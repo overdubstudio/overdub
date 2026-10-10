@@ -40,7 +40,16 @@
 // "Skip to the studio" is always at the top right. While the stage is open the agent's song-changing tools wait
 // (app.start.busy, read by agent/tools.js's recording check) and the studio's keys stay under it.
 //
-// app.start = { open({ kind = 'tap' | 'hum', view = 'free' | 'click', free (a hum: no beat) }), close(), step, kind, view, busy, tap(row, perfMs), done(), again(),
+// Over the song (open({ kind, over: { track, clip } }): the coach strip's Hum over it, Play keys over it, Tap more on
+// the drums and Tap a beat over it, ui/coach-strip.js): the stage reopens with the song as the guide. The loop runs over
+// the clip's bars (a hum's made 4 bars with the song's own Make it longer, sketch.js longerPlan, when Hum is pressed:
+// one undo step with the take), Speed and Beat are hidden and the tempo never changes. A hum or the keys go onto a new
+// track (core/sounds.js newPartFor, the recorder's 'take' mode, the steadiest round kept); taps go over the click view
+// at the song's tempo, and Done folds them into the Drums clip (what was there stays; notes.add) or, over a tune, onto a
+// new Drums track. The stage's primary on 'in' is the run's next part (app.coach.after), else Hum over it.
+// close emits { from, to, kind, free, over, landed, under } (landed: the take that went in while it was open, or null).
+//
+// app.start = { open({ kind = 'tap' | 'hum' | 'keys', view = 'free' | 'click', free (a hum: no beat), over }), close(), step, kind, view, busy, tap(row, perfMs), done(), again(),
 //   humNow() (Hum over the beat), humFree() (the free hum), hum() (the hum now: { mode, on, notes, bpm, fit, ruler } or
 //   { mode: 'beat', rec, state, round, speed }), setTune(on), againOverBeat(), tick() (Promise of the reading tick's
 //   level: { take, tick, under, gain } dB),
@@ -61,6 +70,9 @@ import { mountBeatWindow, OPEN } from './beatwindow.js';
 import { humStage, tuned } from './start-hum.js';
 import { noteName, keyLabel } from '../core/music.js';
 import { planStart } from '../core/start.js';
+import { isDrumTrack } from '../input/recorder.js';
+import { TYPE_MAP } from '../input/qwerty.js';
+import { longerPlan } from './sketch.js';
 import { putGroove } from '../agent/grooves-tool.js';
 
 const LEVEL_WORD = { tight: 'Tight', loose: 'Loose', played: 'As played' };
@@ -76,7 +88,9 @@ export function doorOf(app, ctx = {}) {
   const st = () => app.start;
   const tap = () => (st() ? st().open({ kind: 'tap' }) : app.onboard?.firstMinute?.('tap'));
   const hum = () => (st() ? st().open({ kind: 'hum' }) : app.ui.show('sketch'));
-  const keys = () => (app.onboard?.keysOver ? app.onboard.keysOver() : app.ui.show('sketch'));
+  // (the doors that don't use the stage: the coach strip docks when their first part lands, app.coach.expect)
+  const expect = (door) => { try { app.coach?.expect?.(door); } catch { /* ok */ } };
+  const keys = () => { expect('keys'); return app.onboard?.keysOver ? app.onboard.keysOver() : app.ui.show('sketch'); };
   const row = (label, why, run, primary = false, key = null) => h('li.st-way', { onclick: (e) => { if (!e.target.closest('button')) run(); } },
     h(primary ? 'button.btn.btn-go.st-way-b' : 'button.btn.st-way-b', { type: 'button', onclick: go(run), dataset: { way: label }, 'aria-describedby': null }, label),
     h('span.st-way-why', why, key ? [' ', h('kbd', key)] : null),
@@ -99,9 +113,9 @@ export function doorOf(app, ctx = {}) {
     h('p.ar-empty-text', 'Bring one idea. Play it at any speed; the studio sets the tempo from you.'),
     ledger,
     h('p.st-notime', h('span.t3', 'No playing in time: '),
-      h('button.btn.btn-txt', { type: 'button', title: 'Click squares in the Beat tab: nothing to play in time', onclick: () => (app.beat?.draw ? app.beat.draw() : app.ui.show('drumgrid')) }, 'Draw a beat'), ' ',
-      h('button.btn.btn-txt', { type: 'button', onclick: () => app.ui.show('grooves') }, 'Pick a groove'), ' ',
-      h('button.btn.btn-txt.ar-empty-agent', { type: 'button', onclick: () => { ctx.showAgent?.(); app.ui.emit('agent:compose', { text: 'I have an idea. Help me get it down.' }); } }, name ? `Ask ${name}` : 'Ask your agent')),
+      h('button.btn.btn-txt', { type: 'button', title: 'Click squares in the Beat tab: nothing to play in time', onclick: () => { expect('draw'); return app.beat?.draw ? app.beat.draw() : app.ui.show('drumgrid'); } }, 'Draw a beat'), ' ',
+      h('button.btn.btn-txt', { type: 'button', onclick: () => { expect('groove'); app.ui.show('grooves'); } }, 'Pick a groove'), ' ',
+      h('button.btn.btn-txt.ar-empty-agent', { type: 'button', onclick: () => { expect('ask'); ctx.showAgent?.(); app.ui.emit('agent:compose', { text: 'I have an idea. Help me get it down.' }); } }, name ? `Ask ${name}` : 'Ask your agent')),
     h('p.ar-empty-foot', 'Or ', h('span', { dataset: { feature: 'tracks' } }, h('button.ar-link', { type: 'button', onclick: (e) => ctx.addTrackMenu?.(e.currentTarget) }, 'add a track'), ' yourself, or '), 'hear a finished one: ', h('button.ar-link.ar-empty-demo', { type: 'button', onclick: () => ctx.openDemo?.() }, 'Night Shift'), '.'));
 }
 
@@ -109,10 +123,10 @@ export default function (app) {
   const { store, ui, engine } = app;
   css('start', CSS);
   const fns = new Map();
-  const emit = (t, d) => { for (const fn of fns.get(t) || []) { try { fn(d); } catch (e) { console.error('start listener', e); } } };
+  const emit = (t, d) => { if (t === 'land' && d?.clip) S.everLanded = { track: d.track, clip: d.clip }; for (const fn of fns.get(t) || []) { try { fn(d); } catch (e) { console.error('start listener', e); } } };
 
   // the session's state (never the song's): what is open, what has been played, what landed
-  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false, hum: null, under: null, tune: true, tick: null, inLine: '', trying: null };
+  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false, hum: null, under: null, tune: true, tick: null, inLine: '', trying: null, over: null, everLanded: null };
   let stage = null, body = null, statusEl = null, opener = null;
   const mainEl = () => document.querySelector('.ew-main');
   const under = () => { const m = mainEl(); return m ? [...m.children].filter((c) => c !== stage) : []; };
@@ -126,6 +140,8 @@ export default function (app) {
   // (a page going away gives the previews back first, before the autosave's flush: capture runs ahead of it)
   window.addEventListener('pagehide', () => { if (S.pads || S.guide || S.ckTempo || S.tick) { try { engine.stop?.(); } catch { /* ok */ } release(); } }, true);
   function padsTrack() {
+    // (Tap more on the drums: the pads sound on the Drums track itself)
+    if (S.over?.drums && store.track(S.over.track)) return S.over.track;
     if (S.pads && store.track(S.pads.created?.pads)) return S.pads.created.pads;
     const r = store.preview({ type: 'track.add', ref: 'pads', track: { name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} } } }, { by: 'you' });
     if (!r.ok) return null;
@@ -187,15 +203,24 @@ export default function (app) {
     emit('step', step);
   }
 
-  function open({ kind = 'tap', view = 'free', free = false } = {}) {
+  // the part the stage plays over: its clip's whole bars, the song's tempo, and what's on it now (Tap more keeps it)
+  function overOf(o) {
+    const f = o && (o.clip ? store.findClip(o.clip) : null);
+    if (!f || f.clip.kind !== 'notes') return null;
+    const bpb = bpbOf(), a = Math.floor(f.clip.start / bpb + 1e-6) * bpb, b = Math.max(a + bpb, Math.ceil((f.clip.start + f.clip.length) / bpb - 1e-6) * bpb);
+    return { track: f.track.id, clip: f.clip.id, name: f.track.name, start: a, length: b - a, drums: isDrumTrack(f.track), tempo: store.get().tempo, base: f.clip.notes.map(({ p, t, d, v }) => ({ p, t, d, v })) };
+  }
+  function open({ kind = 'tap', view = 'free', free = false, over = null } = {}) {
     if (S.step) close({ quiet: true });
-    if (store.get().tracks.some((t) => t.clips.length)) { ui.toast('Start a song is for a blank song: Song ▸ New song gives you one.'); return false; }
+    const ov = over ? overOf(over) : null;
+    if (over && !ov) { ui.toast('That part isn’t in the song any more.'); return false; }
+    if (!ov && store.get().tracks.some((t) => t.clips.length)) { ui.toast('Start a song is for a blank song: Song ▸ New song gives you one.'); return false; }
     try { app.input?.qwerty?.on && app.input.qwerty.toggle(false); } catch { /* ok */ }
     try { if (engine.playing) engine.stop(); } catch { /* ok */ }
-    Object.assign(S, { kind, view: 'free', ck: null, hits: [], read: null, landed: null, level: 'tight', reading: 0, before: null, gridAt: 0, hum: null, under: null, tune: true, inLine: '', trying: null });
+    Object.assign(S, { kind, view: 'free', ck: null, hits: [], read: null, landed: null, level: 'tight', reading: 0, before: null, gridAt: 0, hum: null, under: null, tune: true, inLine: '', trying: null, over: ov, everLanded: null, take: null });
     mount();
-    if (kind === 'hum') { S.hum = { mode: 'beat', rec: false, busy: false }; setStep('hum'); if (free) hum.freeStart(); else guideOn(); }
-    else { setStep('play'); padsTrack(); if (view === 'click') setView('click'); }
+    if (kind === 'hum' || kind === 'keys') { S.hum = { mode: kind === 'keys' ? 'keys' : 'beat', rec: false, busy: false }; setStep('hum'); if (ov) hum.overLoop(); else if (free) hum.freeStart(); else guideOn(); }
+    else { setStep('play'); padsTrack(); if (ov || view === 'click') setView('click'); }
     requestAnimationFrame(() => { const b = stage?.querySelector('.st-first') || stage; try { b?.focus({ preventScroll: true }); } catch { /* ok */ } });
     return true;
   }
@@ -212,9 +237,13 @@ export default function (app) {
     clearTimeout(S.ck?.tapTimer);
     S.view = 'free'; S.ck = null;
     const was = S.step;
-    S.step = null; S.kind = null; S.asking = false; S.hum = null;
+    // (what the coach strip needs: the door, the take that went in while it was open, the beat a hum went over)
+    const info = { from: was, to, kind: S.kind, free: !!S.take?.free, over: S.over ? { track: S.over.track, clip: S.over.clip, drums: S.over.drums } : null,
+      landed: S.everLanded && store.findClip(S.everLanded.clip) ? { track: S.everLanded.track, clip: S.everLanded.clip } : null,
+      under: S.under?.clip && store.findClip(S.under.clip) ? { track: S.under.track, clip: S.under.clip } : null };
+    S.step = null; S.kind = null; S.asking = false; S.hum = null; S.over = null; S.everLanded = null;
     unmount();
-    if (!quiet) emit('close', { from: was, to });
+    if (!quiet) emit('close', info);
   }
   function keepInTakes() {
     const cap = app.input?.capture;
@@ -288,7 +317,8 @@ export default function (app) {
   /* ---------------------------------------------------------------- over a click (S.view 'click') */
   const played = () => (S.view === 'click' ? (S.ck?.hits.length || 0) : S.hits.length);
   const snap = (b) => snapGentle(b, { coarse: 0.5, fine: 0.25 });
-  const loopLen = () => 2 * bpbOf();
+  const loopLen = () => (S.over ? S.over.length : 2 * bpbOf());
+  const base = () => (S.over ? S.over.start : 0);
   const r4 = (x) => Math.round(x * 10000) / 10000;
   // the click is the studio's, not the song's: lent for the view when it was off, and given back after
   function lendClick() {
@@ -313,7 +343,7 @@ export default function (app) {
     S.hits = []; S.read = null; S.gridAt = 0; S.asking = false;
     if (view === 'click') {
       S.view = 'click';
-      S.ck = { bpm: S.speed || 100, hits: [], taps: [], tapTimer: 0, tapLine: '', folded: 0, fold: null, playAt: 0, openAt: 0 };
+      S.ck = { bpm: S.over ? S.over.tempo : S.speed || 100, hits: [], taps: [], tapTimer: 0, tapLine: '', folded: 0, fold: null, playAt: 0, openAt: 0 };
       lendClick();
       draw();
       startTake();
@@ -335,11 +365,11 @@ export default function (app) {
     Object.assign(ck, { hits: [], folded: 0, fold: null, openAt: 0 });
     bw?.clear();
     padsTrack();
-    // the tempo and the 2-bar loop: heard, never in History until Done
-    const r = store.preview({ type: 'project.set', patch: { tempo: ck.bpm, loop: { on: true, start: 0, end: loopLen() } } }, { by: 'you' });
+    // the tempo and the 2-bar loop: heard, never in History until Done (over the song: its tempo, the clip's bars)
+    const r = store.preview({ type: 'project.set', patch: { ...(S.over ? {} : { tempo: ck.bpm }), loop: { on: true, start: base(), end: base() + loopLen() } } }, { by: 'you' });
     if (r.ok) S.ckTempo = r;
     ck.playAt = performance.now();
-    try { const p = engine.play(0, { countIn: { beats: bpbOf(), preroll: true } }); p?.catch?.(() => {}); } catch { /* silent engine */ }
+    try { const p = engine.play(base(), { countIn: { beats: bpbOf(), preroll: true } }); p?.catch?.(() => {}); } catch { /* silent engine */ }
     syncClick();
   }
   // the take's grid at an event's time (beats from bar 1; below 0 in the count-in): the engine's, moved on at the tempo
@@ -347,7 +377,7 @@ export default function (app) {
     let g = null;
     try { g = engine.playing ? engine.gridBeat : null; } catch { g = null; }
     if (!Number.isFinite(g)) return null;
-    return g + ((perfMs - performance.now()) / 60000) * S.ck.bpm;
+    return g - base() + ((perfMs - performance.now()) / 60000) * S.ck.bpm;
   }
   function clickHit(r, row, perfMs, v) {
     const ck = S.ck;
@@ -384,7 +414,7 @@ export default function (app) {
     const tid = padsTrack(), L = loopLen();
     const notes = ck.fold ? atLevel(ck.fold.notes, 'tight', { length: L }) : [];
     if (tid && notes.length) {
-      const r = store.preview({ type: 'clip.add', track: tid, clip: { kind: 'notes', start: 0, length: L, name: 'Beat', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })) } }, { by: 'you' });
+      const r = store.preview({ type: 'clip.add', track: tid, clip: { kind: 'notes', start: base(), length: L, name: 'Beat', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })) } }, { by: 'you' });
       if (r.ok) S.ckFold = r;
     }
     bw?.setFold(notes);
@@ -396,6 +426,7 @@ export default function (app) {
     let g = null;
     try { g = engine.playing ? engine.gridBeat : null; } catch { g = null; }
     if (Number.isFinite(g)) {
+      g -= base();
       if (g >= OPEN && !ck.openAt) ck.openAt = performance.now();
       const done = g >= 0 ? Math.floor(g / loopLen()) : 0;
       if (done > ck.folded) { ck.folded = done; refold(); }
@@ -405,7 +436,7 @@ export default function (app) {
   }
   function setSpeed(bpm) {
     bpm = Math.round(+bpm);
-    if (S.step !== 'play' || S.view !== 'click' || !(bpm >= 40 && bpm <= 240)) return false;
+    if (S.step !== 'play' || S.view !== 'click' || S.over || !(bpm >= 40 && bpm <= 240)) return false;
     if (S.ck.hits.length) keepInTakes();
     clearTimeout(S.ck.tapTimer);
     S.ck.bpm = bpm; S.ck.tapLine = '';
@@ -416,7 +447,7 @@ export default function (app) {
   }
   // Tap it: four T presses or more, read with timing.js findPulse; the click moves to it once the taps stop
   function tapTempo(perfMs = performance.now()) {
-    if (S.step !== 'play' || S.view !== 'click') return null;
+    if (S.step !== 'play' || S.view !== 'click' || S.over) return null;
     const ck = S.ck, t = perfMs / 1000;
     if (ck.taps.length && (t - ck.taps[ck.taps.length - 1] > 2 || t < ck.taps[ck.taps.length - 1])) ck.taps = [];
     ck.taps.push(t);
@@ -440,6 +471,7 @@ export default function (app) {
     let g = null;
     try { g = engine.playing ? engine.gridBeat : null; } catch { g = null; }
     const last = Math.max(...ck.hits.map((x) => x.g));
+    if (Number.isFinite(g)) g -= base();
     const f = foldOf(ck, Number.isFinite(g) ? Math.max(g, ck.folded * L, Math.min(last + 0.25, (ck.folded + 1) * L)) : last + 0.25);
     if (!f || !f.notes.length) { say('A few more hits, and the studio can find the beat.'); return false; }
     clearTimeout(ck.tapTimer);
@@ -447,17 +479,29 @@ export default function (app) {
     release();
     giveClick();
     const notes = atLevel(f.notes, 'tight', { length: L });
-    const plan = planStart(store.get(), { notes, bpm, length: L, kind: 'drums' });
-    const res = store.dispatch(plan.ops, { by: 'you', label: plan.label });
+    const ov = S.over;
+    let res;
+    if (ov?.drums && store.findClip(ov.clip)) {
+      // Tap more on the drums: the fold goes into the Drums clip, over what was there (a hit already there isn't doubled)
+      const had = new Set(ov.base.map((n) => `${n.p}@${n.t}`));
+      const add = notes.filter((n) => !had.has(`${n.p}@${r4(n.t)}`)).map(({ p, t, d, v }) => ({ p, t: r4(t), d, v }));
+      res = add.length ? store.dispatch([{ type: 'notes.add', track: ov.track, clip: ov.clip, notes: add }], { by: 'you', label: `more on ${ov.name}, ${plural(add.length, 'hit')}` }) : { ok: false, error: 'every hit was there already' };
+      if (res.ok) res.created = { ...res.created, c: ov.clip };
+    } else {
+      const plan = planStart(store.get(), { notes, bpm, length: L, kind: 'drums' });
+      // (over a tune: the beat from the tune's first bar)
+      if (ov) for (const op of plan.ops) if (op.type === 'clip.add') op.clip.start = ov.start;
+      res = store.dispatch(plan.ops, { by: 'you', label: ov ? `${plan.label} over ${ov.name}` : plan.label });
+    }
     if (!res.ok) { say(`That didn't go in: ${res.error}`); lendClick(); startTake(); return false; }
     const track = store.get().tracks.find((t) => t.clips.some((c) => c.id === res.created.c));
     S.landed = { txn: res.txn.id, track: track?.id || null, clip: res.created.c };
     const rd = { bpm, shift: 0, notes: f.notes, length: L, why: 'first' };
-    S.take = { bpm, fit: { fit: 1, drift: 0 }, loop: f.loop, fold: f, downbeat: { shift: 0, sure: true, margin: 1, why: 'click' }, notes: f.notes, strays: f.strays, length: L, readings: [rd], click: true };
+    S.take = { bpm, fit: { fit: 1, drift: 0 }, loop: f.loop, fold: f, downbeat: { shift: 0, sure: true, margin: 1, why: 'click' }, notes: f.notes, strays: f.strays, length: L, readings: [rd], click: true, base: ov?.drums ? ov.base : null };
     S.level = 'tight'; S.reading = 0;
-    try { app.input?.capture?.add({ src: 'tap', kind: 'drums', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: bpm, beat: 0, track: S.landed.track, clip: S.landed.clip, raw: ck.hits.map((x) => ({ t: r4((x.g * 60) / bpm), p: x.p, v: x.v })), rounds: f.rounds, kept: [{ track: S.landed.track, clip: S.landed.clip, at: Date.now() }] }); } catch (e) { console.error('start: capture', e); }
+    try { app.input?.capture?.add({ src: 'tap', kind: 'drums', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: bpm, beat: base(), track: S.landed.track, clip: S.landed.clip, raw: ck.hits.map((x) => ({ t: r4((x.g * 60) / bpm), p: x.p, v: x.v })), rounds: f.rounds, kept: [{ track: S.landed.track, clip: S.landed.clip, at: Date.now() }] }); } catch (e) { console.error('start: capture', e); }
     try { ui.select({ track: S.landed.track, clip: S.landed.clip, notes: [] }); } catch { /* ok */ }
-    try { engine.play(0); } catch { /* silent engine */ }
+    try { engine.play(base()); } catch { /* silent engine */ }
     S.inLine = ''; S.trying = null;
     setStep('in');
     hostCard();
@@ -482,6 +526,8 @@ export default function (app) {
   function planned(reading = S.reading, level = S.level, tune = S.tune) {
     const rd = S.take.readings[reading] || S.take.readings[0];
     const notes = atLevel(rd.notes, level, { length: rd.length });
+    // (Tap more on the drums: what was on the clip stays as it was, under the new hits)
+    if (S.take.base) { const had = new Set(S.take.base.map((n) => `${n.p}@${n.t}`)); return { rd, notes: [...S.take.base, ...notes.filter((n) => !had.has(`${n.p}@${r4(n.t)}`))] }; }
     // (a hum: in the key's scale, or as sung)
     return { rd, notes: S.take.kind === 'hum' ? tuned(notes, S.take.key, tune) : notes };
   }
@@ -519,22 +565,29 @@ export default function (app) {
     if (back) { hum.tickOff(); setStep('in'); } else draw();
     return true;
   }
+  // what the coach strip makes of this landing (app.coach.after): the run's next part, as the stage's primary
+  const landing = () => ({ kind: S.kind, free: !!S.take?.free, over: S.over ? { track: S.over.track, clip: S.over.clip, drums: S.over.drums } : null, landed: S.landed ? { track: S.landed.track, clip: S.landed.clip } : null, under: S.under?.clip ? { track: S.under.track, clip: S.under.clip } : null });
+  function nextPart() {
+    let nx = null;
+    try { nx = app.coach?.after?.(landing()) || null; } catch (e) { console.error('start: coach', e); }
+    if (nx) return nx;
+    // (no strip: a hum's next is the song; a beat's is a hum over it, on the stage)
+    return S.take?.kind === 'hum' ? null : { label: 'Hum over it', run: (l) => open({ kind: 'hum', over: l }) };
+  }
   function next() {
-    // a hum's: back to the song, playing
-    if (S.take?.kind === 'hum') { close({ to: 'song' }); return true; }
-    // the next part: hum over it (Sketch's Hum, the beat looping, a bar to come in on)
+    const nx = nextPart(), l = S.landed ? { track: S.landed.track, clip: S.landed.clip } : null;
     close({ to: 'song' });
     try { if (!engine.playing) engine.play(0); } catch { /* ok */ }
-    app.onboard?.humOver?.();
+    if (nx) nx.run(l);
     return true;
   }
   // the hum's steps (ui/start-hum.js): Hum over the beat, and the free hum, both on the stage
   const hum = humStage(app, {
     S, say: (t) => say(t), setStep: (x) => setStep(x), draw: () => draw(), emit, bpbOf, guideOn, statusEl: () => statusEl, body: () => body,
-    dropGuide: () => dropPreview('guide'),
+    dropGuide: () => dropPreview('guide'), longerPlan: (o) => longerPlan(app, o),
     // a hum landed: the stage's step 'in', as a tapped beat's
     landed(take, landed) {
-      S.take = take; S.landed = landed; S.level = 'tight'; S.reading = 0; S.tune = true; S.before = null; S.inLine = ''; S.trying = null;
+      S.take = take; S.landed = landed; S.level = 'tight'; S.reading = 0; S.tune = !take.keys; S.before = null; S.inLine = ''; S.trying = null;
       try { ui.select({ track: landed.track, clip: landed.clip, notes: [] }); } catch { /* ok */ }
       try { engine.play(0); } catch { /* silent engine */ }
       setStep('in');
@@ -642,13 +695,14 @@ export default function (app) {
     const alt = stage.querySelector('.st-alt');
     alt.replaceChildren();
     if (S.step === 'play' && S.view === 'click') {
-      alt.append(h('button.btn.btn-txt.st-view', { type: 'button', onclick: () => setView('free') }, 'Free time instead'));
+      // (over the song: its tempo and its bars, so no Speed and no free time)
+      if (!S.over) alt.append(h('button.btn.btn-txt.st-view', { type: 'button', onclick: () => setView('free') }, 'Free time instead'));
       const ck = S.ck;
       const bwEl = h('div.st-bw');
       body.replaceChildren(
         h('div.st-head', h('div', h('h2.st-title.disp', 'Tap your beat with the click.')),
           h('div.st-read', { 'aria-hidden': 'true' }, h('span.num.st-bpm', ''), h('span.st-unit', ''), h('span.st-rounds', ''))),
-        h('div.st-speed', h('div.st-choice', { role: 'radiogroup', 'aria-label': 'Speed' }, h('span.st-choice-l.t3', 'Speed'),
+        S.over ? null : h('div.st-speed', h('div.st-choice', { role: 'radiogroup', 'aria-label': 'Speed' }, h('span.st-choice-l.t3', 'Speed'),
           SPEEDS.map(([word, val]) => h('button.st-word', { type: 'button', role: 'radio', 'aria-checked': String(val === ck.bpm), onclick: () => setSpeed(val) }, `${word} ${val}`))),
         h('button.st-word.st-tapit', { type: 'button', title: 'Tap T in time, four times or more', onpointerdown: (e) => { e.preventDefault(); tapTempo(e.timeStamp || performance.now()); } }, 'Tap it (T, four times)')),
         bwEl,
@@ -656,8 +710,8 @@ export default function (app) {
         h('footer.st-foot', statusEl,
           h('button.btn.btn-txt.st-again', { type: 'button', onclick: () => again() }, 'Start again'),
           h('button.btn.st-done.st-first', { type: 'button', onclick: () => done() }, 'Done ', h('kbd', 'Space'))));
-      bw = mountBeatWindow(bwEl, { rows: ROW_ORDER.map((id) => { const r = ROWS.find((x) => x.id === id); return { id, label: r.short || r.label, p: r.p }; }), meter: store.get().meter || [4, 4], bars: 2, ball: true, countIn: true,
-        clock: () => { try { return { beat: engine.beat, grid: engine.playing ? engine.gridBeat : null, playing: engine.playing }; } catch { return { playing: false }; } } });
+      bw = mountBeatWindow(bwEl, { rows: ROW_ORDER.map((id) => { const r = ROWS.find((x) => x.id === id); return { id, label: r.short || r.label, p: r.p }; }), meter: store.get().meter || [4, 4], bars: Math.max(1, Math.round(loopLen() / bpbOf())), ball: true, countIn: true,
+        clock: () => { try { return { beat: engine.beat - base(), grid: engine.playing ? engine.gridBeat - base() : null, playing: engine.playing }; } catch { return { playing: false }; } } });
       syncClick();
     } else if (S.step === 'play') {
       alt.append(h('button.btn.btn-txt.st-view', { type: 'button', onclick: () => setView('click') }, 'Play to a click instead'));
@@ -695,7 +749,7 @@ export default function (app) {
           h(unsure ? 'p.st-unsure' : 'span', unsure ? 'The studio isn’t sure where the 1 is. ' : null,
             r.readings.length > 1 ? h('button.btn.btn-txt.st-notquite', { type: 'button', onclick: () => { S.before = S.reading; setStep('readings'); } }, unsure ? 'Hear the other ways it could go.' : 'Not quite? Hear the other ways it could go.') : null),
           h('button.btn.btn-txt.st-back', { type: 'button', onclick: () => close({ to: 'song' }) }, 'Back to the song'),
-          h('button.btn.btn-go.st-next.st-first', { type: 'button', onclick: () => next() }, 'Hum over it')));
+          nextBtn()));
       say(S.inLine || '');
       drawGrid();
     } else if (S.step === 'readings') {
@@ -730,6 +784,12 @@ export default function (app) {
       if (isHum) hum.tickOn(r.readings[S.reading] || r.readings[0]);
     }
   }
+  // the stage's one primary on 'in': the run's next part (Enter), or Back to the song when there's none
+  function nextBtn() {
+    const nx = nextPart();
+    return nx ? h('button.btn.btn-go.st-next.st-first', { type: 'button', onclick: () => next() }, nx.label)
+      : h('button.btn.btn-go.st-back.st-first', { type: 'button', onclick: () => close({ to: 'song' }) }, 'Back to the song');
+  }
   // the Timing line: the three words, what the level moved, and (a hum) the In tune lamp
   function timingLine(levelLine, tune) {
     return h('div.st-timing', h('span.st-choice-l.t3', 'Timing'),
@@ -747,20 +807,22 @@ export default function (app) {
     const barsW = bars === 1 ? 'bar 1' : `bars 1–${bars}`;
     const sub = r.free
       ? [`${t?.name || 'Melody'}, ${barsW} at ${bpm} BPM, in ${key}, sung by `, byline('you', { app }), '. ', h('span.t3', 'Undo takes it out.')]
+      : r.keys ? [`${t?.name || 'Keys'}, ${barsW} at ${bpm} BPM, over ${r.over}, played by `, byline('you', { app }), '. ', r.rounds > 1 ? `Kept round ${r.kept}, the steadiest of ${r.rounds}.` : 'One time round, kept as you played it.', ' ', h('span.t3', 'Undo takes it out.')]
       : [`${t?.name || 'Melody'}, ${barsW} at ${bpm} BPM, in ${key}, over ${r.over}. `, r.rounds > 1 ? `Kept round ${r.kept}, the steadiest of ${r.rounds}.` : 'One time round, kept as you sang it.', ' ', h('span.t3', 'Undo takes it out.')];
     grid = canvas('st-grid');
     const mv = moved(rd.notes, S.level, { bpm: rd.bpm });
     const levelLine = S.level === 'played' ? 'As you sang it.' : `${LEVEL_WORD[S.level]} moved ${plural(mv.n, 'note')}${mv.n ? `, ${mv.ms} ms on average` : ''}.`;
-    const tune = h('button.tog.st-tune', { type: 'button', 'aria-pressed': String(!!S.tune), title: `On: your notes in ${key}. Off: as sung`, onclick: () => setTune(!S.tune) }, 'In tune');
+    const tune = r.keys ? null : h('button.tog.st-tune', { type: 'button', 'aria-pressed': String(!!S.tune), title: `On: your notes in ${key}. Off: as sung`, onclick: () => setTune(!S.tune) }, 'In tune');
     const weak = r.free && r.readings.length > 1 && !(r.fit?.fit >= 0.5);
     const other = r.readings.length > 1 ? h('button.btn.btn-txt.st-notquite', { type: 'button', onclick: () => { S.before = S.reading; setStep('readings'); } }, weak ? 'Hear the other ways it could go' : 'Not quite? Hear the other ways it could go.') : null;
     body.replaceChildren(
-      h('div.st-head', h('div', h('h2.st-title.disp', 'Your tune is in the song.'), h('p.st-sub', ...sub))),
+      h('div.st-head', h('div', h('h2.st-title.disp', r.keys ? 'Your part is in the song.' : 'Your tune is in the song.'), h('p.st-sub', ...sub))),
       h('div.st-inrow', h('div.st-inleft', h('div.st-gridwrap', grid.cv), timingLine(levelLine, tune)), slot()),
       h('footer.st-foot', statusEl,
         weak ? h('p.st-unsure.st-promoted', `It’s in at ${bpm} BPM, but the hum didn’t settle on a steady beat. `, other, ', or ', h('button.btn.btn-txt.st-overbeat', { type: 'button', onclick: () => againOverBeat() }, 'hum it again over a beat'), '.')
           : h('span', other),
-        h('button.btn.btn-go.st-back.st-first', { type: 'button', onclick: () => close({ to: 'song' }) }, 'Back to the song')));
+        nextPart() ? h('button.btn.btn-txt.st-back', { type: 'button', onclick: () => close({ to: 'song' }) }, 'Back to the song') : null,
+        nextBtn()));
     say(S.inLine || '');
     drawGrid();
   }
@@ -885,8 +947,11 @@ export default function (app) {
   const K = (key, when, run, label, extra = {}) => ui.keys.add({ key, when, run, label, group: 'Start a song', first: key !== 'Space', ...extra });
   // the studio's own keys wait under the stage (Space is the stage's on every step, below; added first: ui.keys tries the last-added `first` key first, so the
   // stage's own keys below win over these) (R, M, S, the panes, Tap, the keys' octave...)
+  // (Play keys over it: musical typing plays through, its notes and its octave keys)
+  const keysStep = () => S.step === 'hum' && S.hum?.mode === 'keys';
+  const typed = new Set([...Object.keys(TYPE_MAP), 'KeyZ', 'KeyX', 'KeyC', 'KeyV']);
   for (const key of ['KeyR', 'KeyM', 'KeyS', 'KeyB', 'KeyD', 'KeyA', 'KeyT', 'KeyH', 'KeyC', 'KeyE', 'KeyN', 'KeyZ', 'KeyX', 'KeyG', 'KeyQ', 'KeyW', 'KeyU', 'KeyI', 'KeyO', 'KeyP', 'KeyY', 'KeyV', 'Digit0', 'Delete', 'Backspace', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Comma', 'Period', 'Slash']) {
-    K(key, isOpen, () => {}, 'Held while Start a song is open', { hidden: true });
+    K(key, typed.has(key) ? () => isOpen() && !keysStep() : isOpen, () => {}, 'Held while Start a song is open', { hidden: true });
   }
 
   for (const id of PAD_ROWS) { const r = ROWS.find((x) => x.id === id); K(r.key, on('play'), (e) => tap(id, e?.timeStamp || performance.now()), `Tap the ${(r.short || r.label).toLowerCase()} (Start a song)`, { hidden: true }); }
@@ -901,7 +966,7 @@ export default function (app) {
   K('ArrowRight', clickView, () => speedStep(1), 'Quicker (Start a song)', { hidden: true });
   K('Enter', on('in'), () => next(), 'The next part: Hum over it (Start a song)', { hidden: true });
   // the hum (over the beat or free): H, Space and Enter start it, and stop it into the song; ⌫ starts a free hum again
-  K('KeyH', on('hum'), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true });
+  K('KeyH', () => S.step === 'hum' && !keysStep(), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true });
   // (first, unlike the other steps' Space: the recorder's own Space, stop and keep, is live while the hum records)
   K('Space', on('hum'), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true, first: true });
   K('Enter', () => S.step === 'hum' && !document.activeElement?.closest?.('button'), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true });

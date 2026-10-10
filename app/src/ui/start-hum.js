@@ -15,11 +15,18 @@
 //     at the best reading (rounds.js humReadingsOf), whatever the fit: one undo step by you (core/start.js planStart:
 //     tempo, loop, a Melody track and its clip, plus the key heard on a blank song).
 //
+//   over the song (S.over, the coach strip's Hum over it and Play keys over it): no guide beat, the song itself loops
+//     over the part's bars (a preview until Hum is pressed). Hum (H) makes the song 4 bars when it's shorter (sketch.js
+//     longerPlan, the song's own Make it longer, with the loop round the 4 bars) and records as over a beat, the take
+//     joined to that change; the tempo doesn't move. The keys (S.hum.mode 'keys') are the same with no Make it longer:
+//     Play (Space) puts musical typing on (lent for the take, given back after) and counts in a bar, and Done keeps
+//     the steadiest round on a new track.
+//
 // The reading tick (R25): while the readings of a hum are up, a soft tick on every beat plays on a previewed track
 // (nothing in History), at a level measured once (engine.render + audio/measure.js) to sit at least 12 dB under the
 // take's RMS: tick() -> Promise of { take, tick, under, gain } (dB).
 //
-// humStage(app, ctx) -> { draw(body, alt), frame(now), start(), done(), again(), freeStart(), overBeat(bpm), leave(),
+// humStage(app, ctx) -> { draw(body, alt), frame(now), start(), done(), again(), freeStart(), overBeat(bpm), overLoop(), leave(),
 //   stop({ quiet }), state(), tickOn(rd), tickOff(), tick() }
 //   ctx: { S, say, setStep, draw, emit, bpbOf, guideOn, dropGuide, landed(take, landed), stage() }
 
@@ -126,11 +133,50 @@ export function humStage(app, ctx) {
     return true;
   }
 
+  /* ---------------------------------------------------------------- over the song: the part's bars loop */
+  const bars = (L) => Math.max(1, Math.round(L / ctx.bpbOf()));
+  function overLoop() {
+    const o = S.over;
+    if (!o) return false;
+    ctx.dropGuide();
+    S.guidePlan = null;
+    const r = store.preview({ type: 'project.set', patch: { loop: { on: true, start: o.start, end: o.start + o.length } } }, { by: 'you' });
+    if (r.ok) S.guide = r;
+    try { if (engine.playing) engine.stop(); engine.play(o.start); } catch { /* silent engine */ }
+    return true;
+  }
+  // the keys: musical typing on from Play (lent, given back when the take ends): aimed at a new track, typing on makes
+  // it (recorder.keysTrack), so the take and the track are one undo step
+  function lendTyping() {
+    const q = inp()?.qwerty;
+    if (!q || q.on) return;
+    try { q.toggle(true); S.typingLent = true; } catch { /* ok */ }
+  }
+  function giveTyping() {
+    if (!S.typingLent) return;
+    S.typingLent = false;
+    try { inp()?.qwerty?.on && inp().qwerty.toggle(false); } catch { /* ok */ }
+  }
+  // Hum over the song: what Hum puts in the song first, the 4 bars and the loop round them (one change, joined by the
+  // take). The keys: only the loop, when it isn't round the part already
+  function overOps() {
+    const o = S.over, p = store.get(), bpb = ctx.bpbOf(), ops = [];
+    let L = o.length;
+    if (S.hum?.mode !== 'keys' && bars(L) < 4) {
+      const plan = ctx.longerPlan({ bars: 4 });
+      if (plan?.ok) { ops.push(...plan.ops.filter((x) => x.type !== 'project.set')); L = 4 * bpb; }
+    }
+    const lp = p.loop;
+    if (!(lp?.on && Math.abs(lp.start - o.start) < 1e-6 && Math.abs(lp.end - (o.start + L)) < 1e-6)) ops.push({ type: 'project.set', patch: { loop: { on: true, start: o.start, end: o.start + L } } });
+    return { ops, length: L };
+  }
+
   /* ---------------------------------------------------------------- over a beat: the rounds as takes */
   async function beatStart() {
     if (S.step !== 'hum' || S.hum?.rec || S.hum?.mode === 'free') return false;
     const rec = inp()?.recorder;
     if (!rec) { ctx.say('The recorder isn’t loaded in this tab.'); return false; }
+    if (S.over) return overStart(rec);
     if (!S.guidePlan && !ctx.guideOn()) return false;
     try { rec.setAim?.('hum', 'new'); } catch { /* ok */ }
     const ops = [{ type: 'project.set', patch: { tempo: S.speed, loop: { on: true, start: 0, end: 4 * ctx.bpbOf() } } }, ...S.guidePlan.ops];
@@ -149,9 +195,33 @@ export function humStage(app, ctx) {
     sync();
     return true;
   }
+  async function overStart(rec) {
+    const keys = S.hum.mode === 'keys', o = S.over;
+    if (!store.findClip(o.clip)) { ctx.say('That part isn’t in the song any more.'); return false; }
+    try { rec.setAim?.(keys ? 'keys' : 'hum', 'new'); } catch { /* ok */ }
+    ctx.dropGuide();
+    const chosen = keyChosen(store.get(), store.history);
+    const { ops, length } = overOps();
+    let txn = null;
+    if (ops.length) {
+      const res = store.dispatch(ops, { by: 'you', label: keys ? `a loop to play over, ${plural(bars(length), 'bar')}` : `make it ${bars(length)} bars to hum over` });
+      if (!res.ok) { ctx.say(`That didn’t go in: ${res.error}`); overLoop(); return false; }
+      txn = res.txn?.id || null;
+    }
+    S.under = { txn, track: o.track, clip: o.clip, chosen, over: true };
+    try { if (engine.playing) engine.stop(); engine.seek?.(o.start); } catch { /* ok */ }
+    const H = S.hum = { mode: keys ? 'keys' : 'beat', rec: true, busy: false };
+    if (keys) lendTyping();
+    ctx.draw();
+    try { await rec.record({ hum: !keys, countIn: 1, join: txn }); } catch (e) { console.error('start: take over the song', e); }
+    if (S.hum !== H) return true;
+    if (rec.state === 'idle') { H.rec = false; ctx.say('The take didn’t start: press it again.'); ctx.draw(); return false; }
+    sync();
+    return true;
+  }
   async function beatDone() {
     const rec = inp()?.recorder, H = S.hum;
-    if (!H || H.mode !== 'beat' || !H.rec || H.busy || !rec) return false;
+    if (!H || (H.mode !== 'beat' && H.mode !== 'keys') || !H.rec || H.busy || !rec) return false;
     if (rec.state === 'count') { ctx.say('Come in on 1.'); return false; }
     if (rec.state !== 'rec') return false;
     H.busy = true;
@@ -167,16 +237,18 @@ export function humStage(app, ctx) {
     let res = null;
     try { res = await rec.stop(); } catch (e) { console.error('start: hum take', e); }
     H.busy = false; H.rec = false;
+    if (H.mode === 'keys') giveTyping();
     if (S.step !== 'hum' || S.hum !== H) return false;
     if (!res || !res.ok || res.empty || !keep) {
-      ctx.say('Nothing heard in that take. The beat is in the song: press Hum to go again.');
+      ctx.say(S.over ? 'Nothing heard in that take. Press it again to go round once more.' : 'Nothing heard in that take. The beat is in the song: press Hum to go again.');
       ctx.draw();
       return false;
     }
     return landOver(res, keep, pool.length);
   }
   function landOver(res, keep, rounds) {
-    const part = (res.parts || []).find((x) => (x.kinds || []).includes('hum')) || (res.parts || []).find((x) => !x.drums) || res.parts?.[0];
+    const keysTake = S.hum?.mode === 'keys';
+    const part = (res.parts || []).find((x) => (x.kinds || []).includes(S.hum?.mode === 'keys' ? 'keys' : 'hum')) || (res.parts || []).find((x) => !x.drums) || res.parts?.[0];
     const tr = part && store.track(part.track);
     if (!tr) { ctx.say('The take went in, but its track isn’t there.'); return false; }
     const folders = takeFolders(tr);
@@ -202,18 +274,19 @@ export function humStage(app, ctx) {
     });
     const ops = [];
     if (folder) for (const c of folder.clips) if (!!c.mute !== (c.id !== kept.id)) ops.push({ type: 'clip.set', track: tr.id, clip: c.id, patch: { mute: c.id !== kept.id } });
-    if (!chosen && key) ops.push({ type: 'project.set', patch: { key: { root: key.root, scale: key.scale } } });
-    const inTune = tuned(atLevel(notes, 'tight', { length: kept.length }), key, true);
+    if (!chosen && key && !keysTake) ops.push({ type: 'project.set', patch: { key: { root: key.root, scale: key.scale } } });
+    const inTune = tuned(atLevel(notes, 'tight', { length: kept.length }), key, !keysTake);
     if (inTune.some((n, i) => n.p !== kept.notes[i]?.p)) ops.push({ type: 'notes.replace', track: tr.id, clip: kept.id, notes: inTune.map(({ p, t, d, v }) => ({ p, t, d, v })) });
     let txn = res.txn || S.under?.txn || null;
+    const bpm = S.over ? store.get().tempo : S.speed;
     if (ops.length) {
-      const d = store.dispatch(ops, { by: 'you', label: `a beat and your tune over it, 4 bars at ${S.speed} BPM`, join: txn });
+      const d = store.dispatch(ops, { by: 'you', label: S.over ? `your ${keysTake ? 'part' : 'tune'} over ${S.over.name}` : `a beat and your tune over it, 4 bars at ${S.speed} BPM`, join: txn });
       if (d.ok && d.txn) txn = d.txn.id;
     }
     const length = kept.length;
     const under = S.under?.track ? store.track(S.under.track) : null;
-    const take = { kind: 'hum', free: false, bpm: S.speed, fit: { fit: 1 }, key, length, rounds, kept: keep.n + 1, over: under?.name || 'Drums', notes,
-      readings: [{ bpm: S.speed, shift: 0, notes, length, why: 'first', fit: 1 }] };
+    const take = { kind: 'hum', keys: keysTake, free: false, bpm, fit: { fit: 1 }, key, length, rounds, kept: keep.n + 1, over: under?.name || 'Drums', notes,
+      readings: [{ bpm, shift: 0, notes, length, why: 'first', fit: 1 }] };
     S.hum = null;
     ctx.landed(take, { txn, track: tr.id, clip: kept.id });
     return true;
@@ -247,15 +320,16 @@ export function humStage(app, ctx) {
     const H = S.hum, hum = inp()?.hum, rec = inp()?.recorder;
     if (!H) return;
     if (H.mode === 'free' && hum?.active && !hum.recording) { try { if ((hum.segs() || []).length && !quiet) hum.stop(); else hum.cancel(); } catch { /* ok */ } }
-    if (H.mode === 'beat' && H.rec && rec) { try { if (rec.state === 'count') rec.cancel(); else if (rec.state === 'rec') rec.stop(); } catch { /* ok */ } }
+    if ((H.mode === 'beat' || H.mode === 'keys') && H.rec && rec) { try { if (rec.state === 'count') rec.cancel(); else if (rec.state === 'rec') rec.stop(); } catch { /* ok */ } }
     H.rec = false; H.on = false;
+    giveTyping();
   }
   function state() {
     const H = S.hum, hum = inp()?.hum, rec = inp()?.recorder;
     if (!H) return null;
     if (H.mode === 'free') { const f = H.fit; return { mode: 'free', on: !!hum?.active, notes: hum?.active ? (hum.segs() || []).length : 0, bpm: f ? Math.round(f.bpm) : null, fit: f ? f.fit : null, ruler: !!H.rulerAt }; }
     const lv = H.rec && rec ? rec.live() : null;
-    return { mode: 'beat', rec: !!H.rec, state: rec?.state || 'idle', round: lv ? (lv.pass || 0) + 1 : 0, speed: S.speed };
+    return { mode: H.mode === 'keys' ? 'keys' : 'beat', over: !!S.over, rec: !!H.rec, state: rec?.state || 'idle', round: lv ? (lv.pass || 0) + 1 : 0, speed: S.speed };
   }
 
   /* ---------------------------------------------------------------- drawing */
@@ -275,15 +349,25 @@ export function humStage(app, ctx) {
       sync();
       return;
     }
+    const keys = H.mode === 'keys', tempo = S.over ? store.get().tempo : S.speed;
     if (H.rec) {
       win = canvas('st-hwin');
       body.replaceChildren(
-        h('div.st-head', h('div', h('h2.st-title.disp', 'Hum over this beat.'), h('p.st-sub', `${S.speed} BPM. Hum it each time round the loop, as many times as you like; every round is kept as a take, and the steadiest one plays.`)),
-          h('div.st-read', { 'aria-hidden': 'true' }, h('span.num.st-bpm', String(S.speed)), h('span.st-unit', 'BPM'), h('span.st-rounds', ''))),
+        h('div.st-head', h('div', h('h2.st-title.disp', keys ? 'Play your part.' : 'Hum over this beat.'), h('p.st-sub', `${tempo} BPM. ${keys ? 'Play it' : 'Hum it'} each time round the loop, as many times as you like; every round is kept as a take, and the steadiest one plays.`)),
+          h('div.st-read', { 'aria-hidden': 'true' }, h('span.num.st-bpm', String(tempo)), h('span.st-unit', 'BPM'), h('span.st-rounds', ''))),
         h('div.st-winwrap', win.cv, h('p.st-empty.t3.st-count', 'Come in on 1.')),
-        h('footer.st-foot', ctx.statusEl(), h('span.t3.st-phones', 'Headphones keep the beat out of your hum.'),
+        h('footer.st-foot', ctx.statusEl(), keys ? null : h('span.t3.st-phones', 'Headphones keep the beat out of your hum.'),
           h('button.btn.btn-go.st-done.st-first', { type: 'button', onclick: () => beatDone() }, 'Done ', h('kbd', 'Space'))));
       sync();
+      return;
+    }
+    if (S.over) {
+      // over the song: no Speed and no Beat (the song has both), and no free hum
+      body.replaceChildren(
+        h('div.st-head', h('div', h('h2.st-title.disp', keys ? 'Play your part.' : 'Hum over this beat.'), h('p.st-sub', keys ? `Your keys play a new track over ${S.over.name}. Press Play and the loop counts you in for a bar; play as many times round as you like. Space stops.` : 'Press Hum and the beat counts you in for a bar. Hum anything, as many times round as you like. Space stops.')),
+          h('div.st-read', { 'aria-hidden': 'true' }, h('span.num.st-bpm', String(tempo)), h('span.st-unit', 'BPM'), h('span.st-rounds', ''))),
+        h('div.st-humwrap', h('button.btn.btn-go.st-hum.st-first', { type: 'button', onclick: () => beatStart() }, h('span.st-dot', { 'aria-hidden': 'true' }), keys ? 'Play ' : 'Hum ', h('kbd', keys ? 'Space' : 'H'))),
+        h('footer.st-foot', ctx.statusEl(), keys ? null : h('span.t3.st-phones', 'Headphones keep the beat out of your hum.')));
       return;
     }
     alt.append(h('button.btn.btn-txt.st-view', { type: 'button', onclick: () => freeStart() }, 'No beat; I’ll hum freely'));
@@ -319,7 +403,7 @@ export function humStage(app, ctx) {
       if (rounds) rounds.textContent = counting ? '' : `round ${n}`;
       const c = body.querySelector('.st-count');
       if (c) c.hidden = !counting;
-      if (!S.asking && !H.busy) ctx.say(counting ? 'Come in on 1.' : `Round ${n}. Hum it each time round; Space stops, and the steadiest round is kept.`);
+      if (!S.asking && !H.busy) ctx.say(counting ? 'Come in on 1.' : `Round ${n}. ${H.mode === 'keys' ? 'Play it' : 'Hum it'} each time round; Space stops, and the steadiest round is kept.`);
     }
   }
   let lastSync = 0;
@@ -405,5 +489,5 @@ export function humStage(app, ctx) {
   }
   function tick() { return tickWait || Promise.resolve(null); }
 
-  return { draw, frame, start, done, again, freeStart, overBeat, stop, state, tickOn, tickOff, tick, beatStart, beatDone, freeDone };
+  return { draw, frame, start, done, again, freeStart, overBeat, overLoop, stop, state, tickOn, tickOff, tick, beatStart, beatDone, freeDone };
 }

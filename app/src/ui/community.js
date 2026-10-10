@@ -6,10 +6,15 @@
 //
 // There is no marketplace: nothing here is sold, priced, rated or counted. It's a shelf.
 //
-// Off on the live site. COMMUNITY_LIVE is false until AJ turns it on (not before the API key is out of origin storage);
-// while it is, everything here needs the page to be on localhost or 127.0.0.1: elsewhere ?community=,
-// ?community-device= and a stored overdub:community are ignored, the section isn't drawn, Find's shelf words aren't
-// added and the tool answers "isn't on".
+// Off on the live site. COMMUNITY_LIVE is false until AJ turns it on (docs/COMMUNITY-SHELF.md, "Where it's on"); while
+// it is, everything here needs the page to be on localhost or 127.0.0.1: elsewhere ?community=, ?community-device= and
+// a stored overdub:community are ignored, the section isn't drawn, Find's shelf words aren't added and the tool answers
+// "isn't on".
+//
+// The emergency off: app/site-config.json with "community": "off" (site-config.js; the deploy writes it, no code
+// change) turns the shelf off on any host, as COMMUNITY_LIVE false does on the live site, with one difference: the
+// studio's own copy is still read on every load and its deny list still applied (trust.forget), so turning the shelf off
+// never un-revokes anything. on() says which once ready() has resolved.
 //
 // What runs when:
 //   - Browsing reads the index (JSON: never code). ▶ fetches a clip under the URL policy (devices/community.js), checks
@@ -43,6 +48,7 @@ import { kernelPrint } from '../agent/keep.js';
 import { communityTool } from '../agent/community-tool.js';
 import { demoProject } from '../core/demo.js';
 import { parseNotes } from '../core/music.js';
+import { loadSiteConfig } from '../site-config.js';
 
 export const COMMUNITY_LIVE = false;
 // Try waits for the worklet freeze (docs/COMMUNITY-SHELF.md, section 6; docs/SECURITY.md item 3)
@@ -104,7 +110,8 @@ async function fetchCapped(url, cap, types = null) {
 export default async function (app) {
   const { store, ui, devices } = app;
   const params = new URLSearchParams(location.search);
-  const on = COMMUNITY_LIVE || isLocalHost(location.hostname);
+  // (false for good after the site config says "community": "off": load() below)
+  let on = COMMUNITY_LIVE || isLocalHost(location.hostname);
   const tools = installTools(app);
   const tool = communityTool(app);
   const S = { status: 'off', url: null, bundled: false, how: 'bundled', all: [], entries: [], built: null, skipped: 0, refused: 0, newer: false, inputs: {}, revoked: new Map(), bundledEntries: [], kind: 'all', open: null, code: new Map(), reached: false, busy: new Set() };
@@ -117,7 +124,7 @@ export default async function (app) {
   app.community = {
     on: () => on,
     ready: () => loading || Promise.resolve(),
-    state: () => ({ entries: S.entries, bundled: S.bundled, source: S.bundled ? 'bundled' : S.url, built: S.built, newer: S.newer, status: S.status }),
+    state: () => ({ entries: S.entries, bundled: S.bundled, source: S.bundled ? 'bundled' : S.url, url: S.url, built: S.built, newer: S.newer, status: S.status }),
     section, reach, offer, targetFor, tryEntry, matchKernel, heldLines, stop: () => player.stop(),
   };
   tools.register(tool);
@@ -150,14 +157,25 @@ export default async function (app) {
   function load() {
     loading = (async () => {
       S.status = 'loading';
-      const src = chosenSource();
+      // the emergency off: the deploy's site config can turn the shelf off without a code change
+      let cfg = null;
+      try { cfg = await loadSiteConfig(); } catch { cfg = null; }
+      if (cfg?.community === 'off') on = false;
+      const src = on ? chosenSource() : { url: bundledUrl, how: 'bundled' };
       S.url = src.url; S.how = src.how; S.bundled = src.url === bundledUrl;
-      // the studio's own copy is read every load, whatever the section shows: its deny list, and what the held strip
-      // and the prompt may say as fact
+      // the studio's own copy is read every load, whatever the section shows and even with the shelf off: its deny
+      // list, and what the held strip and the prompt may say as fact
       const own = await readFrom(bundledUrl, true);
-      S.bundledEntries = own.entries || [];
       S.revoked = new Map((own.revoked || []).map((r) => [r.sha256, r]));
       if (S.revoked.size) { try { app.trust?.forget?.([...S.revoked.keys()]); } catch (e) { console.warn('overdub: the shelf could not take a hash back', e); } }
+      if (!on) {
+        // off: nothing listed, nothing in Find, no tool results; the held strip still says what was taken down
+        S.bundledEntries = []; S.all = []; S.entries = []; S.status = 'off';
+        strip('community', 'community-device');
+        ui.emit('community:ready', { status: S.status });
+        return;
+      }
+      S.bundledEntries = own.entries || [];
       const r = S.bundled ? own : await readFrom(S.url, false);
       S.all = r.entries || [];
       S.entries = S.all.filter((e) => e.tier === 'community' && !S.revoked.has(e.sha256));
@@ -180,7 +198,7 @@ export default async function (app) {
     return loading;
   }
   load();
-  if (refusedSource) ui.on('ready', () => ui.toast(say.refusedSource, { kind: 'bad', ms: 6000 }));
+  ui.on('ready', async () => { await loading; if (on && refusedSource) ui.toast(say.refusedSource, { kind: 'bad', ms: 6000 }); });
 
   // the studio's own copy's hashes, worked out as kernel prints (keep.js) the first time an agent defines a device while
   // the shelf has entries: define_device refuses a shelf device's code, as it is or with its names or spacing changed.
@@ -339,7 +357,6 @@ export default async function (app) {
   function askTrust(e, def, { anchor = null, target }) {
     promptOpen?.close?.(false);
     return new Promise((resolve) => {
-      const keyHere = (() => { try { return Object.keys(localStorage).some((k) => /anthropic|api-key|apikey/i.test(k) && localStorage.getItem(k)); } catch { return false; } })();
       const own = e.origin === 'bundled';
       const who = e.author.alias || e.author.handle;
       const fp = (e.sha256 || '').slice(0, 12);
@@ -355,7 +372,7 @@ export default async function (app) {
         : [h('b', e.name), ` is code. The shelf at ${hostOf(e.origin)} says ${who} asked for this. The studio can’t confirm that.`];
       const el = h('div.cs-prompt', { role: 'dialog', 'aria-modal': 'true', 'aria-label': `Run ${e.name}?` },
         h('p.cs-p1', ...credit),
-        h('p.cs-p2', `It runs on the studio’s audio thread, in ${keyHere ? 'the same browser tab as your API key' : 'this browser tab'}. It can’t reach the network or your files from there, but it can change how other devices sound. The check catches mistakes, not malice. The clip is a recording, not a promise.`),
+        h('p.cs-p2', 'It runs on the studio’s audio thread, in this browser tab, beside your songs. It can’t reach the network or your files from there, but it can change how other devices sound. The check catches mistakes, not malice. The clip is a recording, not a promise.'),
         h('p.cs-fp', 'Fingerprint ', h('code', fp), ' · ', read),
         codeBox,
         h('label.cs-remember', box, ' Run it in any song from now on'),
@@ -681,6 +698,7 @@ export default async function (app) {
     ui.on('ready', async () => {
       strip('community-device');
       await app.community.ready();
+      if (!on) return;
       const e = entryById(S.entries, wanted);
       if (!e) { ui.toast(`The shelf has no device “${String(wanted).slice(0, 60)}”.`, { kind: 'bad', ms: 6000 }); return; }
       if (fresh) {

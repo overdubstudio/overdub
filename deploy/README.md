@@ -42,6 +42,12 @@ Moving the shelf forward is a pull request that changes only `deploy/community-p
 (`.github/PULL_REQUEST_TEMPLATE/community-pin.md`). Adding needs the second person to accept the PR; a takedown pin
 merges at once and is reviewed after (overdub-devices' `docs/TAKEDOWN.md`).
 
+The emergency off needs no code change: add `"community": "off"` to `deploy/site-config.json` and run `deploy.sh`
+(and `--next`, which keeps the key). The studio and the gallery then behave as if `COMMUNITY_LIVE` were false (no
+section, no Find words, `find_community_device` answers that the shelf isn't on, the gallery says so), on every host,
+except that the studio still reads `app/community/community-index.json` on every load and applies its `revoked` list,
+so turning the shelf off never un-revokes anything. Take the key out and deploy again to turn it back on.
+
 ## The response headers (`deploy/headers.sh`)
 
 Both distributions send a custom response headers policy in place of CloudFront's managed SecurityHeadersPolicy:

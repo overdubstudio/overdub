@@ -19,7 +19,10 @@
 //     and kept by you; define_device refuses a shelf kernel (and one with a space changed); the demo agent's ask
 //   - the catalog lists it with annotations under 2,048 characters; the Simple view's More finds the shelf
 //   - forced live (tools/community-live.js: COMMUNITY_LIVE and TRY_ON read true, served as overdub.test): the shelf
-//     reads the bundled index only, and ?community=http://localhost:… is refused, never fetched
+//     reads the bundled index only, and ?community=http://localhost:… is refused, never fetched; a load with the Browser
+//     never opened forgets a revoked hash; code allowed from now on and then revoked is held, and Try refuses it with
+//     the reason; the prompt word for word (focus, the 600 ms hold, Esc, the box unticked, no "API key"); the emergency
+//     off (a routed site-config.json, "community": "off"): no section, no shelf words, the tool off, the deny list kept
 //   - the deploy, dry (a stub aws, a fixture overdub-devices repo: tools/fixtures/community-repo.js): the pinned shelf is
 //     staged with the index and device files no-cache and the MP3s audio/mpeg no-cache, no WAV; a pin that doesn't
 //     match deploys nothing; held back while COMMUNITY_LIVE is false at REF, and with no checkout then it goes on
@@ -532,6 +535,117 @@ await section('forced-live', async () => {
     T.ok(r.bundled && r.source === 'bundled' && r.n === 5, `forced live: ?community=http://localhost:… is refused and the shelf is the studio's own copy (${r.source}, ${r.n} entries)`);
     T.ok(indexes.length >= 1 && indexes.every((u) => u === `http://${LIVE_HOST}/app/community/community-index.json`), `forced live: the only index fetched is /app/community/ (${[...new Set(indexes)].join(', ')})`);
     T.ok(!errorsOf(P).length, `forced live: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
+  } finally { await P.close(); }
+});
+
+// on the live site (forced live), the shelf read on every load with the Browser never opened (R12); a device trusted
+// from now on, then revoked: held, and Try refuses with the reason (R11); the prompt as it ships (R18). The bundled
+// copy is a copy of the fixture's, in a temp directory, so the revoke can land between two loads.
+await section('live-revoke', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'community-live-'));
+  fs.cpSync(FIX, dir, { recursive: true });
+  const REASON = 'It hid a second effect in its code.';
+  const P = await openLive('/app/', { bundled: dir });
+  const loaded = () => P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
+  try {
+    await loaded();
+    await E(P, () => window.overdub.community.ready());
+    const gone = read('revoked-kernel.txt');
+    // a song with Soft Echo in it, its code allowed from now on, and the deny list's kernel allowed from now on too
+    const before = await E(P, async (k) => {
+      const app = window.overdub, e = app.community.state().entries.find((x) => x.id === 'tester.soft-echo');
+      const j = await (await fetch(e.device)).json();
+      app.trust.allow([j.device.kernel, k]);
+      app.store.dispatch([{ type: 'device.define', device: { ...j.device, by: 'you' } }], { by: 'you' });
+      return { kernel: j.device.kernel, name: j.device.name, sha: e.sha256, trusted: app.trust.trusts(j.device.kernel) && app.trust.trusts(k), gone: app.trust.trusts(k) };
+    }, gone);
+    await sleep(900);
+    const j = JSON.parse(fs.readFileSync(path.join(dir, 'bundled-index.json'), 'utf8'));
+    j.revoked.push({ sha256: before.sha, reason: REASON, at: '2026-10-10' });
+    fs.writeFileSync(path.join(dir, 'bundled-index.json'), JSON.stringify(j, null, 2));
+    P.requests.length = 0;
+    await P.page.reload({ waitUntil: 'load' });
+    await loaded();
+    await E(P, () => window.overdub.community.ready());
+    // nothing here opens the Browser: the load alone reads the index and applies its deny list
+    const r = await E(P, async ({ kernel, gone }) => {
+      const app = window.overdub;
+      return { on: app.community.on(), echo: app.trust.trusts(kernel), gone: app.trust.trusts(gone), held: app.devices.heldDevices().map((d) => d.id), listed: app.community.state().entries.some((e) => e.id === 'tester.soft-echo'), reached: !!document.querySelector('.cs-detail') };
+    }, { kernel: before.kernel, gone });
+    const indexes = P.requests.filter((u) => /community-index\.json$/.test(u)), files = P.requests.filter((u) => /overdub-device\.json/.test(u));
+    T.ok(before.trusted && r.on && !r.gone && indexes.length >= 1 && !files.length && !r.reached, `R12: on a load with the Browser never opened, the bundled index is read (${indexes.length} request${indexes.length === 1 ? '' : 's'}, no device file) and a revoked hash is forgotten`);
+    await P.page.waitForFunction(() => /taken off the shelf/.test(document.querySelector('.sh-held-shelf')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
+    const line = await E(P, () => document.querySelector('.sh-held-shelf')?.textContent || '');
+    T.ok(!r.echo && r.held.includes('tester.soft-echo') && !r.listed && line.includes(`${before.name} was taken off the shelf: ${REASON}`), `R11: code allowed from now on and then revoked is forgotten, held in the song and off the list; the held strip says "${line.trim()}" (the song's name for it: the revoke carries none)`);
+    const tr = await E(P, async ({ text, reason }) => {
+      const app = window.overdub;
+      const { readIndex } = await import('/app/src/devices/community.js');
+      // the entry as an earlier load (or an agent's card) had it
+      const e = readIndex(text, { base: new URL('/app/community/community-index.json', location.href).href, bundled: true }).entries.find((x) => x.id === 'tester.soft-echo');
+      const h0 = app.store.history.length;
+      const out = await app.community.tryEntry(e);
+      const toast = [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | ');
+      return { out, prompt: !!document.querySelector('.cs-prompt'), same: app.store.history.length === h0, trusted: app.trust.trusts((await (await fetch(e.device)).json()).device.kernel), toast, want: `Soft Echo was taken off the shelf: ${reason}` };
+    }, { text: read('bundled-index.json'), reason: REASON });
+    T.ok(!tr.out.ok && tr.out.error === tr.want && !tr.prompt && tr.same && !tr.trusted && tr.toast.includes(tr.want), `R11: Try refuses a revoked device, asks nothing and changes nothing: "${tr.out.error}"`);
+
+    // R18: the prompt for the studio's own copy, word for word
+    await E(P, () => window.overdub.community.reach('tester.spinner', 'you'));
+    await P.page.waitForSelector('.cs-detail[data-community="tester.spinner"] .cs-try');
+    const e = await E(P, () => { const app = window.overdub, x = app.community.state().entries.find((y) => y.id === 'tester.spinner'); return { sha: x.sha256, on: app.community.targetFor(x).name, agent: x.agent }; });
+    await P.page.click('.cs-detail .cs-try');
+    await P.page.waitForSelector('.cs-prompt');
+    const q = () => E(P, () => { const el = document.querySelector('.cs-prompt'); const t = (s) => el.querySelector(s)?.textContent.replace(/\s+/g, ' ').trim(); return { p1: t('.cs-p1'), p2: t('.cs-p2'), fp: t('.cs-fp'), box: t('.cs-remember'), ticked: el.querySelector('#cs-remember').checked, go: t('.cs-go'), no: t('.cs-no'), alt: !!el.querySelector('.cs-alt'), focus: document.activeElement?.textContent, held: el.querySelector('.cs-go').disabled, all: el.textContent }; });
+    const p0 = await q();
+    await sleep(300);
+    const p300 = await q();
+    T.ok(p0.p1 === `Spinner is code. tester asked for it, ${e.agent} wrote it. A person read it before it went on the shelf.`, `R18: "${p0.p1}"`);
+    T.ok(p0.p2 === 'It runs on the studio’s audio thread, in this browser tab, beside your songs. It can’t reach the network or your files from there, but it can change how other devices sound. The check catches mistakes, not malice. The clip is a recording, not a promise.', `R18: "${p0.p2}"`);
+    T.ok(p0.fp === `Fingerprint ${e.sha.slice(0, 12)} · Read the code` && p0.box === 'Run it in any song from now on' && !p0.ticked && p0.go === `Play it on ${e.on}` && p0.no === 'Not now' && !p0.alt, `R18: "${p0.fp}", "${p0.box}" unticked, [${p0.go}] ${p0.no}`);
+    T.ok(p0.focus === 'Not now' && p0.held && p300.held && p300.focus === 'Not now', 'R18: focus on Not now, and Play it is still held 300 ms in');
+    await sleep(400);
+    T.ok(await E(P, () => !document.querySelector('.cs-prompt .cs-go').disabled), 'R18: Play it is pressable after 600 ms');
+    await P.shot('community-prompt-live');
+    const h1 = await E(P, () => ({ hist: window.overdub.store.history.length, trust: window.overdub.trust.size() }));
+    await P.page.keyboard.press('Escape');
+    await P.page.waitForTimeout(200);
+    const h2 = await E(P, () => ({ prompt: !!document.querySelector('.cs-prompt'), hist: window.overdub.store.history.length, trust: window.overdub.trust.size() }));
+    T.ok(!h2.prompt && h2.hist === h1.hist && h2.trust === h1.trust, 'R18: Esc is Not now: nothing changed, nothing trusted');
+    const src = fs.readFileSync(path.join(HERE, '../app/src/ui/community.js'), 'utf8');
+    T.ok(!/api.?key/i.test(p0.all) && !/api.?key|keyHere/i.test(src), 'R18: no "API key" in the prompt or in ui/community.js');
+    T.ok(!errorsOf(P).length, `live-revoke: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
+  } finally { await P.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// the emergency off (R14): app/site-config.json says "community": "off" on the live site: no section, no shelf words,
+// ?community= and ?community-device= ignored, the tool off, and the bundled index's deny list still applied
+await section('live-off', async () => {
+  const gone = read('revoked-kernel.txt');
+  const P = await openLive('/app/', { bundled: FIX, siteConfig: { community: 'off' }, query: (local) => `community=${encodeURIComponent(`http://localhost:${new URL(local).port}${FIXURL}community-index.json`)}&community-device=tester.soft-echo` });
+  const loaded = () => P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
+  try {
+    await loaded();
+    await E(P, (k) => { window.overdub.trust.allow([k]); }, gone);
+    const was = await E(P, (k) => window.overdub.trust.trusts(k), gone);
+    P.requests.length = 0;
+    await P.page.reload({ waitUntil: 'load' });
+    await loaded();
+    await E(P, () => window.overdub.community.ready());
+    await P.page.waitForTimeout(400);
+    const r = await E(P, async (k) => {
+      const app = window.overdub;
+      app.ui.show('browser'); app.ui.setOpen('left', true); app.browser.render();
+      const f = app.ui.workspace?.FEATURES?.find((x) => x.id === 'browser');
+      const tool = await app.tools.run('find_community_device', { query: 'echo' }, { by: 'claude' });
+      const put = await app.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'claude' });
+      return { on: app.community.on(), status: app.community.state().status, n: app.community.state().entries.length, section: !!document.querySelector('.cs-group'), words: f ? f.aliases.filter((a) => /shelf|community/.test(a)) : [], tool, put, gone: app.trust.trusts(k), url: location.search, detail: !!document.querySelector('.cs-detail'), toast: [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | ') };
+    }, gone);
+    const asked = P.requests.filter((u) => /community-index\.json/.test(u));
+    T.ok(P.rewritten.includes('/app/src/ui/community.js') && !r.on && r.status === 'off' && !r.n && !r.section && !r.words.length, `R14: with "community": "off" there's no section and no shelf words in Find, though COMMUNITY_LIVE reads true (${r.status})`);
+    T.ok(/isn't on in this studio/.test(r.tool.error || '') && !r.tool.results.length && /isn't on in this studio/.test(r.put.error || '') && !r.put.offered, `R14: the tool answers "${r.tool.error}", for a search and for put_on`);
+    T.ok(was && !r.gone, 'R14: the bundled deny list still applies: a revoked hash is forgotten with the shelf off');
+    T.ok(asked.length >= 1 && asked.every((u) => u === `http://${LIVE_HOST}/app/community/community-index.json`) && !/community/.test(r.url) && !r.detail && !/has no device/.test(r.toast), `R14: ?community= is ignored (only the bundled index is read: ${[...new Set(asked)].join(', ')}), and ?community-device= opens nothing and leaves the address (${r.url || 'none'})`);
+    T.ok(!errorsOf(P).length, `live-off: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
   } finally { await P.close(); }
 });
 

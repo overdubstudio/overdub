@@ -8,7 +8,8 @@
 //
 // Results never carry code, and free text from an entry's author (its request, who asked) comes back only with
 // detail: true, under untrusted_text. `trusted` (whether this browser already runs that code) goes to the in-page agent
-// only: over the relay or MCP it would tell a remote caller what this browser runs.
+// only: over the relay or MCP it would tell a remote caller what this browser runs. shelf.source is the index's absolute
+// URL (the studio's own copy: <this site>/app/community/community-index.json), and preview URLs are absolute too.
 //
 // A card: app.tools.requests gets { id, kind: 'shelf', by, entry, track, status, result, waiters, render, summarize };
 // get_variation_result reads its result: { kept: true, ... } once it's on the track, { kept: false, ... } otherwise.
@@ -56,8 +57,10 @@ export function communityTool(app) {
     ...COMMUNITY_SCHEMA,
     async run(input, ctx = {}) {
       const shelf = app.community;
-      if (!shelf || !shelf.on()) return { error: OFF, results: [] };
+      if (!shelf) return { error: OFF, results: [] };
+      // (on() is settled once the shelf has read the site config: its emergency off)
       await shelf.ready();
+      if (!shelf.on()) return { error: OFF, results: [] };
       const st = shelf.state();
       if (!st.entries.length) return { error: st.newer ? 'This shelf was built for a newer studio.' : 'The community shelf is empty here.', results: [] };
       const by = ctx.by || 'claude';
@@ -69,7 +72,7 @@ export function communityTool(app) {
       const list = filterEntries(st.entries, { kind, cat: typeof input.cat === 'string' ? input.cat : null, q: typeof input.query === 'string' ? input.query : '' });
       return {
         about: ABOUT + (vouched ? '' : ABOUT_OTHER),
-        shelf: { source: vouched ? 'the studio\'s own copy' : st.source, built: st.built?.at || null, count: st.entries.length, vouched },
+        shelf: { source: st.url, built: st.built?.at || null, count: st.entries.length, vouched },
         results: list.slice(0, limit).map((e) => result(e, { inPage, detail: input.detail === true, vouched })),
         ...(list.length > limit ? { more: list.length - limit } : {}),
       };

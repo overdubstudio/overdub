@@ -1,7 +1,10 @@
-// The deploy's own switches: app/site-config.json, which is not in the repo (it's gitignored). Today it holds one thing,
-// the origin of the hosted agent's service ("Claude on Overdub credits"), and it's off unless the file names one:
+// The deploy's own switches: app/site-config.json, which is not in the repo (it's gitignored). It holds two things: the
+// origin of the hosted agent's service ("Claude on Overdub credits"), off unless the file names one, and the community
+// shelf's emergency off (docs/COMMUNITY-SHELF.md; ui/community.js and the gallery read it):
 //
-//   { "cloud": { "api": "https://api.example.com" } }
+//   { "cloud": { "api": "https://api.example.com" }, "community": "off" }
+//
+// "community": "off" is the only value it takes; anything else (or no key) leaves the shelf as the code has it.
 //
 // No file (a fork, a self-hosted copy, the live site until it's switched on), an unreadable one or a bad origin means
 // cloud off: no row in the Agent panel and no request to any cloud origin. The local server answers the file from
@@ -10,7 +13,10 @@
 // ?cloud=<origin> points a local studio at a local service, for development and tests: only when the studio itself is
 // on this machine and the origin is on this machine too, so a link can never send someone's song to another server.
 //
-//   loadSiteConfig({ fetch, search, host }) -> Promise<{ cloud: { api } | null }>   fetched once per page load
+//   loadSiteConfig({ fetch, search, host, url }) -> Promise<{ cloud: { api } | null, community: 'off' | null }>
+//       fetched once per page load; url is 'site-config.json' (beside the studio's page) unless a page elsewhere names
+//       /app/site-config.json. ?cloud= replaces the file's cloud origin, never its community key, so the file is read
+//       either way.
 //   cloudOrigin(value) -> origin | null       https:, or http: on a loopback name; anything else is refused
 //   cloudOverride(search, host) -> origin | null
 
@@ -34,18 +40,16 @@ export function cloudOverride(search = globalThis.location?.search || '', host =
 }
 
 let loaded = null;
-export function loadSiteConfig({ fetch: f = globalThis.fetch, search, host, fresh = false } = {}) {
+export function loadSiteConfig({ fetch: f = globalThis.fetch, search, host, url = 'site-config.json', fresh = false } = {}) {
   if (loaded && !fresh) return loaded;
   loaded = (async () => {
-    const override = cloudOverride(search, host);
-    if (override) return { cloud: { api: override } };
     let j = null;
     try {
-      const r = await f('site-config.json', { cache: 'no-store', credentials: 'same-origin' });
+      const r = await f(url, { cache: 'no-store', credentials: 'same-origin' });
       if (r.ok && (r.headers.get('content-type') || '').includes('json')) j = await r.json();
     } catch { j = null; }
-    const api = cloudOrigin(j?.cloud?.api);
-    return { cloud: api ? { api } : null };
+    const api = cloudOverride(search, host) || cloudOrigin(j?.cloud?.api);
+    return { cloud: api ? { api } : null, community: j?.community === 'off' ? 'off' : null };
   })();
   return loaded;
 }

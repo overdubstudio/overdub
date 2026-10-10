@@ -2758,4 +2758,69 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await close();
 }
 
+/* ------------------------------------------------------------------ 5. the community shelf on the live site */
+// COMMUNITY_LIVE and TRY_ON forced true and the studio served as overdub.test (tools/community-live.js), with the
+// fixture shelf as the studio's own copy: find_community_device as the live site will answer it (R20), and
+// define_device's side door with the Browser never opened (R21)
+{
+  const { openLive, LIVE_HOST } = await import('./community-live.js');
+  const FIX = path.join(HERE, 'fixtures/community-fake');
+  const P = await openLive('/app/', { bundled: FIX, query: 'agent=mock&fast' });
+  const { page, errors } = P;
+  await ready(page);
+  await page.evaluate(() => window.overdub.community.ready());
+  // R21 first, before anything could open the Browser
+  const sd = await page.evaluate(async () => {
+    const app = window.overdub;
+    const st = app.community.state().entries.find((e) => e.id === 'tester.fails-check');
+    const k = (await (await fetch(st.device)).json()).device.kernel;
+    const params = [{ key: 'mix', label: 'MIX', min: 0, max: 100, def: 50 }];
+    const a = await app.tools.run('define_device', { device: { id: 'copy-a', name: 'Copy', kind: 'effect', params, kernel: k } }, { by: 'claude' });
+    const b = await app.tools.run('define_device', { device: { id: 'copy-b', name: 'Copy', kind: 'effect', params, kernel: k.replace('return {', 'return  {').replace(/\n/g, '\n  ') } }, { by: 'mcp:probe' });
+    return { a, b, defined: Object.keys(app.store.get().devices).filter((x) => /copy/.test(x)), detail: !!document.querySelector('.cs-detail') };
+  });
+  t.ok(P.rewritten.includes('/app/src/ui/community.js') && sd.a.refused && /from the community shelf/.test(sd.a.error || '') && sd.b.refused && !sd.defined.length && !sd.detail,
+    `live shelf (R21): define_device refuses a shelf kernel and one with its spacing changed, with the Browser never opened ("${(sd.a.error || '').slice(0, 70)}…")`);
+  const r = await page.evaluate(async () => {
+    const app = window.overdub;
+    const a = await app.tools.run('find_community_device', { limit: 20 }, { by: 'claude' });
+    const d = await app.tools.run('find_community_device', { query: 'echo', detail: true }, { by: 'claude' });
+    const m = await app.tools.run('find_community_device', { limit: 20 }, { by: 'mcp:probe' });
+    return { a, d, m, origin: location.origin };
+  });
+  const under = `${r.origin}/app/community/`;
+  const clips = (r.a.results || []).flatMap((x) => [x.preview.wet, x.preview.dry]).filter(Boolean);
+  const echo = (r.a.results || []).find((x) => x.id === 'tester.soft-echo');
+  t.ok(r.origin === `http://${LIVE_HOST}` && r.a.shelf?.vouched === true && r.a.shelf.source === `${under}community-index.json` && echo?.vouched === true && !/unconfirmed/.test(r.a.about || ''),
+    `live shelf (R20): results come from the studio's own copy, vouched, with shelf.source ${r.a.shelf?.source}`);
+  t.ok(clips.length >= 5 && clips.every((u) => u.startsWith(`${under}clips/`)), `live shelf (R20): preview.wet and dry are absolute URLs under ${under}clips/ (${clips.length}, e.g. ${clips[0]})`);
+  t.ok(r.a.results.every((x) => !('untrusted_text' in x)) && !!r.d.results[0]?.untrusted_text && !/"kernel"/.test(JSON.stringify(r.a)), 'live shelf (R20): request and requester come back only with detail: true, as untrusted_text');
+  t.ok(r.a.results.every((x) => 'trusted' in x) && r.m.results.length === r.a.results.length && r.m.results.every((x) => !('trusted' in x)), 'live shelf (R20): `trusted` goes to the in-page agent only, never over MCP');
+  // one card per song, and three No thanks
+  const cards = await page.evaluate(async () => {
+    const app = window.overdub, h0 = app.store.history.length;
+    const one = await app.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'claude' });
+    const two = await app.tools.run('find_community_device', { put_on: { id: 'tester.tiny-keys' } }, { by: 'claude' });
+    const first = await app.tools.run('get_variation_result', { id: one.id }, { by: 'claude' });
+    app.ui.show('agent'); app.ui.setOpen('right', true);
+    return { one, two, first, pending: [...app.tools.requests.values()].filter((x) => x.kind === 'shelf' && x.status === 'pending').length, same: app.store.history.length === h0 };
+  });
+  t.ok(cards.one.offered && cards.two.offered && cards.first.kept === false && cards.pending === 1 && cards.same, `live shelf (R20): put_on raises one card per song (a second replaces the first; ${cards.pending} pending, nothing changed)`);
+  for (let i = 0; i < 3; i++) {
+    if (i) await page.evaluate(() => window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.tiny-keys' } }, { by: 'claude' }));
+    await page.waitForSelector('.cs-card .cs-card-no', { timeout: 10000 });
+    await page.click('.cs-card .cs-card-no');
+  }
+  const fourth = await page.evaluate(() => window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'claude' }));
+  t.ok(!fourth.offered && fourth.error === 'the person has said no to these for now', `live shelf (R20): after three No thanks: "${fourth.error}"`);
+  t.ok(realErrors(errors).length === 0, 'live shelf: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await P.close();
+  // the emergency off (R14): the same flags, and the site config says "community": "off"
+  const Q = await openLive('/app/', { bundled: FIX, siteConfig: { community: 'off' }, query: 'agent=mock&fast' });
+  await ready(Q.page);
+  const off = await Q.page.evaluate(async () => ({ on: window.overdub.community.on(), find: await window.overdub.tools.run('find_community_device', { query: 'echo' }, { by: 'claude' }), put: await window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'mcp:probe' }) }));
+  t.ok(!off.on && off.find.error === 'The community shelf isn\'t on in this studio.' && !off.find.results.length && off.put.error === off.find.error, `live shelf, emergency off (R20): "${off.find.error}"`);
+  await Q.close();
+}
+
 t.done();

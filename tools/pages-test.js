@@ -402,6 +402,24 @@ for (const width of [1440, 390]) {
     await o.close();
   }
 
+  // the live site, forced (tools/community-live.js: COMMUNITY_LIVE read true, served as overdub.test): the gallery
+  // lists the studio's own copy; with the deploy's emergency off (/app/site-config.json "community": "off") it says the
+  // shelf isn't on and reads no index (R14)
+  {
+    const { openLive } = await import('./community-live.js');
+    const looks = {};
+    for (const [key, siteConfig] of [['on', null], ['off', { community: 'off' }]]) {
+      hits.length = 0;
+      const o = await openLive(SHELF, { siteConfig, width: 1440 });
+      await o.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
+      looks[key] = { ...(await look_(o.page)), emergency: await o.page.evaluate(() => !!window.__community?.emergency), rewritten: o.rewritten, index: hits.filter((u) => /community-index\.json$/.test(u)).length, errs: real(o.errors) };
+      await o.close();
+    }
+    const { on, off } = looks;
+    t.ok(on.rewritten.includes('/site/community/community.js') && !on.off && on.ids.includes('test-person.slow-echo') && on.house && on.index === 1 && !on.errs.length, `forced live, on overdub.test: the gallery lists the studio's own copy (${on.ids.length} entries)`);
+    t.ok(off.off && off.emergency && !off.ids.length && !off.index && /isn’t on here/.test(off.empty) && !off.errs.length, `forced live, with "community": "off" in the site config: the gallery says "${off.empty.replace(/Open the studio$/, '')}" and reads no index (${off.index} requests)`);
+  }
+
   // another index (a path on this site): no House, no vouching, the source named, the link carries it
   {
     const o = await open(SHELF + '?community=/fixture-shelf/community-index.json', { width: 1440 });

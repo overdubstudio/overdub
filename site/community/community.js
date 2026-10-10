@@ -11,10 +11,13 @@
 //   ?kind=instrument|effect  ?cat=<cat>  ?q=<words>   the filters, kept in the address so a view can be linked
 //
 // Shipped with the site (deploy/deploy.sh), but no page links here yet.
-// On any host but localhost / 127.0.0.1 the page reads nothing (COMMUNITY_LIVE below, as the studio's is).
+// On any host but localhost / 127.0.0.1 the page reads nothing (COMMUNITY_LIVE below, as the studio's is). The deploy's
+// emergency off, "community": "off" in /app/site-config.json (app/src/site-config.js), turns it off on any host, as it
+// does the studio's: the page says the shelf isn't on and reads no index.
 import { renderFace } from '/app/src/ui/faces.js';
 import { DEVICE_CATS } from '/app/src/devices/registry.js';
 import { readIndex, resolveUrl, filterEntries as sharedFilter, ASKED_MAX } from '/app/src/devices/community.js';
+import { loadSiteConfig } from '/app/src/site-config.js';
 
 // Keep in step with COMMUNITY_LIVE in app/src/ui/community.js (tools/pages-test.js checks they agree once it exists).
 // The page doesn't import that module: it's the studio's UI, and this page wants only its switch.
@@ -40,6 +43,11 @@ export function filterEntries(entries, { kind = 'all', cat = 'all', q = '', tier
 /* ------------------------------------------------------------------------------------------------ where the index is */
 export const localPage = (host = location.hostname) => host === 'localhost' || host === '127.0.0.1';
 export const shelfOn = () => COMMUNITY_LIVE || localPage();
+// the emergency off, read once per page load: -> true when the site config says "community": "off"
+export const SITE_CONFIG = '/app/site-config.json';
+export async function shelfOff() {
+  try { return (await loadSiteConfig({ url: SITE_CONFIG }))?.community === 'off'; } catch { return false; }
+}
 
 // -> { url, bundled } or { error }. A path on this site, or http://localhost:* / 127.0.0.1:* while this page is local.
 export function indexSource(param = new URLSearchParams(location.search).get('community')) {
@@ -306,6 +314,7 @@ export async function boot(root = document) {
   };
 
   if (!shelfOn()) { empty('The community shelf isn’t on here yet.'); return done({ off: true }); }
+  if (await shelfOff()) { empty('The community shelf isn’t on here at the moment.'); return done({ off: true, emergency: true }); }
   const src = indexSource();
   if (src.error) { empty('This page can read a shelf from this site or from localhost only.'); return done({ refused: true }); }
   const idx = await loadIndex(src);

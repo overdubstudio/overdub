@@ -33,9 +33,12 @@ overdub/
   server/relay.js        the hosted relay for claude.ai (REMOTE-MCP.md; live)                         [agent layer]
                          relay-catalog.json: the tools it lists, generated (tools/relay-catalog.js)
   site/                  landing page, press/, docs/ (built by tools/docs-build.js), llms.txt         [brand]
-                         community/ (the community shelf's gallery; deployed, unlinked, reads nothing off localhost)
+                         community/ (the community shelf's gallery, public at /community/; unlinked and reading
+                         nothing off localhost until the switch, COMMUNITY_LIVE)
   app/community/         the community shelf's bundled snapshot: gitignored, filled from overdub-devices
-                         at deploy/community-pin.json's commit by tools/community-pull.js            [shelf]
+                         at deploy/community-pin.json's commit by tools/community-pull.js: the index,
+                         devices/ (one device file per entry) and clips/ (MP3 only); deploy.sh ships it
+                         no-cache once COMMUNITY_LIVE is true at the ref, and holds it back before    [shelf]
   app/index.html         the studio page; app/library.html the device shelf; app/gallery.html          [core]
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/<family>/: each woff2 and its licence)         [brand]
@@ -501,6 +504,19 @@ Instruments and effects people asked their agents for, from the community repo (
 under **From the community**. Nothing is sold, priced or rated. The spec is [COMMUNITY-SHELF.md](COMMUNITY-SHELF.md);
 SECURITY.md says what runs when. Off on the live site (`COMMUNITY_LIVE`); Try is held (`TRY_ON`) until the switch (the
 worklet's built-ins are frozen now), and a developer on localhost turns it on with localStorage `overdub:community-try` = `1`.
+The switch is one commit that sets both flags and links the gallery; COMMUNITY-SHELF.md, "Where it's on", lists what
+has to hold before it.
+
+- **Where the shelf comes from.** The live studio reads one index, its own `/app/community/community-index.json`,
+  deployed with it (`indexUrlAllowed(..., { live })` refuses any other origin once `COMMUNITY_LIVE` is true). That copy
+  is pinned, not committed: `deploy/community-pin.json` (`{ repo, commit, index_sha256 }`, keys forever) names an
+  overdub-devices commit, and `tools/community-pull.js` fills the gitignored `app/community/` from it with
+  `git archive`, refusing on a wrong hash or a device file whose kernel isn't its entry's. Local development runs the
+  same pull. `tools/prod-check.js` holds the live copy to the pin once the shelf is on.
+- **Revocation and the emergency off.** While the shelf is on, the bundled index is read on every load, Browser open
+  or not, and each `revoked` fingerprint goes through `trust.forget`: the code is held in every song, and the held strip
+  says *"{Name} was taken off the shelf: {reason}"*. `app/site-config.json` key `community` (value `"off"`, the only
+  one) turns the shelf off with no code change, in the studio and the gallery; the revoked list still applies.
 
 - `devices/community.js` is the one reader of an index (`overdub-community-index/1`): the studio, the agent tool and the
   site gallery all read through it. `ASKED_MAX` is how long a requester line can be and still be drawn.
@@ -1597,7 +1613,8 @@ old in-browser key, is deleted on load and noted once (`overdub:agent:key-retire
 paid for with credits, for people without a Claude of their own. It's off unless the deploy names the service in
 `app/site-config.json` (gitignored; `app/src/site-config.js` reads it once per load, `server/serve.js` answers it from
 `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships `deploy/site-config.json` or `{}`); `?cloud=`
-points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
+points a local studio at a local service only. The same file's `community` key (`"off"`) is the community shelf's
+emergency off (`loadSiteConfig` returns it as `community: 'off' | null`, and reads the file even under `?cloud=`). No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
 - `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (an email link, or its 6-digit code in a tab the

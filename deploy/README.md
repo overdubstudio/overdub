@@ -48,6 +48,24 @@ section, no Find words, `find_community_device` answers that the shelf isn't on,
 except that the studio still reads `app/community/community-index.json` on every load and applies its `revoked` list,
 so turning the shelf off never un-revokes anything. Take the key out and deploy again to turn it back on.
 
+Once the shelf is on, `node tools/prod-check.js` checks the live copy against the pin: the live index's SHA-256 is the
+pin's, its `built.from` is the pinned index's (read from `app/community/` when that's the pinned copy, else from the
+pin's commit in `OVERDUB_DEVICES_DIR` or `../overdub-devices`), no revoked fingerprint is listed, and a clip answers
+`audio/mpeg`. While the live `app/src/ui/community.js` says `COMMUNITY_LIVE = false` it prints that those checks are
+skipped. Run it after every pin move.
+
+Switching it on, in order (COMMUNITY-SHELF.md, "Where it's on", has the why):
+
+1. The headers: `DRY_RUN=1 deploy/headers.sh`, then `deploy/headers.sh` and `deploy/headers.sh --next` (below).
+2. `deploy/setup.sh` and `deploy/next/setup.sh` again, so CloudFront runs the current `path-rewrite.js` (the
+   `/community/` path).
+3. `node tools/prod-check.js`: the frame headers on `/`, `/app/`, `/site/community/` and `/community/`, and
+   `/community` a 301.
+4. The pin moved to overdub-devices master's merge commit (`node tools/community-pull.js --pin <sha>`), in its own
+   pull request.
+5. The switch commit (both `COMMUNITY_LIVE`s and `TRY_ON` true, and the gallery linked), then `deploy/deploy.sh`,
+   which now ships `app/community/`, then `node tools/prod-check.js` again for the shelf checks.
+
 ## The response headers (`deploy/headers.sh`)
 
 Both distributions send a custom response headers policy in place of CloudFront's managed SecurityHeadersPolicy:

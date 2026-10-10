@@ -1,6 +1,6 @@
 // The community shelf's index, read (docs/COMMUNITY-SHELF.md, section 1). One reader for everyone who reads an index:
 // the studio's Browser section (ui/community.js), the agent tool (agent/community-tool.js) and the site gallery. The
-// index is someone else's data, read on the origin that holds the API key, so nothing in it is passed on as it came:
+// index is someone else's data, read on the origin that holds the person's songs, so nothing in it is passed on as it came:
 // every value the reader knows is copied into an object of its own, checked for type and range, cleaned and capped;
 // every field it doesn't know is left behind. An index never carries kernel source, and the reader never fetches.
 // Pure: no DOM, no fetch, so Node reads an index the same way.
@@ -10,6 +10,7 @@
 //       this studio (only it may list House entries, use claude., and revoke)
 //   filterEntries(entries, { kind, cat, q, tier }) -> entries (q ranked: name and blurb above nod, request and author)
 //   entryById(entries, id) -> entry | null
+//   sourceLink(url, repo) -> url | null: https on github.com or the repo's own host, else no link
 //   resolveUrl(x, indexUrl, { under }) -> absolute URL | null     the URL policy for clips and device files
 //   indexUrlAllowed(url, { page, live }) -> absolute URL | null   where a studio may read a shelf from
 //   isLocalHost(hostname), plainNumbers(measured, kind) -> words
@@ -96,8 +97,8 @@ export function indexUrlAllowed(url, { page, live = false } = {}) {
   if (live || !isLocalHost(p.hostname)) return null;
   return u.protocol === 'http:' && isLocalHost(u.hostname) ? u.href : null;
 }
-// source.url becomes a link only when it's https on github.com or the repo's own host
-function sourceLink(x, repo) {
+// source.url becomes a link only when it's https on github.com or the repo's own host (the gallery's licence link too)
+export function sourceLink(x, repo) {
   if (typeof x !== 'string') return null;
   let u;
   try { u = new URL(x); } catch { return null; }

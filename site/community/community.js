@@ -16,7 +16,7 @@
 // does the studio's: the page says the shelf isn't on and reads no index.
 import { renderFace } from '/app/src/ui/faces.js';
 import { DEVICE_CATS } from '/app/src/devices/registry.js';
-import { readIndex, resolveUrl, filterEntries as sharedFilter, ASKED_MAX } from '/app/src/devices/community.js';
+import { readIndex, resolveUrl, sourceLink, filterEntries as sharedFilter, ASKED_MAX } from '/app/src/devices/community.js';
 import { loadSiteConfig } from '/app/src/site-config.js';
 
 // Keep in step with COMMUNITY_LIVE in app/src/ui/community.js (tools/pages-test.js checks they agree once it exists).
@@ -332,9 +332,9 @@ export async function boot(root = document) {
   } else {
     lede.textContent = `Instruments and effects people asked their agents for, as the shelf at ${where} lists them. What it says about each one is that shelf’s word, not the studio’s.`;
   }
-  // the licence explainer links to the repo's LICENSING.md once the repo has a public URL (https on an allowed host)
-  // biome-ignore lint/correctness/noUndeclaredVariables: BUG, linkable is defined nowhere: a shelf index with a repo throws here
-  const lic = idx.repo && linkable(idx.repo.replace(/\/+$/, '') + '/blob/HEAD/LICENSING.md', idx.repo);
+  // the licence explainer links to the repo's LICENSING.md once the repo has a public URL (https on github.com or the
+  // repo's own host, the reader's rule for source links)
+  const lic = idx.repo && sourceLink(idx.repo.replace(/\/+$/, '') + '/blob/HEAD/LICENSING.md', idx.repo);
   if (lic) $('#licence-note')?.append(' ', h('a', { href: lic, rel: 'noopener noreferrer' }, 'Who owns what, in plain English.'));
   const built = idx.built?.at ? `, built ${shortDate(idx.built.at)}` : '';
   const left = [idx.skipped ? `${idx.skipped} more need a newer studio.` : '', idx.refused ? `${idx.refused} more were left out.` : ''].filter(Boolean).join(' ');

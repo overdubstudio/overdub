@@ -61,7 +61,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 112 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 114 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -93,9 +93,12 @@ are covered by <code>tools/compat-test.js</code>.</li>
   server/relay.js        the hosted relay for claude.ai (REMOTE-MCP.md; live)                         [agent layer]
                          relay-catalog.json: the tools it lists, generated (tools/relay-catalog.js)
   site/                  landing page, press/, docs/ (built by tools/docs-build.js), llms.txt         [brand]
-                         community/ (the community shelf's gallery; deployed, unlinked, reads nothing off localhost)
+                         community/ (the community shelf's gallery, public at /community/; unlinked and reading
+                         nothing off localhost until the switch, COMMUNITY_LIVE)
   app/community/         the community shelf's bundled snapshot: gitignored, filled from overdub-devices
-                         at deploy/community-pin.json's commit by tools/community-pull.js            [shelf]
+                         at deploy/community-pin.json's commit by tools/community-pull.js: the index,
+                         devices/ (one device file per entry) and clips/ (MP3 only); deploy.sh ships it
+                         no-cache once COMMUNITY_LIVE is true at the ref, and holds it back before    [shelf]
   app/index.html         the studio page; app/library.html the device shelf; app/gallery.html          [core]
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/&lt;family&gt;/: each woff2 and its licence)         [brand]
@@ -514,16 +517,28 @@ the index only) and a Try whose dispatch failed after its allow.</li>
 <p>Instruments and effects people asked their agents for, from the community repo (<code>overdub-devices</code>), in the Browser
 under <strong>From the community</strong>. Nothing is sold, priced or rated. The spec is COMMUNITY-SHELF.md;
 SECURITY.md says what runs when. Off on the live site (<code>COMMUNITY_LIVE</code>); Try is held (<code>TRY_ON</code>) until the switch (the
-worklet's built-ins are frozen now), and a developer on localhost turns it on with localStorage <code>overdub:community-try</code> = <code>1</code>.</p>
+worklet's built-ins are frozen now), and a developer on localhost turns it on with localStorage <code>overdub:community-try</code> = <code>1</code>.
+The switch is one commit that sets both flags and links the gallery; COMMUNITY-SHELF.md, &quot;Where it's on&quot;, lists what
+has to hold before it.</p>
 <ul>
-<li><code>devices/community.js</code> is the one reader of an index (<code>overdub-community-index/1</code>): the studio, the agent tool and the
-site gallery all read through it. <code>ASKED_MAX</code> is how long a requester line can be and still be drawn.</li>
-<li><code>app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track), tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }</code>. <code>targetFor</code> says where a Try
+<li><p><strong>Where the shelf comes from.</strong> The live studio reads one index, its own <code>/app/community/community-index.json</code>,
+deployed with it (<code>indexUrlAllowed(..., { live })</code> refuses any other origin once <code>COMMUNITY_LIVE</code> is true). That copy
+is pinned, not committed: <code>deploy/community-pin.json</code> (<code>{ repo, commit, index_sha256 }</code>, keys forever) names an
+overdub-devices commit, and <code>tools/community-pull.js</code> fills the gitignored <code>app/community/</code> from it with
+<code>git archive</code>, refusing on a wrong hash or a device file whose kernel isn't its entry's. Local development runs the
+same pull. <code>tools/prod-check.js</code> holds the live copy to the pin once the shelf is on.</p></li>
+<li><p><strong>Revocation and the emergency off.</strong> While the shelf is on, the bundled index is read on every load, Browser open
+or not, and each <code>revoked</code> fingerprint goes through <code>trust.forget</code>: the code is held in every song, and the held strip
+says <em>&quot;{Name} was taken off the shelf: {reason}&quot;</em>. <code>app/site-config.json</code> key <code>community</code> (value <code>&quot;off&quot;</code>, the only
+one) turns the shelf off with no code change, in the studio and the gallery; the revoked list still applies.</p></li>
+<li><p><code>devices/community.js</code> is the one reader of an index (<code>overdub-community-index/1</code>): the studio, the agent tool and the
+site gallery all read through it. <code>ASKED_MAX</code> is how long a requester line can be and still be drawn.</p></li>
+<li><p><code>app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track), tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }</code>. <code>targetFor</code> says where a Try
 lands (<code>already: true</code> when it's on that track now: Try doesn't stack a second copy). On a new track a Try brings a
-two-bar part to hear the device on, in the same step.</li>
-<li>Events: <code>community:ready</code> (<code>ui.emit</code>, after each read of the index: <code>ui/share.js</code> draws the held strip's shelf lines
+two-bar part to hear the device on, in the same step.</p></li>
+<li><p>Events: <code>community:ready</code> (<code>ui.emit</code>, after each read of the index: <code>ui/share.js</code> draws the held strip's shelf lines
 again) and <code>workspace:go</code> (<code>ui/workspace.js</code>, Find's Go to, with the query: a shelf word opens the Browser on the
-shelf).</li>
+shelf).</p></li>
 </ul>
 <h3 id="instance"><a class="h-link" href="#instance">Instance</a></h3>
 <p>What <code>instantiate(c, id, opts)</code> returns, for both flavours:</p>
@@ -1498,7 +1513,8 @@ old in-browser key, is deleted on load and noted once (<code>overdub:agent:key-r
 paid for with credits, for people without a Claude of their own. It's off unless the deploy names the service in
 <code>app/site-config.json</code> (gitignored; <code>app/src/site-config.js</code> reads it once per load, <code>server/serve.js</code> answers it from
 <code>OVERDUB_CLOUD_ORIGIN</code> when there's no file, <code>deploy/deploy.sh</code> ships <code>deploy/site-config.json</code> or <code>{}</code>); <code>?cloud=</code>
-points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
+points a local studio at a local service only. The same file's <code>community</code> key (<code>&quot;off&quot;</code>) is the community shelf's
+emergency off (<code>loadSiteConfig</code> returns it as <code>community: 'off' | null</code>, and reads the file even under <code>?cloud=</code>). No prices live here: the rate card, plans and packs come from the
 service's <code>GET /v1/config</code>.</p>
 <ul>
 <li><code>agent/cloud.js</code> (<code>app.agent.cloud</code>) is the account: the sign-in (an email link, or its 6-digit code in a tab the

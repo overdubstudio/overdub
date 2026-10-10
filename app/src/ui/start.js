@@ -30,7 +30,10 @@
 // (app.start.busy, read by agent/tools.js's recording check) and the studio's keys stay under it.
 //
 // app.start = { open({ kind = 'tap' | 'hum' }), close(), step, kind, busy, tap(row, perfMs), done(), again(),
-//   setLevel(level), readings(), useReading(i), landed(), take(), on('step' | 'land' | 'close', fn) }
+//   setLevel(level), readings(), useReading(i), landed(), take(), tempoShown() (the BPM shown while you play, or null:
+//   the top bar's "~"), on('step' | 'land' | 'close', fn) }
+// While the pulse is weak (the reading's fit under 0.5) the status line asks for one more time round; Done is never
+// blocked. A landed take goes to capture with its clip id, what was played as played and the rounds (capture.ofClip).
 
 import { h, css, canvas, tok, byline } from './dom.js';
 import { ROWS } from '../input/tap.js';
@@ -234,6 +237,9 @@ export default function (app) {
     const track = store.get().tracks.find((t) => t.clips.some((c) => c.id === res.created.c));
     S.landed = { txn: res.txn.id, track: track?.id || null, clip: res.created.c };
     S.take = r; S.level = 'tight'; S.reading = 0;
+    // the take, with what was played as played, goes to capture under the clip's id (Timing and the readings re-plan
+    // from it after the stage closes): kept, so Takes shows it on the track
+    try { app.input?.capture?.add({ src: 'tap', kind: 'drums', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: r.bpm, beat: 0, track: S.landed.track, clip: S.landed.clip, raw: S.hits.map(hitOf), rounds: r.fold.rounds, free: { bpm: r.bpm, fit: r.fit.fit, drift: r.fit.drift }, kept: [{ track: S.landed.track, clip: S.landed.clip, at: Date.now() }] }); } catch (e) { console.error('start: capture', e); }
     try { ui.select({ track: S.landed.track, clip: S.landed.clip, notes: [] }); } catch { /* ok */ }
     try { engine.play(0); } catch { /* silent engine */ }
     setStep('in');
@@ -425,7 +431,9 @@ export default function (app) {
     doneB.classList.toggle('btn-go', ready);
     doneB.firstChild.textContent = ready ? 'Done ' : 'A few more ';
     doneB.setAttribute('aria-disabled', String(!ready));
-    if (!S.asking) say(!n ? '' : shown ? `${plural(n, 'hit')}. ${Math.round(r.bpm)} BPM${loopOk ? `, ${plural(r.loop.bars, 'bar')} round, ${plural(r.fold.rounds, 'time')} round` : ''}.` : `${plural(n, 'hit')}.`);
+    // (a weak pulse: one more time round, never a block on Done; rounds-test measures what it buys a beginner)
+    const nudge = shown && r.fit && r.fit.fit < 0.5 ? ' One more time round helps the studio hear it.' : '';
+    if (!S.asking) say(!n ? '' : shown ? `${plural(n, 'hit')}. ${Math.round(r.bpm)} BPM${loopOk ? `, ${plural(r.loop.bars, 'bar')} round, ${plural(r.fold.rounds, 'time')} round` : ''}.${nudge}` : `${plural(n, 'hit')}.`);
   }
   // the hits, scrolling left as you play, and (once the beat is found) the bar lines fading in under them
   const ROW_ORDER = ['hat', 'open', 'snare', 'kick'];
@@ -537,6 +545,9 @@ export default function (app) {
     readings: () => (S.take ? S.take.readings.map((r) => ({ bpm: r.bpm, why: r.why, length: r.length })) : []),
     landed: () => (S.landed ? { ...S.landed } : null),
     take: () => (S.read || S.take ? { hits: S.hits.length, bpm: (S.take || S.read).bpm, length: (S.take || S.read).length, loop: (S.take || S.read).loop.bars, rounds: (S.take || S.read).fold.rounds, kept: (S.take || S.read).fold.notes.length, strays: (S.take || S.read).fold.strays.length, sure: (S.take || S.read).downbeat.sure, level: S.level, reading: S.reading } : null),
+    // the BPM the stage shows while you play (the top bar reads it; "~" until then): null before six hits over three
+    // seconds, and off the play step
+    tempoShown: () => (S.step === 'play' && showBpm() ? Math.round(S.read.bpm) : null),
     get step() { return S.step; }, get kind() { return S.kind; },
     get busy() { return S.step === 'play' || S.step === 'hum'; },
     on(t, fn) { if (!fns.has(t)) fns.set(t, new Set()); fns.get(t).add(fn); return () => fns.get(t).delete(fn); },

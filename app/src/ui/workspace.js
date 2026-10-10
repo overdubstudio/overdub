@@ -38,6 +38,7 @@ export const FEATURES = [
   { id: 'position', group: 'Song', title: 'Where you are', purpose: 'Bar and beat of the playhead, and the beat lights.', panels: [], where: 'the top bar, beside Play', aliases: ['position', 'counter', 'bar', 'beat'] },
   { id: 'song-settings', group: 'Song', title: 'Song settings', purpose: 'Beats per bar, tap the tempo, the click.', panels: [], where: 'the top bar, beside the tempo', aliases: ['meter', 'time signature', 'tap tempo', 'click', 'metronome'] },
   { id: 'tracks', group: 'Song', title: 'Track tools', purpose: 'Add tracks, snap, zoom, and colours.', panels: [], where: 'the bar over the tracks', aliases: ['add track', 'snap', 'zoom', 'fit', 'follow', 'colour', 'sections'] },
+  { id: 'start', group: 'Song', title: 'Start a song', purpose: 'Play one idea at any speed; the studio keeps time.', panels: [], where: 'the Song menu, under New song', aliases: ['start', 'new idea', 'tap a beat', 'hum a tune', 'first take'] },
   { id: 'redo', group: 'Song', title: 'Redo', purpose: 'Put back what Undo took away.', panels: [], where: 'the top bar, beside Undo', aliases: ['redo'] },
   { id: 'record-options', group: 'Recording', title: 'Recording options', purpose: 'Count-in, layering takes and timing.', panels: [], where: 'Sketch, and each track’s header', aliases: ['count-in', 'arm', 'layer', 'quantise', 'timing'] },
   { id: 'history', group: 'Agent', title: 'History', purpose: 'Everything that changed, who changed it, and how to take it back.', panels: ['history'], region: 'right', where: 'the History tab, beside the agent', aliases: ['history', 'changes', 'revert', 'log'] },
@@ -361,6 +362,8 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
   function run(it) {
     const q = findOpen?.find.value.trim() || '';
     if (it.kind === 'ask') { closeFind({ refocus: false }); ui.emit('agent:compose', { text: q, send: true }); return; }
+    // (Start a song is a way in, not a place: Enter does what the Song menu's row does)
+    if (it.kind === 'go' && it.f.id === 'start') { closeFind({ refocus: false }); app.exporter?.startSong?.(); return; }
     if (it.kind === 'go') { closeFind({ refocus: false }); go(it.f.id, { by: 'you', query: q }); return; }
     if (it.kind === 'do') { closeFind(); it.run(); return; }
     if (it.kind === 'sound') { closeFind({ refocus: false }); trySound(it); return; }

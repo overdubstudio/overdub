@@ -5,6 +5,7 @@
 //   node tools/start-test.js
 import { open, tally, OUTDIR } from './pw.js';
 import { perform } from './sloppy.js';
+import { takeOf } from '../app/src/input/rounds.js';
 import path from 'node:path';
 
 const t = tally('start');
@@ -213,6 +214,137 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await E(page, () => window.overdub.input.recorder.cancel?.());
     t.ok(!real(o.errors).length, `hum a tune: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
   } catch (e) { t.ok(false, 'hum threw: ' + (e.stack || e)); }
+  finally { await o.close(); }
+}
+
+/* ================================================================ the ways in: Song ▸ Start a song, Find, "~" in the top bar */
+{
+  console.log('\nthe ways in, and the top bar');
+  const o = await blank();
+  const { page } = o;
+  try {
+    const tp = () => E(page, () => { const n = document.querySelector('.tp-tempo-num'), t = document.querySelector('.tp-tempo'); return { text: n?.textContent, vt: t?.getAttribute('aria-valuetext'), now: t?.getAttribute('aria-valuenow'), ball: window.overdub.transport.ball, tempo: window.overdub.store.get().tempo, step: window.overdub.start.step }; });
+    // the Song menu on a blank song: Start a song under New song, and it opens the stage at once
+    await page.click('.sm-btn');
+    await page.waitForTimeout(250);
+    const m = await E(page, () => { const rows = [...document.querySelectorAll('.sm > .sm-i')].map((b) => b.querySelector('b')?.textContent); const r = document.querySelector('.sm-start'); return { rows: rows.slice(0, 3), sub: r?.querySelector('small')?.textContent }; });
+    await page.screenshot({ path: path.join(OUTDIR, 'start-song-menu.png') });
+    t.ok(m.rows[0] === 'New song' && m.rows[1] === 'Start a song' && m.sub === 'a blank reel, then your idea', `Song ▸ Start a song, under New song: "${m.sub}" (${m.rows.join(' · ')})`);
+    await page.click('.sm-start');
+    await page.waitForTimeout(400);
+    const a = await E(page, () => ({ step: window.overdub.start.step, kind: window.overdub.start.kind, hist: window.overdub.store.history.length, pop: !!document.querySelector('.ew-pop') }));
+    t.ok(a.step === 'play' && a.kind === 'tap' && a.hist === 0 && !a.pop, `on a blank song it opens the stage at Tap a beat, nothing asked (${JSON.stringify(a)})`);
+    // "~" in the top bar until the stage shows a BPM; the tempo holds still meanwhile
+    const t0 = await tp();
+    await E(page, () => { const t = performance.now(); for (let i = 0; i < 4; i++) window.overdub.start.tap(i % 2 ? 'snare' : 'kick', t + i * 600); });
+    await page.waitForTimeout(120);
+    const t1 = await tp();
+    await page.screenshot({ path: path.join(OUTDIR, 'start-topbar-finding.png'), clip: { x: 0, y: 0, width: 1440, height: 120 } });
+    await page.dispatchEvent('.tp-tempo', 'wheel', { deltaY: -100 });
+    await page.focus('.tp-tempo');
+    await page.keyboard.press('ArrowUp');
+    await page.mouse.move(0, 0);
+    const box = await E(page, () => { const r = document.querySelector('.tp-tempo').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    await page.mouse.move(box.x, box.y); await page.mouse.down(); await page.mouse.move(box.x, box.y - 60, { steps: 4 }); await page.mouse.up();
+    await page.waitForTimeout(150);
+    const t2 = await tp();
+    const typing = await E(page, () => !!document.querySelector('.tp-tempo input'));
+    t.ok(t0.text === '~' && t1.text === '~' && t1.vt === 'finding the tempo' && t1.now == null && !t1.ball?.moving, `while the stage finds the tempo the top bar reads "${t1.text}" ("${t1.vt}"), the ball still`);
+    t.ok(t2.tempo === 120 && t2.text === '~' && !typing && t2.step === 'play', `... and the tempo can't be scrolled, stepped, dragged or typed (${t2.tempo} BPM, still "${t2.text}", typing ${typing})`);
+    await E(page, () => window.overdub.start.again());
+    await playRock(page, { bpm: 96 });
+    await page.waitForTimeout(150);
+    const t3 = await tp();
+    const stageBpm = await E(page, () => document.querySelector('.st-bpm')?.textContent);
+    t.ok(t3.text === stageBpm && t3.vt === `${stageBpm} BPM` && +t3.text !== 120, `once the stage shows a BPM the top bar shows it too (${t3.text}; the stage ${stageBpm})`);
+    await page.screenshot({ path: path.join(OUTDIR, 'start-topbar-shown.png'), clip: { x: 0, y: 0, width: 1440, height: 120 } });
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(400);
+    const t4 = await tp();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    const t5 = await tp();
+    t.ok(t4.step === 'in' && t4.text === String(t4.tempo) && !t5.step && t5.text === String(t5.tempo) && t5.vt === `${t5.tempo} BPM`, `landed and closed, it's the song's tempo again (${t4.text}, then ${t5.text})`);
+    // a capture of the landed take carries its clip, what was played as played and the rounds
+    const cp = await E(page, () => { const o = window.overdub, c = o.store.get().tracks[0].clips[0], ph = o.input.capture.ofClip(c.id); return ph && { clip: ph.clip === c.id, raw: ph.raw?.length, rounds: ph.rounds, kept: ph.kept?.[0]?.clip === c.id, none: o.input.capture.ofClip('nope') }; });
+    t.ok(cp && cp.clip && cp.raw > 20 && cp.rounds === 3 && cp.kept && cp.none === null, `the landed take is in capture under its clip: ${cp?.raw} hits as played, ${cp?.rounds} times round (capture.ofClip)`);
+    // a song with something in it: the menu asks New song's question first, then a new song and the stage
+    await page.click('.sm-btn');
+    await page.waitForTimeout(250);
+    await page.click('.sm-start');
+    await page.waitForTimeout(200);
+    const q = await E(page, () => ({ text: document.querySelector('.sm-confirm')?.textContent, go: document.querySelector('.sm-confirm .ew-btn-primary')?.textContent, step: window.overdub.start.step }));
+    await page.screenshot({ path: path.join(OUTDIR, 'start-song-menu-ask.png') });
+    t.ok(/^Start a new song\? “.*” goes to Recent songs, and Undo brings it back\./.test(q.text || '') && q.go === 'Start a song' && !q.step, `from a song with a track it asks first: "${q.text}"`);
+    await page.click('.sm-confirm .ew-btn-primary');
+    await page.waitForTimeout(500);
+    const y = await E(page, () => ({ tracks: window.overdub.store.get().tracks.length, clips: window.overdub.store.get().tracks.reduce((n, tr) => n + tr.clips.length, 0), step: window.overdub.start.step, recent: window.overdub.exporter.recent().length }));
+    t.ok(y.clips === 0 && y.step === 'play' && y.recent >= 1, `yes: a blank song with the stage open, the old song in Recent songs (${JSON.stringify(y)})`);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    // Find: "start" puts Start a song first, and Enter does what the menu does
+    const f = await E(page, () => window.overdub.find.search('start').slice(0, 3).map((x) => `${x.kind}:${x.title}`));
+    t.ok(f[0] === 'go:Start a song', `Find "start": ${f.join(' · ')}`);
+    await E(page, () => window.overdub.find.open({ query: 'start' }));
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(OUTDIR, 'start-find.png') });
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+    const fe = await E(page, () => ({ step: window.overdub.start.step, kind: window.overdub.start.kind }));
+    t.ok(fe.step === 'play' && fe.kind === 'tap', `... Enter opens the stage on a blank song (${JSON.stringify(fe)})`);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    await E(page, () => window.overdub.store.dispatch({ type: 'track.add', ref: 'k', track: { name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys' } } }, { by: 'you' }));
+    await E(page, () => { const o = window.overdub, tr = o.store.get().tracks[0]; o.store.dispatch({ type: 'clip.add', track: tr.id, clip: { start: 0, length: 4, notes: [{ p: 60, t: 0, d: 1, v: 0.8 }] } }, { by: 'you' }); });
+    await E(page, () => window.overdub.find.open({ query: 'start' }));
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(400);
+    const fa = await E(page, () => ({ step: window.overdub.start.step, ask: document.querySelector('.sm-confirm:not([hidden])')?.textContent || null, clips: window.overdub.store.get().tracks.reduce((n, tr) => n + tr.clips.length, 0) }));
+    t.ok(!fa.step && /^Start a new song\?/.test(fa.ask || '') && fa.clips === 1, `... and on a song with clips, the Song menu opens on the same question, nothing replaced yet ("${(fa.ask || '').slice(0, 40)}…")`);
+    await page.keyboard.press('Escape');
+    t.ok(!real(o.errors).length, `the ways in: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
+  } catch (e) { t.ok(false, 'the ways in threw: ' + (e.stack || e)); }
+  finally { await o.close(); }
+}
+
+/* ================================================================ a weak pulse: the nudge */
+{
+  console.log('\nthe nudge');
+  // a shaky take (a beginner's: wide jitter and drift) whose reading is weak, found in Node with the stage's own reader
+  let hits = null, fit = 0;
+  for (let seed = 1; seed < 400 && !hits; seed++) {
+    const hs = perform(ROCK, { bpm: 110, bars: 3, jitter: 0.06, drift: 0.08, seed, start: 0 });
+    const r = takeOf(hs.map((x) => ({ t: x.t, p: x.p, v: 0.85 })));
+    if (r && r.fit.fit < 0.5 && r.fit.fit > 0.2) { hits = hs; fit = r.fit.fit; }
+  }
+  const o = await blank();
+  const { page } = o;
+  try {
+    await page.click('.st-way-b[data-way="Tap a beat"]');
+    await page.waitForTimeout(300);
+    const st0 = await E(page, () => performance.now() + 40);
+    await E(page, ([hs]) => { for (const x of hs) window.overdub.start.tap(x.row, x.ms); }, [hits.map((x) => ({ row: ROW[x.p], ms: st0 + x.t * 1000 }))]);
+    await page.waitForTimeout(150);
+    const w = await E(page, () => ({ line: document.querySelector('.st-status')?.textContent, done: document.querySelector('.st-done')?.textContent.trim(), go: document.querySelector('.st-done')?.classList.contains('btn-go'), dis: document.querySelector('.st-done')?.getAttribute('aria-disabled') }));
+    await page.screenshot({ path: path.join(OUTDIR, 'start-nudge.png') });
+    t.ok(/ BPM.*\. One more time round helps the studio hear it\.$/.test(w.line || ''), `a weak pulse (fit ${fit}): "${w.line}"`);
+    t.ok(/^Done/.test(w.done) && w.go && w.dis === 'false', `... and Done is still Done, ready (${w.done})`);
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(400);
+    const l = await E(page, () => ({ step: window.overdub.start.step, hist: window.overdub.store.history.length }));
+    t.ok(l.step === 'in' && l.hist === 1, `Done lands it anyway: one step (${JSON.stringify(l)})`);
+    // a steady take: no nudge
+    await E(page, () => window.overdub.store.undo());
+    await page.waitForTimeout(300);
+    await page.click('.st-way-b[data-way="Tap a beat"]');
+    await page.waitForTimeout(300);
+    await playRock(page, { jitter: 0.01, drift: 0 });
+    await page.waitForTimeout(150);
+    const s2 = await E(page, () => document.querySelector('.st-status')?.textContent);
+    t.ok(!/One more time round/.test(s2 || ''), `a steady take isn't asked ("${s2}")`);
+    t.ok(!real(o.errors).length, `the nudge: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
+  } catch (e) { t.ok(false, 'the nudge threw: ' + (e.stack || e)); }
   finally { await o.close(); }
 }
 

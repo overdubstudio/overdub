@@ -21,6 +21,11 @@
 // lit R; in Hum it, the track the hum really goes onto, which is never a drum track unless it's armed), in step with
 // the key's title; a click on it picks another track.
 //
+// Start a song (ui/start.js) finding the tempo from your playing (its play step): Tempo reads "~" (aria-valuetext
+// "finding the tempo") until the stage shows a BPM (app.start.tempoShown()), then that BPM, and the song's own once the
+// stage closes. Meanwhile it can't be dragged, typed, stepped or scrolled (Done puts the tempo in), and the ball is
+// still.
+//
 // The ball (the metronome you can see): one cell per beat of the bar (the bar's first wider) beside the position, and
 // a square that travels from cell to cell on a shallow arc, lowest exactly on the beat, drawn from engine.beat (the
 // audible beat) in frame(), so the eye can see the next beat coming (Hove et al. 2013: a moving beat is nearly as good
@@ -602,9 +607,18 @@ function mountTransport(el, app) {
   const tempoNum = h('span.tp-tempo-num.num', '120');
   const tempo = h('div.tp-tempo.tp-spec', { tabindex: 0, role: 'spinbutton', 'aria-label': 'Tempo', 'aria-valuemin': 20, 'aria-valuemax': 400, title: 'Tempo in BPM: drag up or down (Shift: fine), click to type, scroll to nudge' }, h('small.tp-lab', { 'aria-hidden': 'true' }, 'Tempo'), tempoNum);
   let tdrag = null;
+  // While Start a song finds the tempo from your playing (its play step), the tempo reads "~" until the stage shows a
+  // BPM, then that BPM; it can't be dragged, typed or scrolled (Done puts the tempo in), and the ball stays still
+  const finding = () => app.start?.step === 'play';
+  let findingSaid = false;
+  const findingSay = () => {
+    if (!finding()) return false;
+    if (!findingSaid) { findingSaid = true; ui.toast('The tempo comes from your playing: Done puts it in the song.', { kind: 'info', ms: 2400 }); } else ui.announce?.('The tempo comes from your playing.');
+    return true;
+  };
   tempo.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || tempo.querySelector('input')) return;
-    if (lockedSay(app, 'Tempo')) { e.preventDefault(); return; }
+    if (findingSay() || lockedSay(app, 'Tempo')) { e.preventDefault(); return; }
     tdrag = { y: e.clientY, v: p().tempo, moved: false };
     tempo.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -619,14 +633,14 @@ function mountTransport(el, app) {
   });
   tempo.addEventListener('pointerup', () => { if (tdrag && !tdrag.moved) editTempo(); tdrag = null; });
   tempo.addEventListener('dblclick', editTempo);
-  tempo.addEventListener('wheel', (e) => { e.preventDefault(); if (takeRunning(app)) return; const v = clamp(Math.round(p().tempo) + (e.deltaY < 0 ? 1 : -1), 20, 400); store.dispatch({ type: 'project.set', patch: { tempo: v } }, { by: 'you', label: 'tempo', coalesce: 'tempo' }); }, { passive: false });
+  tempo.addEventListener('wheel', (e) => { e.preventDefault(); if (takeRunning(app) || finding()) return; const v = clamp(Math.round(p().tempo) + (e.deltaY < 0 ? 1 : -1), 20, 400); store.dispatch({ type: 'project.set', patch: { tempo: v } }, { by: 'you', label: 'tempo', coalesce: 'tempo' }); }, { passive: false });
   tempo.addEventListener('keydown', (e) => {
-    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') && lockedSay(app, 'Tempo')) { e.preventDefault(); e.stopPropagation(); return; }
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') && (findingSay() || lockedSay(app, 'Tempo'))) { e.preventDefault(); e.stopPropagation(); return; }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); const v = clamp(Math.round(p().tempo) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1), 20, 400); store.dispatch({ type: 'project.set', patch: { tempo: v } }, { by: 'you', label: 'tempo', coalesce: 'tempo' }); }
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); editTempo(); }
   });
   function editTempo() {
-    if (tempo.querySelector('input') || lockedSay(app, 'Tempo')) return;
+    if (tempo.querySelector('input') || findingSay() || lockedSay(app, 'Tempo')) return;
     const inp = h('input.tp-tempo-input', { type: 'text', inputmode: 'decimal', value: String(p().tempo), 'aria-label': 'Tempo in BPM' });
     tempoNum.replaceWith(inp);
     inp.focus(); inp.select();
@@ -860,9 +874,13 @@ function mountTransport(el, app) {
     if (document.activeElement !== title && title.textContent !== pr.title) { title.textContent = pr.title; fitTitle(); }
     fitDigits();
     syncCredits(pr);
-    if (!tempo.querySelector('input')) tempoNum.textContent = Number.isInteger(pr.tempo) ? String(pr.tempo) : pr.tempo.toFixed(1);
-    tempo.setAttribute('aria-valuenow', String(pr.tempo));
-    tempo.setAttribute('aria-valuetext', `${Number.isInteger(pr.tempo) ? pr.tempo : pr.tempo.toFixed(1)} BPM`);
+    // (Start a song's play step: the stage's BPM once it shows one, "~" until then)
+    const fb = finding() ? app.start.tempoShown?.() ?? null : undefined;
+    const tv = fb === undefined ? pr.tempo : fb;
+    if (!tempo.querySelector('input')) tempoNum.textContent = tv == null ? '~' : Number.isInteger(tv) ? String(tv) : tv.toFixed(1);
+    if (tv == null) tempo.removeAttribute('aria-valuenow'); else tempo.setAttribute('aria-valuenow', String(tv));
+    tempo.setAttribute('aria-valuetext', tv == null ? 'finding the tempo' : `${Number.isInteger(tv) ? tv : tv.toFixed(1)} BPM`);
+    if (fb === undefined) findingSaid = false;
     meterV.textContent = pr.meter.join('/');
     meterB.setAttribute('aria-label', `Meter ${pr.meter.join('/')}`);
     keyV.replaceChildren(...(pr.key ? [h('span.tp-key-l', `${pr.key.root} ${keyName(pr.key.scale)}`), h('span.tp-key-s', `${pr.key.root} ${SHORT[pr.key.scale] || keyName(pr.key.scale)}`)] : [h('span.tp-dim', 'none')]));
@@ -1122,7 +1140,10 @@ function mountTransport(el, app) {
       const tl = fmtClock(engine.beatToSec ? engine.beatToSec(Math.max(0, b)) : (Math.max(0, b) * 60) / pr.tempo);
       if (tl !== last.time) { last.time = tl; posTime.textContent = tl; }
       drawMeter(now);
-      drawBall(b, !!engine.playing || !!cd);
+      // (Start a song finding the tempo: the top bar follows the stage, and the ball holds still)
+      const fk = finding() ? `play:${app.start.tempoShown?.() ?? '~'}` : '';
+      if (fk !== last.finding) { last.finding = fk; sync(); }
+      drawBall(b, (!!engine.playing || !!cd) && !fk);
     },
     refresh: sync,
     unmount() { offT(); offU(); offR(); offM(); offReady(); offFit(); window.removeEventListener('resize', refit); try { document.fonts?.removeEventListener?.('loadingdone', refit); } catch { /* ok */ } },

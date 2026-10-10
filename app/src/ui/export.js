@@ -13,7 +13,8 @@
 // app.exporter = { encodeWav, encodeMidi, zipStore, provenance, newSong(), openDemo(), openFile(), loadText(text, name),
 //                  saveProject(), exportMix(), exportStems(), exportMidi(), exportLog(), exportDawproject(), openReport(), busy,
 //                  recent() -> [{ id, title, at, tracks }], openRecent(i), putAside(song, msg) (a song main.js replaced on the way in),
-//                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone) }
+//                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone),
+//                  startSong({ anchor }) (Song ▸ Start a song: the stage on a blank song, else New song's question first) }
 // The simple view (ui/workspace.js) puts the file rows away (data-feature="files": open a file, the imports, stems, MIDI,
 // DAWproject and the reports) and keeps New song, the demos, Save, Share a link, Export mix and Take one; on a phone the
 // Song key itself is More's first row, not the top bar's.
@@ -332,6 +333,19 @@ export default function (app) {
     const { createProject } = await import('../core/project.js');
     await replaceSong(createProject(), `New song. “${store.get().title}” is in Recent songs, and Undo brings it back.`);
   }
+  // Start a song (Song ▸ Start a song, Find's "start"): on a blank song the stage opens at Tap a beat; a song with
+  // something in it asks New song's question first, in the Song menu under the row (a new song, then the stage)
+  const blankSong = () => store.get().tracks.every((t) => !t.clips.length);
+  async function startFresh() {
+    await newSong();
+    return app.start ? app.start.open({ kind: 'tap' }) : false;
+  }
+  function startSong({ anchor = null } = {}) {
+    if (!app.start) return false;
+    if (blankSong()) return app.start.open({ kind: 'tap' });
+    openMenu(anchor, { ask: 'start' });
+    return null;   // (asked: the answer is the person's)
+  }
   // openDemo(id?): a song from the demo shelf (core/demos/); no id is Night Shift
   async function openDemo(id) {
     const d = DEMOS.find((x) => x.id === id) || DEMOS[0];
@@ -448,13 +462,13 @@ export default function (app) {
   }
   const openReport = () => openProvenanceReport(app);
 
-  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, openDemo, putAside, openFile, loadText, saveProject, exportMix, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
+  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, startSong, openDemo, putAside, openFile, loadText, saveProject, exportMix, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
     recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, openMenu: (anchor) => openMenu(anchor) };
 
   /* ---------------------------------------------------- the menu */
   // the width under which app.css hides the transport's loop and metronome group
   const narrow = () => typeof matchMedia === 'function' && matchMedia('(max-width: 460px)').matches;
-  function openMenu(anchor) {
+  function openMenu(anchor, { ask: asking = null } = {}) {
     if (busy) return;
     const at = anchor?.isConnected ? anchor : btn;
     if (!at) return;
@@ -498,6 +512,8 @@ export default function (app) {
     const body = h('div.sm',
       h('div.sm-head', h('b', p.title), h('small', `${p.tempo} bpm, ${p.tracks.length} track${p.tracks.length === 1 ? '' : 's'}`)),
       h('button.sm-i.sm-new', { onclick: (e) => ask(e.currentTarget, 'Start a new song?', 'New song', newSong) }, h('span', h('b', 'New song'), h('small', 'a blank reel'))),
+      // Start a song: the same blank reel, and the stage on it (ui/start.js); a blank song needs no question
+      app.start ? h('button.sm-i.sm-start', { onclick: (e) => { if (blankSong()) { pop.close(); app.start.open({ kind: 'tap' }); } else ask(e.currentTarget, 'Start a new song?', 'Start a song', startFresh); } }, h('span', h('b', 'Start a song'), h('small', 'a blank reel, then your idea'))) : null,
       // a new song with the first minute on it (Take one's beat, then a tune over it): the welcome's main action
       app.onboard?.ownSong ? h('button.sm-i.sm-own', { onclick: (e) => ask(e.currentTarget, 'Make a song of your own?', 'Make your own', () => app.onboard.ownSong()) }, h('span', h('b', 'Make your own'), h('small', 'a new song: a beat and a tune in two minutes'))) : null,
       bf ? item('history', `Back to “${(bf.title || 'Untitled').slice(0, 32)}”`, 'your song from before Make it yours', null, () => replaceSong(bf, `Back to “${bf.title || 'Untitled'}”. “${p.title}” is kept: Undo brings it back.`), '.sm-before-fork') : null,
@@ -539,6 +555,9 @@ export default function (app) {
         }))) : null);
     const pop = popover(at, body, { align: 'end', label: 'Song' });
     menuKeys(pop.el, '.sm-i, .sm-confirm button');
+    // (Find's Start a song on a song with something in it: the menu opens on the question)
+    const row = asking === 'start' ? body.querySelector('.sm-start') : null;
+    if (row) ask(row, 'Start a new song?', 'Start a song', startFresh);
   }
 
   ui.panel({

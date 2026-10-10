@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { open, tally } from './pw.js';
-import { openLive, LIVE_HOST } from './community-live.js';
+import { openLive, liveRoutes, LIVE_HOST } from './community-live.js';
 import { makeDevicesRepo } from './fixtures/community-repo.js';
 import { readIndex, filterEntries, resolveUrl, indexUrlAllowed, LIMITS } from '../app/src/devices/community.js';
 
@@ -120,17 +120,12 @@ async function studio(query, { tryOn = true, width = 1440, height = 900, init = 
 const E = (P, fn, arg) => P.page.evaluate(fn, arg);
 const FIXQ = `community=${FIXURL}community-index.json`;
 
-// off anywhere but a local host
+// off anywhere but a local host while COMMUNITY_LIVE is false. The flags are read false through community-live.js
+// whatever the tree says, so this holds on the switch commit too (where the forced-live sections below are the tree's
+// own behaviour).
 await section('off-host', async () => {
-  const P = await open('/app/');
+  const P = await openLive('/app/', { query: `${FIXQ}&community-device=tester.soft-echo`, flags: { COMMUNITY_LIVE: false, TRY_ON: false } });
   try {
-    const local = new URL(P.url).origin;
-    await P.page.route('http://overdub.test/**', async (route) => {
-      const u = new URL(route.request().url());
-      const res = await route.fetch({ url: local + u.pathname + u.search });
-      await route.fulfill({ response: res });
-    });
-    await P.page.goto(`http://overdub.test/app/?${FIXQ}&community-device=tester.soft-echo`, { waitUntil: 'load' });
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
     await P.page.waitForTimeout(400);
     const r = await E(P, async () => {
@@ -338,9 +333,10 @@ await section('link', async () => {
   } finally { await P.close(); }
 });
 
-// held back (TRY_ON off, no developer flag): no Try or Keep to press, a plain line instead; hearing and reading stay
+// held back (TRY_ON off, no developer flag): no Try or Keep to press, a plain line instead; hearing and reading stay.
+// TRY_ON is read false through community-live.js whatever the tree says, so this holds on the switch commit too.
 await section('held-back', async () => {
-  const P = await studio(FIXQ, { tryOn: false, init: { 'overdub:community-try': '0' } });
+  const P = await studio(FIXQ, { tryOn: false, init: { 'overdub:community-try': '0' }, routes: (page) => liveRoutes(page, { origin: new URL(page.url()).origin, local: new URL(page.url()).origin, flags: { TRY_ON: false } }) });
   try {
     await E(P, () => window.overdub.community.reach('tester.soft-echo', 'you'));
     await P.page.waitForSelector('.cs-detail[data-community="tester.soft-echo"]');

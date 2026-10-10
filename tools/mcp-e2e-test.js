@@ -271,7 +271,7 @@ try {
     const st = await page.evaluate(async () => {
       const app = window.overdub, check = await import('/app/src/kernel/check.js');
       // 4 ms of busy-wait in each of a render's first 500 blocks: 2 s (Date from the realm: kernels get no clock)
-      const kernel = '({ create() { const now = [].constructor.constructor("return Date.now")(); let b = 0; return { process() { if (b++ < 500) { const t = now(); while (now() - t < 4) {} } } }; } })';
+      const kernel = '({ create() { const now = (0, eval)("Date.now"); let b = 0; return { process() { if (b++ < 500) { const t = now(); while (now() - t < 4) {} } } }; } })';
       const ac = new AbortController();
       setTimeout(() => ac.abort(), 300);
       const t0 = performance.now();

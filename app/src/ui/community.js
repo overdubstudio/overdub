@@ -22,8 +22,9 @@
 //     the song is the file's code under the index's words: name, blurb, nod, request and look come from the entry the
 //     person saw, never from the file. A new track gets a two-bar part to hear it on (an empty track plays silence), and
 //     an effect already on the track isn't stacked a second time.
-//   - Try is also held behind TRY_ON until the worklet's built-in prototypes are frozen (the spec's section 6). On a
-//     local host, localStorage 'overdub:community-try' = '1' lets a developer use it before then.
+//   - Try is also held behind TRY_ON until the switch (the worklet's built-in prototypes are frozen now:
+//     kernel/worklet.js freezeRealm). On a local host, localStorage 'overdub:community-try' = '1' lets a developer use
+//     it before then.
 //
 //   app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
 //                     tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }

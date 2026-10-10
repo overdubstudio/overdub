@@ -246,6 +246,85 @@ try {
   T.ok(sb.r3 === null, `globalThis, Date, registerProcessor, sampleRate, fetch and Function are out of reach${sb.r3 ? ' (saw ' + sb.r3 + ')' : ''}`);
   T.ok(sb.r4 && /read.only|Cannot assign/.test(sb.r4), `Math is frozen: "${sb.r4}"`);
 
+  // ------------------------------------------------------------------ the shared realm is frozen (docs/SECURITY.md)
+  // Kernels of different devices share one AudioWorkletGlobalScope per audio context. A trusted kernel that reaches
+  // the realm's Function, hooks MessagePort.prototype.postMessage, patches Float32Array.prototype.set or plants a
+  // getter on Object.prototype fails each attempt; a second device in the same context renders bit-identically to
+  // its render alone; and every message the attacker's node sends is stamped with its own device id by the worklet.
+  console.log('frozen realm');
+  const fz = await page.evaluate(async () => {
+    const { host } = window.K, SR = window.H.SR;
+    const attacker = { id: 'x.attacker', kind: 'effect', params: [], kernel: `({ create() {
+      const res = {};
+      const attempt = (k, f) => { try { f(); res[k] = 'ok'; } catch (e) { res[k] = e.name + ': ' + e.message; } };
+      attempt('ctor', () => [].constructor.constructor('return globalThis')());
+      attempt('asyncCtor', () => (async () => {}).constructor('return 1'));
+      const G = (0, eval)('this');
+      res.reached = typeof G.Float32Array;
+      attempt('port', () => { G.MessagePort.prototype.postMessage = function (m) { return m; }; });
+      attempt('set', () => { G.Float32Array.prototype.set = function () {}; });
+      attempt('fill', () => { Float32Array.prototype.fill = function () { return this; }; });
+      attempt('typed', () => { Object.getPrototypeOf(Int8Array).prototype.subarray = function () { return this; }; });
+      attempt('device', () => Object.defineProperty(Object.prototype, 'device', { get() { return 'other.device'; }, set() {}, configurable: true }));
+      attempt('id', () => Object.defineProperty(Object.prototype, 'id', { get() { return 'other.device'; }, configurable: true }));
+      attempt('json', () => { JSON.stringify = () => '{"type":"error","id":"other.device"}'; });
+      console.log(res);
+      let n = 0;
+      return { process(L, R, len) {
+        L.fill(0); R.fill(0);
+        if (++n === 40) { const e = new Error('posted as another device'); e.type = 'error'; e.id = 'other.device'; e.device = 'other.device'; throw e; }
+      } };
+    } })` };
+    const victim = { id: 'x.victim', kind: 'effect', params: [], kernel: `({ create({ sr }) {
+      let ph = 0; const buf = new Float32Array(4096);
+      return { process(L, R, n) {
+        for (let i = 0; i < n; i++) { buf[i] = 0.25 * Math.sin(ph) + 0.1 * Math.sin(ph * 3.01); ph += 2 * Math.PI * 220 / sr; }
+        L.fill(1); L.set(buf.subarray(0, n)); R.set(buf.subarray(0, n));
+      } };
+    } })` };
+    // the raw messages each node's port delivers on the page, before the host reads them
+    const raw = [];
+    const desc = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+    Object.defineProperty(MessagePort.prototype, 'onmessage', { configurable: true, get() { return desc.get.call(this); },
+      set(fn) { desc.set.call(this, fn ? (e) => { raw.push(e.data); return fn(e); } : fn); } });
+    const secs = 0.5, N = Math.round(secs * SR);
+    let solo, shared, a, b, logs = [];
+    try {
+      const c1 = new OfflineAudioContext(2, N, SR);
+      const v1 = await host.kernelInstance(c1, victim, { seed: 1 }); await v1.ready;
+      v1.output.connect(c1.destination);
+      solo = (await c1.startRendering()).getChannelData(0).slice();
+      v1.dispose();
+      raw.length = 0;
+      const c2 = new OfflineAudioContext(2, N, SR);
+      a = await host.kernelInstance(c2, attacker, { seed: 1 });
+      a.on('log', (args) => logs.push(...args));
+      await a.ready;
+      b = await host.kernelInstance(c2, victim, { seed: 1 }); await b.ready;
+      const mute = c2.createGain(); mute.gain.value = 0; a.output.connect(mute); mute.connect(c2.destination);
+      b.output.connect(c2.destination);
+      shared = (await c2.startRendering()).getChannelData(0).slice();
+      await a.stats(); await b.stats();
+    } finally { Object.defineProperty(MessagePort.prototype, 'onmessage', desc); }
+    let diff = 0; for (let i = 0; i < N; i++) if (solo[i] !== shared[i]) diff++;
+    const res = logs.length ? JSON.parse(logs[0]) : null;
+    const out = { res, diff, peak: Math.max(...Array.from(solo, Math.abs)), aErrs: a.errors.slice(), bErrs: b.errors.slice(),
+      devices: [...new Set(raw.map((m) => m && m.device))], errMsgs: raw.filter((m) => m && m.type === 'error'), logMsgs: raw.filter((m) => m && m.type === 'log').length };
+    a.dispose(); b.dispose();
+    return out;
+  });
+  const failed = (k) => fz.res && fz.res[k] !== 'ok' && /TypeError/.test(fz.res[k]);
+  T.ok(failed('ctor') && failed('asyncCtor') && /not available to kernels/.test(fz.res.ctor), `[].constructor.constructor and the async variant throw: "${fz.res && fz.res.ctor}"`);
+  T.ok(fz.res && fz.res.reached === 'function' && failed('port') && failed('set') && failed('fill') && failed('typed'),
+    `what an indirect eval reaches can't be patched: postMessage "${fz.res && fz.res.port}", Float32Array.prototype.set "${fz.res && fz.res.set}", %TypedArray%.prototype "${fz.res && fz.res.typed}"`);
+  T.ok(failed('device') && failed('id') && failed('json'), `no getter on Object.prototype and no JSON patch: "${fz.res && fz.res.device}" / "${fz.res && fz.res.json}"`);
+  T.ok(fz.diff === 0 && fz.peak > 0.1, `a second device in the same context renders bit-identically to its render alone (${fz.diff} samples differ, peak ${fz.peak.toFixed(3)})`);
+  T.ok(fz.aErrs.length === 1 && fz.aErrs[0].device === 'x.attacker' && /posted as another device/.test(fz.aErrs[0].message) && !fz.bErrs.length,
+    `the report names the right device: ${fz.aErrs.map((e) => e.device + ' "' + e.message + '"').join(', ')}`);
+  T.ok(fz.errMsgs.length === 1 && fz.errMsgs[0].device === 'x.attacker' && !('id' in fz.errMsgs[0]) && fz.logMsgs >= 1
+    && fz.devices.length === 2 && fz.devices.includes('x.attacker') && fz.devices.includes('x.victim'),
+    `the worklet stamps every message with the node's own device id and drops a kernel's id (devices seen: ${fz.devices.join(', ')})`);
+
   // ------------------------------------------------------------------ faults: NaN, throws, explosions
   console.log('faults');
   const ft = await page.evaluate(async () => {
@@ -419,7 +498,7 @@ try {
   const hang = await page.evaluate(async () => {
     const { check, examples } = window.K, { render } = window.H;
     // `ms` of busy-wait in each of a render's first `blocks` blocks (Date from the realm: kernels get no clock)
-    const busy = (ms, blocks) => `({ create() { const now = [].constructor.constructor('return Date.now')(); let b = 0; return { process() { if (b++ < ${blocks}) { const t = now(); while (now() - t < ${ms}) {} } } }; } })`;
+    const busy = (ms, blocks) => `({ create() { const now = (0, eval)('Date.now'); let b = 0; return { process() { if (b++ < ${blocks}) { const t = now(); while (now() - t < ${ms}) {} } } }; } })`;
     const settle = () => render({ id: 'x.after', kind: 'effect', params: [], kernel: '({ create() { return { process() {} }; } })' }, { secs: 0.01 }); // waits out a slow render
     let t0 = performance.now();
     const rep = await check.checkDevice({ id: 'x.slow', kind: 'effect', params: [], kernel: busy(4, 750) }, { quick: true, timeout: 1000 }); // 3 s a render

@@ -4,7 +4,8 @@
 // its top level uses nothing of the page's (no window, no document).
 //
 // processorOptions: { source, kind: 'effect' | 'instrument', params: [ParamSpec], values: { key: value }, poly, seed,
-//                     transport?: { bpm, playing, beat, time }, idle?: bool, tail?: seconds, data? }
+//                     transport?: { bpm, playing, beat, time }, idle?: bool, tail?: seconds, data?, device? }
+//   device: the def's id, which the processor stamps on every message out (a kernel can't speak as another device)
 //   data (kernel data, docs/DEVICES.md "Kernel data"): { [name]: { hash, bytes? } | null }, what the def's `data`
 //   names. The processor decodes each file once per audio context (kernel/odk.js; bytes come with the first node that
 //   needs them, the hash alone after; a node whose hash comes before those bytes is created again when they land) and
@@ -60,6 +61,7 @@
 //   { type: 'error', stage: 'compile' | 'process', message, line?, id? }   compile errors keep the old kernel;
 //        a process error (a throw, NaN/Infinity, or an exploding output) silences the node until a reload
 //   { type: 'log', args }                      console.log from a kernel (the first 20)
+//   every message out carries device: processorOptions.device (the def's id, or null), set by the processor
 
 import { decodeOdk } from './odk.js';
 
@@ -671,10 +673,42 @@ export function kernelCore(SR, dsp, kernelCompiler) {
   return KernelCore;
 }
 
+// Freeze the built-ins every kernel in this audio context shares (docs/SECURITY.md). Kernels from different devices
+// run in one AudioWorkletGlobalScope, and `[].constructor.constructor` or an indirect eval reaches its globals past
+// every shadowed name. Frozen, what a kernel reaches can't be patched under another device: no wrapping
+// Float32Array.prototype.set to rewrite its samples, no hooking MessagePort.prototype.postMessage to take its port, no
+// getter on Object.prototype. The function prototypes' `constructor` becomes a stub that throws first, so the literal
+// `[].constructor.constructor(...)` fails too (kernelCompiler's `new Function` uses the global binding, which is
+// untouched). The realm is still shared: this stops patching, not reading. Called once, after the dsp stdlib and
+// KernelCore are built and before any kernel runs. The Node renderer never calls it (its kernels run under Node's
+// permission model instead, tools/node-permissions.js).
+export function freezeRealm() {
+  const G = /** @type {any} */ (globalThis);
+  const fnProtos = [Function.prototype, Object.getPrototypeOf(async function () {}), Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async function* () {})];
+  const stub = () => { throw new TypeError('the Function constructor is not available to kernels'); };
+  Object.freeze(stub);
+  for (const p of fnProtos) Object.defineProperty(p, 'constructor', { value: stub, writable: false, enumerable: false, configurable: false });
+  const TA = Object.getPrototypeOf(Int8Array); // %TypedArray%
+  const ctors = [Object, Function, Array, ArrayBuffer, Promise, TA,
+    Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array,
+    G.BigInt64Array, G.BigUint64Array, G.Float16Array, G.MessagePort];
+  for (const C of ctors) {
+    if (typeof C !== 'function') continue;
+    Object.freeze(C);
+    if (C.prototype) Object.freeze(C.prototype);
+  }
+  for (const p of fnProtos) Object.freeze(p);
+  Object.freeze(Math);
+  Object.freeze(JSON);
+}
+
 // The processor. Runs inside the AudioWorkletGlobalScope (kernel/processor.js calls it there): a thin wrapper that
-// hands each render quantum to a KernelCore.
+// hands each render quantum to a KernelCore. Each node's messages carry the device id the host made it for
+// (processorOptions.device), stamped here, never one a kernel supplies: a kernel's console and its faults reach the
+// host as { type: 'log' | 'error', ..., device }, and a log or a process error never carries an id.
 export function overdubKernelWorklet(overdubDsp, kernelCompiler, kernelCore) {
   const KernelCore = kernelCore(sampleRate, overdubDsp(sampleRate), kernelCompiler);
+  freezeRealm();
   // kernel data, decoded once in this audio context: hash -> the decoded file (or null: it didn't decode)
   const DATA = new Map();
   // Processors that were handed a hash whose bytes haven't landed: the first node to need a file carries its bytes, the
@@ -713,7 +747,13 @@ export function overdubKernelWorklet(overdubDsp, kernelCompiler, kernelCore) {
       const o = (options && options.processorOptions) || {};
       this.raw = o.data || null;
       const r = o.data ? open(o.data, this) : null;
-      this.core = new KernelCore(r ? { ...o, data: r.out } : o, (m) => port.postMessage(m));
+      const device = typeof o.device === 'string' ? o.device : null;
+      const post = (/** @type {any} */ m) => {
+        const out = { ...m, device };
+        if (m && (m.type === 'log' || (m.type === 'error' && m.stage === 'process'))) delete out.id;
+        port.postMessage(out);
+      };
+      this.core = new KernelCore(r ? { ...o, data: r.out } : o, post);
       if (r) landed(r.fresh);
       port.onmessage = (e) => { const d = e.data; if (d && d.type === 'data') this.give(d.data); else this.core.msg(d); };
     }

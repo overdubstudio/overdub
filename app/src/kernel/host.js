@@ -13,6 +13,9 @@
 // Kernel code is evaluated only inside the AudioWorklet (and the Node renderer), never on the page: a kernel can
 // arrive from a share link, a device file or an agent, and the worklet scope has no DOM, no localStorage (the
 // person's songs and settings) and no network. The shadowed names in worklet.js are not a boundary; that scope is.
+// Kernels in one audio context share that scope, so the processor freezes its built-ins before any kernel runs
+// (worklet.js freezeRealm) and stamps each node's messages with the def's id (processorOptions.device); an error
+// is attributed to this instance's own def (err.device), never to what a message claims.
 //
 // Instance extras beyond the contract: errors (every error the worklet reported), faulted, version,
 // on('error' | 'log' | 'ready' | 'stuck', fn) -> off, stats() -> Promise<{ voices, held, maxVoices, steals, notes, stuck }>,
@@ -164,7 +167,7 @@ export async function kernelInstance(c, def, opts = {}) {
     numberOfInputs: kind === 'effect' ? (keyed ? 2 : 1) : 0,
     numberOfOutputs: 1,
     outputChannelCount: [2],
-    processorOptions: { source: def.kernel, kind, params: specs, values, poly: def.poly, seed, transport: transport(), idle: !offline, tail: def.tail,
+    processorOptions: { source: def.kernel, kind, device: def.id, params: specs, values, poly: def.poly, seed, transport: transport(), idle: !offline, tail: def.tail,
       ...(keyed ? { key: true, keyOn: false } : {}),
       ...(files ? { data: dataOptions(c, files, have) } : {}) },
   });
@@ -195,7 +198,8 @@ export async function kernelInstance(c, def, opts = {}) {
       if (d.version === 1) readyRes(inst);
       emit('ready', d);
     } else if (d.type === 'error') {
-      const err = { stage: d.stage, message: d.message, line: d.line || null, at: c.currentTime };
+      // (the device is this node's own def, whatever the message says: the worklet stamps it, and a kernel can't)
+      const err = { stage: d.stage, message: d.message, line: d.line || null, at: c.currentTime, device: def.id };
       inst.errors.push(err);
       if (inst.errors.length > 50) inst.errors.shift();
       if (d.stage === 'process') inst.faulted = true;

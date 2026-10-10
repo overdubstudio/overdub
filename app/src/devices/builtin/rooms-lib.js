@@ -174,6 +174,8 @@ export const ROOMS_SAYS = {
   loading: ['Loading rooms…', 'Loading its rooms: the sound passes dry until they’re in'],
   missing: ['No rooms here', 'Its rooms aren’t on this server, so the sound passes dry'],
 };
+// the bank's meta.credit, as the card prints it: source text, unsigned (tools/rooms-test.js holds it to the header)
+export const ROOMS_CREDIT = 'Rooms measured by RWTH Aachen University (AIR 1.4, MIT).';
 // What the card and the agents say about each room, from the bank's header (tools/kits/air-rooms.js roomInfo writes it;
 // tools/rooms-test.js holds it to the decoded header, field by field): its label and id, what it is, how far from the
 // source the ears were (m), its T30 at 500 Hz, 1 kHz and 2 kHz and its EDT at 1 kHz (s, measured from the full IR),

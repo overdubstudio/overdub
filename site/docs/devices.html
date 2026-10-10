@@ -81,7 +81,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Devices: writing instruments and effects</a></h1>
-    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 65 min to read</p>
+    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 66 min to read</p>
     <article class="prose">
 <p>Overdub's instruments and effects are <strong>devices</strong>: a small definition (id, name, params, look) plus either a Web Audio
 graph (<code>build(c, kit)</code>, trusted built-ins like the ported pedals and amps) or a <strong>kernel</strong>: a few dozen lines of pure DSP
@@ -735,6 +735,15 @@ rooms that miss a bar are kept and marked as waiting on a waiver.</li>
 <li><strong>The same numbers everywhere.</strong> Every coefficient comes from + - * /, <code>Math.sqrt</code> and the series (<code>series.js</code>:
 <code>dsin</code>, <code>dcos</code>, <code>dexp</code>), never <code>Math.exp</code>, <code>pow</code>, <code>sin</code>, <code>cos</code>, <code>tan</code> or <code>log</code>, so its golden scenes are bit-identical
 in Node and Chromium (<code>fx:core.rooms#&lt;12 hex&gt;</code> and one per other room).</li>
+<li><strong>The face, the card and the agents.</strong> A wide face in hammered cream (<code>#cfc6b3</code>, ink <code>#1d1a16</code>, a <code>#ffb347</code> lamp),
+cream knobs, ROOM REVERB on its plate. Under the face the card prints a room line that follows ROOM and the credit,
+unsigned: &quot;Aula Carolina, Aachen: a former church, 3 m from the source. 3.2 s at 1 kHz.&quot; then &quot;Rooms measured by
+RWTH Aachen University (AIR 1.4, MIT).&quot; It does that through an optional def hook, <code>cardLine(params)</code> (a few lines
+of words; the rack redraws them when a param changes, an older reader skips it, and only the studio's own devices
+get one). <code>describe(params)</code> gives <code>get_project</code> one line (&quot;Aula Carolina (a former church, 3 m), pre 0 ms, decay
+×1.0, mix 0.22&quot;), and <code>library</code> lists the six rooms for <code>get_device { library: &quot;&quot; }</code>, each with its header numbers
+and <code>params: { room: '&lt;LABEL&gt;' }</code>. Find and <code>list_devices</code> know it by &quot;reverb&quot;, &quot;room&quot;, &quot;church&quot;, &quot;hall&quot; and
+&quot;convolution&quot; (its plate's kind and its nod). Stairwell stays the reverb <code>adjust</code>'s <code>space</code> move adds.</li>
 </ul>
 <h2 id="kernel-data-samples-a-kernel-plays"><a class="h-link" href="#kernel-data-samples-a-kernel-plays">Kernel data: samples a kernel plays</a></h2>
 <p>A kernel sees only <code>dsp</code>, so a device that plays recordings needs the host to bring them. A def can name files by

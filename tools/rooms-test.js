@@ -19,6 +19,10 @@
 //                rates, a click-free room change, the device check at defaults
 //   the cost     no garbage collection across room changes; the heaviest block of the cycle under 0.5 ms; a room
 //                change's block reported (Q5); checkDevice's cpu against core.verb, at most 1.5x (R36)
+//   the studio   (Chromium, QUIET; R25-R28) an empty chain offers Real room after Reverb; with the bank held back the
+//                card says "Loading rooms…" beside the name, then the card's room line and the unsigned credit, every
+//                number the header's, following ROOM; with the bank missing it says "No rooms here". The face: wide,
+//                hammer, plate, its look. Screenshots: tools/.out/rooms-card*.png. ROOMS_BROWSER=0 skips it
 //   node tools/rooms-test.js
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -27,7 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { PerformanceObserver } from 'node:perf_hooks';
-import { tally } from './pw.js';
+import { tally, open } from './pw.js';
 import { dsin as convolveSin, fft } from '../app/src/kernel/convolve.js';
 import { dsin, dcos, dexp, SERIES } from '../app/src/devices/builtin/series.js';
 import { roomTail, roomSvfSet, roomPole, roomGlide, ROOM_TAIL } from '../app/src/devices/builtin/rooms-lib.js';
@@ -35,7 +39,8 @@ import { openZipRanged } from './kits/zip.js';
 import { fileURLToPath } from 'node:url';
 import rooms, { ROOMS_BODY } from '../app/src/devices/builtin/rooms.js';
 import verb from '../app/src/devices/builtin/verb.js';
-import { ROOMS, ROOM_LABELS, ROOMS_HASH, ROOMS_SAYS, ROOM_INFO } from '../app/src/devices/builtin/rooms-lib.js';
+import { ROOMS, ROOM_LABELS, ROOMS_HASH, ROOMS_SAYS, ROOM_INFO, ROOMS_CREDIT } from '../app/src/devices/builtin/rooms-lib.js';
+import { cardLine, describe as describeRoom } from '../app/src/devices/builtin/rooms.js';
 import { LIB } from '../app/src/devices/builtin/lib.js';
 import { dataFor, dataPath } from '../app/src/engine/node/data.js';
 import { encodeOdk } from '../app/src/kernel/odk.js';
@@ -265,7 +270,7 @@ if (!bank) {
   ok(bank.bits === 16 && bank.channels === 2 && bank.sr === 48000 && bank.samples.length === ROOMS.length, `the aachen bank: ${bank.samples.length} rooms, ${bank.bits}-bit, ${bank.channels} channels, ${bank.sr} Hz`);
   const m = bank.meta;
   ok(m.kind === 'rooms' && m.licence === 'MIT' && /^MIT License/.test(m.notice) && /Permission is hereby granted, free of charge/.test(m.notice) && /THE SOFTWARE IS PROVIDED "AS IS"/.test(m.notice)
-    && m.credit === 'Rooms measured by RWTH Aachen University (AIR 1.4, MIT).' && /^https:\/\/www\.iks\.rwth-aachen\.de\//.test(m.url),
+    && m.credit === ROOMS_CREDIT && /^https:\/\/www\.iks\.rwth-aachen\.de\//.test(m.url),
     `its meta: kind rooms, licence MIT, the full MIT notice (${m.notice.length} characters), the credit and the source URL`);
   const FIELDS = ['id', 'name', 'place', 'what', 'distance', 'measured', 'tx', 'fit', 'gain', 'level'];
   const fitOk = (f) => f && f.model === 'tail/1' && Number.isInteger(f.D) && f.D > 0 && f.scale >= 0.4 && f.scale <= 1.6 && f.t60.length === 3 && f.t60.every((t) => t > 0.05)
@@ -394,6 +399,72 @@ if (bank) {
   for (let i = 0; i < 5; i++) { cv.push((await checkDeviceNode(verb)).cpu.ms); cr.push((await checkDeviceNode(rooms)).cpu.ms); }
   const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], ratio = med(cr) / med(cv);
   ok(ratio <= 1.5, `CPU: Echo Chamber (AULA, the heaviest room) ${med(cr)} ms for the device check's 4 s render against Stairwell's ${med(cv)} ms: ${ratio.toFixed(2)}x (at most 1.5x; median of 5)`);
+}
+
+/* ------------------------------------------------------------------ the studio: the card, its words and the face */
+console.log('the studio');
+if (process.env.ROOMS_BROWSER === '0') T.note('the studio: skipped (ROOMS_BROWSER=0)');
+else {
+  const hex = ROOMS_HASH.slice(7);
+  // the card line in Node first: R26's sentence, every number from ROOM_INFO (the header's)
+  const want = ROOM_INFO.map((r) => `${r.name}, ${r.place}: ${r.what}, ${+r.distance.toFixed(1)} m from the source. ${+r.t30[1].toFixed(1)} s at 1 kHz.`);
+  ok(ROOM_INFO.every((r, i) => cardLine({ room: i }).join('|') === want[i] + '|' + ROOMS_CREDIT) && cardLine({ room: 'STAIRS' })[0] === want[3]
+    && cardLine({})[0] === 'Aula Carolina, Aachen: a former church, 3 m from the source. 3.2 s at 1 kHz.',
+  `the card line follows ROOM, from the header ("${cardLine({})[0]}"), then the credit, unsigned`);
+  ok(describeRoom({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22', `describe at defaults: "${describeRoom({})}"`);
+  ok(rooms.look && rooms.look.shape === 'wide' && rooms.look.finish === 'hammer' && rooms.look.knob === 'cream' && rooms.look.label === 'plate'
+    && rooms.look.color === '#cfc6b3' && rooms.look.ink === '#1d1a16' && rooms.look.led === '#ffb347', 'the face: wide, hammer, cream knobs, a plate, #cfc6b3 with #1d1a16 ink and a #ffb347 lamp (R25)');
+  for (const mode of ['slow', 'missing']) {
+    const o = await open('/app/', { query: 'new' });
+    try {
+      let release = null;
+      const held = new Promise((r) => { release = r; });
+      await o.page.route(`**/kits/${hex}.*`, async (route) => {
+        if (mode === 'missing') return route.fulfill({ status: 404, body: 'not found' });
+        await held;
+        return route.continue();
+      });
+      await o.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+      const tid = await o.page.evaluate(async () => {
+        const a = window.overdub;
+        await a.engine.start();   // (the bank is asked for when the engine builds the insert)
+        const r = a.store.dispatch({ type: 'track.add', track: { kind: 'instrument', name: 'Vox', instrument: { device: 'core.bass', params: {} } } }, { by: 'you' });
+        const id = r.created.track;
+        a.ui.select({ track: id, insert: null });
+        a.ui.show('rack');
+        return id;
+      });
+      if (mode === 'slow') {
+        const chips = await o.page.waitForFunction(() => { const x = document.querySelector('.rk-hint'); return x && [...x.querySelectorAll('.rk-chip')].map((b) => b.textContent.trim()); }, null, { timeout: 10000 }).then((h) => h.jsonValue(), () => []);
+        ok(chips[0] === 'Reverb' && chips[1] === 'Real room', `an empty chain offers ${chips.join(', ')}: Real room after Reverb (R28)`);
+        await o.page.evaluate(() => [...document.querySelectorAll('.rk-hint .rk-chip')].find((b) => b.textContent.trim() === 'Real room').click());
+      } else {
+        await o.page.evaluate((id) => window.overdub.store.dispatch({ type: 'insert.add', track: id, insert: { device: 'core.rooms' } }, { by: 'you' }), tid);
+      }
+      const say = mode === 'slow' ? ROOMS_SAYS.loading : ROOMS_SAYS.missing;
+      const saw = await o.page.waitForFunction((t) => [...document.querySelectorAll('.rk-card[data-device="core.rooms"] .rk-data')].some((el) => !el.hidden && el.textContent === t[0] && el.title === t[1]), say, { timeout: 10000 }).then(() => true, () => false);
+      await o.shot('rooms-card-' + mode);
+      ok(saw, `${mode === 'slow' ? 'while the bank loads' : 'with the bank missing'}, the card says "${say[0]}" beside the name ("${say[1]}") (R27)`);
+      if (mode === 'slow') {
+        release();
+        const gone = await o.page.waitForFunction(() => [...document.querySelectorAll('.rk-card[data-device="core.rooms"] .rk-data')].every((el) => el.hidden), null, { timeout: 20000 }).then(() => true, () => false);
+        const read = () => o.page.evaluate(() => {
+          const c = document.querySelector('.rk-card[data-device="core.rooms"]'), f = c?.querySelector('.rk-face'), l = c?.querySelector('.rk-line');
+          const cr = c?.getBoundingClientRect(), lr = l?.getBoundingClientRect(), fr = f?.getBoundingClientRect();
+          return { lines: l ? [...l.children].map((x) => x.textContent) : [], face: !!f?.firstElementChild, wider: lr && fr ? Math.round(lr.width - cr.width) : null };
+        });
+        const r0 = await read();
+        await o.page.evaluate((id) => { const a = window.overdub, t = a.store.track(id), fx = t.inserts.find((x) => x.device === 'core.rooms'); a.store.dispatch({ type: 'insert.set', track: id, insert: fx.id, patch: { params: { room: 'LECTURE' } } }, { by: 'you' }); }, tid);
+        const r2 = await o.page.waitForFunction((w) => { const l = document.querySelector('.rk-card[data-device="core.rooms"] .rk-line'); return l && l.firstElementChild?.textContent === w; }, want[2], { timeout: 5000 }).then(() => read(), () => read());
+        await o.shot('rooms-card');
+        ok(gone && r0.face && r0.lines[0] === want[0] && r0.lines[1] === ROOMS_CREDIT && r0.wider != null && r0.wider <= 0,
+          `once the bank is in, the card draws its face, the room line and the credit, inside the card's width: "${r0.lines.join(' / ')}" (R26)`);
+        ok(r2.lines[0] === want[2], `the line follows ROOM: LECTURE gives "${r2.lines[0]}"`);
+      }
+      const errs = o.errors.filter((e) => !/404|Failed to load resource/.test(e));
+      ok(!errs.length, `${mode}: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);
+    } finally { await o.close(); }
+  }
 }
 
 T.done();

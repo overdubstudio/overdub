@@ -241,6 +241,9 @@ try {
     // a sound: an instrument by its name is a Sound row
     const snd = await P.E(() => { const d = window.overdub.devices.listDevices().find((x) => x.kind === 'instrument' && x.name && x.name.length > 4); return { name: d?.name, rows: window.overdub.find.search(d?.name || '').map((r) => r.kind + ':' + r.title) }; });
     T.ok(snd.rows.some((r) => r === `sound:${snd.name}`), `"${snd.name}" finds its Sound row (${snd.rows.slice(0, 4).join(', ')})`);
+    // Echo Chamber by the words for what it is (R28: its nod, a field Find already reads, carries them)
+    const ec = await P.E(() => ['reverb', 'room', 'church', 'hall', 'convolution'].map((w) => [w, window.overdub.find.search(w).some((r) => r.kind === 'sound' && r.id === 'sound:core.rooms')]));
+    T.ok(ec.every(([, f]) => f), `Echo Chamber's Sound row comes up for ${ec.map(([w, f]) => `"${w}"${f ? '' : ' (NOT)'}`).join(', ')}`);
     // no match: says so, and the only row asks Claude; ⌘Enter composes it to the agent
     await P.E(() => { window.__composed = null; window.overdub.ui.on('agent:compose', (d) => { window.__composed = d; }); window.overdub.find.open({ query: '' }); });
     await sleep(150);

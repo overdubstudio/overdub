@@ -236,6 +236,10 @@ n) (mono x in, one output per taps channel; in place is fine) .set(taps) (new ta
 allocation) .reset() .latency (128 frames; 0 with direct: 128, which convolves the first 128 taps directly: declare
 it). fft(n) (n a power of two, 16..8192) -> .forward(x, Xr, Xi) (n/2 + 1 bins) .inverse(Xr, Xi, x). Both are the
 same doubles on every engine.
+Before writing a reverb, know the two the studio has: Stairwell (core.verb) is long, lush and fully tweakable, a
+synthetic hall for pads and washes; Echo Chamber (core.rooms) puts a real space's first reflections, as recorded, on a
+vocal, a piano or a drum room, with its decay as measured (six rooms: insert.add with { room: 'LECTURE' }). Write your
+own for what neither does: a shimmer, a gated room, a reverb that moves.
 
 ## What the check reports (define_device returns it)
 

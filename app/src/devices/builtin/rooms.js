@@ -23,7 +23,7 @@
 // kernel() puts first, isn't used). With integers in, the output is the same doubles in Node and in every browser.
 import { defineDevice } from '../registry.js';
 import { kernel } from './lib.js';
-import { ROOM_TAIL, ROOMS, ROOM_LABELS, ROOMS_HASH, ROOMS_SAYS } from './rooms-lib.js';
+import { ROOM_TAIL, ROOMS, ROOM_LABELS, ROOMS_HASH, ROOMS_SAYS, ROOM_INFO, ROOMS_CREDIT } from './rooms-lib.js';
 
 // The kernel's own text, after LIB: what tools/rooms-test.js greps (R22)
 export const ROOMS_BODY = String.raw`
@@ -175,10 +175,44 @@ return {
 };
 `;
 
+/* ------------------------------------------------------------------------------------- what it says about a room */
+// Every number here is the bank header's (ROOM_INFO, pinned beside ROOMS_HASH and held to the header by rooms-test)
+const one = (x) => +(+x).toFixed(1);
+// a stored ROOM is its index; an op may give the label ("LECTURE"), which the store turns into the index
+export function roomOf(params = {}) {
+  const v = params.room;
+  const i = typeof v === 'string' ? ROOM_LABELS.indexOf(v.trim().toUpperCase()) : Math.round(Number(v));
+  return ROOM_INFO[i >= 0 && i < ROOM_INFO.length ? i : 0];
+}
+// The card's room line, then the credit: "Aula Carolina, Aachen: a former church, 3 m from the source. 3.2 s at 1 kHz."
+export function cardLine(params = {}) {
+  const r = roomOf(params);
+  return [`${r.name}, ${r.place}: ${r.what}, ${one(r.distance)} m from the source. ${one(r.t30[1])} s at 1 kHz.`, ROOMS_CREDIT];
+}
+// get_project's one line: "Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22"
+export function describe(params = {}) {
+  const r = roomOf(params), n = (k, d) => (Number.isFinite(Number(params[k])) ? Number(params[k]) : d);
+  return `${r.name} (${r.what}, ${one(r.distance)} m), pre ${Math.round(n('predelay', 0))} ms, decay ×${n('decay', 1).toFixed(2).replace(/0$/, '')}, mix ${+n('mix', 0.22).toFixed(2)}`;
+}
+// get_device { library: '' }: the rooms, each with what the header says of it and the params that pick it
+export const LIBRARY = {
+  about: `${ROOM_INFO.length} rooms measured by RWTH Aachen University (the Aachen Impulse Response Database, AIR 1.4, MIT): `
+    + 'each is its first reflections as recorded, then a tail fitted to its measured decay. T30 in seconds at 500 Hz, 1 kHz and 2 kHz, EDT at 1 kHz, the early cut (tx) in seconds',
+  groups: [{ name: 'Aachen', table: 'AIR 1.4', count: ROOM_INFO.length }],
+  items: ROOM_INFO.map((r) => ({
+    label: r.label, id: r.id, name: r.name, group: 'Aachen', place: r.place, what: r.what,
+    distance: r.distance, t30: { '500': r.t30[0], '1k': r.t30[1], '2k': r.t30[2] }, edt: r.edt, tx: r.tx, credit: ROOMS_CREDIT, params: { room: r.label },
+  })),
+};
+
 export default defineDevice({
   id: 'core.rooms', name: 'Echo Chamber', kind: 'effect', cat: 'ambient', by: 'overdub',
   blurb: 'Real rooms, measured: a church down to an office',
-  nod: 'a convolution reverb loaded with measured rooms',
+  // (the plate's kind and the nod are also the words Find and list_devices know it by, R28: reverb, room, church,
+  // hall, convolution; "ROOM REVERB" puts it among the first rooms Find shows for "room")
+  kindLabel: 'ROOM REVERB',
+  nod: 'a convolution reverb loaded with measured rooms, from a church hall to an office',
+  look: { shape: 'wide', finish: 'hammer', knob: 'cream', label: 'plate', color: '#cfc6b3', ink: '#1d1a16', led: '#ffb347' },
   params: [
     { key: 'room', label: 'ROOM', opts: ROOM_LABELS, def: 0, auto: false, desc: 'which space: a church, a lecture room, stairs, an office' },
     { key: 'predelay', label: 'PRE', min: 0, max: 200, def: 0, unit: 'ms', role: 'time', desc: 'a gap before the room answers, on top of its own' },
@@ -190,5 +224,6 @@ export default defineDevice({
   ],
   data: { aachen: ROOMS_HASH }, dataSays: ROOMS_SAYS,
   trails: true, tail: 12,
+  library: LIBRARY, describe, cardLine,
   kernel: kernel(ROOMS_BODY),
 });

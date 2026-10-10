@@ -427,7 +427,7 @@ With detail "params" (the default while the list stays short; one device always 
     name: 'get_device',
     annotations: { title: 'Read a device', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     description: 'One device: params (ranges, units, roles, descriptions), presets, look, flavour, and — for kernel devices written in this project — the kernel source (set source: true to also read a built-in kernel, e.g. core.testfilter, as a worked example to fork). A device the song brought whose code hasn\'t been allowed on this computer comes back with held: true (kept off; only the person can let it play). A device with over 40 params tells the params that repeat by number (mod slots, LFOs, bands) once and names its presets with their blurbs; detail "full" gives every param on its own line and what each preset changes. preset: "<name>" returns one preset\'s whole params.',
-    input_schema: { type: 'object', properties: { id: { type: 'string' }, source: { type: 'boolean' }, preset: { type: 'string', description: 'a preset\'s name: returns that preset\'s whole params' }, tag: { type: 'string', description: 'only the presets tagged so ("bass-music", "growl", "sub"...)' }, detail: { type: 'string', enum: ['brief', 'full'], description: 'a device with over 40 params: "brief" (default) or "full"' }, library: { type: 'string', description: 'a device with a library (Light Table\'s AKWF waves): "" lists its families, a family or part of a wave\'s name lists those waves, each with the params that play it' } }, required: ['id'], additionalProperties: false },
+    input_schema: { type: 'object', properties: { id: { type: 'string' }, source: { type: 'boolean' }, preset: { type: 'string', description: 'a preset\'s name: returns that preset\'s whole params' }, tag: { type: 'string', description: 'only the presets tagged so ("bass-music", "growl", "sub"...)' }, detail: { type: 'string', enum: ['brief', 'full'], description: 'a device with over 40 params: "brief" (default) or "full"' }, library: { type: 'string', description: 'a device with a library (Light Table\'s AKWF waves, Echo Chamber\'s rooms): "" lists its families (a small library comes whole), a family or part of a name lists those entries, each with the params that play it' } }, required: ['id'], additionalProperties: false },
     run(input, { app }) {
       const kept = app.devices.heldDevice?.(input.id);
       if (kept) {
@@ -459,12 +459,21 @@ With detail "params" (the default while the list stays short; one device always 
       // a device's library (Light Table's AKWF single cycles): its families, or the waves that match, with their params
       if (input.library != null) {
         const lib = d.library;
-        if (!lib || !Array.isArray(lib.items)) return err(`${d.name} has no library`, 'only a device with one (Light Table: AKWF waves) lists it');
+        if (!lib || !Array.isArray(lib.items)) return err(`${d.name} has no library`, 'only a device with one (Light Table: AKWF waves; Echo Chamber: its rooms) lists it');
         const q = String(input.library).trim().toLowerCase();
-        if (!q) return { id: d.id, library: lib.about, families: lib.groups.map((g) => `${g.name} (${g.table}): ${lib.items.filter((x) => x.group === g.name).map((x) => x.name).join(', ')}`), hint: 'library: "<family or wave>" gives each wave\'s params; set them with instrument.set' };
-        const hits = lib.items.filter((x) => x.group.toLowerCase() === q || x.params.a_table?.toLowerCase?.() === q || x.name.toLowerCase().includes(q) || x.group.toLowerCase().includes(q));
-        if (!hits.length) return err(`no wave in ${d.name}'s library matches "${String(input.library).slice(0, 60)}"`, `its families: ${lib.groups.map((g) => g.name).join(', ')}`);
-        return { id: d.id, library: lib.about, waves: hits.slice(0, 60).map((x) => ({ name: x.name, family: x.group, params: x.params })), ...(hits.length > 60 ? { more: hits.length - 60 } : {}), hint: `play one: { "type": "instrument.set", "track": "…", "params": ${JSON.stringify(hits[0].params)} }` };
+        // (each entry as the device gives it: Light Table's waves are a name and params; Echo Chamber's rooms carry
+        // their label, place, T30s and credit too. A small library, its six rooms, comes whole on "")
+        const entry = (x) => { const { group, params, ...rest } = x; return { ...rest, family: group, params }; };
+        const setOp = d.kind === 'instrument' ? '{ "type": "instrument.set", "track": "…", "params": ' : '{ "type": "insert.set", "track": "…", "insert": "…", "patch": { "params": ';
+        const play = (x) => `play one: ${setOp}${JSON.stringify(x.params)}${d.kind === 'instrument' ? ' }' : ' } }'}`;
+        if (!q) {
+          const small = lib.items.length <= 12;
+          return { id: d.id, library: lib.about, families: lib.groups.map((g) => `${g.name} (${g.table}): ${lib.items.filter((x) => x.group === g.name).map((x) => x.label || x.name).join(', ')}`),
+            ...(small ? { items: lib.items.map(entry), hint: play(lib.items[0]) } : { hint: 'library: "<family or wave>" gives each wave\'s params; set them with instrument.set' }) };
+        }
+        const hits = lib.items.filter((x) => x.group.toLowerCase() === q || x.params.a_table?.toLowerCase?.() === q || x.name.toLowerCase().includes(q) || x.group.toLowerCase().includes(q) || (typeof x.label === 'string' && x.label.toLowerCase().includes(q)));
+        if (!hits.length) return err(`no ${lib.items.length <= 12 ? 'entry' : 'wave'} in ${d.name}'s library matches "${String(input.library).slice(0, 60)}"`, `its families: ${lib.groups.map((g) => g.name).join(', ')}`);
+        return { id: d.id, library: lib.about, waves: hits.slice(0, 60).map(entry), ...(hits.length > 60 ? { more: hits.length - 60 } : {}), hint: play(hits[0]) };
       }
       const big = d.params.length > BIG_DEVICE, full = input.detail === 'full';
       const shown = big ? d.params.filter((q) => !q.hidden) : d.params;
@@ -473,7 +482,7 @@ With detail "params" (the default while the list stays short; one device always 
       // (Studio A's window, 2026-10-03) a drum kit's own names for its notes, so an agent writes its articulations
       const kn = kitNotes(d);
       if (kn) { out.notes = kn; out.notes_hint = NOTES_HINT; }
-      if (d.library && Array.isArray(d.library.items)) out.library_hint = `${d.library.about}. get_device { "id": "${d.id}", "library": "" } lists the families and their waves; "library": "<family or wave>" gives each one's params`;
+      if (d.library && Array.isArray(d.library.items)) out.library_hint = `${d.library.about}. get_device { "id": "${d.id}", "library": "" } lists the families and their entries; "library": "<family or name>" gives each one's params`;
       const dPresets = input.tag ? (d.presets || []).filter((x) => x.tags && x.tags.includes(input.tag)) : d.presets;
       if (dPresets && dPresets.length) {
         if (big && !full) {

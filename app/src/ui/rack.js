@@ -125,6 +125,32 @@ onData(({ hash }) => {
   }
 });
 
+// A built-in's card line under its face (def.cardLine(params): a few lines of words, Echo Chamber's room and its
+// credit), redrawn when its params change. Optional: a def without it, or an older reader, draws nothing. Only the
+// studio's own devices speak here; a song's device (source project) never does, since its words would be anyone's.
+function cardLineText(def, vals) {
+  if (typeof def?.cardLine !== 'function' || def.source === 'project') return null;
+  try {
+    const out = def.cardLine(vals);
+    const lines = (Array.isArray(out) ? out : [out]).filter((x) => typeof x === 'string' && x).slice(0, 3).map((x) => x.slice(0, 200));
+    return lines.length ? lines : null;
+  } catch { return null; }
+}
+function cardLineEl(def, vals) {
+  const lines = cardLineText(def, vals);
+  if (!lines) return null;
+  const el = h('div.rk-line', { role: 'note' });
+  el._text = '';
+  syncCardLine(el, def, vals, lines);
+  return el;
+}
+function syncCardLine(el, def, vals, lines = cardLineText(def, vals)) {
+  const text = (lines || []).join('\n');
+  if (text === el._text) return;
+  el._text = text;
+  el.replaceChildren(...(lines || []).map((x, i) => h(i ? 'small.rk-line-credit' : 'span.rk-line-main', x)));
+}
+
 export function addDevice(app, id, { track = currentTrack(app), index, toast = true, by = 'you' } = {}) {
   const def = app.devices.getDevice(id);
   const ui = app.ui;
@@ -864,7 +890,7 @@ export default async function (app) {
       }
 
       function emptyHint(t) {
-        const want = [['core.verb', 'Reverb'], ['core.delay', 'Delay'], ['core.comp', 'Compressor'], ['core.drive', 'Drive'], ['core.eq', 'EQ']]
+        const want = [['core.verb', 'Reverb'], ['core.rooms', 'Real room'], ['core.delay', 'Delay'], ['core.comp', 'Compressor'], ['core.drive', 'Drive'], ['core.eq', 'EQ']]
           .filter(([d]) => app.devices.getDevice(d));
         const id = tid();
         return h('div.rk-hint.empty',
@@ -914,7 +940,7 @@ export default async function (app) {
         card.append(cap);
         const pre = def && def.presets?.length ? presetLine(tId, key, def) : null;
         if (pre) card.append(pre.el);
-        let face = null;
+        let face = null, line = null;
         if (held) {
           card.append(keptOffNote(held, devId));
         } else if (!def) {
@@ -933,11 +959,13 @@ export default async function (app) {
           const fw = h('div.rk-face', face.el);
           if (face.kind === 'amp' || face.el.dataset.face === 'amp') { fw.classList.add('rk-amp'); fw.style.width = (compact ? 440 : 560) + 'px'; }
           card.append(fw);
+          line = cardLineEl(def, vals);
+          if (line) card.append(line);
         }
         card.classList.toggle('off', !isInst && !fx.on);
         card.addEventListener('pointerdown', () => { if (!isInst) ui.select({ insert: fx.id }); });
         if (!isInst) wireReorder(card, grip, tId, fx.id);
-        cards.set(key, { el: card, face, def, devId, isInst, pre });
+        cards.set(key, { el: card, face, def, devId, isInst, pre, line });
         if (!isInst && ui.state.selection.insert === fx.id) card.classList.add('sel');
         return card;
       }
@@ -1072,6 +1100,7 @@ export default async function (app) {
           const fx = chainOf(id).find((x) => x.id === key);
           if (!fx) continue;
           c.face.update(paramValues(c.def, fx.params), fx.on);
+          if (c.line) syncCardLine(c.line, c.def, paramValues(c.def, fx.params));
           c.el.classList.toggle('off', !fx.on);
         }
         const out = rail.querySelector('.rk-out small');
@@ -1451,6 +1480,9 @@ const RACK_CSS = `
 .rk-cable rect { fill: #9e9a94; }
 .rk-board.playing .rk-c2 { stroke: var(--accent); stroke-dasharray: 3 9; animation: rk-flow .9s linear infinite; }
 @keyframes rk-flow { to { stroke-dashoffset: -12; } }
+/* (width 0, min-width 100%: the words wrap to the face's width and never widen the card) */
+.rk-line { align-self: stretch; width: 0; min-width: 100%; box-sizing: border-box; display: grid; gap: 2px; padding: 4px 10px 2px; font-size: 12px; color: var(--text-2); line-height: 1.35; }
+.rk-line-credit { font-size: 12px; color: var(--text-3); }
 .rk-node { flex: none; display: grid; justify-items: center; gap: 3px; width: 104px; padding: 12px 6px; margin-top: 26px; border-radius: var(--r-2); border: 1px solid var(--line-2);
   background: linear-gradient(180deg, #3c372f, #2b2822); color: var(--text-2); box-shadow: var(--shadow-1); text-align: center; font: inherit; }
 .rk-node b { font-size: 12px; color: var(--text); } .rk-node small { font-size: 10px; color: var(--text-3); font-family: var(--font-mono); }

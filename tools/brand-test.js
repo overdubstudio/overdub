@@ -53,6 +53,12 @@ const stok = {};
 for (const m of siteCss.matchAll(/(--(?:paper|ink|ink-2))\s*:\s*(#[0-9a-f]{6})/g)) stok[m[1]] = m[2];
 for (const t of ['--ink', '--ink-2']) T.ok(stok[t] && ratio(stok[t], stok['--paper']) >= 4.5, `tape box: ${t} ${stok[t]} on --paper ${stok['--paper']} is AA (${stok[t] ? ratio(stok[t], stok['--paper']).toFixed(2) : '?'}:1)`);
 T.ok(ratio(stok['--ink'], tok['--accent']) >= 4.5, `tape box: ink on a leader-green button is AA (${ratio(stok['--ink'], tok['--accent']).toFixed(2)}:1)`);
+// Echo Chamber's face (intent 0006 R25): its printed ink on its hammered cream is AA
+{
+  const { default: rooms } = await import('../app/src/devices/builtin/rooms.js');
+  const L = rooms.look || {}, r = L.ink && L.color ? ratio(L.ink, L.color) : 0;
+  T.ok(r >= 4.5, `Echo Chamber's face: ink ${L.ink} on ${L.color} is AA (${r.toFixed(2)}:1)`);
+}
 {
   // the faces come from the site: tokens.css imports fonts.css, which declares Archivo over its width axis to 125
   let fontsSrc = '';

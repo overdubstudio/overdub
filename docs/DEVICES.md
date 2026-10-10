@@ -694,6 +694,15 @@ room table are `rooms-lib.js` (kernel text, shared with the build so that what t
 - **The same numbers everywhere.** Every coefficient comes from + - * /, `Math.sqrt` and the series (`series.js`:
   `dsin`, `dcos`, `dexp`), never `Math.exp`, `pow`, `sin`, `cos`, `tan` or `log`, so its golden scenes are bit-identical
   in Node and Chromium (`fx:core.rooms#<12 hex>` and one per other room).
+- **The face, the card and the agents.** A wide face in hammered cream (`#cfc6b3`, ink `#1d1a16`, a `#ffb347` lamp),
+  cream knobs, ROOM REVERB on its plate. Under the face the card prints a room line that follows ROOM and the credit,
+  unsigned: "Aula Carolina, Aachen: a former church, 3 m from the source. 3.2 s at 1 kHz." then "Rooms measured by
+  RWTH Aachen University (AIR 1.4, MIT)." It does that through an optional def hook, `cardLine(params)` (a few lines
+  of words; the rack redraws them when a param changes, an older reader skips it, and only the studio's own devices
+  get one). `describe(params)` gives `get_project` one line ("Aula Carolina (a former church, 3 m), pre 0 ms, decay
+  ×1.0, mix 0.22"), and `library` lists the six rooms for `get_device { library: "" }`, each with its header numbers
+  and `params: { room: '<LABEL>' }`. Find and `list_devices` know it by "reverb", "room", "church", "hall" and
+  "convolution" (its plate's kind and its nod). Stairwell stays the reverb `adjust`'s `space` move adds.
 
 ## Kernel data: samples a kernel plays
 

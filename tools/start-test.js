@@ -212,7 +212,9 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(Math.abs(bpmT - 92) <= 2 && /^About \d+ BPM\. Tap again to change it\.$/.test(tline) && ta.tempo === bpmT && ta.bpm === bpmT && ta.hist === 0, `Tap it: T five times 650 ms apart reads ${bpmT} BPM ("${tline}"), and the click moves there, still a preview (${ta.tempo} BPM)`);
     await page.click('.st-speed [role="radio"]:has-text("Upbeat 120")');
     await page.waitForTimeout(150);
-    // rounds fold under you: a kick played only in round 1 of 2 isn't in what plays in round 3, and isn't kept
+    // rounds fold under you: a kick played only in round 1 of 2 isn't in what plays in round 3, and isn't kept. (R14's
+    // "round 2's preview" read as the preview the fold makes once round 2 is played: under round 2 the fold so far is
+    // round 1 alone, nothing in it has been missed yet, and the source spec's round-2 frame shows it playing under you)
     const BEAT = [[0, 'kick'], [2, 'snare'], [4, 'kick'], [5, 'kick'], [6, 'snare'], ...[0, 1, 2, 3, 4, 5, 6, 7].map((b) => [b, 'hat'])];
     const r1 = [...BEAT, [3.5, 'kick']], r2 = BEAT;
     const plan = [...r1.map(([b, row]) => [b + 0.02, row]), ...r2.map(([b, row]) => [8 + b - 0.02, row])];
@@ -946,6 +948,19 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await page.waitForTimeout(150);
     await E(page, () => window.overdub.coach.band());
     await page.waitForTimeout(150);
+    await E(page, () => window.overdub.coach.preview(0));
+    for (let i = 0; i < 40 && !(await E(page, () => !!window.overdub.coach.state()?.hearing)); i++) await page.waitForTimeout(100);
+    // a style being heard is a preview: a tab closing on it gives it back before the autosave's flush, so the saved song
+    // never keeps a band nobody kept
+    await page.waitForTimeout(700);
+    const pv = await E(page, () => {
+      const o = window.overdub, names = () => o.store.get().tracks.map((x) => x.name), saved = () => { try { return JSON.parse(localStorage.getItem('overdub:project')).tracks.map((x) => x.name); } catch { return null; } };
+      const during = names();
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      return { during, live: names(), saved: saved(), hearing: !!o.coach.state()?.hearing, hist: o.store.history.length };
+    });
+    t.ok(pv.during.length > pv.live.length && pv.live.length === 1 && JSON.stringify(pv.saved) === JSON.stringify(pv.live) && !pv.hearing && pv.hist === 1,
+      `a style heard when the tab closes is given back before the save: ${JSON.stringify(pv.during)} heard, ${JSON.stringify(pv.saved)} saved, History ${pv.hist}`);
     await E(page, () => window.overdub.coach.preview(0));
     for (let i = 0; i < 40 && !(await E(page, () => !!window.overdub.coach.state()?.hearing)); i++) await page.waitForTimeout(100);
     await note('band rows');

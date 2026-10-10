@@ -181,6 +181,14 @@ export default function (app) {
     const p = R.pv; R.pv = null;
     if (p) { try { p.release(); } catch (e) { console.error('coach: preview release', e); } }
   }
+  // (a page going away gives the style being heard back first, before the autosave's flush: capture runs ahead of it,
+  // so a closed tab never keeps a band nobody kept; a build still on its way is dropped by the token)
+  window.addEventListener('pagehide', () => {
+    if (!R || (!R.pv && R.sel < 0)) return;
+    if (R.pv) { try { app.engine?.stop?.(); } catch { /* ok */ } }
+    stopPreview(); R.sel = -1; R.line = null;
+    try { paint(); } catch { /* ok */ }
+  }, true);
   // ↓/↑: a style heard on the loop (a preview: nothing in History); the agent's row asks it instead
   async function preview(i) {
     if (!R?.rows || R.busy) return null;

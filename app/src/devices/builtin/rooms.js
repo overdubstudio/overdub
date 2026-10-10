@@ -178,11 +178,14 @@ return {
 /* ------------------------------------------------------------------------------------- what it says about a room */
 // Every number here is the bank header's (ROOM_INFO, pinned beside ROOMS_HASH and held to the header by rooms-test)
 const one = (x) => +(+x).toFixed(1);
-// a stored ROOM is its index; an op may give the label ("LECTURE"), which the store turns into the index
+// a stored ROOM is its index, read the way the kernel host reads a switch (worklet.js fit: a number, else the
+// default; clamped; rounded), so the card and get_project name the room that plays. A label ("LECTURE") becomes the
+// index only at the agent's door (apply_ops, tools.js switchNumber); a song that stores one as text plays AULA, the
+// default, so it reads as AULA here too
 export function roomOf(params = {}) {
-  const v = params.room;
-  const i = typeof v === 'string' ? ROOM_LABELS.indexOf(v.trim().toUpperCase()) : Math.round(Number(v));
-  return ROOM_INFO[i >= 0 && i < ROOM_INFO.length ? i : 0];
+  const n = ROOM_INFO.length - 1, v = params.room == null ? 0 : +params.room;
+  const i = !Number.isFinite(v) ? 0 : Math.round(v < 0 ? 0 : v > n ? n : v);
+  return ROOM_INFO[i];
 }
 // The card's room line, then the credit: "Aula Carolina, Aachen: a former church, 3 m from the source. 3.2 s at 1 kHz."
 export function cardLine(params = {}) {

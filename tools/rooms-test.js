@@ -401,6 +401,30 @@ if (bank) {
   ok(ratio <= 1.5, `CPU: Echo Chamber (AULA, the heaviest room) ${med(cr)} ms for the device check's 4 s render against Stairwell's ${med(cv)} ms: ${ratio.toFixed(2)}x (at most 1.5x; median of 5)`);
 }
 
+/* ------------------------------------------------- the card names the room that plays, whatever ROOM holds */
+// The kernel reads ROOM as `P.room | 0`; a label becomes the index only through apply_ops. A song that stores the
+// label, a string index or a fraction must not show one room on the card and play another: render the fx:core.rooms
+// golden scene with each and hold the card line to the render (same line exactly when the same sound)
+if (!bank) T.note("the card against the render: skipped (no aachen bank)");
+else {
+  const { scenes } = await import('./golden-scenes.js');
+  const { renderSong } = await import('../app/src/engine/node/render.js');
+  const base = scenes().find((s) => s.name.startsWith('fx:core.rooms#'));
+  const sum = (room) => {
+    const project = JSON.parse(JSON.stringify(base.project));
+    project.tracks[0].inserts[0].params = room === undefined ? {} : { room };
+    const ch = renderSong(project, { ...base.opts, assets: base.assets }).channels;
+    let x = 0;
+    for (const c of ch) for (let i = 0; i < c.length; i++) x = (Math.imul(x, 31) + Math.round(c[i] * 1e7)) | 0;
+    return x;
+  };
+  const vals = [undefined, 0, 4, 'OFFICE', '4', 4.6, 99], got = vals.map((v) => ({ v, sum: sum(v), line: cardLine({ room: v })[0], desc: describeRoom({ room: v }) }));
+  const bad = [];
+  for (const a of got) for (const b of got) if ((a.sum === b.sum) !== (a.line === b.line && a.desc === b.desc)) bad.push(`${JSON.stringify(a.v)} vs ${JSON.stringify(b.v)}`);
+  ok(base && !bad.length && got[1].sum !== got[2].sum,
+    `the card and get_project name the room that plays for ROOM ${vals.map((v) => JSON.stringify(v) ?? 'unset').join(', ')}${bad.length ? `: they disagree for ${bad.slice(0, 3).join('; ')}` : ' (a stored label plays AULA and reads AULA)'}`);
+}
+
 /* ------------------------------------------------------------------ the studio: the card, its words and the face */
 console.log('the studio');
 if (process.env.ROOMS_BROWSER === '0') T.note('the studio: skipped (ROOMS_BROWSER=0)');
@@ -408,7 +432,7 @@ else {
   const hex = ROOMS_HASH.slice(7);
   // the card line in Node first: R26's sentence, every number from ROOM_INFO (the header's)
   const want = ROOM_INFO.map((r) => `${r.name}, ${r.place}: ${r.what}, ${+r.distance.toFixed(1)} m from the source. ${+r.t30[1].toFixed(1)} s at 1 kHz.`);
-  ok(ROOM_INFO.every((r, i) => cardLine({ room: i }).join('|') === want[i] + '|' + ROOMS_CREDIT) && cardLine({ room: 'STAIRS' })[0] === want[3]
+  ok(ROOM_INFO.every((r, i) => cardLine({ room: i }).join('|') === want[i] + '|' + ROOMS_CREDIT) && cardLine({ room: '3' })[0] === want[3]
     && cardLine({})[0] === 'Aula Carolina, Aachen: a former church, 3 m from the source. 3.2 s at 1 kHz.',
   `the card line follows ROOM, from the header ("${cardLine({})[0]}"), then the credit, unsigned`);
   ok(describeRoom({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22', `describe at defaults: "${describeRoom({})}"`);
@@ -454,12 +478,12 @@ else {
           return { lines: l ? [...l.children].map((x) => x.textContent) : [], face: !!f?.firstElementChild, wider: lr && fr ? Math.round(lr.width - cr.width) : null };
         });
         const r0 = await read();
-        await o.page.evaluate((id) => { const a = window.overdub, t = a.store.track(id), fx = t.inserts.find((x) => x.device === 'core.rooms'); a.store.dispatch({ type: 'insert.set', track: id, insert: fx.id, patch: { params: { room: 'LECTURE' } } }, { by: 'you' }); }, tid);
+        await o.page.evaluate((id) => { const a = window.overdub, t = a.store.track(id), fx = t.inserts.find((x) => x.device === 'core.rooms'); a.store.dispatch({ type: 'insert.set', track: id, insert: fx.id, patch: { params: { room: 2 } } }, { by: 'you' }); }, tid);
         const r2 = await o.page.waitForFunction((w) => { const l = document.querySelector('.rk-card[data-device="core.rooms"] .rk-line'); return l && l.firstElementChild?.textContent === w; }, want[2], { timeout: 5000 }).then(() => read(), () => read());
         await o.shot('rooms-card');
         ok(gone && r0.face && r0.lines[0] === want[0] && r0.lines[1] === ROOMS_CREDIT && r0.wider != null && r0.wider <= 0,
           `once the bank is in, the card draws its face, the room line and the credit, inside the card's width: "${r0.lines.join(' / ')}" (R26)`);
-        ok(r2.lines[0] === want[2], `the line follows ROOM: LECTURE gives "${r2.lines[0]}"`);
+        ok(r2.lines[0] === want[2], `the line follows ROOM: 2 (LECTURE) gives "${r2.lines[0]}"`);
       }
       const errs = o.errors.filter((e) => !/404|Failed to load resource/.test(e));
       ok(!errs.length, `${mode}: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);

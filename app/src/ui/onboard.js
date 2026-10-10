@@ -234,7 +234,7 @@ export default function (app) {
     const pt = last.parts?.[0];
     if (!pt) return null;
     const tr = store.track(pt.track);
-    const drums = pt.mode === 'layer' && (!!tr && isDrumTrack(tr));
+    const drums = (pt.mode === 'layer' || pt.mode === 'fold') && (!!tr && isDrumTrack(tr));
     // (a steady lean taken out: the card says so, with the number, so "in the song" is never said over a take that came
     // out wrong without a word; input/recorder.js leanWords)
     const lean = last.lean ? leanWords({ lean: last.lean.beats, ms: last.lean.ms, opening: last.lean.opening, kind: drums ? 'hit' : 'note' }) : '';
@@ -402,6 +402,9 @@ export default function (app) {
     }
     try { ui.select({ track: t.id, clip: null, notes: [] }); } catch { /* ok */ }
     disarmOthers(t);
+    // (the tour teaches layering, "add a little more every time": its track layers, where a drum track's default is
+    // Fold, which leaves out a hit played in only one round of several)
+    try { app.input?.recorder?.setMode?.(t.id, 'layer'); } catch { /* ok */ }
     ui.show?.('sketch');
     if (!ui.isOpen?.('bottom')) ui.setOpen?.('bottom', true);
     // (what the pads and Sketch's tab were before: Sketch on Tap it keeps the pads live, so it goes back too)

@@ -8,8 +8,11 @@
 //       smallest of 1, 2 or 4 bars at which one round and the next agree (the cells each sound was played in, over the
 //       cells both rounds reached) at 0.6 or more; a larger loop wins only when it agrees far better. No repeat: bars
 //       null, one round over the whole take (up to 8 bars).
-//   foldRounds(notes, loop, { bpb = 4 }) -> { notes (kept), strays, rounds, rows: { [p]: rounds that row was played in },
-//       beyond }
+//   foldRounds(notes, loop, { bpb = 4, reach }) -> { notes (kept), strays, rounds, rows: { [p]: rounds that row was
+//       played in }, beyond }
+//       reach (optional): [[from, to]] per round, the beats inside the round it really covered (a round over the click
+//       is whole; the recorder's first pass can start at a bar line inside the loop, its last stops where you stopped).
+//       Without it every round but the last is whole and the last reaches its last hit.
 //       Per row (one drum sound) and cell: of the rounds that played that row at all and reached that cell, a hit is
 //       kept when it is in the only one, in both of two, or in at least half of three or more. A kept hit's raw offset
 //       and velocity are the medians over the rounds that have it. Everything else is a stray: never added on top of a
@@ -95,7 +98,7 @@ export function loopOf(notes, { bpb = 4 } = {}) {
   return { bars: pick.bars, length: pick.L, rounds: Array.from({ length: pick.n }, (_, k) => [k * pick.L, (k + 1) * pick.L]), agree: pick.agree };
 }
 
-export function foldRounds(notes, loop, { bpb = 4 } = {}) {
+export function foldRounds(notes, loop, { bpb = 4, reach: span = null } = {}) {
   if (!loop || !loop.bars) {
     const L = (loop && loop.length) || 8 * bpb;
     const keep = notes.filter((n) => n.t < L - 1e-9).map((n) => ({ p: n.p, t: r4(n.t), d: n.d || CELL, v: n.v ?? 0.8, raw: n.raw ?? n.t }));
@@ -103,7 +106,10 @@ export function foldRounds(notes, loop, { bpb = 4 } = {}) {
   }
   const L = loop.length, n = loop.rounds.length, end = lastT(notes);
   const placed = placeIn(notes, L);
+  // (span: what each round really covered, [from, to) beats inside it; else every round but the last is whole and the
+  // last reaches as far as its last hit)
   const reach = (k) => (k < n - 1 ? Infinity : cellOf(end - k * L));
+  const within = span ? (k, c) => { const r = span[k]; return !!r && c * CELL >= r[0] - 1e-6 && c * CELL < r[1] - 1e-6; } : (k, c) => c <= reach(k);
   const played = new Map();               // p -> Set of rounds
   const at = new Map();                   // `${p}@${c}` -> Map(k -> note)
   for (const { n: x, k, c } of placed) {
@@ -117,7 +123,7 @@ export function foldRounds(notes, loop, { bpb = 4 } = {}) {
   const kept = [], strays = [];
   for (const [key, m] of at) {
     const [p, c] = key.split('@').map(Number);
-    const eligible = [...played.get(p)].filter((k) => c <= reach(k)).length;
+    const eligible = Math.max(1, [...played.get(p)].filter((k) => within(k, c)).length);
     const present = m.size;
     const need = eligible <= 1 ? 1 : eligible === 2 ? 2 : Math.ceil(eligible / 2);
     const hits = [...m.values()];

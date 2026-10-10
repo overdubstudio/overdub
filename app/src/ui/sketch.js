@@ -312,7 +312,7 @@ function mount(el, app) {
   // a part the simple view can put away (ui/workspace.js hides [data-feature~=id] while that feature is put away)
   function tagged(el, feature) { el.dataset.feature = feature; return el; }
   function seg(opts, cur, onpick, label) {
-    return h('div.sk-seg', { role: 'radiogroup', 'aria-label': label }, opts.map(([v, l]) => h('button' + (v === cur ? '.on' : ''), { role: 'radio', 'aria-checked': String(v === cur), onclick: () => onpick(v) }, l)));
+    return h('div.sk-seg', { role: 'radiogroup', 'aria-label': label }, opts.map(([v, l]) => h('button' + (v === cur ? '.on' : ''), { role: 'radio', dataset: { v }, 'aria-checked': String(v === cur), onclick: () => onpick(v) }, l)));
   }
   // Where a kept take goes: "A new track" first, then the tracks that fit it ("On Melody", "On Keys"), the same list and
   // the same default as Onto (where R would put this kind of take: recorder.aim). The new track's instrument is the
@@ -865,7 +865,7 @@ function mount(el, app) {
   let stripKey = '';
   function paintStrip(force = false) {
     const st = rec.state, k = kindNow(), t = stripTarget(), list = stripTracks(k);
-    const m = k === 'audio' ? 'take' : t ? rec.modeFor(t) : k === 'pads' ? 'layer' : 'take';
+    const m = k === 'audio' ? 'take' : t ? rec.modeFor(t) : k === 'pads' ? 'fold' : 'take';
     const L = st !== 'idle' ? recLive : null;
     const stk = k !== 'audio' && stacks(t, k);
     const key = [st, k, t ? t.id : '', list.map((x) => x.id + ':' + x.name).join(','), m, rec.countIn, !!eng.metronome, input.mode, L ? L.pass : -1, rec.tracks.join(), stk].join('|');
@@ -884,10 +884,14 @@ function mount(el, app) {
     tgtSel.value = t ? t.id : k === 'audio' ? '' : 'new';
     tgtSel.title = t ? `R records onto ${t.name}${stk ? ', a new take over the one there' : ''}` : 'R records onto a new track';
     tgtSel.disabled = st !== 'idle';
-    const sg = seg([['layer', 'Layer'], ['take', 'New take']], m, (v) => { const tt = stripTarget(); if (tt && kindNow() !== 'audio') rec.setMode(tt, v); paintStrip(true); }, 'Each pass');
-    sg.firstChild.title = 'Layer: each time the loop comes round, what you play is added to what’s there';
-    sg.lastChild.title = 'New take: each time round is a take of its own, stacked; keep the one you like';
-    if (k === 'audio') { sg.firstChild.disabled = true; sg.firstChild.title = 'An audio take always stacks as a new take'; }
+    // (Fold: the drums' default; each time round is a round, and what you play most often stays)
+    const fold = k === 'pads' || m === 'fold';
+    const sg = seg([...(fold ? [['fold', 'Fold']] : []), ['layer', 'Layer'], ['take', 'New take']], m, (v) => { const tt = stripTarget(); if (tt && kindNow() !== 'audio') rec.setMode(tt, v); paintStrip(true); }, 'Each pass');
+    const segB = (v) => sg.querySelector(`[data-v="${v}"]`);
+    if (fold) segB('fold').title = 'Fold: each time round, what you play most often stays; a one-off miss is left out (and kept in Takes)';
+    segB('layer').title = 'Layer: each time the loop comes round, what you play is added to what’s there';
+    segB('take').title = 'New take: each time round is a take of its own, stacked; keep the one you like';
+    if (k === 'audio') { segB('layer').disabled = true; segB('layer').title = 'An audio take always stacks as a new take'; }
     for (const b of sg.children) b.disabled = b.disabled || st !== 'idle';
     passWrap.replaceChildren(sg);
     const ci = rec.countIn;
@@ -2188,7 +2192,7 @@ const CSS = `
 .sk [hidden] { display: none !important; }
 /* the record strip: the footer's last row, one line (it wraps only in a narrow pane); a touch screen's Each pass,
    count-in and click are a row of their own under the mode's options */
-.sk-strip { display: flex; flex: 1 0 100%; align-items: center; gap: 8px 12px; min-width: 0; flex-wrap: wrap; }
+.sk-strip { display: flex; flex: 1 0 100%; align-items: center; gap: 8px 10px; min-width: 0; flex-wrap: wrap; }
 /* its controls keep their width (shrunk, a field ran into the next: "Drums ⌄Layer New ta■Count-in" while recording);
    the line saying what it records onto is the one that gives way */
 .sk-strip > *, .sk-strip .sk-recopts > * { flex: none; }
@@ -2218,7 +2222,7 @@ const CSS = `
 .sk-foot .sk-pad { height: 34px; flex-direction: row; align-items: center; gap: 8px; padding: 0 9px; }
 .sk-foot .sk-pad kbd { position: static; }
 .sk-foot .sk-pad small { display: none; }
-.sk-strip .sk-seg { height: 28px; }
+.sk-strip .sk-seg { height: 28px; gap: 6px; }
 .sk-strip .sk-seg button:disabled { opacity: .45; cursor: default; }
 .sk-target { max-width: 180px; min-width: 72px; flex: 0 1 auto; }
 /* Onto takes the room there is ("Melody, a new take" is long): it lines up from 100 px and grows to 200, so a long

@@ -428,13 +428,19 @@ try {
     T.ok(forced.coach && forced.view === 'simple', `?coach still starts the tour in the simple view (${JSON.stringify(forced)})`);
     await pg.evaluate(() => window.overdub.onboard.stop());
     await boot('/app/?view=simple');
-    // (Tap a beat opens Start a song's stage; its "Play to a click instead" is the first minute)
+    // (Tap a beat opens Start a song's stage; its "Play to a click instead" stays on the stage now, the click view: the
+    // first minute is the tour's)
     await pg.evaluate(() => [...document.querySelectorAll('.ar-empty-actions button')].find((b) => b.textContent.trim() === 'Tap a beat')?.click());
     await sleep(300);
     await pg.evaluate(() => [...document.querySelectorAll('.st-stage button')].find((b) => b.textContent.trim() === 'Play to a click instead')?.click());
     await sleep(900);
-    const door = await pg.evaluate(() => { const o = window.overdub; return { minute: !!o.onboard?.minute, tracks: o.store.get().tracks.map((t) => t.name) }; });
-    T.ok(door.minute && door.tracks.includes('Drums'), `Tap a beat on the blank sheet, then Play to a click instead, starts the first minute (${JSON.stringify(door)})`);
+    const door = await pg.evaluate(() => { const o = window.overdub; return { minute: !!o.onboard?.minute, step: o.start?.step, view: o.start?.view, tracks: o.store.get().tracks.map((t) => t.name), hist: o.store.history.length }; });
+    T.ok(!door.minute && door.step === 'play' && door.view === 'click' && door.hist === 0, `Tap a beat on the blank sheet, then Play to a click instead, stays on the stage over a click, not the first minute (${JSON.stringify(door)})`);
+    await pg.evaluate(() => { const o = window.overdub; o.start?.close?.(); o.engine.stop?.(); o.onboard?.stop?.(); });
+    await pg.evaluate(() => window.overdub.onboard.firstMinute('tap'));
+    await sleep(900);
+    const fm = await pg.evaluate(() => { const o = window.overdub; return { minute: !!o.onboard?.minute, tracks: o.store.get().tracks.map((t) => t.name) }; });
+    T.ok(fm.minute && fm.tracks.includes('Drums'), `the first minute is still there for the tour (${JSON.stringify(fm)})`);
     await pg.evaluate(() => { const o = window.overdub; o.engine.stop?.(); o.onboard?.stop?.(); });
     await ctx.close();
   }

@@ -61,6 +61,18 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
   const lay2 = planTake(s2.get(), { id: 'tk_test02', parts: [{ track: tr, kind: 'notes', mode: 'layer', drums: true, span: { start: 0, end: 8 }, passes: [{ n: 0, notes: [{ p: 36, t: 0, d: 0.25, v: 0.8 }] }, { n: 1, notes: [{ p: 38, t: 5, d: 0.25, v: 0.8 }] }] }] });
   t.ok(lay2.ops.length === 1 && lay2.ops[0].type === 'clip.add' && lay2.ops[0].clip.start === 0 && lay2.ops[0].clip.length === 8 && lay2.ops[0].clip.notes.length === 2, `Layer on an empty track: one clip over the loop, bars 1–2, with both passes (${JSON.stringify(lay2.ops[0].clip && { start: lay2.ops[0].clip.start, length: lay2.ops[0].clip.length, notes: lay2.ops[0].clip.notes.length })})`);
 
+  // Fold (the drum tracks' default): three passes round a 1-bar loop, a kick played once in pass 2 is left out, a snare
+  // missed in pass 3 stays (two of three), and the toast counts it; one pass folds to itself (Layer's commit)
+  const sF = createStore(createProject());
+  const kF = sF.dispatch({ type: 'track.add', ref: 'd', track: { name: 'Kit', instrument: { device: 'core.drums' } } }).created.d;
+  const BT = [[0, 36], [1, 38], [2, 36], [3, 38]];
+  const fp = (n, { extra = [], miss = null } = {}) => ({ n, complete: true, clip: { start: 0, end: 4, from: 0, to: 4 }, notes: [...BT.filter(([b, p]) => !(miss && miss[0] === b && miss[1] === p)), ...extra].map(([b, p]) => ({ p, t: b, d: 0.25, v: 0.8 })) });
+  const fold = planTake(sF.get(), { id: 'tk_test0f', bpb: 4, parts: [{ track: kF, kind: 'notes', mode: 'fold', drums: true, loop: { start: 0, end: 4 }, span: { start: 0, end: 4 }, passes: [fp(0), fp(1, { extra: [[2.5, 36]] }), fp(2, { miss: [3, 38] })] }] });
+  const fNotes = fold.ops[0]?.clip?.notes.map((n) => `${n.p}@${n.t}`).join(' ');
+  t.ok(fold.ops.length === 1 && fNotes === '36@0 38@1 36@2 38@3' && fold.parts[0].kept === 4 && fold.parts[0].left === 1 && fold.label === 'record Kit' && /^Your beat is in: bar 1 on Kit, 3 times round\. Kept 4; left out 1\.$/.test(fold.summary), `Fold: three passes, a kick in one only is left out, a snare missed in one stays (${fNotes}; "${fold.summary}")`);
+  const fold1 = planTake(sF.get(), { id: 'tk_test0g', bpb: 4, parts: [{ track: kF, kind: 'notes', mode: 'fold', drums: true, loop: { start: 0, end: 4 }, span: { start: 0, end: 4 }, passes: [fp(0, { extra: [[2.5, 36]] })] }] });
+  t.ok(fold1.ops[0]?.clip?.notes.length === 5 && /^Your beat is in: bar 1, 5 hits on Kit\.$/.test(fold1.summary), `one pass folds to itself: all 5 hits, as Layer puts them ("${fold1.summary}")`);
+
   // New take over the Changes clip (beats 0–32), from bar 5: split at 16, the covered half muted into the take group,
   // two passes: the first muted, the last playing
   const take = planTake(store.get(), { id: 'tk_test03', parts: [{ track: keys.id, kind: 'notes', mode: 'take', passes: [
@@ -591,6 +603,22 @@ try {
   const grp = keysTakes.filter((c) => c.take);
   t.ok(grp.length === 3 && grp.filter((c) => !c.mute).length === 1 && /^\["60@/.test(JSON.stringify(grp.find((c) => !c.mute).notes)) && grp.some((c) => c.mute && /^\["62@/.test(JSON.stringify(c.notes))) && grp.every((c) => c.start === 0 && c.length === 4), `keys, a pass and then one cut short by Space: the complete pass (C4) plays, the cut-short one (D4) and the covered bar are kept under it, muted (${grp.map((c) => `${c.name}${c.mute ? ' muted' : ''} ${JSON.stringify(c.notes)}`).join('; ')})`);
   await page.keyboard.press('Backquote');
+  await reset();
+
+  /* ---- Fold, a drum track's default: three passes, a kick played in one only is left out, and the toast counts it */
+  await page.evaluate(() => { const app = window.overdub; app.store.dispatch([{ type: 'project.set', patch: { loop: { on: true, start: 0, end: 4 } } }, { type: 'track.add', ref: 'd', track: { name: 'Kit', instrument: { device: 'core.drums' } } }], { by: 'you', label: 'setup' }); });
+  const kit2 = await page.evaluate(() => window.overdub.store.get().tracks.find((x) => x.name === 'Kit').id);
+  const fmode = await page.evaluate((d) => { const app = window.overdub; app.store.dispatch({ type: 'track.set', track: d, patch: { arm: true } }, { by: 'you' }); app.input.setMode('tap'); app.engine.seek(0); return app.input.recorder.modeFor(d); }, kit2);
+  await page.keyboard.press('KeyR');
+  for (const [b, k] of [[1, 'KeyF'], [2, 'KeyJ'], [5, 'KeyF'], [6, 'KeyJ'], [7, 'KeyF'], [9, 'KeyF'], [10, 'KeyJ']]) { await until(b, { grid: true }); await tapKey(k, 50); }
+  await until(11.5, { grid: true });
+  await page.keyboard.press('Space');
+  await idle();
+  const fk = await page.evaluate((d) => { const app = window.overdub, tr = app.store.track(d); return { clips: tr.clips.map((c) => c.notes.map((n) => n.p + '@' + n.t).join(' ')), last: app.input.recorder.last, show: !!document.querySelector('.ew-toast .rec-show'), hist: app.store.history.slice(-1)[0]?.label }; }, kit2);
+  const fToast = await lastToast();
+  const fkd = await page.evaluate(() => window.__kd.filter((x) => ['KeyF', 'KeyJ'].includes(x.code)).slice(-7).map((x) => x.beat?.toFixed(2)).join(' '));
+  t.ok(fmode === 'fold' && fk.clips.length === 1 && fk.clips[0] === '36@1 38@2' && fk.hist === 'record Kit', `Fold is a drum track's default: three passes, the kick on 4 played once is left out, the rest kept where it's in two of three or more (${fk.clips.join(' | ')}; played at ${fkd})`);
+  t.ok(/Kept 2; left out 1\..*Show them/.test(fToast) && fk.show, `the toast counts it, with Show them ("${fToast.slice(0, 140)}")`);
   await reset();
 
   /* ---- the punch: the loop is the punch range (notes before it are left out of the take, kept in capture) */

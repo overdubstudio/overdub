@@ -123,7 +123,7 @@ try {
   }
   t.ok(Object.values(modes).every((x) => x.inStage && x.rec === 'Record' && /^Count-in: 1 bar$/.test(x.count) && x.click === 'Click'), `every mode ends in the record strip: Record, Onto, Each pass, the count-in, the click (${Object.entries(modes).map(([k, v]) => `${k}: ${v.rec}, ${v.count}`).join('; ')})`);
   // (Onto: "A new track" first; a track whose take would stack over the one there reads "Keys, a new take")
-  t.ok(modes.tap.target === 'Drums' && modes.tap.each === 'Layer* New take' && /^Keys(, a new take)?$/.test(modes.play.target) && modes.play.each === 'Layer New take*', `the strip names the track and how each pass records: Tap onto ${modes.tap.target} (${modes.tap.each}), Play onto ${modes.play.target} (${modes.play.each})`);
+  t.ok(modes.tap.target === 'Drums' && modes.tap.each === 'Fold* Layer New take' && /^Keys(, a new take)?$/.test(modes.play.target) && modes.play.each === 'Layer New take*', `the strip names the track and how each pass records: Tap onto ${modes.tap.target} (${modes.tap.each}), Play onto ${modes.play.target} (${modes.play.each})`);
   t.ok(['hum', 'tap', 'play'].every((m) => modes[m].onto[0] === 'A new track'), `Onto offers "A new track" first in every way in (${['hum', 'tap', 'play'].map((m) => `${m}: ${modes[m].onto.join(', ')}`).join('; ')})`);
   t.ok(!modes.play.onto.includes('Drums') && !modes.tap.onto.includes('Keys'), `keys never list the drums, pads never list the keys (Play: ${modes.play.onto.join(', ')}; Tap: ${modes.tap.onto.join(', ')})`);
   t.ok(!modes.hum.chips.some((c) => /With song/.test(c)) && !modes.tap.buttons.includes('Done'), `With song and Tap's Done are gone (hum chips: ${modes.hum.chips.join(', ')}; tap foot: ${modes.tap.buttons.join(', ')})`);
@@ -961,13 +961,17 @@ async function blank({ fakeAudio = null } = {}) {
   await s.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
   await s.page.evaluate(async () => { await window.overdub.engine.start(); });
   const ev = (f, a) => s.page.evaluate(f, a);
-  // the blank song's door (ui/start.js): Tap a beat with a click is the stage's "Play to a click instead", and Hum it in
+  // the blank song's door (ui/start.js): Tap a beat with a click is the first minute (the stage's "Play to a click
+  // instead" is its own click view now), and Hum it in
   // your own time is Hum a tune's "No beat; I'll hum freely" (Sketch's Hum)
   const VIA = { 'Tap a beat': ['Tap a beat', 'Play to a click instead'], 'Hum it': ['Hum a tune', 'No beat; I’ll hum freely'] };
   const door = async (label) => {
     const [way, then] = VIA[label] || [label, null];
     await ev((l) => [...document.querySelectorAll('.ar-empty-actions button')].find((b) => b.textContent.trim() === l)?.click(), way);
     if (then) { await s.page.waitForTimeout(250); await ev((l) => [...document.querySelectorAll('.st-stage button')].find((b) => b.textContent.trim() === l)?.click(), then); }
+    // (the stage's click view stays on the stage now: Sketch's take with a click is the first minute, as the tour
+    // reaches it)
+    if (label === 'Tap a beat') await ev(() => { const o = window.overdub; if (o.start?.step) o.start.close({ to: 'studio' }); return o.onboard.firstMinute('tap'); });
   };
   const song = () => ev(() => { const a = window.overdub, p = a.store.get(); return { tempo: p.tempo, hist: a.store.history.length, labels: a.store.history.map((x) => x.label), tracks: p.tracks.map((t) => ({ name: t.name, device: t.instrument?.device, clips: t.clips.filter((c) => !c.mute).map((c) => ({ start: c.start, length: c.length, notes: c.notes.map((n) => ({ p: n.p, t: n.t, d: n.d })) })) })) }; });
   return { ...s, ev, door, song };

@@ -204,10 +204,10 @@ const humIt = async (P) => {
 };
 const tapABeat = async (P) => {
   await P.page.getByRole('button', { name: 'Tap a beat' }).click();
-  // (on a blank song Tap a beat opens Start a song's stage, ui/start.js: "Play to a click instead" is the first minute,
-  // R to record, as this path has always been)
+  // (on a blank song Tap a beat opens Start a song's stage, ui/start.js, whose click view stays on the stage: this path
+  // is the first minute, R to record, as the tour reaches it)
   await sleep(300);
-  if (await P.E(() => !!window.overdub.start?.step)) await P.page.getByRole('button', { name: 'Play to a click instead' }).click();
+  if (await P.E(() => !!window.overdub.start?.step)) await P.E(() => { window.overdub.start.close({ to: 'studio' }); return window.overdub.onboard.firstMinute('tap'); });
   await sleep(1500);
   await P.page.keyboard.press('r');
   await sleep(2300);

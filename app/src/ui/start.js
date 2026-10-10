@@ -14,8 +14,15 @@
 //               Drums track (store.preview: nothing in History). Your first hit starts the clock; after six hits over
 //               three seconds the BPM shows, after two bars' worth the bar lines fade in under your hits, and once a
 //               repeat is found the rounds are counted. Done (Space, Enter) lands it; Start again (Backspace) clears
-//               it (the hits stay in Takes); "Play to a click instead" is the first minute (app.onboard.firstMinute:
-//               a Drums track, a 2-bar loop with the click, R records).
+//               it (the hits stay in Takes); "Play to a click instead" swaps the window for the click view (below).
+//   'play' over a click (S.view 'click'): Tap your beat with the click. A 2-bar window (ui/beatwindow.js) with a ball
+//               on the engine's beat; each take starts from a stopped transport with a bar of count-in (4 3 2 1, "Come
+//               in on 1."), then loops with no count. Speed (Slow 80 / Easy 100 / Upbeat 120, ← →) and Tap it (T four
+//               times or more: timing.js findPulse) are previews of the tempo, and restart the take. Each time round
+//               is a round: at every wrap the rounds so far are folded (rounds.js foldRounds) and the fold at Tight
+//               plays under you on the previewed Drums track, so a one-off miss is never played back as a cue. Done
+//               lands the fold as a free take lands (planStart, one undo step by you, at the click's tempo). "Free time
+//               instead" swaps back. The click is lent for the view (on, and off again after) if it was off.
 //   'hum'       Hum over this beat: a simple beat loops at Easy 100 (Speed Slow 80 / Easy 100 / Upbeat 120, Beat
 //               Simple / Rock / Lo-fi, all previews). Hum (H) puts the beat in the song (one undo step) and records the
 //               hum over it from the next bar line (input/recorder.js, a bar to come in on); Space stops and keeps it
@@ -29,7 +36,9 @@
 // "Skip to the studio" is always at the top right. While the stage is open the agent's song-changing tools wait
 // (app.start.busy, read by agent/tools.js's recording check) and the studio's keys stay under it.
 //
-// app.start = { open({ kind = 'tap' | 'hum' }), close(), step, kind, busy, tap(row, perfMs), done(), again(),
+// app.start = { open({ kind = 'tap' | 'hum', view = 'free' | 'click' }), close(), step, kind, view, busy, tap(row, perfMs), done(), again(),
+//   setView('free' | 'click'), setSpeed(bpm), tapTempo(perfMs), click() (the click view's take: { bpm, hits, rounds, kept, left,
+//   playAt, openAt } or null), window() (the beat window's last frame: ui/beatwindow.js state()),
 //   setLevel(level), readings(), useReading(i), landed(), take(), tempoShown() (the BPM shown while you play, or null:
 //   the top bar's "~"), on('step' | 'land' | 'close', fn) }
 // While the pulse is weak (the reading's fit under 0.5) the status line asks for one more time round; Done is never
@@ -37,8 +46,9 @@
 
 import { h, css, canvas, tok, byline } from './dom.js';
 import { ROWS } from '../input/tap.js';
-import { takeOf, atLevel, moved } from '../input/rounds.js';
-import { LEVELS } from '../input/timing.js';
+import { takeOf, atLevel, moved, foldRounds } from '../input/rounds.js';
+import { LEVELS, findPulse, snapGentle } from '../input/timing.js';
+import { mountBeatWindow, OPEN } from './beatwindow.js';
 import { planStart } from '../core/start.js';
 import { putGroove } from '../agent/grooves-tool.js';
 
@@ -91,7 +101,7 @@ export default function (app) {
   const emit = (t, d) => { for (const fn of fns.get(t) || []) { try { fn(d); } catch (e) { console.error('start listener', e); } } };
 
   // the session's state (never the song's): what is open, what has been played, what landed
-  const S = { step: null, kind: null, hits: [], read: null, pads: null, guide: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map() };
+  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false };
   let stage = null, body = null, statusEl = null, opener = null;
   const mainEl = () => document.querySelector('.ew-main');
   const under = () => { const m = mainEl(); return m ? [...m.children].filter((c) => c !== stage) : []; };
@@ -99,10 +109,11 @@ export default function (app) {
 
   /* ---------------------------------------------------------------- previews: heard, never in History */
   function release() {
-    for (const k of ['pads', 'guide']) { const p = S[k]; S[k] = null; if (p) { try { p.release(); } catch (e) { console.error('start: preview release', e); } } }
+    // (last made, first given back: the fold's clip sits on the pads' track)
+    for (const k of ['ckFold', 'ckTempo', 'pads', 'guide']) { const p = S[k]; S[k] = null; if (p) { try { p.release(); } catch (e) { console.error('start: preview release', e); } } }
   }
   // (a page going away gives the previews back first, before the autosave's flush: capture runs ahead of it)
-  window.addEventListener('pagehide', () => { if (S.pads || S.guide) { try { engine.stop?.(); } catch { /* ok */ } release(); } }, true);
+  window.addEventListener('pagehide', () => { if (S.pads || S.guide || S.ckTempo) { try { engine.stop?.(); } catch { /* ok */ } release(); } }, true);
   function padsTrack() {
     if (S.pads && store.track(S.pads.created?.pads)) return S.pads.created.pads;
     const r = store.preview({ type: 'track.add', ref: 'pads', track: { name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} } } }, { by: 'you' });
@@ -165,25 +176,28 @@ export default function (app) {
     emit('step', step);
   }
 
-  function open({ kind = 'tap' } = {}) {
+  function open({ kind = 'tap', view = 'free' } = {}) {
     if (S.step) close({ quiet: true });
     if (store.get().tracks.some((t) => t.clips.length)) { ui.toast('Start a song is for a blank song: Song ▸ New song gives you one.'); return false; }
     try { app.input?.qwerty?.on && app.input.qwerty.toggle(false); } catch { /* ok */ }
     try { if (engine.playing) engine.stop(); } catch { /* ok */ }
-    Object.assign(S, { kind, hits: [], read: null, landed: null, level: 'tight', reading: 0, before: null, gridAt: 0 });
+    Object.assign(S, { kind, view: 'free', ck: null, hits: [], read: null, landed: null, level: 'tight', reading: 0, before: null, gridAt: 0 });
     mount();
     if (kind === 'hum') { setStep('hum'); guideOn(); }
-    else { setStep('play'); padsTrack(); }
+    else { setStep('play'); padsTrack(); if (view === 'click') setView('click'); }
     requestAnimationFrame(() => { const b = stage?.querySelector('.st-first') || stage; try { b?.focus({ preventScroll: true }); } catch { /* ok */ } });
     return true;
   }
   function close({ to = 'studio', quiet = false } = {}) {
     if (!S.step) return;
     // (a take played and not kept stays in Takes)
-    if (S.step === 'play' && S.hits.length) keepInTakes();
+    if (S.step === 'play' && played()) keepInTakes();
     const playing = S.step === 'in' || S.step === 'readings';
     if (!playing || to !== 'song') { try { if (engine.playing && (S.guide || S.step === 'play')) engine.stop(); } catch { /* ok */ } }
     release();
+    giveClick();
+    clearTimeout(S.ck?.tapTimer);
+    S.view = 'free'; S.ck = null;
     const was = S.step;
     S.step = null; S.kind = null; S.asking = false;
     unmount();
@@ -191,6 +205,13 @@ export default function (app) {
   }
   function keepInTakes() {
     const cap = app.input?.capture;
+    if (S.view === 'click') {
+      // (over the click: the hits on the click's beats, as played, at its tempo)
+      const ck = S.ck;
+      if (!cap || !ck || !ck.hits.length) return;
+      try { cap.add({ src: 'tap', kind: 'drums', notes: ck.hits.map((x) => ({ p: x.p, t: Math.max(0, snap(x.g)), d: 0.25, v: x.v })), tempo: ck.bpm, beat: 0, track: null }); } catch (e) { console.error('start: capture', e); }
+      return;
+    }
     const r = S.read || takeOf(S.hits.map(hitOf), { bpb: bpbOf() });
     if (!cap || !r) return;
     try { cap.add({ src: 'tap', kind: 'drums', notes: r.notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: r.bpm, beat: null, track: null, free: { bpm: r.bpm, fit: r.fit.fit, drift: r.fit.drift } }); } catch (e) { console.error('start: capture', e); }
@@ -204,6 +225,7 @@ export default function (app) {
     if (!r) return false;
     const tid = padsTrack();
     if (tid) { try { engine.liveNoteOn(tid, r.p, v); setTimeout(() => { try { engine.liveNoteOff(tid, r.p); } catch { /* ok */ } }, 160); } catch { /* silent engine */ } }
+    if (S.view === 'click') return clickHit(r, row, perfMs, v);
     S.hits.push({ t: perfMs / 1000, p: r.p, v, row });
     S.flash.set(row, performance.now());
     if (S.asking) { S.asking = false; }
@@ -213,6 +235,7 @@ export default function (app) {
   }
   function again() {
     if (S.step !== 'play') return;
+    if (S.view === 'click') { const had = S.ck?.hits.length; if (had) keepInTakes(); startTake(); if (had) say('Cleared. That take is in Takes if you want it back.'); return; }
     if (S.hits.length) keepInTakes();
     S.hits = []; S.read = null; S.gridAt = 0;
     say('Cleared. That take is in Takes if you want it back.');
@@ -221,7 +244,7 @@ export default function (app) {
   const span = () => (S.hits.length ? S.hits[S.hits.length - 1].t - S.hits[0].t : 0);
   const showBpm = () => !!S.read && S.hits.length >= 6 && span() >= 3;
   function done() {
-    if (S.step === 'play') return land();
+    if (S.step === 'play') return S.view === 'click' ? landClick() : land();
     if (S.step === 'in') return next();
     if (S.step === 'readings') return useReading(S.reading, { back: true });
     return false;
@@ -245,6 +268,197 @@ export default function (app) {
     setStep('in');
     emit('land', { ...S.landed });
     return true;
+  }
+  /* ---------------------------------------------------------------- over a click (S.view 'click') */
+  const played = () => (S.view === 'click' ? (S.ck?.hits.length || 0) : S.hits.length);
+  const snap = (b) => snapGentle(b, { coarse: 0.5, fine: 0.25 });
+  const loopLen = () => 2 * bpbOf();
+  const r4 = (x) => Math.round(x * 10000) / 10000;
+  // the click is the studio's, not the song's: lent for the view when it was off, and given back after
+  function lendClick() {
+    if (S.clickLent) return;
+    let on = false;
+    try { on = !!engine.metronome; } catch { /* no engine */ }
+    if (on) return;
+    S.clickLent = true;
+    try { app.transport.click.set({ on: true }); } catch { try { engine.metronome = true; } catch { /* ok */ } }
+  }
+  function giveClick() {
+    if (!S.clickLent) return;
+    S.clickLent = false;
+    try { app.transport.click.set({ on: false }); } catch { try { engine.metronome = false; } catch { /* ok */ } }
+  }
+  function dropPreview(k) { const p = S[k]; S[k] = null; if (p) { try { p.release(); } catch (e) { console.error('start: preview release', e); } } }
+  function setView(view) {
+    if (S.step !== 'play' || (view !== 'click' && view !== 'free') || view === S.view) return false;
+    if (played()) keepInTakes();
+    try { if (engine.playing) engine.stop(); } catch { /* ok */ }
+    dropPreview('ckFold'); dropPreview('ckTempo');
+    S.hits = []; S.read = null; S.gridAt = 0; S.asking = false;
+    if (view === 'click') {
+      S.view = 'click';
+      S.ck = { bpm: S.speed || 100, hits: [], taps: [], tapTimer: 0, tapLine: '', folded: 0, fold: null, playAt: 0, openAt: 0 };
+      lendClick();
+      draw();
+      startTake();
+    } else {
+      clearTimeout(S.ck?.tapTimer);
+      S.view = 'free'; S.ck = null;
+      giveClick();
+      draw();
+    }
+    emit('view', S.view);
+    return true;
+  }
+  // A take over the click: from a stopped transport, a bar of count-in, then round the loop with no count
+  function startTake() {
+    const ck = S.ck;
+    if (!ck) return;
+    try { if (engine.playing) engine.stop(); } catch { /* ok */ }
+    dropPreview('ckFold'); dropPreview('ckTempo');
+    Object.assign(ck, { hits: [], folded: 0, fold: null, openAt: 0 });
+    bw?.clear();
+    padsTrack();
+    // the tempo and the 2-bar loop: heard, never in History until Done
+    const r = store.preview({ type: 'project.set', patch: { tempo: ck.bpm, loop: { on: true, start: 0, end: loopLen() } } }, { by: 'you' });
+    if (r.ok) S.ckTempo = r;
+    ck.playAt = performance.now();
+    try { const p = engine.play(0, { countIn: { beats: bpbOf(), preroll: true } }); p?.catch?.(() => {}); } catch { /* silent engine */ }
+    syncClick();
+  }
+  // the take's grid at an event's time (beats from bar 1; below 0 in the count-in): the engine's, moved on at the tempo
+  function gridAt(perfMs) {
+    let g = null;
+    try { g = engine.playing ? engine.gridBeat : null; } catch { g = null; }
+    if (!Number.isFinite(g)) return null;
+    return g + ((perfMs - performance.now()) / 60000) * S.ck.bpm;
+  }
+  function clickHit(r, row, perfMs, v) {
+    const ck = S.ck;
+    S.flash.set(row, performance.now());
+    if (S.asking) S.asking = false;
+    const g = gridAt(perfMs);
+    // (in the count-in, or stopped: heard, not kept)
+    if (g == null || g < OPEN) { syncClick(); return true; }
+    ck.hits.push({ g: r4(g), p: r.p, v, row });
+    bw?.hit(row, g);
+    syncClick();
+    return true;
+  }
+  // The rounds so far, folded (rounds.js foldRounds): the whole rounds up to `upto` beats and, with Done mid-round, the
+  // one you're in as far as it got. Hits on the click's grid (the pads' gentle snap), as played in raw.
+  function foldOf(ck, upto) {
+    const L = loopLen(), whole = Math.floor(upto / L + 1e-9), part = upto - whole * L;
+    const all = ck.hits.map((x) => ({ p: x.p, t: Math.max(0, snap(x.g)), raw: x.g, v: x.v }));
+    // (a round only begun counts when something was played in it)
+    const n = whole + (part >= 0.25 && all.some((x) => x.t >= whole * L - 1e-6 && x.t < upto) ? 1 : 0);
+    if (!n) return null;
+    const notes = all.filter((x) => x.t < n * L - 1e-6);
+    if (!notes.length) return null;
+    const reach = Array.from({ length: n }, (_, k) => [0, k < whole ? L : part]);
+    const loop = { bars: 2, length: L, rounds: Array.from({ length: n }, (_, k) => [k * L, (k + 1) * L]), agree: 1 };
+    return { ...foldRounds(notes, loop, { bpb: bpbOf(), reach }), loop };
+  }
+  // each wrap: the fold so far, at Tight, is what plays under you on the next round (a one-off miss never comes back
+  // as a cue)
+  function refold() {
+    const ck = S.ck;
+    ck.fold = foldOf(ck, ck.folded * loopLen());
+    dropPreview('ckFold');
+    const tid = padsTrack(), L = loopLen();
+    const notes = ck.fold ? atLevel(ck.fold.notes, 'tight', { length: L }) : [];
+    if (tid && notes.length) {
+      const r = store.preview({ type: 'clip.add', track: tid, clip: { kind: 'notes', start: 0, length: L, name: 'Beat', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })) } }, { by: 'you' });
+      if (r.ok) S.ckFold = r;
+    }
+    bw?.setFold(notes);
+    syncClick();
+  }
+  function clickFrame(now) {
+    const ck = S.ck;
+    if (!ck) return;
+    let g = null;
+    try { g = engine.playing ? engine.gridBeat : null; } catch { g = null; }
+    if (Number.isFinite(g)) {
+      if (g >= OPEN && !ck.openAt) ck.openAt = performance.now();
+      const done = g >= 0 ? Math.floor(g / loopLen()) : 0;
+      if (done > ck.folded) { ck.folded = done; refold(); }
+    }
+    bw?.frame(now);
+    flashPads(now);
+  }
+  function setSpeed(bpm) {
+    bpm = Math.round(+bpm);
+    if (S.step !== 'play' || S.view !== 'click' || !(bpm >= 40 && bpm <= 240)) return false;
+    if (S.ck.hits.length) keepInTakes();
+    clearTimeout(S.ck.tapTimer);
+    S.ck.bpm = bpm; S.ck.tapLine = '';
+    if (SPEEDS.some(([, v]) => v === bpm)) S.speed = bpm;
+    draw();
+    startTake();
+    return true;
+  }
+  // Tap it: four T presses or more, read with timing.js findPulse; the click moves to it once the taps stop
+  function tapTempo(perfMs = performance.now()) {
+    if (S.step !== 'play' || S.view !== 'click') return null;
+    const ck = S.ck, t = perfMs / 1000;
+    if (ck.taps.length && (t - ck.taps[ck.taps.length - 1] > 2 || t < ck.taps[ck.taps.length - 1])) ck.taps = [];
+    ck.taps.push(t);
+    if (ck.taps.length > 12) ck.taps.shift();
+    if (ck.taps.length < 4) return null;
+    const p = findPulse(ck.taps, { halves: false });
+    if (!p || !(p.tatum > 0)) return null;
+    // (the rate you tapped: findPulse's beat can be two of your taps; Tap it means each tap is a beat)
+    const bpm = Math.max(50, Math.min(200, Math.round(60 / p.tatum)));
+    ck.tapLine = `About ${bpm} BPM. Tap again to change it.`;
+    say(ck.tapLine);
+    clearTimeout(ck.tapTimer);
+    ck.tapTimer = setTimeout(() => { if (S.ck === ck && S.view === 'click') { const line = ck.tapLine; setSpeed(bpm); ck.tapLine = line; syncClick(); } }, 700);
+    return bpm;
+  }
+  // Done over the click: the fold lands as a free take does (planStart, one undo step by you), at the click's tempo
+  function landClick() {
+    const ck = S.ck;
+    if (!ck || ck.hits.length < 4) { say(ck?.hits.length ? 'A few more hits, and the studio can find the beat.' : 'Come in on 1.'); return false; }
+    const L = loopLen(), bpm = ck.bpm;
+    let g = null;
+    try { g = engine.playing ? engine.gridBeat : null; } catch { g = null; }
+    const last = Math.max(...ck.hits.map((x) => x.g));
+    const f = foldOf(ck, Number.isFinite(g) ? Math.max(g, ck.folded * L, Math.min(last + 0.25, (ck.folded + 1) * L)) : last + 0.25);
+    if (!f || !f.notes.length) { say('A few more hits, and the studio can find the beat.'); return false; }
+    clearTimeout(ck.tapTimer);
+    try { engine.stop(); } catch { /* ok */ }
+    release();
+    giveClick();
+    const notes = atLevel(f.notes, 'tight', { length: L });
+    const plan = planStart(store.get(), { notes, bpm, length: L, kind: 'drums' });
+    const res = store.dispatch(plan.ops, { by: 'you', label: plan.label });
+    if (!res.ok) { say(`That didn't go in: ${res.error}`); lendClick(); startTake(); return false; }
+    const track = store.get().tracks.find((t) => t.clips.some((c) => c.id === res.created.c));
+    S.landed = { txn: res.txn.id, track: track?.id || null, clip: res.created.c };
+    const rd = { bpm, shift: 0, notes: f.notes, length: L, why: 'first' };
+    S.take = { bpm, fit: { fit: 1, drift: 0 }, loop: f.loop, fold: f, downbeat: { shift: 0, sure: true, margin: 1, why: 'click' }, notes: f.notes, strays: f.strays, length: L, readings: [rd], click: true };
+    S.level = 'tight'; S.reading = 0;
+    try { app.input?.capture?.add({ src: 'tap', kind: 'drums', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: bpm, beat: 0, track: S.landed.track, clip: S.landed.clip, raw: ck.hits.map((x) => ({ t: r4((x.g * 60) / bpm), p: x.p, v: x.v })), rounds: f.rounds, kept: [{ track: S.landed.track, clip: S.landed.clip, at: Date.now() }] }); } catch (e) { console.error('start: capture', e); }
+    try { ui.select({ track: S.landed.track, clip: S.landed.clip, notes: [] }); } catch { /* ok */ }
+    try { engine.play(0); } catch { /* silent engine */ }
+    setStep('in');
+    emit('land', { ...S.landed });
+    return true;
+  }
+  // "Or play it again over a click." from the readings: the landing comes back out (it's the last step, yours), and
+  // the stage is the click view
+  function againOverClick() {
+    const top = store.history[store.history.length - 1];
+    if (!S.landed || !top || top.id !== S.landed.txn) { close({ to: 'studio' }); open({ kind: 'tap', view: 'click' }); return; }
+    const was = S.landed; S.landed = null;
+    try { if (engine.playing) engine.stop(); } catch { /* ok */ }
+    const u = store.undo();
+    if (u && u.ok === false) { S.landed = was; return; }
+    Object.assign(S, { take: null, hits: [], read: null, level: 'tight', reading: 0, before: null, gridAt: 0, view: 'free' });
+    setStep('play');
+    padsTrack();
+    setView('click');
   }
   // the take's notes as the song has them now, for a level and a reading
   function planned(reading = S.reading, level = S.level) {
@@ -314,7 +528,7 @@ export default function (app) {
     app.input?.emit?.('sketch:mode', 'hum');
   }
   function leave() {
-    if (S.step === 'play' && S.hits.length && !S.asking) {
+    if (S.step === 'play' && played() && !S.asking) {
       S.asking = true;
       statusEl.replaceChildren('Leave without keeping this take? It stays in Takes. ',
         h('button.btn.btn-txt', { type: 'button', onclick: () => close({ to: 'studio' }) }, 'Leave'), ' ',
@@ -326,29 +540,47 @@ export default function (app) {
   }
 
   /* ---------------------------------------------------------------- drawing */
-  let win = null, grid = null;
+  let win = null, grid = null, bw = null;
+  // the four pads: each fires on pointerdown, never on click; from the keyboard F J K L play it wherever the focus is,
+  // and Enter on a focused pad plays it too (Space stays Done)
+  const padsEl = () => h('div.st-pads', PAD_ROWS.map((id) => {
+    const r = ROWS.find((x) => x.id === id);
+    return h('button.st-pad', { type: 'button', dataset: { row: id }, 'aria-label': `${r.short || r.label} (${r.hint})`,
+      onpointerdown: (e) => { e.preventDefault(); tap(id, e.timeStamp || performance.now()); },
+      onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tap(id, e.timeStamp || performance.now()); } else if (e.key === ' ') { e.preventDefault(); e.stopPropagation(); done(); } } },
+    h('span.st-pad-l', r.short || r.label), h('kbd', r.hint));
+  }));
   function draw() {
     if (!body) return;
-    win = null; grid = null;
+    win = null; grid = null; bw = null;
     const alt = stage.querySelector('.st-alt');
     alt.replaceChildren();
-    if (S.step === 'play') {
-      alt.append(h('button.btn.btn-txt', { type: 'button', onclick: () => { close({ to: 'studio' }); app.onboard?.firstMinute?.('tap'); } }, 'Play to a click instead'));
+    if (S.step === 'play' && S.view === 'click') {
+      alt.append(h('button.btn.btn-txt.st-view', { type: 'button', onclick: () => setView('free') }, 'Free time instead'));
+      const ck = S.ck;
+      const bwEl = h('div.st-bw');
+      body.replaceChildren(
+        h('div.st-head', h('div', h('h2.st-title.disp', 'Tap your beat with the click.')),
+          h('div.st-read', { 'aria-hidden': 'true' }, h('span.num.st-bpm', ''), h('span.st-unit', ''), h('span.st-rounds', ''))),
+        h('div.st-speed', h('div.st-choice', { role: 'radiogroup', 'aria-label': 'Speed' }, h('span.st-choice-l.t3', 'Speed'),
+          SPEEDS.map(([word, val]) => h('button.st-word', { type: 'button', role: 'radio', 'aria-checked': String(val === ck.bpm), onclick: () => setSpeed(val) }, `${word} ${val}`))),
+        h('button.st-word.st-tapit', { type: 'button', title: 'Tap T in time, four times or more', onpointerdown: (e) => { e.preventDefault(); tapTempo(e.timeStamp || performance.now()); } }, 'Tap it (T, four times)')),
+        bwEl,
+        padsEl(),
+        h('footer.st-foot', statusEl,
+          h('button.btn.btn-txt.st-again', { type: 'button', onclick: () => again() }, 'Start again'),
+          h('button.btn.st-done.st-first', { type: 'button', onclick: () => done() }, 'Done ', h('kbd', 'Space'))));
+      bw = mountBeatWindow(bwEl, { rows: ROW_ORDER.map((id) => { const r = ROWS.find((x) => x.id === id); return { id, label: r.short || r.label, p: r.p }; }), meter: store.get().meter || [4, 4], bars: 2, ball: true, countIn: true,
+        clock: () => { try { return { beat: engine.beat, grid: engine.playing ? engine.gridBeat : null, playing: engine.playing }; } catch { return { playing: false }; } } });
+      syncClick();
+    } else if (S.step === 'play') {
+      alt.append(h('button.btn.btn-txt.st-view', { type: 'button', onclick: () => setView('click') }, 'Play to a click instead'));
       win = canvas('st-win');
-      const pads = h('div.st-pads', PAD_ROWS.map((id, i) => {
-        const r = ROWS.find((x) => x.id === id);
-        // (a pad fires on pointerdown, never on click; from the keyboard F J K L play it wherever the focus is, and
-        // Enter on a focused pad plays it too: Space stays Done)
-        return h('button.st-pad', { type: 'button', dataset: { row: id }, 'aria-label': `${r.short || r.label} (${r.hint})`,
-          onpointerdown: (e) => { e.preventDefault(); tap(id, e.timeStamp || performance.now()); },
-          onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tap(id, e.timeStamp || performance.now()); } else if (e.key === ' ') { e.preventDefault(); e.stopPropagation(); done(); } } },
-        h('span.st-pad-l', r.short || r.label), h('kbd', r.hint));
-      }));
       body.replaceChildren(
         h('div.st-head', h('div', h('h2.st-title.disp', 'Tap your beat.'), h('p.st-sub', 'Any speed. Keep going round; the studio finds the tempo and the bar from you.')),
           h('div.st-read', { 'aria-hidden': 'true' }, h('span.num.st-bpm', ''), h('span.st-unit', ''), h('span.st-rounds', ''))),
         h('div.st-winwrap', win.cv, h('p.st-empty.t3', 'Your first hit starts the clock.')),
-        pads,
+        padsEl(),
         h('footer.st-foot', statusEl,
           h('button.btn.btn-txt.st-again', { type: 'button', onclick: () => again() }, 'Start again'),
           h('button.btn.st-done.st-first', { type: 'button', onclick: () => done() }, 'Done ', h('kbd', 'Space'))));
@@ -410,14 +642,14 @@ export default function (app) {
         h('div.st-head', h('div', h('h2.st-title.disp', 'Which one nods along with you?'), h('p.st-sub', 'Each plays your beat. Pick the one that feels right; it plays as soon as you pick it.'))),
         list,
         h('footer.st-foot', statusEl,
-          h('button.btn.btn-txt', { type: 'button', onclick: () => { close({ to: 'studio' }); app.onboard?.firstMinute?.('tap'); } }, 'Or play it again over a click.'),
+          r.click ? null : h('button.btn.btn-txt', { type: 'button', onclick: () => againOverClick() }, 'Or play it again over a click.'),
           h('button.btn.btn-txt', { type: 'button', onclick: () => leave() }, 'Back'),
           h('button.btn.btn-go.st-use', { type: 'button', onclick: () => useReading(S.reading, { back: true }) }, 'Use this one')));
       requestAnimationFrame(() => body?.querySelector('.st-reading.sel')?.focus());
     }
   }
   function syncPlay() {
-    if (S.step !== 'play' || !body) return;
+    if (S.step !== 'play' || !body || S.view === 'click') return;
     const n = S.hits.length, r = S.read;
     const bpm = body.querySelector('.st-bpm'), unit = body.querySelector('.st-unit'), rounds = body.querySelector('.st-rounds');
     const shown = showBpm();
@@ -435,10 +667,32 @@ export default function (app) {
     const nudge = shown && r.fit && r.fit.fit < 0.5 ? ' One more time round helps the studio hear it.' : '';
     if (!S.asking) say(!n ? '' : shown ? `${plural(n, 'hit')}. ${Math.round(r.bpm)} BPM${loopOk ? `, ${plural(r.loop.bars, 'bar')} round, ${plural(r.fold.rounds, 'time')} round` : ''}.${nudge}` : `${plural(n, 'hit')}.`);
   }
+  function syncClick() {
+    if (S.step !== 'play' || S.view !== 'click' || !body || !S.ck) return;
+    const ck = S.ck, n = ck.hits.length, k = ck.fold ? ck.fold.notes.length : 0;
+    const bpm = body.querySelector('.st-bpm'), unit = body.querySelector('.st-unit'), rounds = body.querySelector('.st-rounds');
+    if (bpm) { bpm.textContent = String(Math.round(ck.bpm)); unit.textContent = 'BPM'; rounds.textContent = ck.folded ? `round ${ck.folded + 1} · kept so far: ${plural(k, 'hit')}` : ''; }
+    for (const b of body.querySelectorAll('.st-speed [role="radio"]')) b.setAttribute('aria-checked', String(b.textContent.endsWith(` ${Math.round(ck.bpm)}`)));
+    const doneB = body.querySelector('.st-done');
+    const ready = n >= 4;
+    doneB.classList.toggle('btn-go', ready);
+    doneB.firstChild.textContent = ready ? 'Done ' : 'A few more ';
+    doneB.setAttribute('aria-disabled', String(!ready));
+    if (!S.asking) say(ck.folded ? `Round ${ck.folded + 1}. Kept so far: ${plural(k, 'hit')}. What you play most often stays; one-off misses don’t.` : ck.tapLine || '');
+  }
+  // a pad that just sounded lights for a moment (reverse print), so a tap is seen as well as heard
+  function flashPads(now) {
+    for (const [row, at] of S.flash) {
+      const el = body?.querySelector(`.st-pad[data-row="${row}"]`);
+      const lit = now - at < 110;
+      if (el && el.classList.contains('on') !== lit) el.classList.toggle('on', lit);
+      if (!lit) S.flash.delete(row);
+    }
+  }
   // the hits, scrolling left as you play, and (once the beat is found) the bar lines fading in under them
   const ROW_ORDER = ['hat', 'open', 'snare', 'kick'];
   function drawWin(now) {
-    if (!win || S.step !== 'play') return;
+    if (!win || S.step !== 'play' || S.view === 'click') return;
     win.fit();
     const g = win.g, W = win.w, H = win.h;
     g.clearRect(0, 0, W, H);
@@ -476,13 +730,7 @@ export default function (app) {
       g.fillStyle = text;
       g.fillRect(Math.round(xx) - 1, rowH * i + rowH * 0.2, 3, rowH * 0.6);
     }
-    // a pad that just sounded lights for a moment (reverse print), so a tap is seen as well as heard
-    for (const [row, at] of S.flash) {
-      const el = body?.querySelector(`.st-pad[data-row="${row}"]`);
-      const lit = now - at < 110;
-      if (el && el.classList.contains('on') !== lit) el.classList.toggle('on', lit);
-      if (!lit) S.flash.delete(row);
-    }
+    flashPads(now);
   }
   function drawGrid(now = performance.now()) {
     if (!grid || !S.take) return;
@@ -511,7 +759,7 @@ export default function (app) {
   }
 
   /* ---------------------------------------------------------------- the loop and the keys */
-  ui.panel({ id: 'start', region: 'top', title: 'Start a song', mount: (el) => { el.hidden = true; el.style.display = 'none'; return { frame(now) { if (!S.step) return; if (S.step === 'play') drawWin(now); else if (S.step === 'in' && grid) drawGrid(now); } }; } });
+  ui.panel({ id: 'start', region: 'top', title: 'Start a song', mount: (el) => { el.hidden = true; el.style.display = 'none'; return { frame(now) { if (!S.step) return; if (S.step === 'play') { if (S.view === 'click') clickFrame(now); else drawWin(now); } else if (S.step === 'in' && grid) drawGrid(now); } }; } });
   const isOpen = () => !!S.step;
   const on = (step) => () => S.step === step;
   // (first: ahead of the keys a mode declares, Tap's F J K L among them; Space needn't be, as no other Space with a
@@ -527,6 +775,12 @@ export default function (app) {
   K('Space', () => S.step === 'play' || S.step === 'in' || S.step === 'readings', () => done(), 'Done (Start a song)', { hidden: true });
   K('Enter', () => S.step === 'play' && !document.activeElement?.closest?.('button'), () => done(), 'Done (Start a song)', { hidden: true });
   K('Backspace', on('play'), () => again(), 'Start again (Start a song)', { hidden: true });
+  // over a click: T is Tap it, ← → step the Speed (each a fresh take)
+  const clickView = () => S.step === 'play' && S.view === 'click';
+  const speedStep = (d) => { const vs = SPEEDS.map(([, v]) => v), cur = S.ck?.bpm ?? S.speed; const i = vs.indexOf(cur); const j = i < 0 ? (d > 0 ? vs.findIndex((v) => v > cur) : vs.length - 1 - [...vs].reverse().findIndex((v) => v < cur)) : i + d; if (j >= 0 && j < vs.length && vs[j] != null) setSpeed(vs[j]); };
+  K('KeyT', clickView, (e) => tapTempo(e?.timeStamp || performance.now()), 'Tap it: the tempo (Start a song)', { hidden: true });
+  K('ArrowLeft', clickView, () => speedStep(-1), 'Slower (Start a song)', { hidden: true });
+  K('ArrowRight', clickView, () => speedStep(1), 'Quicker (Start a song)', { hidden: true });
   K('Enter', on('in'), () => next(), 'The next part: Hum over it (Start a song)', { hidden: true });
   K('KeyH', on('hum'), () => humNow(), 'Hum over the beat (Start a song)', { hidden: true });
   K('Space', on('hum'), () => humNow(), 'Hum over the beat (Start a song)', { hidden: true });
@@ -541,14 +795,16 @@ export default function (app) {
   });
   // while a take is played on the stage, the agent's song-changing tools wait (agent/tools.js reads app.start.busy)
   const api = app.start = {
-    open, close: (o) => close(o), tap, done, again, setLevel, useReading: (i) => useReading(i), humNow, humFree, leave,
+    open, close: (o) => close(o), tap, done, again, setLevel, useReading: (i) => useReading(i), humNow, humFree, leave, setView, setSpeed, tapTempo,
+    click: () => (S.ck ? { bpm: S.ck.bpm, hits: S.ck.hits.length, rounds: S.ck.folded, kept: S.ck.fold ? S.ck.fold.notes.length : 0, left: S.ck.fold ? S.ck.fold.strays.length : 0, fold: S.ck.fold ? S.ck.fold.notes.map(({ p, t }) => ({ p, t })) : [], playAt: S.ck.playAt, openAt: S.ck.openAt } : null),
+    window: () => (bw ? bw.state() : null),
     readings: () => (S.take ? S.take.readings.map((r) => ({ bpm: r.bpm, why: r.why, length: r.length })) : []),
     landed: () => (S.landed ? { ...S.landed } : null),
     take: () => (S.read || S.take ? { hits: S.hits.length, bpm: (S.take || S.read).bpm, length: (S.take || S.read).length, loop: (S.take || S.read).loop.bars, rounds: (S.take || S.read).fold.rounds, kept: (S.take || S.read).fold.notes.length, strays: (S.take || S.read).fold.strays.length, sure: (S.take || S.read).downbeat.sure, level: S.level, reading: S.reading } : null),
     // the BPM the stage shows while you play (the top bar reads it; "~" until then): null before six hits over three
     // seconds, and off the play step
-    tempoShown: () => (S.step === 'play' && showBpm() ? Math.round(S.read.bpm) : null),
-    get step() { return S.step; }, get kind() { return S.kind; },
+    tempoShown: () => (S.step !== 'play' ? null : S.view === 'click' && S.ck ? Math.round(S.ck.bpm) : showBpm() ? Math.round(S.read.bpm) : null),
+    get step() { return S.step; }, get kind() { return S.kind; }, get view() { return S.step ? S.view : null; },
     get busy() { return S.step === 'play' || S.step === 'hum'; },
     on(t, fn) { if (!fns.has(t)) fns.set(t, new Set()); fns.get(t).add(fn); return () => fns.get(t).delete(fn); },
   };
@@ -571,7 +827,7 @@ const CSS = `
 .st-read { display: grid; justify-items: end; gap: 2px; min-width: 120px; }
 .st-bpm { font-size: 44px; line-height: 1; color: var(--text); min-height: 44px; }
 .st-unit { font-size: 11px; letter-spacing: .08em; color: var(--text-3); text-transform: uppercase; }
-.st-rounds { font-size: 12px; color: var(--text-2); }
+.st-rounds { font-size: 12px; color: var(--text-2); min-height: 16px; }
 .st-winwrap, .st-gridwrap { position: relative; border-top: var(--rule); border-bottom: var(--rule); }
 .st-win { display: block; width: 100%; height: clamp(120px, 22vh, 190px); }
 .st-grid { display: block; width: 100%; height: clamp(110px, 20vh, 170px); }
@@ -600,6 +856,8 @@ const CSS = `
 .btn-go kbd { color: var(--bg); border-color: color-mix(in srgb, var(--bg) 45%, transparent); }
 .st-dot { width: 10px; height: 10px; background: var(--rec); }
 .st-phones { font-size: 12px; }
+.st-speed { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 22px; }
+.st-tapit { color: var(--text-3); }
 .st-readings .ledger-row { --ledger-cols: 96px 1fr auto; cursor: pointer; padding: 12px 8px; }
 .st-rbpm { font-size: 18px; }
 /* the door: a ledger of ways in, each row the full width */

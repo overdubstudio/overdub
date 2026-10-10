@@ -86,7 +86,8 @@ if [ -n "${COMMUNITY_PIN:-}" ]; then cp "$COMMUNITY_PIN" "$PIN"; else git show "
 if [ ! -s "$PIN" ]; then
   echo "app/community: none ($REF has no deploy/community-pin.json)"
 else
-  if git show "$REF:app/src/ui/community.js" 2>/dev/null | grep -q '^export const COMMUNITY_LIVE = true;'; then SHIP=1; else SHIP=; fi
+  # (grep reads it all, not -q: under pipefail an early exit would SIGPIPE git show and read as "false")
+  if git show "$REF:app/src/ui/community.js" 2>/dev/null | grep '^export const COMMUNITY_LIVE = true;' >/dev/null; then SHIP=1; else SHIP=; fi
   SHIP=${COMMUNITY_SHIP:-$SHIP}
   [ "$SHIP" = 0 ] && SHIP=
   DEVICES_DIR=${OVERDUB_DEVICES_DIR:-$ROOT/../overdub-devices}

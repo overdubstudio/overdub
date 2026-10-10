@@ -207,10 +207,10 @@ redistribution and claims nothing of the songs made with it. Contributed sounds 
 | Modifications | A subset: nine single cycles from each of 12 families, picked by measure (`node tools/akwf-bank.js --pick`). Packed losslessly into `app/src/devices/builtin/akwf.js`, which is in this repository and carried in the kernel's source; each cycle's spectrum turned to sine phase, RMS-scaled and band-limited per octave when the tables are built. `node tools/akwf-bank.js` rebuilds the module from the pinned files (`--verify` offline). |
 | Verified | 2026-10-06 |
 
-## Aachen Impulse Response Database: Echo Chamber's rooms (`core.rooms`, being built)
+## Aachen Impulse Response Database: Echo Chamber's rooms (`core.rooms`)
 
-Echo Chamber is being built on the `real-rooms` branch (intent 0006, "Real Rooms"). It isn't in the studio yet. The
-bank is built (`node tools/fetch-kits.js --only air-rooms`) and pinned; its QA report is
+Echo Chamber (intent 0006, "Real Rooms") is a built-in effect; the README and the site don't list it until AJ's
+listening trial passes. The bank is built (`node tools/fetch-kits.js --only air-rooms`) and pinned; its QA report is
 `tools/.out/library/rooms/qa.json`, and every room is waiting on a waiver (below).
 
 | | |

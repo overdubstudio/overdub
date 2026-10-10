@@ -64,6 +64,7 @@
 <li><a href="#rusty-sticks-coremetalkit-a-metal-kit">Rusty Sticks (core.metalkit): a metal kit</a></li>
 <li><a href="#drum-riser-coredrumbus-a-drum-bus">Drum Riser (core.drumbus): a drum bus</a></li>
 <li><a href="#half-stack-iso-cab-and-y-cable-corestack-corecab-corebassrig-a-guitar-amp-that-renders">Half Stack, Iso Cab and Y Cable (core.stack, core.cab, core.bassrig): a guitar amp that renders</a></li>
+<li><a href="#echo-chamber-corerooms-measured-rooms">Echo Chamber (core.rooms): measured rooms</a></li>
 <li><a href="#kernel-data-samples-a-kernel-plays">Kernel data: samples a kernel plays</a></li>
 <li><a href="#melodic-kits-a-sampled-instrument-across-the-keyboard">Melodic kits: a sampled instrument across the keyboard</a></li>
 <li><a href="#a-big-instrument-light-table-corewavetable">A big instrument: Light Table (core.wavetable)</a></li>
@@ -80,7 +81,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Devices: writing instruments and effects</a></h1>
-    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 63 min to read</p>
+    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 65 min to read</p>
     <article class="prose">
 <p>Overdub's instruments and effects are <strong>devices</strong>: a small definition (id, name, params, look) plus either a Web Audio
 graph (<code>build(c, kit)</code>, trusted built-ins like the ported pedals and amps) or a <strong>kernel</strong>: a few dozen lines of pure DSP
@@ -702,6 +703,38 @@ latency.</li>
 a driven top through a guitar cab. Presets: Modern, Grind, Clean.</li>
 <li>The cab IRs are kernel data (<code>data: { cabs }</code>, 39 KB). Until they arrive, or on a server without them, every IR
 choice plays the Filter 4x12 at the same level, and the card says so.</li>
+</ul>
+<h2 id="echo-chamber-corerooms-measured-rooms"><a class="h-link" href="#echo-chamber-corerooms-measured-rooms">Echo Chamber (<code>core.rooms</code>): measured rooms</a></h2>
+<p>A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen
+University, AIR 1.4, MIT; docs/SOUNDS.md). The device is <code>app/src/devices/builtin/rooms.js</code>; its tail, filters and
+room table are <code>rooms-lib.js</code> (kernel text, shared with the build so that what the fit measures is what plays).</p>
+<ul>
+<li><strong>The model.</strong> Each room plays the first 80-200 ms of its measured impulse response through <code>dsp.convolver</code> (the
+early reflections as recorded, binaural: the two ears are the left and right taps), then hands off to a tail fitted
+to that room's measured decay: an 8-line Householder FDN in Stairwell's family, three absorption bands (shelves at
+500 Hz and 4 kHz around a mid gain), an output EQ (250 Hz shelf, 1.5 kHz bell, 6 kHz shelf) and a gain. A church
+rings for its seconds without seconds of convolution. The cut (<code>tx</code>) is per room: AULA and AULA FAR 150 ms, LECTURE
+120, STAIRS 100, OFFICE and MEETING 80.</li>
+<li><strong>The bank.</strong> Kernel data, <code>data: { aachen }</code> (<code>ROOMS_HASH</code>; 137 KB on the wire for all six rooms). Each room's
+early IR is 16-bit, its direct sound removed with a 1 ms ramp, and its header carries the fit and what the card
+says (<code>ROOM_INFO</code>, held to the header by tools/rooms-test.js). Built by <code>node tools/fetch-kits.js --only air-rooms</code>
+from <code>tools/kits/air-rooms.js</code>; frozen once it ships: a better fit is a new room in a new bank, never a changed one.
+Until the bank arrives, or on a server without it, the input passes through unchanged and the rack says so
+(<code>dataSays</code>).</li>
+<li><strong>The params.</strong> ROOM (a switch, no automation lane: AULA, AULA FAR, LECTURE, STAIRS, OFFICE, MEETING; an index is a
+room forever, the table is append-only), PRE (0-200 ms), DECAY (0.5-2x the room's own), DAMP (as measured to a
+darker, shorter top), LOW CUT (20-1000 Hz, 120 by default), WIDTH (mono to as measured) and MIX (equal power,
+Stairwell's law, 0.22 by default). A room change crossfades to a second wet path over 50 ms at equal power; a change
+during a crossfade waits for it to end. <code>trails: true</code>, <code>tail: 12</code>, no declared latency: the dry path is exact.</li>
+<li><strong>The fit.</strong> The build removes the direct sound, cuts each room at <code>tx</code>, fits the tail's three T60s, line scale,
+onset delay, EQ and gain by least squares to the measured decay (the low band capped at 1.5x the 500 Hz T30; the
+uncapped values are kept in the QA report), renders the hybrid through the kernel itself and scores it against the
+measured room (T20, T30, EDT, C80, the decay curves and the envelope at the seam, <code>tools/kits/qa.js</code> <code>qaRoom</code>). Each
+room's level is set so that its wet signal has the DI strum's RMS. The report is <code>tools/.out/library/rooms/qa.json</code>;
+rooms that miss a bar are kept and marked as waiting on a waiver.</li>
+<li><strong>The same numbers everywhere.</strong> Every coefficient comes from + - * /, <code>Math.sqrt</code> and the series (<code>series.js</code>:
+<code>dsin</code>, <code>dcos</code>, <code>dexp</code>), never <code>Math.exp</code>, <code>pow</code>, <code>sin</code>, <code>cos</code>, <code>tan</code> or <code>log</code>, so its golden scenes are bit-identical
+in Node and Chromium (<code>fx:core.rooms#&lt;12 hex&gt;</code> and one per other room).</li>
 </ul>
 <h2 id="kernel-data-samples-a-kernel-plays"><a class="h-link" href="#kernel-data-samples-a-kernel-plays">Kernel data: samples a kernel plays</a></h2>
 <p>A kernel sees only <code>dsp</code>, so a device that plays recordings needs the host to bring them. A def can name files by

@@ -7,7 +7,7 @@
     "v8": "13.6.233.17-node.49",
     "arch": "arm64",
     "platform": "darwin",
-    "date": "2026-10-08"
+    "date": "2026-10-10"
   },
   "scenes": {
     "inst:core.poly": {
@@ -602,6 +602,66 @@
       "lufs": -7.26,
       "truePeak": -1.1,
       "peak": -1.1
+    },
+    "fx:core.rooms#edab2a95720b": {
+      "sha256": "06c54e9e5a10175c0e92a28aebf18168607632a6a68bce587d77d3d94bdcc828",
+      "frames": 576000,
+      "lufs": -21.19,
+      "truePeak": -10.35,
+      "peak": -10.5,
+      "data": {
+        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+      }
+    },
+    "fx:core.rooms:aula-far#edab2a95720b": {
+      "sha256": "5f739e1cfcbdbd73f37b378e184f7784f2a31e11a92fd973872730e6b595e30f",
+      "frames": 576000,
+      "lufs": -21.17,
+      "truePeak": -10.07,
+      "peak": -10.44,
+      "data": {
+        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+      }
+    },
+    "fx:core.rooms:lecture#edab2a95720b": {
+      "sha256": "b5bd9c682f5ccb406c8011a0a0cfec025fb2579321c7c513db0418970f743ee9",
+      "frames": 576000,
+      "lufs": -21.29,
+      "truePeak": -10.15,
+      "peak": -10.16,
+      "data": {
+        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+      }
+    },
+    "fx:core.rooms:stairs#edab2a95720b": {
+      "sha256": "d509e63c0faeba37cdcf47cb345402de40e204d1ad05d55fe69ce9dc6d1d24ee",
+      "frames": 576000,
+      "lufs": -21.1,
+      "truePeak": -9.91,
+      "peak": -9.91,
+      "data": {
+        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+      }
+    },
+    "fx:core.rooms:office#edab2a95720b": {
+      "sha256": "2efa7d666441e93d4ce3496c8cc7f555f41850523965f9491eeea2f5a3c23892",
+      "frames": 576000,
+      "lufs": -21.17,
+      "truePeak": -9.44,
+      "peak": -9.44,
+      "data": {
+        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+      }
+    },
+    "fx:core.rooms:meeting#edab2a95720b": {
+      "sha256": "be3c5d56e2e592783c3612e5498f9122100a6a2c8eb552071d497a696291acb7",
+      "frames": 576000,
+      "lufs": -21.06,
+      "truePeak": -9.7,
+      "peak": -10.32,
+      "data": {
+        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+      }
     }
   }
 }

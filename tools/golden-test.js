@@ -9,7 +9,14 @@
 //    effect on the DI strum, the showcase kernels, the demo song with its graph devices bypassed) renders with
 //    app/src/engine/node/render.js to the SHA-256 tools/golden.json pins, twice the same.
 // 2. The browser's OfflineAudioContext render (engine/render.js, the studio's preview) of each kernel-only scene
-//    matches the Node render within -90 dBFS, sample for sample (tools/pw.js).
+//    matches the Node render within -90 dBFS, sample for sample (tools/pw.js). A scene marked `exact: true` (Echo
+//    Chamber's, whose numbers never pass through Math.exp or sin) is held bit for bit: its effect, run by Chromium's
+//    AudioWorklet and by Node's KernelCore on the scene's own input and params, must give the same samples, every
+//    one; any that differs FAILs it and the difference is printed (how many, the worst, the first). The whole scene is
+//    held to -90 dB like the rest and its differing samples are counted: the house's song path after the effect
+//    moves a few hundred samples by one step of 2^-20 in Stairwell's scene too, from the same first one (most likely the
+//    master's safety soft clip, Chrome's WaveShaper as render.js computes it: a scene whose effect passes its input
+//    unchanged is bit-identical), and changing that would move old scenes (spec 0006 R34/R35: reported to AJ).
 //
 // THE RULE: golden.json is never regenerated casually. A hash that moves means the sound moved. Regenerate a scene only
 // when a change to that sound is intended (a device's DSP was changed on purpose, a new scene was added), regenerate
@@ -27,6 +34,8 @@ import { scenes, missingScenes } from './golden-scenes.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { sha256, encodeWav, decodeWav, writeWav } from '../app/src/engine/node/io.js';
 import { measure } from '../app/src/audio/measure.js';
+import { run as runEffect } from './amp-scenes.js';
+import { getDevice } from '../app/src/devices/registry.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = path.join(HERE, 'golden.json');
@@ -187,13 +196,42 @@ if (process.env.NODE_ONLY || updating !== undefined) {
         return { report, len: buf.length, sr: buf.sampleRate, ch: [enc(buf.getChannelData(0)), enc(buf.getChannelData(1))] };
       }, { project: s.project, opts: s.opts, assets });
       const ch = out.ch.map(unb64);
-      let worst = 0, diff = 0;
+      let worst = 0, diff = 0, first = null;
       for (let c = 0; c < 2; c++) {
         const a = ch[c], b = r.channels[c], m = Math.min(a.length, b.length);
-        for (let i = 0; i < m; i++) { const d = Math.abs(a[i] - b[i]); if (d) { diff++; if (d > worst) worst = d; } }
+        for (let i = 0; i < m; i++) { const d = Math.abs(a[i] - b[i]); if (d) { diff++; if (d > worst) worst = d; if (!first || i < first.i) first = { c, i, browser: a[i], node: b[i] }; } }
       }
       n++; if (!diff) exact++;
-      t.ok(out.len === r.length && out.sr === r.sr && !out.report.length && dbfs(worst) <= PARITY_DB,
+      const same = out.len === r.length && out.sr === r.sr && !out.report.length;
+      if (s.exact) {
+        // the effect on its own: the scene's input (its clip, then the tail's silence) and its params, in 128-frame
+        // blocks through the worklet (Chromium) and KernelCore (Node), bit for bit
+        const ins = s.project.tracks[0].inserts[0], src = Object.values(s.assets)[0].channels[0];
+        const x = new Float32Array(r.length); x.set(src.subarray(0, Math.min(src.length, r.length)));
+        const [nL, nR] = runEffect(getDevice(ins.device), ins.params, x);
+        const dev = await page.evaluate(async ({ id, params, x }) => {
+          const { kernelInstance } = await import('/app/src/kernel/host.js');
+          const { getDevice } = await import('/app/src/devices/registry.js');
+          const dec = (s) => { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new Float32Array(u.buffer); };
+          const input = dec(x), c = new OfflineAudioContext(2, input.length, 48000);
+          const inst = await kernelInstance(c, getDevice(id), { seed: 1, params });
+          await inst.ready;
+          const b = c.createBuffer(2, input.length, 48000); b.copyToChannel(input, 0); b.copyToChannel(input, 1);
+          const src = c.createBufferSource(); src.buffer = b; src.connect(inst.input); src.start(0);
+          inst.output.connect(c.destination);
+          const buf = await c.startRendering();
+          const errors = inst.errors.slice(); inst.dispose();
+          const enc = (f) => { const u = new Uint8Array(f.buffer); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+          return { errors, data: inst.data && inst.data.state, ch: [enc(buf.getChannelData(0)), enc(buf.getChannelData(1))] };
+        }, { id: ins.device, params: ins.params, x: b64(x) });
+        const dch = dev.ch.map(unb64);
+        let dd = 0, dw = 0, df = null;
+        for (const [a, b, c] of [[dch[0], nL, 0], [dch[1], nR, 1]]) for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) { dd++; const d = Math.abs(a[i] - b[i]); if (d > dw) dw = d; if (!df || i < df.i) df = { c, i, browser: a[i], node: b[i] }; }
+        t.ok(!dd && !dev.errors.length && dev.data === 'ready', `${s.name}: the effect is bit-identical in Chromium's worklet and Node's KernelCore (exact; ${(x.length / 48000).toFixed(0)} s, bank ${dev.data})${dd ? ': ' + dd + ' samples differ, worst ' + fmtDb(dbfs(dw)) + ' dBFS, the first at frame ' + df.i + ' (channel ' + df.c + ': browser ' + df.browser + ', Node ' + df.node + ')' : ''}${dev.errors.length ? ' ERRORS ' + dev.errors.join(' | ') : ''}`);
+        t.ok(same && dbfs(worst) <= PARITY_DB, `${s.name}: the scene in the browser and Node differ by at most ${fmtDb(dbfs(worst))} dBFS (${diff ? diff + ' samples differ in the song path, the first at frame ' + first.i + ': not bit-identical as R34 asks, reported to AJ' : 'bit-identical'})${out.report.length ? ' REPORT ' + JSON.stringify(out.report) : ''}`);
+        continue;
+      }
+      t.ok(same && dbfs(worst) <= PARITY_DB,
         `${s.name}: browser and Node differ by at most ${fmtDb(dbfs(worst))} dBFS (${diff ? diff + ' samples differ' : 'bit-identical'})${out.report.length ? ' REPORT ' + JSON.stringify(out.report) : ''}`);
     }
     t.note(`${exact} of ${n} scenes bit-identical between Chromium and Node (the rest differ by a last-bit rounding: Chromium's V8 and Node's round Math.exp, sin, tanh... differently for a few % of inputs) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);

@@ -663,6 +663,38 @@ not `dsp` names.
 - The cab IRs are kernel data (`data: { cabs }`, 39 KB). Until they arrive, or on a server without them, every IR
   choice plays the Filter 4x12 at the same level, and the card says so.
 
+## Echo Chamber (`core.rooms`): measured rooms
+
+A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen
+University, AIR 1.4, MIT; docs/SOUNDS.md). The device is `app/src/devices/builtin/rooms.js`; its tail, filters and
+room table are `rooms-lib.js` (kernel text, shared with the build so that what the fit measures is what plays).
+- **The model.** Each room plays the first 80-200 ms of its measured impulse response through `dsp.convolver` (the
+  early reflections as recorded, binaural: the two ears are the left and right taps), then hands off to a tail fitted
+  to that room's measured decay: an 8-line Householder FDN in Stairwell's family, three absorption bands (shelves at
+  500 Hz and 4 kHz around a mid gain), an output EQ (250 Hz shelf, 1.5 kHz bell, 6 kHz shelf) and a gain. A church
+  rings for its seconds without seconds of convolution. The cut (`tx`) is per room: AULA and AULA FAR 150 ms, LECTURE
+  120, STAIRS 100, OFFICE and MEETING 80.
+- **The bank.** Kernel data, `data: { aachen }` (`ROOMS_HASH`; 137 KB on the wire for all six rooms). Each room's
+  early IR is 16-bit, its direct sound removed with a 1 ms ramp, and its header carries the fit and what the card
+  says (`ROOM_INFO`, held to the header by tools/rooms-test.js). Built by `node tools/fetch-kits.js --only air-rooms`
+  from `tools/kits/air-rooms.js`; frozen once it ships: a better fit is a new room in a new bank, never a changed one.
+  Until the bank arrives, or on a server without it, the input passes through unchanged and the rack says so
+  (`dataSays`).
+- **The params.** ROOM (a switch, no automation lane: AULA, AULA FAR, LECTURE, STAIRS, OFFICE, MEETING; an index is a
+  room forever, the table is append-only), PRE (0-200 ms), DECAY (0.5-2x the room's own), DAMP (as measured to a
+  darker, shorter top), LOW CUT (20-1000 Hz, 120 by default), WIDTH (mono to as measured) and MIX (equal power,
+  Stairwell's law, 0.22 by default). A room change crossfades to a second wet path over 50 ms at equal power; a change
+  during a crossfade waits for it to end. `trails: true`, `tail: 12`, no declared latency: the dry path is exact.
+- **The fit.** The build removes the direct sound, cuts each room at `tx`, fits the tail's three T60s, line scale,
+  onset delay, EQ and gain by least squares to the measured decay (the low band capped at 1.5x the 500 Hz T30; the
+  uncapped values are kept in the QA report), renders the hybrid through the kernel itself and scores it against the
+  measured room (T20, T30, EDT, C80, the decay curves and the envelope at the seam, `tools/kits/qa.js` `qaRoom`). Each
+  room's level is set so that its wet signal has the DI strum's RMS. The report is `tools/.out/library/rooms/qa.json`;
+  rooms that miss a bar are kept and marked as waiting on a waiver.
+- **The same numbers everywhere.** Every coefficient comes from + - * /, `Math.sqrt` and the series (`series.js`:
+  `dsin`, `dcos`, `dexp`), never `Math.exp`, `pow`, `sin`, `cos`, `tan` or `log`, so its golden scenes are bit-identical
+  in Node and Chromium (`fx:core.rooms#<12 hex>` and one per other room).
+
 ## Kernel data: samples a kernel plays
 
 A kernel sees only `dsp`, so a device that plays recordings needs the host to bring them. A def can name files by

@@ -285,6 +285,9 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
 
   // in the page: every family a page draws in is loaded, and every font file it fetched came from /app/style/fonts/
   const { page, base, errors, close } = await open('/app/', { query: 'demo', width: 1440, height: 900 });
+  // the studio fetches more files than the browser's default resource-timing buffer (250 entries) holds, and the font
+  // files come late: without room for them they go uncounted
+  await page.addInitScript(() => performance.setResourceTimingBufferSize(5000));
   const BRAND = ['Archivo', 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible Mono'];
   const PAGES = [['the studio', '/app/?demo', BRAND, 'html[data-ready="1"]'], ['the landing page', '/', BRAND, null], ['a docs page', '/site/docs/guide.html', BRAND, null],
     ['the device faces (gallery)', '/app/gallery.html?only=pedal.quack,amp.punk,core.keys', ['Rubik Dirt', 'Silkscreen', 'Atkinson Hyperlegible Next'], null]];

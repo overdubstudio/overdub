@@ -424,7 +424,7 @@ stops a disposed node's processor); the vendored pedals' are <code>WORKLETS</cod
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
-core.multiband Gaffer Tape; core.drumroom Studio A, a room), and a rename only touches <code>name</code>. Names must not collide
+core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches <code>name</code>. Names must not collide
 with the vendored pedals' (<code>tools/guitar-test.js</code> checks).
 A def the studio ships may carry <code>describe(params)</code> (one line of text for <code>get_project</code>, in place of the params' JSON:
 core/project.js <code>summarize</code>), and a param <code>hidden</code> (not on the face or in the generic window), <code>auto: false</code> (no lane)
@@ -437,9 +437,11 @@ function to draw them, so the editor shows exactly what plays. The bank (<code>a
 is a literal in the kernel's source, packed so the kernel stays under its 256 KB. Its design note, with the param map its editor works from, is
 <code>docs/research/LIGHT-TABLE.md</code>.</p>
 <p>Param <code>role</code> (for agents and semantic controls): <code>tone level drive mix time feedback rate depth size decay attack release pitch shape width gate sens</code> (or omit). <code>unit</code>: <code>Hz dB ms s % st note x</code>.</p>
-<p><strong>Where devices come from.</strong> <code>main.js</code> imports three libraries at boot: <code>devices/builtin/</code> (the 52 built-ins, fourteen
+<p><strong>Where devices come from.</strong> <code>main.js</code> imports three libraries at boot: <code>devices/builtin/</code> (the 53 built-ins, fourteen
 of them sampled: Virtuosity Kit, Parlour Upright, Rusty Brushes, Hand Crate, Full Stick, Rosin, Damper Bar, Roundwound,
-Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data), <code>devices/guitar/</code> (the
+Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data; eighteen play
+kernel data in all: those fourteen, Half Stack, Iso Cab and Y Cable on the cab bank, and Echo Chamber on measured
+rooms), <code>devices/guitar/</code> (the
 Guitar Studio's 101 pedals and 27 amps, with 16 cabinets and 5 mics inside the amps, and its 156 rigs as device chains)
 and <code>devices/library/</code> (the house shelf: ten kernels Claude wrote, <code>claude.*</code>, <code>source: 'library'</code>, each with its
 <code>request</code>; also loaded by the Node renderer). <code>devices/showcase.js</code> holds the three devices the demo song carries as

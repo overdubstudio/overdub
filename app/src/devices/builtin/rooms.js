@@ -159,8 +159,12 @@ return {
             const mid = 0.5 * (wl + wr), side = 0.5 * (wl - wr) * wY;
             mY = mixT + (mY - mixT) * mA;
             if (mY !== lastMx) { lastMx = mY; dry = dcos(mY * HALF_PI); wet = dsin(mY * HALF_PI); }
-            L[o + i] = L[o + i] * dry + (mid + side) * wet;
-            R[o + i] = R[o + i] * dry + (mid - side) * wet;
+            // (an output under 1e-30, -600 dB, is 0: as the tail dies float32 would hold it as a denormal, which
+            // Chromium's audio thread flushes to zero and Node keeps. Here, not in the tail's lines: 8 tests a sample
+            // there cost 18% of the device in Node, and a line's denormal reaches only an output this flushes)
+            const yl = L[o + i] * dry + (mid + side) * wet, yr = R[o + i] * dry + (mid - side) * wet;
+            L[o + i] = yl > 1e-30 || yl < -1e-30 ? yl : 0;
+            R[o + i] = yr > 1e-30 || yr < -1e-30 ? yr : 0;
           }
           S[0] = l1; S[1] = l2; S[2] = r1; S[3] = r2; S[5] = wY; S[6] = mY; S[8] = dry; S[9] = wet; S[10] = lastMx;
           a.st[0] = ae0; a.st[1] = ae1; b.st[0] = be0; b.st[1] = be1; I[2] = fd;

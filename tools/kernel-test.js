@@ -476,6 +476,39 @@ try {
   });
   T.ok(cpu.pct < 50 && cpu.maxVoices >= 16, `16-voice synth + 8 kernel effects (4 oversampled filters, 4 echoes): ${cpu.pct.toFixed(1)}% of real time (${Math.round(cpu.ms)} ms for 8 s, ${cpu.maxVoices} voices)`);
 
+  // ------------------------------------------------------------------ CPU: Echo Chamber against Stairwell (R36)
+  // checkDevice's cpu (its 4 s render on the DI strum) for core.rooms at its heaviest room (AULA, its default: the
+  // longest early cut) against core.verb at its defaults, the median of 5 each, alternating, in this one page. At
+  // most 1.5x (spec 0006 R36; tools/rooms-test.js holds the same in Node). Without the aachen bank it plays nothing
+  // and is skipped. Measured at commit: about 2.0x here (1.4x in Node). The early convolver alone costs more than
+  // Stairwell in Chromium's worklet, and R36's cuts don't reach the bar: the early cut barely moves it (MEETING, 80 ms,
+  // within 6% of AULA, 150 ms), the tail has no modulation to take off, and other body partitions (256, 512, 2048)
+  // are slower than 1024. Per AJ's Q4 the miss is reported, not cut further and not raised: over 1.5x, this prints a
+  // note for AJ instead of failing; the budget stays 1.5x.
+  console.log('cpu: Echo Chamber against Stairwell');
+  const rc = await page.evaluate(async () => {
+    const { check } = window.K;
+    const rooms = (await import('/app/src/devices/builtin/rooms.js')).default, verb = (await import('/app/src/devices/builtin/verb.js')).default;
+    const { loadData } = await import('/app/src/kernel/data.js');
+    if (!(await loadData(rooms.data.aachen))) return { missing: true };
+    const cv = [], cr = [];
+    for (let i = 0; i < 5; i++) {
+      const v = await check.checkDevice(verb, { quick: true }), r = await check.checkDevice(rooms, { quick: true });
+      if (!v.cpu || !r.cpu) return { failed: [v.errors[0], r.errors[0]] };
+      cv.push(v.cpu.ms); cr.push(r.cpu.ms);
+    }
+    const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1];
+    return { verb: med(cv), rooms: med(cr), cv, cr };
+  });
+  if (rc.missing) T.note('Echo Chamber against Stairwell: skipped, the aachen bank hasn\'t been fetched (node tools/fetch-kits.js --only air-rooms)');
+  else {
+    const ratio = rc.rooms / rc.verb;
+    const say = `Chromium: Echo Chamber (AULA, the heaviest room) ${rc.rooms} ms for the device check's 4 s render against Stairwell's ${rc.verb} ms: ${rc.failed ? 'no cpu: ' + rc.failed.join(' | ') : ratio.toFixed(2) + 'x'} (at most 1.5x; median of 5)`;
+    if (rc.failed || !(ratio > 0)) T.ok(false, say);
+    else if (ratio <= 1.5) T.ok(true, say);
+    else T.note(say + ': OVER the 1.5x budget, reported to AJ (spec 0006 R36, Q4)');
+  }
+
   // ------------------------------------------------------------------ a live AudioContext
   console.log('realtime');
   const rt = await page.evaluate(async () => {

@@ -311,7 +311,7 @@ export async function boot(root = document) {
   const idx = await loadIndex(src);
   const where = src.bundled ? null : new URL(src.url).host === location.host ? new URL(src.url).pathname : new URL(src.url).host;
   if (idx.missing || idx.unreadable || idx.tooBig) {
-    empty(src.bundled ? 'No shelf here.' : `No shelf at ${where}.`, src.bundled ? 'Build one with node tools/index.js --out ../overdub/app/community in overdub-devices.' : idx.tooBig ? 'Its index is over 2 MB.' : null);
+    empty(src.bundled ? 'No shelf here.' : `No shelf at ${where}.`, src.bundled ? 'Fill it with node tools/community-pull.js in the studio repo (it reads the pinned commit from ../overdub-devices).' : idx.tooBig ? 'Its index is over 2 MB.' : null);
     return done({ missing: true });
   }
   if (idx.newer) { empty('This shelf was built for a newer studio.'); return done({ newer: true }); }

@@ -17,6 +17,31 @@ function in `path-rewrite.js`, no-cache text and day-cached media), and both shi
 `DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`, `DRY_RUN=1 deploy/next/setup.sh`.
 `tools/analytics-test.js` runs both dry with a stub `aws` and checks the plan.
 
+## The community shelf (`app/community/`)
+
+The studio's shelf is pinned, not committed: `deploy/community-pin.json` names an overdub-devices commit and the
+SHA-256 of its `index/community-index.json`. `deploy.sh` reads the pin **at REF**
+(`git show REF:deploy/community-pin.json`, never the working tree) and runs `tools/community-pull.js` into its stage
+after `git archive`. The pull reads that commit with `git archive <commit> index/` from the overdub-devices checkout
+(`OVERDUB_DEVICES_DIR`, else `../overdub-devices`), checks the index's hash and every device file's kernel against its
+entry, and copies the index, the device files and the MP3 clips. If it refuses, nothing is deployed. The index and device files go up as JSON and
+the clips as `audio/mpeg`, all `no-cache`, so a rebuild or a takedown is live at the next load.
+
+| At REF | What the deploy does with the shelf |
+|---|---|
+| no `deploy/community-pin.json` (any ref before the pin existed) | nothing: no shelf, as before |
+| a pin, `COMMUNITY_LIVE = false` in `app/src/ui/community.js` | pulls and checks it, then holds it back ("app/community: held back"); with no checkout to pull from it says so and goes on, so CI's preview deploy works without overdub-devices |
+| a pin, `COMMUNITY_LIVE = true` | ships it; a missing checkout or a refused pull stops the deploy |
+
+`COMMUNITY_SHIP=1` ships it whatever the flag says; `COMMUNITY_PIN=<file>` reads another pin, in a dry run only.
+`tools/community-test.js` runs the deploy dry against a fixture overdub-devices repo and checks the plan.
+
+Moving the shelf forward is a pull request that changes only `deploy/community-pin.json`:
+`node tools/community-pull.js --pin <overdub-devices commit>` checks that commit, writes the pin, fills
+`app/community/` and prints what's added, changed and taken down since the last pin, for the PR body
+(`.github/PULL_REQUEST_TEMPLATE/community-pin.md`). Adding needs the second person to accept the PR; a takedown pin
+merges at once and is reviewed after (overdub-devices' `docs/TAKEDOWN.md`).
+
 ## How the preview works
 
 `deploy/next/setup.sh` (once; re-running skips what exists) makes the bucket `next.overdubstudio.com`, an ACM

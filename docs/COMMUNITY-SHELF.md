@@ -62,13 +62,18 @@ It ships **off on the live site** until AJ turns it on, and "off" means off, wha
   Without that check, a link to `overdubstudio.com/app/?community=http://localhost:NNNN/…` would open the shelf and its
   trust prompt on the live studio's origin, which holds the person's songs and drives their agents, since `connect-src`
   already allows `localhost:*`.
-- The bundled snapshot (`app/community/`) is **gitignored**, so `deploy/deploy.sh`, which ships `git archive`, never
-  carries community devices or clips to overdubstudio.com.
+- The bundled snapshot (`app/community/`) is **gitignored**. The studio pins the shelf it ships in a committed file,
+  `deploy/community-pin.json` (an overdub-devices commit and the SHA-256 of its index), and `tools/community-pull.js`
+  fills `app/community/` from a sibling `../overdub-devices` checkout at exactly that commit, checking the index's hash
+  and every device file's kernel against its entry; it copies the index, the device files and the MP3 clips only.
+  Local development runs the same pull, so a laptop's shelf is the shipped one. `deploy/deploy.sh` runs it into its
+  stage and deploys nothing if it refuses; while `COMMUNITY_LIVE` is false at the ref it ships, the pulled shelf is
+  checked and then held back, so no community device or clip reaches overdubstudio.com before the switch.
 - `site/community/` is committed and, since AJ approved it on 2026-10-06, `deploy.sh` ships it (its `HELD_BACK` list
   is empty). No page links to it yet. The page keeps the studio's switch: while `COMMUNITY_LIVE` is false it reads
   nothing away from localhost, and on overdubstudio.com it says *"The community shelf isn't on here yet."* It has
-  nothing to read there anyway: the index it reads by default is the studio's snapshot, which never ships. `pages-test`
-  checks all of this.
+  nothing to read there anyway: the index it reads by default is the studio's snapshot, which the deploy holds back
+  until the switch. `pages-test` checks all of this.
 - Nothing from the shelf runs before the trust prompt. A plain file import doesn't ask today; making it ask touches
   every import, not just the shelf, so it's a separate change.
 - **The API key in origin storage is not dealt with by this spec.** The prompt says plainly that the code runs in the
@@ -256,7 +261,7 @@ The community repo owns its index. The generator lives there, uses the studio fr
 
 ```
 node tools/index.js                              every device; writes index/
-node tools/index.js --out ../overdub/app/community   the studio's bundled snapshot (gitignored there)
+node tools/index.js --out <dir>                  an index somewhere else (a look; the studio's snapshot comes from its pull)
 node tools/index.js --checks out/check.json      use a check report that already ran (a CI artifact) instead of checking
 node tools/index.js --encoder auto|lame|ffmpeg|none   (default auto: lame, then ffmpeg, then WAV only)
 node tools/index.js --allow-dirty                build from uncommitted edits (built.from says "+dirty")
@@ -606,8 +611,8 @@ and steer a click into it. CloudFront needs the same response headers before the
   the page itself is on `localhost` or `127.0.0.1` (or `COMMUNITY_LIVE` is true, in which case only the studio's own
   origin is allowed: the live studio reads a copy deployed with it, never a remote index). Anything else is refused before any fetch: *"The studio can read a shelf from
   this site or from localhost only."*
-- A missing or unreadable index: the section is the empty state, a sentence and a button. *"No shelf here. Build one
-  with node tools/index.js --out ../overdub/app/community in overdub-devices."*
+- A missing or unreadable index: the section is the empty state, a sentence and a button. *"No shelf here. Fill it
+  with node tools/community-pull.js (it reads the pinned commit from ../overdub-devices)."*
 - The index is fetched once per page load (when the shelf is on), and again on Change.
 
 ### Taken off the shelf

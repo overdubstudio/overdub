@@ -18,13 +18,22 @@
 //     that changes nothing, one card per song, three No thanks and it stops, the card's Try lands signed by the agent
 //     and kept by you; define_device refuses a shelf kernel (and one with a space changed); the demo agent's ask
 //   - the catalog lists it with annotations under 2,048 characters; the Simple view's More finds the shelf
+//   - forced live (tools/community-live.js: COMMUNITY_LIVE and TRY_ON read true, served as overdub.test): the shelf
+//     reads the bundled index only, and ?community=http://localhost:… is refused, never fetched
+//   - the deploy, dry (a stub aws, a fixture overdub-devices repo: tools/fixtures/community-repo.js): the pinned shelf is
+//     staged with the index and device files no-cache and the MP3s audio/mpeg no-cache, no WAV; a pin that doesn't
+//     match deploys nothing; held back while COMMUNITY_LIVE is false at REF, and with no checkout then it goes on
 //   - brand: no pills or coloured edges in the new CSS; no "safe", "secure", "sandboxed", "verified", "marketplace",
 //     "buy", "price" or "free trial" in the new copy
 //   node tools/community-test.js      (screenshots: tools/.out/community-*.png)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { open, tally } from './pw.js';
+import { openLive, LIVE_HOST } from './community-live.js';
+import { makeDevicesRepo } from './fixtures/community-repo.js';
 import { readIndex, filterEntries, resolveUrl, indexUrlAllowed, LIMITS } from '../app/src/devices/community.js';
 
 const T = tally('community');
@@ -506,6 +515,61 @@ await section('find', async () => {
     T.ok(sz.length === 5 && sz.every(([w, h]) => w >= 40 && h >= 40), `at 390 px each row's ▶ is at least 40 × 40 (${sz.map((x) => x.join('×')).join(', ')})`);
     await P.shot('community-phone');
   } finally { await P.close(); }
+});
+
+// forced live (R1): the flag on, a host that isn't local; the only index read is the studio's own
+await section('forced-live', async () => {
+  const P = await openLive('/app/', { query: (local) => `community=${encodeURIComponent(`http://localhost:${new URL(local).port}${FIXURL}community-index.json`)}`, bundled: FIX });
+  try {
+    await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
+    await E(P, () => window.overdub.community.ready());
+    const r = await E(P, () => { const s = window.overdub.community.state(); return { on: window.overdub.community.on(), bundled: s.bundled, source: s.source, n: s.entries.length, host: location.host }; });
+    const indexes = P.requests.filter((u) => new URL(u).pathname.endsWith('community-index.json'));
+    T.ok(P.rewritten.includes('/app/src/ui/community.js') && r.on && r.host === LIVE_HOST, `forced live: COMMUNITY_LIVE reads true on ${r.host} (rewritten: ${P.rewritten.join(', ')})`);
+    T.ok(r.bundled && r.source === 'bundled' && r.n === 5, `forced live: ?community=http://localhost:… is refused and the shelf is the studio's own copy (${r.source}, ${r.n} entries)`);
+    T.ok(indexes.length >= 1 && indexes.every((u) => u === `http://${LIVE_HOST}/app/community/community-index.json`), `forced live: the only index fetched is /app/community/ (${[...new Set(indexes)].join(', ')})`);
+    T.ok(!errorsOf(P).length, `forced live: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
+  } finally { await P.close(); }
+});
+
+// the deploy, dry (R3): the pinned shelf in the stage, with a stub aws first on PATH and no credentials
+await section('deploy', async () => {
+  const ROOT = path.join(HERE, '..');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'community-deploy-'));
+  try {
+    const repo = makeDevicesRepo(path.join(tmp, 'overdub-devices'));
+    const stub = path.join(tmp, 'bin');
+    fs.mkdirSync(stub);
+    fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    const pin = (name, sha) => { const f = path.join(tmp, `${name}.json`); fs.writeFileSync(f, JSON.stringify({ repo: 'overdubstudio/overdub-devices', commit: repo.c2, index_sha256: sha })); return f; };
+    const good = pin('good', repo.sha('index/community-index.json'));
+    const run = (env) => {
+      const r = spawnSync(path.join(ROOT, 'deploy/deploy.sh'), ['--skip-tests'], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', SITE_CONFIG: '/dev/null', OVERDUB_DEVICES_DIR: repo.dir, COMMUNITY_SHIP: '', ...env } });
+      return { status: r.status, out: (r.stdout || '') + (r.stderr || '') };
+    };
+    const ship = run({ COMMUNITY_PIN: good, COMMUNITY_SHIP: '1' });
+    const lines = ship.out.split('\n');
+    T.ok(ship.status === 0 && !/aws was called/.test(ship.out), `deploy, dry, shelf shipped: runs without calling AWS (exit ${ship.status})${ship.status ? ': ' + ship.out.slice(-300) : ''}`);
+    T.ok(lines.some((l) => /^ {2}app\/community\/community-index\.json {2}application\/json; charset=utf-8 {2}no-cache$/.test(l)) && lines.some((l) => /^ {2}app\/community\/devices\/tester\.echo\.overdub-device\.json .* no-cache$/.test(l)), 'deploy: the plan lists app/community/community-index.json and the device files as no-cache');
+    T.ok(lines.filter((l) => /^ {2}app\/community\/clips\/.*\.mp3 {2}audio\/mpeg {2}no-cache$/.test(l)).length === 3 && !/app\/community\/\S*\.(wav|txt)/.test(ship.out), 'deploy: the MP3 clips go up as audio/mpeg, no-cache, and no WAV or other file is staged');
+    T.ok(/\+ aws s3 sync \S+ s3:\/\/\S+ --only-show-errors --exclude \* --include app\/community\/\*\.mp3 --content-type audio\/mpeg --cache-control no-cache/.test(ship.out), 'deploy: the upload rule for the clips');
+    const bad = run({ COMMUNITY_PIN: pin('bad', '0'.repeat(64)), COMMUNITY_SHIP: '1' });
+    T.ok(bad.status !== 0 && /not deploying: tools\/community-pull\.js/.test(bad.out) && !/\+ aws s3/.test(bad.out), `deploy: a pin whose index doesn't match deploys nothing (exit ${bad.status})`);
+    const badHeld = run({ COMMUNITY_PIN: pin('bad2', '0'.repeat(64)) });
+    T.ok(badHeld.status !== 0 && !/\+ aws s3/.test(badHeld.out), `deploy: it refuses even while the shelf is held back (exit ${badHeld.status})`);
+    // held back while COMMUNITY_LIVE is false at REF (HEAD); the switch commit ships it
+    const live = /^export const COMMUNITY_LIVE = true;/m.test(spawnSync('git', ['show', 'HEAD:app/src/ui/community.js'], { cwd: ROOT, encoding: 'utf8' }).stdout);
+    const held = run({ COMMUNITY_PIN: good });
+    if (!live) {
+      T.ok(held.status === 0 && /app\/community: held back \(COMMUNITY_LIVE is false at HEAD\); the pinned shelf checks out/.test(held.out) && !/^ {2}app\/community\//m.test(held.out), 'deploy: with COMMUNITY_LIVE false at HEAD the shelf is checked, then held back');
+      const none = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere') });
+      T.ok(none.status === 0 && /held back .* not checked: no checkout/.test(none.out), 'deploy: held back with no overdub-devices checkout, it goes on and says so');
+      const noneShip = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere'), COMMUNITY_SHIP: '1' });
+      T.ok(noneShip.status !== 0 && !/\+ aws s3/.test(noneShip.out), `deploy: shipping with no checkout deploys nothing (exit ${noneShip.status})`);
+    } else {
+      T.ok(held.status === 0 && /^ {2}app\/community\/community-index\.json/m.test(held.out), 'deploy: with COMMUNITY_LIVE true at HEAD the shelf ships');
+    }
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
 T.done();

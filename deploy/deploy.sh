@@ -67,10 +67,54 @@ if [ "$TARGET" = next ]; then
     fs.writeFileSync(file, JSON.stringify({ ...c, env: "preview", preview: true, ref }, null, 2) + "\n");' "$STAGE/app/site-config.json" "$SHORT"
 fi
 # Paths committed but held back from both sites until AJ decides (empty now: the community gallery, site/community/,
-# ships since 2026-10-06; docs/COMMUNITY-SHELF.md, "Where it's on"). The studio's built snapshot, app/community/, is
-# gitignored, so it never ships. The sync below runs with --delete, so taking a path off this list is what puts it live.
+# ships since 2026-10-06; docs/COMMUNITY-SHELF.md, "Where it's on"). The sync below runs with --delete, so taking a
+# path off this list is what puts it live.
 HELD_BACK=()
 for p in ${HELD_BACK[@]+"${HELD_BACK[@]}"}; do rm -rf "${STAGE:?}/$p"; done
+
+# The community shelf, app/community/ (gitignored): pulled from overdub-devices at the commit REF's
+# deploy/community-pin.json names, by tools/community-pull.js, which checks it by hash and refuses a wrong one (then
+# nothing is deployed). A REF with no pin ships no shelf. While COMMUNITY_LIVE is false in REF's app/src/ui/community.js
+# the shelf is checked and then held back, so the draft index stays off the site until the switch commit; the pull is
+# skipped with a line, not an error, when there's no checkout to pull from. COMMUNITY_SHIP=1 ships it anyway (a dry
+# run's check). The checkout: OVERDUB_DEVICES_DIR, else ../overdub-devices. A dry run may read another pin from
+# COMMUNITY_PIN (tools/community-test.js); a real deploy reads REF's only.
+if [ -n "${COMMUNITY_PIN:-}" ] && [ -z "$DRY" ]; then echo "COMMUNITY_PIN is for dry runs: a deploy reads the pin at $REF"; exit 2; fi
+PIN=$(mktemp)
+trap 'rm -rf "$STAGE" "$PIN"' EXIT
+if [ -n "${COMMUNITY_PIN:-}" ]; then cp "$COMMUNITY_PIN" "$PIN"; else git show "$REF:deploy/community-pin.json" > "$PIN" 2>/dev/null || : > "$PIN"; fi
+if [ ! -s "$PIN" ]; then
+  echo "app/community: none ($REF has no deploy/community-pin.json)"
+else
+  if git show "$REF:app/src/ui/community.js" 2>/dev/null | grep -q '^export const COMMUNITY_LIVE = true;'; then SHIP=1; else SHIP=; fi
+  SHIP=${COMMUNITY_SHIP:-$SHIP}
+  [ "$SHIP" = 0 ] && SHIP=
+  DEVICES_DIR=${OVERDUB_DEVICES_DIR:-$ROOT/../overdub-devices}
+  set +e
+  node "$ROOT/tools/community-pull.js" --pin-file "$PIN" --from "$DEVICES_DIR" --out "$STAGE/app/community"
+  PULLED=$?
+  set -e
+  if [ "$PULLED" = 3 ] && [ -z "$SHIP" ]; then
+    echo "app/community: held back (COMMUNITY_LIVE is false at $REF), and not checked: no checkout with the pinned commit at $DEVICES_DIR"
+  elif [ "$PULLED" != 0 ]; then
+    echo "not deploying: tools/community-pull.js didn't pull the pinned shelf (exit $PULLED)"; exit 1
+  elif [ -z "$SHIP" ]; then
+    rm -rf "${STAGE:?}/app/community"
+    echo "app/community: held back (COMMUNITY_LIVE is false at $REF); the pinned shelf checks out"
+  else
+    echo "app/community: $(find "$STAGE/app/community" -type f | wc -l | tr -d ' ') files, as pinned"
+    # a dry run lists each with the type and caching its upload rule below gives it
+    if [ -n "$DRY" ]; then
+      (cd "$STAGE" && find app/community -type f | sort) | while read -r f; do
+        case "$f" in
+          *.json) echo "  $f  application/json; charset=utf-8  no-cache" ;;
+          *.mp3) echo "  $f  audio/mpeg  no-cache" ;;
+          *) echo "  $f  (the catch-all sync)" ;;
+        esac
+      done
+    fi
+  fi
+fi
 echo "$TARGET: $SHORT ($REF): $(find "$STAGE" -type f | wc -l | tr -d ' ') files -> s3://$BUCKET, distribution $DIST"
 echo "app/site-config.json: $(tr -d '\n ' < "$STAGE/app/site-config.json")"
 
@@ -97,7 +141,7 @@ done
 
 # the kits first, so no page names one that isn't up yet (uploaded once each: a file named by its hash never changes)
 KITTMP=$(mktemp -d)
-trap 'rm -rf "$STAGE" "$KITTMP"' EXIT
+trap 'rm -rf "$STAGE" "$PIN" "$KITTMP"' EXIT
 for name in $HAVE; do
   for ext in odkz odk; do
     if [ -z "$DRY" ] && aws s3api head-object --bucket "$BUCKET" --key "app/kits/$name.$ext" >/dev/null 2>&1; then echo "kit $name.$ext: already up"; continue; fi
@@ -125,6 +169,9 @@ up --include '*.gif' --content-type 'image/gif' --cache-control "$MEDIA"
 up --include '*.mp4' --content-type 'video/mp4' --cache-control "$MEDIA"
 up --include '*.woff2' --content-type 'font/woff2' --cache-control "$MEDIA"
 up --include '*.wav' --content-type 'audio/wav' --cache-control "$MEDIA"
+# the shelf's clips revalidate like its index and device files (*.json, above), so a rebuild or a takedown is live at the
+# next load
+up --include 'app/community/*.mp3' --content-type 'audio/mpeg' --cache-control "$TEXT"
 # anything else, and remove what's gone (never the kits: they aren't in git, so they aren't in the stage)
 x aws s3 sync "$STAGE" "s3://$BUCKET" --only-show-errors --delete --exclude 'app/kits/*'
 

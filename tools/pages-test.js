@@ -455,6 +455,13 @@ for (const width of [1440, 390]) {
   const held = (deploy.match(/^HELD_BACK=\(([^)]*)\)/m) || [])[1] || '';
   t.ok(/^HELD_BACK=\(/m.test(deploy) && !/\bsite\/community\b/.test(held), `deploy.sh ships site/community: it isn't in HELD_BACK (${held.trim() || 'empty'})`);
   t.ok(/^\/?app\/community\/?$/m.test(read('.gitignore')), 'app/community/ (the studio\'s built snapshot) is in .gitignore');
+  // the shelf the deploy ships is pinned (deploy/community-pin.json, tools/community-pull.js), and its preview clips
+  // have their row in SOUNDS.md under the licences overdub-devices allows
+  let pin = null;
+  try { pin = JSON.parse(read('deploy/community-pin.json')); } catch { /* checked below */ }
+  t.ok(pin && Object.keys(pin).join() === 'repo,commit,index_sha256' && /^[0-9a-f]{40}$/.test(pin.commit) && /^[0-9a-f]{64}$/.test(pin.index_sha256), `deploy/community-pin.json pins a commit and the index's SHA-256 (${pin ? pin.commit.slice(0, 7) : 'missing'})`);
+  const sounds = (read('docs/SOUNDS.md').split(/^## Community shelf preview clips/m)[1] || '').split(/^## /m)[0];
+  t.ok(['MIT-0', 'MIT', 'CC0-1.0'].every((l) => new RegExp(`\\[${l.replace(/[.-]/g, '\\$&')}\\]`).test(sounds)) && /community-pull\.js/.test(sounds), 'docs/SOUNDS.md has the community shelf\'s preview clips, under MIT-0, MIT or CC0-1.0, from the pull');
   const ui = path.join(ROOT, 'app/src/ui/community.js');
   const pageLive = /export const COMMUNITY_LIVE = (true|false)/.exec(read('site/community/community.js'))?.[1];
   const studioLive = fs.existsSync(ui) ? /COMMUNITY_LIVE\s*=\s*(true|false)/.exec(fs.readFileSync(ui, 'utf8'))?.[1] : null;

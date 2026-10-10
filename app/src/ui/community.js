@@ -50,7 +50,7 @@ const STORE_KEY = 'overdub:community', TRY_KEY = 'overdub:community-try';
 const catName = (c) => (DEVICE_CATS.find(([k]) => k === c) || [c, c])[1];
 const say = {
   refusedSource: 'The studio can read a shelf from this site or from localhost only.',
-  none: 'No shelf here. Build one with node tools/index.js --out ../overdub/app/community in overdub-devices.',
+  none: 'No shelf here. Fill it with node tools/community-pull.js (it reads the pinned commit from ../overdub-devices).',
   newer: 'This shelf was built for a newer studio.',
   // (the Browser's line at the top says what a click or a tap on the studio's own devices does; a shelf row adds nothing)
   target: 'A row here adds nothing: ▶ plays a recording, and Try asks before any code runs.',

@@ -172,3 +172,52 @@ export function qaInstrument(rows, waive = [], { drums = false } = {}) {
   out.push(['11 tuning, layers', split.length ? 'review' : 'accept', split.length ? `the layers of ${split.length} notes are more than 8 cents apart: ${split.join(', ')}` : 'every note\'s layers within 8 cents of each other']);
   return { verdicts: out, rows };
 }
+
+// ------------------------------------------------------------------------------------------------ rooms (R13)
+// A measured room's fit, scored: the hybrid (Echo Chamber's early part and tail, rendered by the kernel itself, an
+// impulse in, wet only) against the measured IR it stands for (direct sound removed, as the hybrid's is). Both are
+// tools/kits/air-rooms.js measureRoom(..., { curves: true }) results from the same start: per octave { f, t20, t30,
+// edt, c80, db (the decay curve, per sample, dB) } and broadband.e (the energy per sample, both ears).
+//
+//   qaRoom(ref, hyb, { sr, tx })  -> { pass, checks: [[name, pass, worst, detail]], bands: [{ f, ...each number }] }
+//
+// The bar (spec R13): T20, T30 and EDT per octave from 250 Hz to 4 kHz within 5% (ISO 3382's just-noticeable
+// difference); C80 per octave there within 1 dB; the broadband envelope in every 10 ms frame from tx - 50 ms to tx +
+// 100 ms within 1.5 dB; each octave's decay curve, down to -30 dB, within 1 dB; at 125 Hz and 8 kHz the times within
+// 10% and the decay curve within 2 dB.
+export const ROOM_BAR = { time: 0.05, c80: 1, env: 1.5, edc: 1, edgeTime: 0.1, edgeEdc: 2 };
+export function qaRoom(ref, hyb, { sr, tx }) {
+  const F = Math.round(0.01 * sr), bar = ROOM_BAR;
+  // the largest gap between two decay curves while the measured one is above -30 dB, read every 10 ms
+  const edcGap = (a, b) => {
+    let worst = 0;
+    for (let i = 0; i < a.length && i < b.length; i += F) { if (a[i] < -30) break; worst = Math.max(worst, Math.abs(b[i] - a[i])); }
+    return worst;
+  };
+  const rel = (h, m) => (h == null || m == null ? Infinity : Math.abs(h / m - 1));
+  const bands = ref.bands.map((r, i) => {
+    const h = hyb.bands[i];
+    return { f: r.f, t20: [r.t20, h.t20], t30: [r.t30, h.t30], edt: [r.edt, h.edt], c80: [r.c80, h.c80],
+      err: { t20: rel(h.t20, r.t20), t30: rel(h.t30, r.t30), edt: rel(h.edt, r.edt), c80: Math.abs(h.c80 - r.c80), edc: edcGap(r.db, h.db) } };
+  });
+  const mid = bands.filter((b) => b.f >= 250 && b.f <= 4000), edge = bands.filter((b) => b.f === 125 || b.f === 8000);
+  // the broadband envelope around the seam: 10 ms frames, both ears
+  const env = [];
+  for (let a = tx - 5 * F; a + F <= tx + 10 * F; a += F) {
+    if (a < 0) continue;
+    let er = 0, eh = 0;
+    for (let i = a; i < a + F; i++) { er += ref.broadband.e[i] || 0; eh += hyb.broadband.e[i] || 0; }
+    env.push(10 * Math.log10(eh / er));
+  }
+  const worstOf = (list, key) => list.reduce((w, b) => Math.max(w, b.err[key]), 0);
+  const where = (list, key) => list.reduce((w, b) => (b.err[key] > w.v ? { v: b.err[key], f: b.f } : w), { v: -1, f: null }).f;
+  const pct = (x) => (x === Infinity ? 'unread' : (100 * x).toFixed(1) + '%');
+  const checks = [];
+  for (const key of ['t20', 't30', 'edt']) { const w = worstOf(mid, key); checks.push([`${key.toUpperCase()} 250 Hz-4 kHz`, w <= bar.time, w, `worst ${pct(w)} (at ${where(mid, key)} Hz)`]); }
+  { const w = worstOf(mid, 'c80'); checks.push(['C80 250 Hz-4 kHz', w <= bar.c80, w, `worst ${w.toFixed(2)} dB (at ${where(mid, 'c80')} Hz)`]); }
+  { const w = env.reduce((m, d) => Math.max(m, Math.abs(d)), 0); checks.push(['envelope at the seam', w <= bar.env, w, `worst ${w.toFixed(2)} dB over ${env.length} frames, tx - 50 ms to tx + 100 ms`]); }
+  { const w = worstOf(mid, 'edc'); checks.push(['decay curves 250 Hz-4 kHz', w <= bar.edc, w, `worst ${w.toFixed(2)} dB to -30 dB (at ${where(mid, 'edc')} Hz)`]); }
+  { const w = Math.max(worstOf(edge, 't20'), worstOf(edge, 't30'), worstOf(edge, 'edt')); checks.push(['times at 125 Hz and 8 kHz', w <= bar.edgeTime, w, `worst ${pct(w)}`]); }
+  { const w = worstOf(edge, 'edc'); checks.push(['decay curves at 125 Hz and 8 kHz', w <= bar.edgeEdc, w, `worst ${w.toFixed(2)} dB to -30 dB (at ${where(edge, 'edc')} Hz)`]); }
+  return { pass: checks.every((c) => c[1]), checks, bands, env };
+}

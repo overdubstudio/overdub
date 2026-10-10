@@ -152,3 +152,37 @@ export function roomTail(sr, opts) {
 // the kernel text: the series, then these, in this order (a kernel pastes ROOM_TAIL after lib.js's LIB, whose names
 // it doesn't reuse: svf, onepole, glide and coef there are built on Math.exp and Math.tan)
 export const ROOM_TAIL = [SERIES, roomSvfSet, roomPole, roomGlide, roomTail].map(String).join('\n');
+
+// ---------------------------------------------------------------------------------------------- the rooms and the bank
+// The ROOM switch's table, append-only: [label, bank, the room's id in that bank]. An index is a room forever (a song
+// stores the index): a room is added at the end, never reordered, reused or renamed. The kernel pastes it as JSON.
+export const ROOMS = [
+  ['AULA', 'aachen', 'aachen.aula-3m'],
+  ['AULA FAR', 'aachen', 'aachen.aula-10m'],
+  ['LECTURE', 'aachen', 'aachen.lecture-5m'],
+  ['STAIRS', 'aachen', 'aachen.stairway-2m'],
+  ['OFFICE', 'aachen', 'aachen.office-2m'],
+  ['MEETING', 'aachen', 'aachen.meeting-2m'],
+];
+export const ROOM_LABELS = ROOMS.map((r) => r[0]);
+// the `aachen` bank (node tools/fetch-kits.js air-rooms builds it: tools/kits/air-rooms.js). Frozen once it ships: a
+// better fit is a new room in a new bank, never a changed one
+export const ROOMS_HASH = 'sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382';
+// what the rack and the pickers say while the bank is on its way, or isn't on this server (ui/rack.js dataLine): the
+// effect passes its input through meanwhile
+export const ROOMS_SAYS = {
+  loading: ['Loading rooms…', 'Loading its rooms: the sound passes dry until they’re in'],
+  missing: ['No rooms here', 'Its rooms aren’t on this server, so the sound passes dry'],
+};
+// What the card and the agents say about each room, from the bank's header (tools/kits/air-rooms.js roomInfo writes it;
+// tools/rooms-test.js holds it to the decoded header, field by field): its label and id, what it is, how far from the
+// source the ears were (m), its T30 at 500 Hz, 1 kHz and 2 kHz and its EDT at 1 kHz (s, measured from the full IR),
+// and its early cut (s)
+export const ROOM_INFO = [
+  { label: 'AULA', id: 'aachen.aula-3m', name: 'Aula Carolina', place: 'Aachen', what: 'a former church', distance: 3, t30: [4.203, 3.176, 2.665], edt: 2.642, tx: 0.15 },
+  { label: 'AULA FAR', id: 'aachen.aula-10m', name: 'Aula Carolina', place: 'Aachen', what: 'a former church', distance: 10, t30: [4.261, 3.168, 2.697], edt: 2.958, tx: 0.15 },
+  { label: 'LECTURE', id: 'aachen.lecture-5m', name: 'Lecture room', place: 'Aachen', what: 'a lecture room', distance: 5.56, t30: [0.855, 0.882, 0.918], edt: 0.77, tx: 0.12 },
+  { label: 'STAIRS', id: 'aachen.stairway-2m', name: 'Stairway', place: 'Aachen', what: 'a stairwell', distance: 2, t30: [1.336, 1.174, 1.044], edt: 0.707, tx: 0.1 },
+  { label: 'OFFICE', id: 'aachen.office-2m', name: 'Office', place: 'Aachen', what: 'an office', distance: 2, t30: [0.633, 0.492, 0.419], edt: 0.461, tx: 0.08 },
+  { label: 'MEETING', id: 'aachen.meeting-2m', name: 'Meeting room', place: 'Aachen', what: 'a meeting room', distance: 1.9, t30: [0.383, 0.343, 0.309], edt: 0.223, tx: 0.08 },
+];

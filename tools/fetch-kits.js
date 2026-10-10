@@ -62,6 +62,8 @@ import { METALKIT_HASH } from '../app/src/devices/builtin/metalkit.js';
 import { buildBlended } from './kits/blend.js';
 import { RECIPE as CABS_RECIPE, cabBuilder } from './kits/jester-cabs.js';
 import { CABS_HASH } from '../app/src/devices/builtin/amp-lib.js';
+import { RECIPE as AIR_RECIPE, roomBuilder } from './kits/air-rooms.js';
+import { ROOMS_HASH } from '../app/src/devices/builtin/rooms-lib.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -369,6 +371,14 @@ async function buildCabBank(recipe) {
   return { ...r, hash: 'sha256-' + sha256(r.bytes), inFrames: r.rows.reduce((s, x) => s + x.frames, 0), outFrames: r.rows.reduce((s, x) => s + x.taps, 0) };
 }
 
+// Echo Chamber's rooms (tools/kits/air-rooms.js): twelve .mat files read by range from the Aachen database's zip, each
+// room fitted, windowed and scored through the kernel itself (its QA, spec R13, goes to tools/.out/library/rooms/)
+async function buildRoomBank(recipe) {
+  const r = await roomBuilder({ cache: CACHE, offline: () => OFFLINE })(recipe);
+  for (const row of r.rows) console.log(`  ${row.id.padEnd(20)} tx ${Math.round(row.tx * 1000)} ms, D ${row.fit.D}, scale ${row.fit.scale}, T60 ${row.fit.t60.join(' / ')} s, level ${row.level} dB: ${row.pass ? 'within the bar' : 'misses the bar (waiver pending AJ)'}`);
+  return { ...r, hash: 'sha256-' + sha256(r.bytes) };
+}
+
 // every kit a device names: [recipe, the hash the device pins, how it's built]
 const KITS = [[KIT_RECIPE, KIT_HASH, build], [UPRIGHT_RECIPE, UPRIGHT_HASH, buildMelodic], [BRUSH_RECIPE, BRUSH_HASH, build], [HAND_RECIPE, HAND_HASH, build],
   [GRAND_RECIPE, GRAND_HASH, buildLaidOut],
@@ -379,7 +389,8 @@ const KITS = [[KIT_RECIPE, KIT_HASH, build], [UPRIGHT_RECIPE, UPRIGHT_HASH, buil
   [FLUTE_RECIPE, FLUTE_HASH, buildLaidOut],
   [TRUMPET_RECIPE, TRUMPET_HASH, buildLaidOut],
   [STICKS_RECIPE, METALKIT_HASH, buildMixed],
-  [CABS_RECIPE, CABS_HASH, buildCabBank]];
+  [CABS_RECIPE, CABS_HASH, buildCabBank],
+  [AIR_RECIPE, ROOMS_HASH, buildRoomBank]];
 
 async function one(recipe, pinned, make, { check, verify, rebuild }) {
   const file = path.join(ROOT, 'app', dataFile(pinned));
@@ -390,7 +401,8 @@ async function one(recipe, pinned, make, { check, verify, rebuild }) {
     console.log(`${recipe.name}: ${here ? 'here' : fs.existsSync(file) ? 'NOT the pinned file' : 'not fetched'} (${path.relative(ROOT, file)}), .odkz ${packed ? 'here' : 'missing or wrong'}`);
     return here && packed ? 0 : 1;
   }
-  console.log(recipe.zips ? `${recipe.name}: ${Object.values(recipe.zips).map((z) => z.url.replace(/^.*\//, '') + ' ' + z.sha256.slice(0, 12)).join(', ')} (${recipe.licence})`
+  const zips = recipe.zips ? Object.values(recipe.zips) : recipe.zip ? [recipe.zip] : null;
+  console.log(zips ? `${recipe.name}: ${zips.map((z) => z.url.replace(/^.*\//, '') + ' ' + z.sha256.slice(0, 12)).join(', ')} (${recipe.licence})`
     : `${recipe.name}: ${recipe.repo} at ${recipe.commit.slice(0, 12)} (${recipe.licence})`);
   if (verify) {
     OFFLINE = true;
@@ -410,7 +422,7 @@ async function one(recipe, pinned, make, { check, verify, rebuild }) {
     // the report, one row per sample with every number (tools/.out/library/<repo>/qa.json)
     const dir = path.join(HERE, '.out', 'library', recipe.qaName || recipe.repo.replace(/\//g, '_'));
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'qa.json'), JSON.stringify({ kit: recipe.name, commit: recipe.commit, verdicts: r.qa.verdicts, rows: r.qa.rows }, null, 1) + '\n');
+    fs.writeFileSync(path.join(dir, 'qa.json'), JSON.stringify({ kit: recipe.name, commit: recipe.commit || (recipe.zip && recipe.zip.sha256), ...(recipe.kind === 'rooms' ? { hash: r.hash } : {}), verdicts: r.qa.verdicts, rows: r.qa.rows }, null, 1) + '\n');
     console.log(`  the QA report: ${path.relative(ROOT, path.join(dir, 'qa.json'))}`);
   }
   fs.mkdirSync(KITS_DIR, { recursive: true });
@@ -434,7 +446,7 @@ async function main() {
   // `--only rusty`; a name matches a recipe's name or repo, any case)
   const only = process.argv.slice(2).filter((a) => !a.startsWith('--')).map((a) => a.toLowerCase());
   for (const [recipe, pinned, make] of KITS) {
-    if (only.length && !only.some((w) => recipe.name.toLowerCase().includes(w) || String(recipe.repo || '').toLowerCase().includes(w))) continue;
+    if (only.length && !only.some((w) => recipe.name.toLowerCase().includes(w) || String(recipe.repo || '').toLowerCase().includes(w) || String(recipe.key || '') === w)) continue;
     code = Math.max(code, await one(recipe, pinned, make, flags));
   }
   process.exitCode = code;

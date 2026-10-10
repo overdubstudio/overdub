@@ -209,9 +209,9 @@ redistribution and claims nothing of the songs made with it. Contributed sounds 
 
 ## Aachen Impulse Response Database: Echo Chamber's rooms (`core.rooms`, being built)
 
-Echo Chamber is being built on the `real-rooms` branch (intent 0006, "Real Rooms"). It isn't in the studio yet. This
-section records the source and its licence now, because the recipe already reads them. The bank's hash, the
-modifications and the QA go here when the bank is built.
+Echo Chamber is being built on the `real-rooms` branch (intent 0006, "Real Rooms"). It isn't in the studio yet. The
+bank is built (`node tools/fetch-kits.js --only air-rooms`) and pinned; its QA report is
+`tools/.out/library/rooms/qa.json`, and every room is waiting on a waiver (below).
 
 | | |
 |---|---|
@@ -220,8 +220,9 @@ modifications and the QA go here when the bank is built.
 | Licence | MIT. `AIR_1_4/license.txt`, read from the zip itself on 2026-10-10, is quoted in full below. The build refuses to run unless that file has the pinned hash and begins "MIT License". `readme.txt` says "This database is under the MIT license. For further details see license.txt" |
 | Author | Marco Jeub et al., RWTH Aachen University, Institute of Communication Systems (IKS; "Institute of Communication Systems and Data Processing (IND)" in the licence) |
 | What they are | Binaural room impulse responses (a dummy head's two ears) at 48 kHz, read from the `.mat` files. The Aula Carolina is only in those files. The six rooms are the Aula Carolina (a former church) at 3 m and 10 m, the lecture room at 5.56 m, the stairway at 2 m, the office at 2 m and the meeting room at 1.9 m |
-| Modifications | Not built yet |
-| Kit | Not built yet |
+| Modifications | Per room: both ears from the direct sound's arrival (the onset, the first sample within 20 dB of the left ear's peak, less 0.5 ms) to the early cut (AULA and AULA FAR 150 ms, LECTURE 120, STAIRS 100, OFFICE and MEETING 80). The direct sound (to 2.5 ms after the onset) is faded out over 1 ms, because the dry path is the direct sound. The rest is windowed so that it and the fitted tail add up to the measured envelope in 10 ms frames, then faded to 0 at the cut over 5 ms. Peak-normalised, rounded to 16 bits, the gain in the header. The tail's fit (three T60s, the line scale, its delay, its EQ and gain) and each room's level are numbers in the header, not audio. The full IRs are not shipped |
+| QA | `tools/.out/library/rooms/qa.json` scores each room's hybrid, rendered by the kernel, against its measured IR (spec R13). On 2026-10-10 no room passed every check, so all six are marked "waiver pending AJ": the listening room decides. Aula's low octaves miss by design (R14 caps the tail's low T60 at 1.5x the 500 Hz T30), and the seam's 10 ms frames miss the 1.5 dB bar in five rooms |
+| Kit | `sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382` (16-bit stereo, 48 kHz, six rooms, 137.4 KB as .odk) |
 | Verified | 2026-10-10 |
 
 The notice, as `license.txt` gives it (its line breaks kept). It goes into the bank's `meta.notice` as well:

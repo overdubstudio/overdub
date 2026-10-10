@@ -1,5 +1,5 @@
-// Echo Chamber (core.rooms, intent 0006 "Real Rooms"): the room tail and the series it is built from. The device, its
-// bank and its fit join this suite as they land.
+// Echo Chamber (core.rooms, intent 0006 "Real Rooms"): the series, the room tail, the ranged zip, the `aachen` bank and
+// the device. Not registered in builtin/index.js yet: this imports it, which defines it.
 //
 //   the series   series.js's dsin is convolve.js's, double for double; dexp is within 1e-15 of Math.exp; SERIES and
 //                ROOM_TAIL are the functions' own text, and that text, run as a kernel would, gives the same samples
@@ -8,9 +8,17 @@
 //   the tail     an impulse through roomTail alone decays at each band's set T60 within 5% (R8, R10): the low band at
 //                63 Hz, the mid at 1.4 kHz and the high at 16 kHz, with DECAY and DAMP applied as R10 says; nothing
 //                allocates in process()
-//   the zip     tools/kits/zip.js's ranged reader against a local server: members by Range, checked and cached by
+//   the zip      tools/kits/zip.js's ranged reader against a local server: members by Range, checked and cached by
 //                their SHA-256, then read again offline; a server that ignores Range gets the whole zip, checked
 //                against its own SHA-256; a member that isn't its pin is refused
+//   the bank     (app/kits/: node tools/fetch-kits.js --only air-rooms) every R15 field and the meta; ROOM_INFO is the
+//                header's; the direct sound out (R6); the spec's early cuts (R7); each IR ends at 0 (R12); under 50 KB
+//                a room on the wire (R18); qa.json is this bank's, and each room passes R13 or names its waiver
+//   the device   R19-R24: the def, the dataSays words, ROOM_TAIL verbatim and no Math.exp/pow/sin/cos/tan/log after
+//                LIB, no bank = the input as it is, MIX 0 = dry, every room's wet RMS within 0.5 dB, other host
+//                rates, a click-free room change, the device check at defaults
+//   the cost     no garbage collection across room changes; the heaviest block of the cycle under 0.5 ms; a room
+//                change's block reported (Q5); checkDevice's cpu against core.verb, at most 1.5x (R36)
 //   node tools/rooms-test.js
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -24,6 +32,23 @@ import { dsin as convolveSin, fft } from '../app/src/kernel/convolve.js';
 import { dsin, dcos, dexp, SERIES } from '../app/src/devices/builtin/series.js';
 import { roomTail, roomSvfSet, roomPole, roomGlide, ROOM_TAIL } from '../app/src/devices/builtin/rooms-lib.js';
 import { openZipRanged } from './kits/zip.js';
+import { fileURLToPath } from 'node:url';
+import rooms, { ROOMS_BODY } from '../app/src/devices/builtin/rooms.js';
+import verb from '../app/src/devices/builtin/verb.js';
+import { ROOMS, ROOM_LABELS, ROOMS_HASH, ROOMS_SAYS, ROOM_INFO } from '../app/src/devices/builtin/rooms-lib.js';
+import { LIB } from '../app/src/devices/builtin/lib.js';
+import { dataFor, dataPath } from '../app/src/engine/node/data.js';
+import { encodeOdk } from '../app/src/kernel/odk.js';
+import { packOdk } from '../app/src/kernel/odkz.js';
+import { makeDsp } from '../app/src/kernel/dsp.js';
+import { kernelSpecs } from '../app/src/kernel/host.js';
+import { paramValues } from '../app/src/devices/registry.js';
+import { diStrum } from '../app/src/audio/testsignals.js';
+import { measure } from '../app/src/audio/measure.js';
+import { checkDeviceNode } from '../app/src/engine/node/check.js';
+import { summarize } from '../app/src/kernel/check.js';
+import { roomInfo } from './kits/air-rooms.js';
+import { run } from './amp-scenes.js';
 
 const T = tally('rooms');
 const ok = T.ok;
@@ -77,6 +102,12 @@ function bandT60(y, f, half, want) {
   const mx = pts.reduce((s, p) => s + p[0], 0) / pts.length, my = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   const slope = pts.reduce((s, p) => s + (p[0] - mx) * (p[1] - my), 0) / pts.reduce((s, p) => s + (p[0] - mx) * (p[0] - mx), 0);
   return -60 / slope;
+}
+// x high-passed at f: four first-order high-passes in a row (24 dB/oct), forward only
+function highBand(x, f) {
+  const a = Math.exp((-2 * Math.PI * f) / SR), y = Float64Array.from(x);
+  for (let k = 0; k < 4; k++) { let px = 0, py = 0; for (let i = 0; i < y.length; i++) { const v = y[i]; py = a * (py + v - px); px = v; y[i] = py; } }
+  return y;
 }
 const impulse = (tail, secs) => {
   const n = Math.round(secs * SR), x = new Float64Array(n), L = new Float64Array(n), R = new Float64Array(n);
@@ -220,6 +251,149 @@ console.log('the ranged zip');
     server.close();
     for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
   }
+}
+
+/* ------------------------------------------------------------------ the bank */
+// (what follows needs the `aachen` bank: node tools/fetch-kits.js --only air-rooms builds it into app/kits/)
+const bank = dataFor(rooms.data).aachen;
+const wantTx = { 'aachen.aula-3m': 150, 'aachen.aula-10m': 150, 'aachen.lecture-5m': 120, 'aachen.stairway-2m': 100, 'aachen.office-2m': 80, 'aachen.meeting-2m': 80 };
+const QA = path.join(path.dirname(fileURLToPath(import.meta.url)), '.out', 'library', 'rooms', 'qa.json');
+console.log('the bank');
+if (!bank) {
+  ok(false, `the aachen bank (${ROOMS_HASH.slice(0, 19)}...) is here (node tools/fetch-kits.js --only air-rooms builds it)`);
+} else {
+  ok(bank.bits === 16 && bank.channels === 2 && bank.sr === 48000 && bank.samples.length === ROOMS.length, `the aachen bank: ${bank.samples.length} rooms, ${bank.bits}-bit, ${bank.channels} channels, ${bank.sr} Hz`);
+  const m = bank.meta;
+  ok(m.kind === 'rooms' && m.licence === 'MIT' && /^MIT License/.test(m.notice) && /Permission is hereby granted, free of charge/.test(m.notice) && /THE SOFTWARE IS PROVIDED "AS IS"/.test(m.notice)
+    && m.credit === 'Rooms measured by RWTH Aachen University (AIR 1.4, MIT).' && /^https:\/\/www\.iks\.rwth-aachen\.de\//.test(m.url),
+    `its meta: kind rooms, licence MIT, the full MIT notice (${m.notice.length} characters), the credit and the source URL`);
+  const FIELDS = ['id', 'name', 'place', 'what', 'distance', 'measured', 'tx', 'fit', 'gain', 'level'];
+  const fitOk = (f) => f && f.model === 'tail/1' && Number.isInteger(f.D) && f.D > 0 && f.scale >= 0.4 && f.scale <= 1.6 && f.t60.length === 3 && f.t60.every((t) => t > 0.05)
+    && f.eq.length === 3 && f.eq.every((e) => Math.abs(e) <= 24) && f.g > 0 && f.mod === 0 && f.t60raw.length === 3;
+  const meas = (s) => s.measured && ['t30', 'edt', 'c80'].every((k) => s.measured[k].length === s.measured.octaves.length) && s.measured.mix > 0 && s.measured.floor < -30;
+  ok(bank.samples.every((s, i) => FIELDS.every((k) => s[k] != null) && s.id === ROOMS[i][2] && s.label === ROOMS[i][0] && fitOk(s.fit) && meas(s)),
+    `every room, in the switch's order, carries ${FIELDS.join(', ')} (the fit tail/1 with D, scale, t60 [lo, mid, hi] and the uncapped t60raw, eq, g, mod; the measured T30, EDT and C80 per octave, the mixing time, the noise floor)`);
+  ok(JSON.stringify(roomInfo(bank)) === JSON.stringify(ROOM_INFO), `ROOM_INFO (rooms-lib.js, what the card and the agents read) is the header's, field by field (${ROOM_INFO.map((r) => `${r.label} ${r.t30[1]} s at 1 kHz`).join(', ')})`);
+  ok(bank.samples.every((s) => Math.round(s.tx * 1000) === wantTx[s.id] && s.frames === Math.round(s.tx * 48000)),
+    `the early cuts are the spec's: ${bank.samples.map((s) => `${s.label} ${Math.round(s.tx * 1000)} ms`).join(', ')}`);
+  // R6: the direct sound is out: the stored IR's first 2.5 ms under -40 dB re its peak
+  const heads = bank.samples.map((s) => {
+    let pk = 0, h = 0; const n = Math.round(0.0025 * 48000);
+    for (const c of s.ch) for (let i = 0; i < c.length; i++) { const a = Math.abs(c[i]); if (a > pk) pk = a; if (i < n && a > h) h = a; }
+    return h > 0 ? 20 * Math.log10(h / pk) : -200;
+  });
+  ok(heads.every((d) => d < -40), `the direct sound is out: each IR's first 2.5 ms peak at ${heads.map((d) => (d <= -200 ? 'silence' : d.toFixed(0) + ' dB')).join(', ')} re its peak (under -40)`);
+  // R12: the window reaches 0 at tx (the last stored frame is silent)
+  ok(bank.samples.every((s) => s.ch.every((c) => c[c.length - 1] === 0)), 'each early IR ends at 0 at its cut (the window\'s 5 ms cosine)');
+  // R18: the sizes on the wire, a room at a time (its own .odk, packed, gzipped)
+  const wire = bank.samples.map((s) => zlib.gzipSync(packOdk(encodeOdk({ name: 'one', sr: 48000, bits: 16, channels: 2, meta: {}, samples: [{ id: s.id, ch: s.ch }] })), { level: 9 }).length);
+  const whole = zlib.gzipSync(packOdk(fs.readFileSync(dataPath(ROOMS_HASH))), { level: 9 }).length;
+  ok(wire.every((b) => b < 50000), `each room is under 50 KB on the wire: ${wire.map((b) => (b / 1000).toFixed(1)).join(', ')} KB (the bank ${(fs.statSync(dataPath(ROOMS_HASH)).size / 1000).toFixed(1)} KB as .odk, ${(whole / 1000).toFixed(1)} KB packed and gzipped)`);
+  // R13: the fit's report
+  let qa = null;
+  try { qa = JSON.parse(fs.readFileSync(QA, 'utf8')); } catch { /* not built here */ }
+  if (!qa || qa.hash !== ROOMS_HASH) ok(false, `tools/.out/library/rooms/qa.json is this bank's (node tools/fetch-kits.js --only air-rooms --rebuild writes it)`);
+  else {
+    ok(qa.rows.length === ROOMS.length && qa.rows.every((r) => r.pass || /waiver pending AJ/.test(r.waiver || '')),
+      `qa.json: every room passes the R13 bar or names its waiver (${qa.rows.map((r) => `${r.label} ${r.pass ? 'passes' : 'waiver pending: ' + r.checks.filter((c) => !c.pass).length + ' of ' + r.checks.length + ' checks miss'}`).join('; ')})`);
+    for (const r of qa.rows) T.note(`${r.label}: ${r.checks.map((c) => `${c.pass ? '' : 'MISS '}${c.name} ${c.detail}`).join('; ')}`);
+    ok(qa.rows.every((r) => r.built > 0 && r.fit.D + 0 === bank.samples.find((s) => s.id === r.id).fit.D), `the tail has built up by tx: D puts its plateau there (built ${qa.rows.map((r) => r.built + ' ms').join(', ')} after its input)`);
+    T.note(`R7's rule (twice the mixing time, to the next 10 ms, 80-200 ms) would give ${qa.rows.map((r) => `${r.label} ${r.txRule}`).join(', ')} ms; the spec's listed values ship`);
+  }
+}
+
+/* ------------------------------------------------------------------ Echo Chamber */
+console.log('Echo Chamber');
+{
+  const d = rooms;
+  ok(d.id === 'core.rooms' && d.name === 'Echo Chamber' && d.kind === 'effect' && d.cat === 'ambient' && d.by === 'overdub' && d.trails === true && d.tail === 12 && d.latency == null && d.data.aachen === ROOMS_HASH,
+    'core.rooms is Echo Chamber: an ambient effect, trails, tail 12 s, no declared latency, data { aachen }');
+  ok(JSON.stringify(d.params.map((p) => p.key)) === JSON.stringify(['room', 'predelay', 'decay', 'damp', 'lowcut', 'width', 'mix']) && JSON.stringify(d.params[0].opts) === JSON.stringify(ROOM_LABELS) && d.params[0].auto === false,
+    `its params, keys forever: ${d.params.map((p) => p.key).join(', ')}; ROOM a switch of ${ROOM_LABELS.join(', ')}, never automated`);
+  ok(JSON.stringify(d.dataSays) === JSON.stringify(ROOMS_SAYS) && ROOMS_SAYS.loading[0] === 'Loading rooms…' && ROOMS_SAYS.missing[0] === 'No rooms here', `it says "${ROOMS_SAYS.loading[0]}" while the bank loads and "${ROOMS_SAYS.missing[0]}" without it`);
+  // R8 and R22: ROOM_TAIL verbatim in the kernel; nothing after LIB calls Math.exp, pow, sin, cos, tan or log
+  ok(d.kernel.includes(ROOM_TAIL) && d.kernel.includes(ROOMS_BODY) && d.kernel.indexOf(ROOMS_BODY) > d.kernel.indexOf(LIB) + LIB.length - 1, 'the kernel carries ROOM_TAIL verbatim, after lib.js\'s LIB');
+  const banned = ROOMS_BODY.match(/Math\.(exp|pow|sin|cos|tan|log)\w*/g);
+  ok(!banned, `the kernel's own text (${ROOMS_BODY.length} characters after LIB) calls no Math.exp, pow, sin, cos, tan or log${banned ? ': ' + [...new Set(banned)].join(', ') : ''}`);
+  // R24: no bank, the input as it is
+  const strum = diStrum(4, SR), st = [Float32Array.from(strum, (v) => v * 0.7), Float32Array.from(strum, (v, i) => v * 0.5 + 0.1 * Math.sin(i * 0.01))];
+  const [nl, nr] = run(d, {}, st[0], st[1], { data: null });
+  let same = true; for (let i = 0; i < nl.length; i++) if (nl[i] !== st[0][i] || nr[i] !== st[1][i]) { same = false; break; }
+  ok(same, 'with no bank (loading, or not on this server) the input passes through, sample for sample');
+  if (bank) {
+    const [dl] = run(d, { mix: 0 }, st[0], st[1]);
+    let dry = true; for (let i = 0; i < dl.length; i++) if (dl[i] !== st[0][i]) { dry = false; break; }
+    ok(dry, 'MIX 0 is the dry signal, sample for sample (the dry path has no latency)');
+    // R20: every room's wet signal at the DI strum's RMS
+    const pad = new Float32Array(SR * 12); pad.set(diStrum(8, SR));
+    const wet = ROOMS.map((_, r) => { const [l, rr] = run(d, { room: r, mix: 1 }, pad); return measure({ sr: SR, channels: [l, rr] }).rms; });
+    const spread = Math.max(...wet) - Math.min(...wet);
+    ok(spread < 0.5, `switching rooms moves the wet RMS on the DI strum by ${spread.toFixed(2)} dB at most (${wet.map((x) => x.toFixed(2)).join(', ')} dBFS; under 0.5)`);
+    // at another host rate the rooms are resampled (linearly) and the fit's D moves with the rate: about the same level
+    // (the bank, the fit and the bit-exact renders are 48 kHz's; elsewhere the linear resampling's top-octave loss and
+    // the tail's own rate dependence move it by a dB or two, measured here and held within 3 dB)
+    const atRate = (sr) => { const x = new Float32Array(sr * 12); x.set(diStrum(8, sr)); const [l, rr] = run(d, { room: 0, mix: 1 }, x, x, { sr }); return measure({ sr, channels: [l, rr] }).rms; };
+    const rates = [44100, 96000].map((r) => [r, atRate(r) - wet[0]]);
+    ok(rates.every(([, dd]) => Math.abs(dd) < 3), `at ${rates.map(([r, dd]) => `${r / 1000} kHz the wet RMS is ${dd >= 0 ? '+' : ''}${dd.toFixed(2)} dB`).join(' and ')} from 48 kHz's (AULA)`);
+    // R23: a live room change, no click: a 440 Hz sine in, AULA to LECTURE at 1 s; the difference from staying in AULA,
+    // above 4 kHz (where a sine's room has nothing), stays under -60 dBFS
+    const sine = new Float32Array(SR * 2); for (let i = 0; i < sine.length; i++) sine[i] = 0.25 * Math.sin((2 * Math.PI * 440 * i) / SR);
+    const sw = run(d, { mix: 0.5 }, sine, sine, { sched: (t) => (t >= 1 && t < 1 + 128 / SR ? { mix: 0.5, room: 2 } : null) })[0], stay = run(d, { mix: 0.5 }, sine)[0];
+    const diff = Float64Array.from(sw, (v, i) => v - stay[i]), hp = highBand(diff, 4000);
+    let before = 0, at = 0;
+    for (let i = SR / 2; i < SR; i++) before = Math.max(before, Math.abs(hp[i]));
+    for (let i = SR; i < SR + Math.round(0.1 * SR); i++) at = Math.max(at, Math.abs(hp[i]));
+    const db = (x) => (x > 0 ? 20 * Math.log10(x) : -200);
+    ok(db(at) < -60, `a room change mid-signal (AULA to LECTURE on a sine) has no click: the difference's band above 4 kHz peaks at ${db(at).toFixed(0)} dBFS over the 50 ms crossfade and after (${db(before).toFixed(0)} before it)`);
+    let moved = 0; for (let i = SR + Math.round(0.06 * SR); i < SR + Math.round(0.2 * SR); i++) moved = Math.max(moved, Math.abs(diff[i]));
+    ok(db(moved) > -40, `and the room did change (the difference after the crossfade: ${db(moved).toFixed(0)} dBFS)`);
+    // R21: the device check at defaults
+    const nc = await checkDeviceNode(d);
+    ok(nc.ok && nc.deterministic && !nc.nan && Math.abs(nc.level.deltaLU) <= 3 && nc.truePeak < -1, `the device check at defaults: ${summarize(nc)} (${nc.level.deltaLU} LU against the input, ${nc.truePeak} dBTP${nc.warnings.length ? '; ' + nc.warnings.join('; ') : ''})`);
+  }
+}
+
+/* ------------------------------------------------------------------ the room switch, timed, and the CPU */
+if (bank) {
+  console.log('the cost');
+  const K = new Function('return ' + rooms.kernel)(), dsp = makeDsp(SR);
+  const P = paramValues(rooms, {});
+  const inst = K.create({ sr: SR, seed: 1, dsp, params: kernelSpecs(rooms), data: { aachen: bank } });
+  const L = new Float32Array(128), R = new Float32Array(128), x = diStrum(2, SR);
+  let blk = 0;
+  const step = (p) => { for (let i = 0; i < 128; i++) { L[i] = x[(blk * 128 + i) % x.length]; R[i] = L[i]; } blk++; inst.process(L, R, 128, p); };
+  for (let i = 0; i < 400; i++) step(P);
+  // every room to every other, a few times over, timing the block that takes the change (the plan, the resets and the
+  // block) and the blocks of each crossfade. A wall-clock maximum is mostly this machine's scheduling (Stairwell's own
+  // worst block here runs to milliseconds when other work is running), so a block's cost is the median of its phase in
+  // the convolver's 8-block cycle, counted from the change (the new path starts its cycle there; the body's FFT lands on
+  // one phase), and the worst phase is held to 0.5 ms.
+  const switchMs = [], fadePh = Array.from({ length: 8 }, () => []), plainPh = Array.from({ length: 8 }, () => []);
+  const order = [0, 1, 2, 3, 4, 5, 0, 2, 4, 1, 3, 5, 0, 3, 1, 4, 2, 5, 0, 1, 2, 3, 4, 5, 0, 4, 2, 1, 5, 3, 0];
+  const Ps = ROOMS.map((_, r) => ({ ...P, room: r }));
+  { let junk = 0; for (let i = 0; i < 256; i++) junk += new Float64Array(1 << 15).length; if (!junk) throw new Error('unreachable'); }
+  await new Promise((r) => setTimeout(r, 50));
+  let gcs = 0;
+  const obs = new PerformanceObserver((list) => { gcs += list.getEntries().length; });
+  obs.observe({ entryTypes: ['gc'] });
+  for (const r of order) {
+    const t0 = performance.now(); step(Ps[r]); switchMs.push(performance.now() - t0);
+    for (let i = 0; i < 48; i++) { const ph = (i + 1) % 8, t1 = performance.now(); step(Ps[r]); (i < 18 ? fadePh : plainPh)[ph].push(performance.now() - t1); }
+  }
+  await new Promise((r) => setTimeout(r, 50));
+  obs.disconnect();
+  ok(gcs === 0, `${order.length} room changes and their crossfades allocate nothing: no garbage collection (${gcs})`);
+  const median = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1];
+  const sw = switchMs.slice(1), worstPhase = (ph) => Math.max(...ph.map(median));
+  // (Q5: a change's block over 0.5 ms is reported for AJ, not cut by a new planning API)
+  T.note(`a room change's block (the room's taps, planning its partitions, resetting the tail, then the block): median ${median(sw).toFixed(3)} ms, worst ${Math.max(...sw).toFixed(3)} ms${median(sw) > 0.5 ? ' (OVER 0.5 ms: reported to AJ, R23/Q5)' : ''}`);
+  ok(worstPhase(plainPh) < 0.5 && worstPhase(fadePh) < 0.5, `the heaviest block of the cycle takes ${worstPhase(plainPh).toFixed(3)} ms, ${worstPhase(fadePh).toFixed(3)} ms during a crossfade (two paths) (under 0.5 ms; the quantum is 2.67 ms)`);
+  // R36: checkDevice's cpu, Echo Chamber at its heaviest room (AULA, the longest early cut, its default) against
+  // Stairwell at its defaults, the median of 5 each, in one process
+  const cv = [], cr = [];
+  for (let i = 0; i < 5; i++) { cv.push((await checkDeviceNode(verb)).cpu.ms); cr.push((await checkDeviceNode(rooms)).cpu.ms); }
+  const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], ratio = med(cr) / med(cv);
+  ok(ratio <= 1.5, `CPU: Echo Chamber (AULA, the heaviest room) ${med(cr)} ms for the device check's 4 s render against Stairwell's ${med(cv)} ms: ${ratio.toFixed(2)}x (at most 1.5x; median of 5)`);
 }
 
 T.done();

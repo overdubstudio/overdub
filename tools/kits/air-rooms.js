@@ -9,25 +9,37 @@
 // License, pinned by hash; the build refuses unless it matches and begins "MIT License" (checkLicence). The Aula
 // Carolina is only in the .mat files (the WAV sub-zip doesn't have it), so the recipe reads MAT v5 (tools/mat.js).
 //
-// What is here so far (build package 1 of 5): the pins, the licence gate, reading each room (step 2) and measuring it
-// (steps 3 and 4: the onset; per octave from 125 Hz to 8 kHz, Schroeder integration with the noise floor subtracted,
-// T20, T30, EDT, C80; the mixing time; the noise floor; the ears' correlation). The early cut, the fitted tail, the
-// window, the QA against the kernel and the .odk come next (steps 5 to 8).
+// The build, step by step (spec "The build, step by step"): fetch the members and check every pin (1); read each ear's
+// h_air and air_info.fs (2); the onset (3); measure the full IR per octave, 125 Hz to 8 kHz (4: Schroeder integration
+// with the noise floor subtracted, T20, T30, EDT, C80; the mixing time; the noise floor; the ears' correlation); take
+// the direct sound out and set the early cut (5); fit the tail with the kernel's own roomTail (6); window the early IR
+// and score the hybrid, rendered through core.rooms' kernel (7, tools/kits/qa.js qaRoom); normalise, 16 bits, each
+// room's level, the .odk (8). node tools/fetch-kits.js --only air-rooms runs it and writes
+// tools/.out/library/rooms/qa.json; rooms-lib.js pins the bank's hash (ROOMS_HASH) and what its header says
+// (ROOM_INFO, roomInfo below).
 //
 //   node tools/kits/air-rooms.js           fetch the twelve files (by range, into the download cache: KITS_CACHE, or
 //                                          tools/.out/kits-cache) and print each room's measurements against the spec's
 //   node tools/kits/air-rooms.js --offline the same from the cache alone
+//   node tools/kits/air-rooms.js --build   build the bank in memory and print each room's fit and QA (writes nothing)
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openZipRanged } from './zip.js';
 import { readMat } from '../mat.js';
+import { dcos } from '../../app/src/devices/builtin/series.js';
+import { roomTail, roomSvfSet, ROOMS } from '../../app/src/devices/builtin/rooms-lib.js';
+import { encodeOdk, decodeOdk } from '../../app/src/kernel/odk.js';
+import { diStrum } from '../../app/src/audio/testsignals.js';
+import { qaRoom, ROOM_BAR } from './qa.js';
 
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 export const RECIPE = {
   name: 'Echo Chamber rooms (aachen)',
+  key: 'air-rooms',   // node tools/fetch-kits.js --only air-rooms
   kind: 'rooms',
+  qaName: 'rooms',    // tools/.out/library/rooms/qa.json
   source: 'Aachen Impulse Response Database (AIR) 1.4, RWTH Aachen University, Institute of Communication Systems (IKS)',
   repo: 'iks.rwth-aachen.de',
   page: 'https://www.iks.rwth-aachen.de/en/research/tools-downloads/databases/aachen-impulse-response-database/',
@@ -224,14 +236,298 @@ function correlation(L, R, on, sr, a = 0.08, b = 0.5) {
 
 // Step 4: a room's full measurement. Per octave (both ears' energy) and broadband: T20, T30, EDT, C80, the noise
 // floor (dB re the peak 10 ms) and where the decay curve was cut; the mixing time (left ear) and the correlation.
-export function measureRoom({ sr, L, R }) {
-  const on = onsetOf(L);
+export function measureRoom({ sr, L, R }, { on = onsetOf(L), curves = false } = {}) {
   const one = (chs) => {
     const { e, noise } = energy(chs, on), d = decayCurve(e, noise, sr);
-    return { t20: decayTime(d.db, sr, -5, -25), t30: decayTime(d.db, sr, -5, -35), edt: decayTime(d.db, sr, 0, -10), c80: clarity(e, noise, d.cut, sr), floor: d.floorDb, cut: d.cut / sr };
+    return { t20: decayTime(d.db, sr, -5, -25), t30: decayTime(d.db, sr, -5, -35), edt: decayTime(d.db, sr, 0, -10), c80: clarity(e, noise, d.cut, sr), floor: d.floorDb, cut: d.cut / sr, ...(curves ? { db: d.db, e, noise } : {}) };
   };
   const bands = OCTAVES.map((f) => ({ f, ...one([octave(L, f, sr), octave(R, f, sr)]) }));
   return { onset: on, length: L.length / sr, broadband: one([L, R]), bands, mix: mixingTime(L, on, sr), corr: correlation(L, R, on, sr) };
+}
+
+/* ------------------------------------------------------------------ the build (steps 5 to 8) */
+// Step 5: the room from its direct sound's arrival (the onset - 0.5 ms), the direct sound itself (to 2.5 ms after
+// the onset) faded out over 1 ms (R6: the dry path is the direct sound); the early cut tx (R7).
+// Step 6: the tail (rooms-lib.js roomTail, the kernel's own code) fitted to the room: its three T60s from the octave
+// T30s, 250 Hz to 8 kHz (the low band capped at 1.5x the 500 Hz T30, R14), the line scale from the mixing time, D so the
+// tail has built up by tx, then g and the EQ by least squares on the octave energies over [tx, tx + 300 ms].
+// Step 7: the early IR windowed so that early + tail has the measured envelope (R12); the hybrid rendered by the kernel
+// and scored (R13, tools/kits/qa.js qaRoom). Step 8: peak-normalised to 16 bits, each room's level set so its wet
+// signal has the DI strum's RMS (R20), the .odk.
+//
+// The numbers that reach the bytes (the window, the ramps) are built from the series (dcos), so the bank is the same
+// on any engine; the measuring (octave filters, logs) uses Math, and every value it gives the header is rounded.
+
+const FIT_OCT = [250, 500, 1000, 2000, 4000, 8000];
+const TAIL_BASE = [1031, 1327, 1523, 1801, 2111, 2437, 2741, 3089];
+const LATENCY = 128; // the convolver's (the head's block): the early part plays this late, and D includes it
+const round = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
+const sig = (x, n) => Number(x.toPrecision(n));
+
+// Step 5
+export function prepRoom(raw, room) {
+  const { sr } = raw, full = measureRoom(raw);
+  const on = full.onset, start = Math.max(0, on - Math.round(0.0005 * sr));
+  const n = raw.L.length - start, z0 = on - start + Math.round(0.0025 * sr), RAMP = Math.round(0.001 * sr);
+  const L = new Float64Array(n), R = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const w = i < z0 ? 0 : i >= z0 + RAMP ? 1 : 0.5 - 0.5 * dcos((Math.PI * (i - z0)) / RAMP);
+    L[i] = raw.L[start + i] * w; R[i] = raw.R[start + i] * w;
+  }
+  const ref = measureRoom({ sr, L, R }, { on: 0, curves: true });
+  return { sr, full, start, L, R, ref, tx: Math.round(room.tx * sr) };
+}
+
+// The tail's T60 at f for a fit (scale, t60 [lo, mid, hi]): the loop gains roomTail.set works out, per line, and the
+// decay that gives, averaged over the lines (dB per second). The same sums as rooms-lib.js, for choosing the fit.
+export function tailT60At(t60, scale, f, sr = 48000) {
+  const tan = (x) => Math.tan((Math.PI * x) / sr), T500 = tan(500), T4K = tan(4000), O = [tan(63), tan(1414), tan(16000)], w = tan(f);
+  const shelfLo = (A, W, x) => Math.sqrt((A * A * W * W + x * x) / (W * W + x * x));
+  const shelfHi = (A, W, x) => Math.sqrt((W * W + A * A * x * x) / (W * W + x * x));
+  let rate = 0;
+  for (const b of TAIL_BASE) {
+    const len = Math.round(b * scale * (sr / 48000)), loop = (t) => Math.pow(10, (-3 * len) / (t * sr));
+    const t0 = loop(t60[0]), t1 = loop(t60[1]), t2 = loop(t60[2]);
+    let gl = t0, gm = t1, gh = t2, al = 1, ah = 1, W1 = 1, W2 = 1;
+    for (let it = 0; it < 4; it++) {
+      al = gl / gm; ah = gh / gm; W1 = T500 / Math.sqrt(al); W2 = T4K * Math.sqrt(ah);
+      const m = (x) => gm * shelfLo(al, W1, x) * shelfHi(ah, W2, x);
+      gl *= t0 / m(O[0]); gm *= t1 / m(O[1]); gh *= t2 / m(O[2]);
+    }
+    al = gl / gm; ah = gh / gm; W1 = T500 / Math.sqrt(al); W2 = T4K * Math.sqrt(ah);
+    rate += (20 * Math.log10(gm * shelfLo(al, W1, w) * shelfHi(ah, W2, w)) * sr) / len;
+  }
+  return -60 / (rate / TAIL_BASE.length);
+}
+
+// least squares by Gauss-Newton with a numerical Jacobian: x minimising sum(res(x)^2)
+function gaussNewton(res, x0, { iters = 30, h = 1e-4, lo = -Infinity, hi = Infinity } = {}) {
+  let x = x0.slice();
+  for (let it = 0; it < iters; it++) {
+    const r = res(x), n = x.length, m = r.length, J = [];
+    for (let j = 0; j < n; j++) { const xp = x.slice(); xp[j] += h; const rp = res(xp); J.push(rp.map((v, i) => (v - r[i]) / h)); }
+    // (J^T J + a little) dx = -J^T r
+    const A = Array.from({ length: n }, (_, a) => Array.from({ length: n }, (_, b) => { let s = 0; for (let i = 0; i < m; i++) s += J[a][i] * J[b][i]; return s + (a === b ? 1e-9 : 0); }));
+    const g = Array.from({ length: n }, (_, a) => { let s = 0; for (let i = 0; i < m; i++) s -= J[a][i] * r[i]; return s; });
+    for (let c = 0; c < n; c++) { // Gaussian elimination, partial pivoting
+      let p = c; for (let q = c + 1; q < n; q++) if (Math.abs(A[q][c]) > Math.abs(A[p][c])) p = q;
+      [A[c], A[p]] = [A[p], A[c]]; [g[c], g[p]] = [g[p], g[c]];
+      for (let q = c + 1; q < n; q++) { const f = A[q][c] / A[c][c]; for (let k = c; k < n; k++) A[q][k] -= f * A[c][k]; g[q] -= f * g[c]; }
+    }
+    const dx = new Array(n);
+    for (let c = n - 1; c >= 0; c--) { let s = g[c]; for (let k = c + 1; k < n; k++) s -= A[c][k] * dx[k]; dx[c] = s / A[c][c]; }
+    let step = 0;
+    x = x.map((v, j) => { const nv = Math.min(hi, Math.max(lo, v + dx[j])); step = Math.max(step, Math.abs(nv - v)); return nv; });
+    if (step < 1e-7) break;
+  }
+  return x;
+}
+
+// the tail alone, an impulse in, as the hybrid hears it (128 frames of the convolver's latency taken off the front):
+// { L, R } of n frames
+export function tailIr(fit, n, sr = 48000) {
+  const tail = roomTail(sr).set(fit, 1, 0), N = n + LATENCY, x = new Float64Array(N), L = new Float64Array(N), R = new Float64Array(N);
+  x[0] = 1;
+  for (let a = 0; a < N; a += 128) { const m = Math.min(128, N - a); tail.process(x.subarray(a, a + m), L.subarray(a, a + m), R.subarray(a, a + m), m); }
+  return { L: L.subarray(LATENCY), R: R.subarray(LATENCY) };
+}
+const energyOf = (L, R, a, b) => { let s = 0; for (let i = a; i < b && i < L.length; i++) s += L[i] * L[i] + R[i] * R[i]; return s; };
+// the magnitude (dB) at f of the tail's output EQ for gains eq [lo, mid, hi] (roomSvfSet's coefficients, analysed)
+const EQC = new Float64Array(21);
+export function eqDb(eq, f, sr = 48000) {
+  roomSvfSet(sr, 1, 250, 0.707, eq[0], EQC, 0); roomSvfSet(sr, 2, 1500, 0.7, eq[1], EQC, 7); roomSvfSet(sr, 3, 6000, 0.707, eq[2], EQC, 14);
+  let db = 0;
+  for (let o = 0; o < 21; o += 7) {
+    const k = EQC[o], g = EQC[o + 2] / EQC[o + 1], m0 = EQC[o + 4], m1 = EQC[o + 5], m2 = EQC[o + 6];
+    const s = Math.tan((Math.PI * f) / sr) / g; // s' = j s
+    // H = (m0 (1 - s^2 + j k s) + j m1 s + m2) / (1 - s^2 + j k s)
+    const dr = 1 - s * s, di = k * s, nr = m0 * dr + m2, ni = m0 * di + m1 * s;
+    db += 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di));
+  }
+  return db;
+}
+
+// Step 6: the fit, from the prepared room. Returns { fit, raw (the T60s uncapped), plateau (ms) }.
+export function fitTail(p, mixMs, { adjust = [1, 1, 1, 1, 1, 1] } = {}) {
+  const { sr, ref, tx } = p, at = (f) => ref.bands.find((b) => b.f === f);
+  const T = (f) => at(f).t30 ?? at(f).t20;
+  const target = FIT_OCT.map((f, i) => T(f) * adjust[i]);
+  const scale = Math.min(1.6, Math.max(0.4, round((mixMs || 40) / 40, 2)));
+  const lt = gaussNewton((x) => FIT_OCT.map((f, i) => Math.log(tailT60At([Math.exp(x[0]), Math.exp(x[1]), Math.exp(x[2])], scale, f, sr) / target[i])),
+    [Math.log(target[0]), Math.log(target[2]), Math.log(target[5])], { lo: Math.log(0.05), hi: Math.log(30) });
+  const raw = lt.map((v) => round(Math.exp(v), 3));
+  const cap = 1.5 * T(500);
+  const t60 = [Math.min(raw[0], round(cap, 3)), raw[1], raw[2]];
+  // D: where the tail has built up: with D = 1, the 1 kHz octave's 10 ms energy, its decay taken out (the tail's own
+  // T60 there), first within 1 dB of its plateau (the mean from 200 to 500 ms). D then moves that point to tx.
+  const probe = { model: 'tail/1', D: 1, scale, t60, eq: [0, 0, 0], g: 1, mod: 0 };
+  const ir = tailIr(probe, Math.round(0.6 * sr), sr), F = Math.round(0.01 * sr), H = Math.round(0.001 * sr);
+  const oL = octave(ir.L, 1000, sr), oR = octave(ir.R, 1000, sr), t1k = tailT60At(t60, scale, 1000, sr);
+  const lvl = (a) => energyOf(oL, oR, a, a + F) * Math.pow(10, (6 * (a + F / 2)) / (sr * t1k));
+  let plat = 0, np = 0; for (let a = Math.round(0.2 * sr); a + F <= Math.round(0.5 * sr); a += H) { plat += lvl(a); np++; }
+  plat /= np;
+  // (in the hybrid's time: the probe's frame a is the tail's a + 127 frames after its input)
+  let built = 0; for (let a = 0; a + F <= ir.L.length; a += H) if (lvl(a) >= plat * Math.pow(10, -0.1)) { built = a + F / 2; break; }
+  const D = Math.max(1, Math.min(Math.round(0.24 * sr), 1 + tx - built));
+  // g and the EQ: each octave's late energy, from tx on, in the measured room (noise taken out, to where its decay
+  // curve was cut: its decay curve's value at tx) and in the tail, matched in dB by a gain and the three EQ gains; then
+  // twice more against the tail rendered with that EQ (a band's edges hear more than its centre)
+  const W0 = tx, at2 = (f) => ref.bands.find((b) => b.f === f);
+  const refBand = FIT_OCT.map((f) => { const b = at2(f), end = Math.round(b.cut * sr); let s = 0; for (let i = W0; i < end; i++) s += Math.max(0, b.e[i] - b.noise); return s; });
+  const N = p.L.length + sr;
+  let fit = { model: 'tail/1', D, scale, t60, eq: [0, 0, 0], g: 1, mod: 0 };
+  let offset = FIT_OCT.map(() => 0);
+  for (let pass = 0; pass < 3; pass++) {
+    const t = tailIr(fit, N, sr), have = FIT_OCT.map((f) => energyOf(octave(t.L, f, sr), octave(t.R, f, sr), W0, N));
+    // what the bands still want, in dB, on top of what this fit gives
+    const need = FIT_OCT.map((f, i) => 10 * Math.log10(refBand[i] / have[i]));
+    if (pass > 0) offset = offset.map((o, i) => o + need[i]);
+    const base = pass === 0 ? FIT_OCT.map(() => 0) : FIT_OCT.map((f) => 20 * Math.log10(fit.g) + eqDb(fit.eq, f, sr));
+    const x = gaussNewton((v) => FIT_OCT.map((f, i) => v[0] + eqDb([v[1], v[2], v[3]], f, sr) - (base[i] + need[i])),
+      [pass === 0 ? need.reduce((a, v) => a + v, 0) / need.length : 20 * Math.log10(fit.g), ...fit.eq], { iters: 20 });
+    const eq = [1, 2, 3].map((j) => round(Math.min(24, Math.max(-24, x[j])), 2));
+    fit = { ...fit, eq, g: sig(Math.pow(10, x[0] / 20), 5) };
+  }
+  return { fit, raw, built: round((1000 * (built + LATENCY - 1)) / sr, 1) };
+}
+
+// The hybrid as the kernel plays an impulse (the early IR and the tail, both as the convolver's latency leaves them),
+// in doubles: what the fit iterates on (the bank's own render through the kernel is what's scored)
+export function simHybrid(p, fit, early) {
+  const n = p.L.length + p.sr, t = tailIr(fit, n, p.sr), L = Float64Array.from(t.L), R = Float64Array.from(t.R);
+  for (let i = 0; i < early.eL.length; i++) { L[i] += early.eL[i]; R[i] += early.eR[i]; }
+  return { sr: p.sr, L, R };
+}
+// how far a QA result is from the bar: each check's worst over its bar, summed
+const BARS = [ROOM_BAR.time, ROOM_BAR.time, ROOM_BAR.time, ROOM_BAR.c80, ROOM_BAR.env, ROOM_BAR.edc, ROOM_BAR.edgeTime, ROOM_BAR.edgeEdc];
+const distance = (q) => q.checks.reduce((s, c, i) => s + Math.min(10, c[2] / BARS[i]), 0);
+// Steps 6 and 7 together: fit, window, measure the hybrid, and fit again with each octave's T60 target moved by how
+// far the hybrid's decay (its curve from -5 to -30 dB, as a T60) missed the room's; the closest of six tries.
+export function fitRoom(p, tries = 6) {
+  let adjust = FIT_OCT.map(() => 1), best = null;
+  for (let it = 0; it < tries; it++) {
+    const f = fitTail(p, p.full.mix, { adjust }), early = windowEarly(p, f.fit);
+    const hyb = measureRoom(simHybrid(p, f.fit, early), { on: 0, curves: true });
+    const q = qaRoom(p.ref, hyb, { sr: p.sr, tx: p.tx }), d = distance(q);
+    if (!best || d < best.d) best = { ...f, early, d, iters: it + 1 };
+    adjust = adjust.map((a, i) => {
+      const r = p.ref.bands.find((b) => b.f === FIT_OCT[i]), h = hyb.bands.find((b) => b.f === FIT_OCT[i]);
+      const tr = decayTime(r.db, p.sr, -5, -30), th = decayTime(h.db, p.sr, -5, -30);
+      return tr && th ? a * Math.min(1.5, Math.max(0.67, tr / th)) : a;
+    });
+  }
+  return best;
+}
+
+// Step 7: the window (R12). Et and Em in 10 ms frames over [0, tx] (both ears), w = sqrt(max(0, 1 - Et / Em)) at each
+// frame's centre, linear between them, then to 0 at tx over a 5 ms cosine. The early IR: the room times w, to tx.
+export function windowEarly(p, fit) {
+  const { sr, tx, L, R } = p, F = Math.round(0.01 * sr), t = tailIr(fit, tx, sr);
+  const K = Math.ceil(tx / F), w = new Float64Array(K);
+  for (let k = 0; k < K; k++) {
+    const a = k * F, b = Math.min(tx, a + F), em = energyOf(L, R, a, b), et = energyOf(t.L, t.R, a, b);
+    w[k] = em > 0 ? Math.sqrt(Math.max(0, 1 - et / em)) : 0;
+  }
+  const C = Math.round(0.005 * sr), eL = new Float64Array(tx), eR = new Float64Array(tx), win = new Float64Array(tx);
+  for (let i = 0; i < tx; i++) {
+    const x = (i - F / 2) / F, k = Math.floor(x), f = x - k;
+    let v = k < 0 ? w[0] : k + 1 >= K ? w[K - 1] : w[k] + (w[k + 1] - w[k]) * f;
+    if (i >= tx - C) v *= 0.5 + 0.5 * dcos((Math.PI * (i - (tx - C) + 1)) / C);
+    win[i] = v; eL[i] = L[i] * v; eR[i] = R[i] * v;
+  }
+  return { eL, eR, win, frames: Array.from(w, (v) => round(v, 4)) };
+}
+
+// 16 bits, peak-normalised: { ch, gain (dB: the taps are x / 32768 * 10^(gain / 20)) }
+export function to16(eL, eR) {
+  let pk = 0; for (let i = 0; i < eL.length; i++) pk = Math.max(pk, Math.abs(eL[i]), Math.abs(eR[i]));
+  const s = 32767 / pk, a = new Int16Array(eL.length), b = new Int16Array(eR.length);
+  for (let i = 0; i < eL.length; i++) { a[i] = Math.round(eL[i] * s); b[i] = Math.round(eR[i] * s); }
+  return { ch: [a, b], gain: round(20 * Math.log10((pk * 32768) / 32767), 4) };
+}
+
+const rms = (x) => { let s = 0; for (let i = 0; i < x.length; i++) s += x[i] * x[i]; return Math.sqrt(s / x.length); };
+const OCT_LABELS = OCTAVES;
+// the header's record of the room as measured (the full IR, direct sound and all)
+function measuredOf(full) {
+  const t = (x) => (x == null ? null : round(x, 3));
+  return { octaves: OCT_LABELS, t20: full.bands.map((b) => t(b.t20)), t30: full.bands.map((b) => t(b.t30)), edt: full.bands.map((b) => t(b.edt)),
+    c80: full.bands.map((b) => round(b.c80, 2)), mix: full.mix, floor: round(full.broadband.floor, 1), corr: round(full.corr, 2) };
+}
+
+// The bank. getRoom(room) -> { sr, L, R } (Float64Array). render(def, params, inL, inR, { data }) -> [L, R]: the
+// kernel's own render (tools/amp-scenes.js run); notice: license.txt's text (the bank's meta carries it whole). Returns { bytes, rows, qa, count, inFrames, outFrames }.
+export async function buildRooms(recipe, getRoom, { render, def, notice }) {
+  const sr = recipe.sr, entries = [], preps = [];
+  for (const room of recipe.rooms) {
+    if (ROOMS[room.index][2] !== room.id || ROOMS[room.index][0] !== room.label) throw new Error(`${room.id}: the recipe's room ${room.index} isn't the kernel's ${ROOMS[room.index].join(' ')}`);
+    const raw = getRoom(room);
+    if (raw.sr !== sr) throw new Error(`${room.id}: ${raw.sr} Hz, the bank is ${sr} Hz`);
+    const p = prepRoom(raw, room);
+    const { fit, raw: t60raw, built, early, iters } = fitRoom(p);
+    const s16 = to16(early.eL, early.eR);
+    preps.push({ p, early, built, t60raw, fit, iters });
+    entries.push({ id: room.id, label: room.label, name: room.name, place: room.place, what: room.what, distance: room.distance,
+      src: [room.left[0], room.right[0]], onset: p.full.onset, start: p.start, measured: measuredOf(p.full), tx: round(room.tx, 3),
+      fit: { ...fit, t60raw }, gain: s16.gain, level: 0, ch: s16.ch });
+  }
+  const meta = (notice) => ({ kind: 'rooms', source: recipe.source, url: recipe.page, zip: recipe.zip.url, licence: recipe.licence, notice, credit: recipe.credit,
+    author: recipe.author, verified: recipe.verified,
+    model: 'each room: its measured IR from the direct sound\'s arrival (onset - 0.5 ms) to tx, the direct sound faded out (to 2.5 ms after the onset, a 1 ms ramp), windowed so that it and the fitted tail (rooms-lib.js roomTail, fit.model tail/1) add up to the measured envelope; taps = x / 32768 * 10^(gain / 20); the wet signal times 10^(level / 20)' });
+  const encode = (notice) => encodeOdk({ name: recipe.name, sr, bits: 16, channels: 2, meta: meta(notice), samples: entries });
+  // R20: each room's level, so that its wet signal (MIX 1, the rest at defaults) has the DI strum's RMS
+  const strum = diStrum(8, sr), pad = new Float32Array(strum.length + 4 * sr); pad.set(strum);
+  let bank = decodeOdk(encode(notice));
+  for (const [i, e] of entries.entries()) {
+    const [l, r] = render(def, { room: i, mix: 1 }, pad, pad, { data: { aachen: bank } });
+    const wet = Math.sqrt((rms(l) ** 2 + rms(r) ** 2) / 2);
+    e.level = round(20 * Math.log10(rms(pad) / wet), 2);
+  }
+  const bytes = encode(notice);
+  bank = decodeOdk(bytes);
+  // Step 7's score: the hybrid through the kernel, against the measured room (direct removed), R13
+  const rows = [];
+  for (const [i, e] of entries.entries()) {
+    const { p, early, built, t60raw } = preps[i];
+    const n = p.L.length + sr, imp = new Float32Array(n + LATENCY); imp[0] = 1;
+    const [l, r] = render(def, { room: i, mix: 1, lowcut: 20, predelay: 0, decay: 1, damp: 0, width: 1 }, imp, imp, { data: { aachen: bank } });
+    const lv = Math.pow(10, -e.level / 20), hL = new Float64Array(n), hR = new Float64Array(n);
+    for (let k = 0; k < n; k++) { hL[k] = l[k + LATENCY] * lv; hR[k] = r[k + LATENCY] * lv; }
+    const hyb = measureRoom({ sr, L: hL, R: hR }, { on: 0, curves: true });
+    const q = qaRoom(p.ref, hyb, { sr, tx: p.tx });
+    const room = recipe.rooms[i];
+    rows.push({ id: e.id, label: e.label, tries: preps[i].iters, tx: e.tx, txRule: txRule(p.full.mix), mix: p.full.mix, built, fit: e.fit, t60raw, gain: e.gain, level: e.level,
+      frames: p.tx, window: early.frames, pass: q.pass, waiver: q.pass ? null : 'waiver pending AJ (spec R13: a room that misses ships only with a written waiver after the listening room\'s verdict)',
+      checks: q.checks.map(([name, ok, worst, detail]) => ({ name, pass: ok, worst: worst === Infinity ? null : round(worst, 4), detail })),
+      bands: q.bands.map((b) => ({ f: b.f, t20: b.t20.map((x) => (x == null ? null : round(x, 3))), t30: b.t30.map((x) => (x == null ? null : round(x, 3))),
+        edt: b.edt.map((x) => (x == null ? null : round(x, 3))), c80: b.c80.map((x) => round(x, 2)), edc: round(b.err.edc, 2) })),
+      envelope: q.env.map((x) => round(x, 2)), spec: room.spec, measured: e.measured });
+  }
+  return { bytes, rows, count: entries.length, inFrames: preps.reduce((s, x) => s + x.p.L.length, 0), outFrames: preps.reduce((s, x) => s + x.p.tx, 0) };
+}
+// R7's rule, for the record (the spec's listed values are what ship: Q2): twice the mixing time, up to the next 10 ms,
+// clamped to 80-200 ms
+export const txRule = (mixMs) => Math.min(200, Math.max(80, Math.ceil((2 * mixMs) / 10) * 10));
+
+// What the card and the agents read from the bank's header (rooms-lib.js ROOM_INFO pins it: rooms-test holds them
+// equal): per room its label, id, name, place, what, distance, T30 at 500 / 1k / 2k, the EDT (1 kHz), the early cut
+export function roomInfo(bank) {
+  const at = (s, key, f) => s.measured[key][s.measured.octaves.indexOf(f)];
+  return bank.samples.map((s) => ({ label: s.label, id: s.id, name: s.name, place: s.place, what: s.what, distance: s.distance,
+    t30: [at(s, 't30', 500), at(s, 't30', 1000), at(s, 't30', 2000)], edt: at(s, 'edt', 1000), tx: s.tx }));
+}
+
+// fetch-kits' builder: the twelve files by range (or from the download cache), the licence first, then the bank,
+// rendered and scored through core.rooms' own kernel. -> { bytes, rows, ... } and qa ({ verdicts, rows }: the report)
+export function roomBuilder({ cache, offline }) {
+  return async (recipe) => {
+    const { z, licence } = await openAir({ cache, offline: offline(), recipe });
+    // (loaded here, not at the top: the device and the renderer are only needed to build)
+    const [{ default: def }, { run }] = await Promise.all([import('../../app/src/devices/builtin/rooms.js'), import('../amp-scenes.js')]);
+    const r = await buildRooms(recipe, (room) => readRoom(z, room), { render: run, def, notice: licence });
+    const verdicts = r.rows.map((x) => [x.label, x.pass ? 'pass' : 'waiver', x.pass ? 'every check within the bar' : x.checks.filter((c) => !c.pass).map((c) => `${c.name}: ${c.detail}`).join('; ')]);
+    return { ...r, qa: { verdicts, rows: r.rows } };
+  };
 }
 
 /* ------------------------------------------------------------------ the command line */
@@ -239,6 +535,18 @@ async function main() {
   const HERE = path.dirname(fileURLToPath(import.meta.url));
   const cache = process.env.KITS_CACHE || path.join(HERE, '..', '.out', 'kits-cache');
   const offline = process.argv.includes('--offline');
+  if (process.argv.includes('--build')) {
+    const r = await roomBuilder({ cache, offline: () => offline })(RECIPE);
+    for (const x of r.rows) {
+      console.log(`\n${x.label}: tx ${x.tx * 1000} ms (the rule gives ${x.txRule}), built ${x.built} ms, D ${x.fit.D}, scale ${x.fit.scale}, t60 ${x.fit.t60.join(' / ')} (uncapped ${x.t60raw.join(' / ')}), eq ${x.fit.eq.join(' / ')} dB, g ${x.fit.g}, gain ${x.gain} dB, level ${x.level} dB: ${x.pass ? 'PASS' : 'MISS'}`);
+      for (const c of x.checks) console.log(`  ${c.pass ? 'ok  ' : 'MISS'} ${c.name}: ${c.detail}`);
+      console.log('  octave  T20 ref/hyb   T30 ref/hyb   EDT ref/hyb   C80 ref/hyb   EDC gap');
+      for (const b of x.bands) console.log(`  ${String(b.f).padStart(5)}  ${b.t20.join('/').padEnd(12)}  ${b.t30.join('/').padEnd(12)}  ${b.edt.join('/').padEnd(12)}  ${b.c80.join('/').padEnd(12)}  ${b.edc}`);
+      console.log(`  envelope at the seam (dB): ${x.envelope.join(' ')}`);
+    }
+    console.log(`\n${r.bytes.length} bytes, sha256-${sha256(r.bytes)}`);
+    return;
+  }
   const { z, licence, how } = await openAir({ cache, offline });
   console.log(`${RECIPE.name}: ${RECIPE.zip.url.replace(/^.*\//, '')} (${how === 'range' ? 'read by range' : how === 'cache' ? 'from the cache' : 'the whole zip'}, ${cache})`);
   console.log(`  licence ok: ${licence.split('\n')[0].trim()} / ${licence.split('\n').find((l) => /Copyright/.test(l)).trim()}`);
@@ -256,4 +564,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((e) => { console.error('air-rooms: ' + e.message); process.exitCode = 1; });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((e) => { console.error('air-rooms: ' + (process.env.DEBUG ? e.stack : e.message)); process.exitCode = 1; });

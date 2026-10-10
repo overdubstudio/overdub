@@ -59,7 +59,14 @@ describe('a good pin', () => {
     const out = path.join(tmp, 'replace-out');
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(path.join(out, 'stale.mp3'), 'x');
-    assert.equal(main(['--from', repo.dir, '--out', out, '--pin', repo.c2, '--pin-file', path.join(tmp, 'replace-pin.json')], () => {}, () => {}), 0);
+    assert.equal(
+      main(
+        ['--from', repo.dir, '--out', out, '--pin', repo.c2, '--pin-file', path.join(tmp, 'replace-pin.json')],
+        () => {},
+        () => {},
+      ),
+      0,
+    );
     assert.ok(!files(out).includes('stale.mp3'));
   });
 
@@ -89,7 +96,10 @@ describe('refusals write nothing', () => {
 
   test("a device file whose kernel isn't its entry's", () => {
     const c = repo.git('rev-parse', 'HEAD');
-    repo.write('index/devices/tester.echo.overdub-device.json', JSON.stringify({ device: { id: 'tester.echo', kernel: KERNELS['tester.keys'] } }));
+    repo.write(
+      'index/devices/tester.echo.overdub-device.json',
+      JSON.stringify({ device: { id: 'tester.echo', kernel: KERNELS['tester.keys'] } }),
+    );
     const bad = repo.commit('swap a device file');
     const out = path.join(tmp, 'swap-out');
     const r = pull(['--from', repo.dir, '--out', out, '--pin', bad, '--pin-file', path.join(tmp, 'swap-pin.json')]);
@@ -102,7 +112,9 @@ describe('refusals write nothing', () => {
 
   test('built.from with +dirty', () => {
     const c = repo.git('rev-parse', 'HEAD');
-    const bad = repo.writeIndex((j) => { j.built.from += '+dirty'; });
+    const bad = repo.writeIndex((j) => {
+      j.built.from += '+dirty';
+    });
     refused(() => verify(repo.dir, bad), /uncommitted edits/);
     repo.git('reset', '-q', '--hard', c);
   });
@@ -113,14 +125,20 @@ describe('refusals write nothing', () => {
     repo.write('LICENSE', 'side\n');
     const side = repo.commit('side');
     repo.git('checkout', '-q', '-');
-    const bad = repo.writeIndex((j) => { j.built.from = `overdub-devices@${side.slice(0, 7)}`; });
+    const bad = repo.writeIndex((j) => {
+      j.built.from = `overdub-devices@${side.slice(0, 7)}`;
+    });
     refused(() => verify(repo.dir, bad), /isn't .* or an ancestor of it/);
     repo.git('reset', '-q', '--hard', c);
   });
 
   test('a change to devices/, revoked.json or picks.json since built.from', () => {
     const c = repo.git('rev-parse', 'HEAD');
-    for (const [rel, body] of [['devices/tester/echo/README.md', 'new\n'], ['revoked.json', '[{"sha256":"' + 'a'.repeat(64) + '"}]\n'], ['picks.json', '{ "picks": ["tester.echo"] }\n']]) {
+    for (const [rel, body] of [
+      ['devices/tester/echo/README.md', 'new\n'],
+      ['revoked.json', '[{"sha256":"' + 'a'.repeat(64) + '"}]\n'],
+      ['picks.json', '{ "picks": ["tester.echo"] }\n'],
+    ]) {
       repo.write(rel, body);
       const bad = repo.commit(`change ${rel}`);
       refused(() => verify(repo.dir, bad), /changed between built\.from .* the index is stale/);
@@ -130,16 +148,32 @@ describe('refusals write nothing', () => {
 
   test('a listed entry whose fingerprint is revoked', () => {
     const c = repo.git('rev-parse', 'HEAD');
-    const bad = repo.writeIndex((j) => { j.revoked = [{ sha256: kernelHash(KERNELS['tester.echo']), reason: 'x', at: '2026-10-10' }]; });
+    const bad = repo.writeIndex((j) => {
+      j.revoked = [{ sha256: kernelHash(KERNELS['tester.echo']), reason: 'x', at: '2026-10-10' }];
+    });
     refused(() => verify(repo.dir, bad), /tester\.echo is listed, but its fingerprint .* is on the revoked list/);
     repo.git('reset', '-q', '--hard', c);
   });
 
-  test('a commit the checkout doesn\'t have is unavailable (exit 3), not refused', () => {
-    const r = pull(['--from', repo.dir, '--out', path.join(tmp, 'gone-out'), '--pin-file', pinFile('gone', { repo: 'x', commit: 'f'.repeat(40), index_sha256: '0'.repeat(64) })]);
+  test("a commit the checkout doesn't have is unavailable (exit 3), not refused", () => {
+    const r = pull([
+      '--from',
+      repo.dir,
+      '--out',
+      path.join(tmp, 'gone-out'),
+      '--pin-file',
+      pinFile('gone', { repo: 'x', commit: 'f'.repeat(40), index_sha256: '0'.repeat(64) }),
+    ]);
     assert.equal(r.status, 3);
     assert.match(r.stderr, /unavailable: f{40} isn't a commit/);
-    const none = pull(['--from', path.join(tmp, 'nowhere'), '--out', path.join(tmp, 'gone-out'), '--pin-file', pinFile('gone2', { repo: 'x', commit: repo.c2, index_sha256: '0'.repeat(64) })]);
+    const none = pull([
+      '--from',
+      path.join(tmp, 'nowhere'),
+      '--out',
+      path.join(tmp, 'gone-out'),
+      '--pin-file',
+      pinFile('gone2', { repo: 'x', commit: repo.c2, index_sha256: '0'.repeat(64) }),
+    ]);
     assert.equal(none.status, 3);
     assert.deepEqual(files(path.join(tmp, 'gone-out')), []);
   });
@@ -150,12 +184,19 @@ describe('--pin', () => {
     const pf = path.join(tmp, 'summary-pin.json');
     const out = path.join(tmp, 'summary-out');
     const lines = [];
-    main(['--from', repo.dir, '--out', out, '--pin', repo.c2, '--pin-file', pf], (l) => lines.push(l), () => {});
+    main(
+      ['--from', repo.dir, '--out', out, '--pin', repo.c2, '--pin-file', pf],
+      (l) => lines.push(l),
+      () => {},
+    );
     const first = JSON.parse(fs.readFileSync(pf, 'utf8'));
     assert.deepEqual(Object.keys(first), ['repo', 'commit', 'index_sha256']);
     assert.equal(first.repo, 'overdubstudio/overdub-devices');
     assert.equal(first.commit, repo.c2);
-    assert.match(lines.join('\n'), /no previous pin[\s\S]*\*\*Added\*\*\n- Test Echo \(`tester\.echo`, [0-9a-f]{12}\)\n- Test Keys/);
+    assert.match(
+      lines.join('\n'),
+      /no previous pin[\s\S]*\*\*Added\*\*\n- Test Echo \(`tester\.echo`, [0-9a-f]{12}\)\n- Test Keys/,
+    );
 
     // the next shelf: Test Keys revoked (and so unlisted), Test Echo's code changed, Test Drive added
     const c = repo.git('rev-parse', 'HEAD');
@@ -163,32 +204,68 @@ describe('--pin', () => {
     const drive = 'return { process(io) { io.out.set(io.in.map((x) => Math.tanh(x))); } };';
     repo.write('devices/tester/echo/device.json', JSON.stringify({ device: { id: 'tester.echo', kernel } }));
     repo.write('devices/tester/drive/device.json', JSON.stringify({ device: { id: 'tester.drive', kernel: drive } }));
-    repo.write('revoked.json', JSON.stringify([{ sha256: kernelHash(KERNELS['tester.keys']), reason: 'It did something it shouldn\'t.', at: '2026-10-11' }]));
+    repo.write(
+      'revoked.json',
+      JSON.stringify([
+        { sha256: kernelHash(KERNELS['tester.keys']), reason: "It did something it shouldn't.", at: '2026-10-11' },
+      ]),
+    );
     const inputs = repo.commit('next devices');
-    repo.write('index/devices/tester.echo.overdub-device.json', JSON.stringify({ device: { id: 'tester.echo', kernel } }));
-    repo.write('index/devices/tester.drive.overdub-device.json', JSON.stringify({ device: { id: 'tester.drive', kernel: drive } }));
+    repo.write(
+      'index/devices/tester.echo.overdub-device.json',
+      JSON.stringify({ device: { id: 'tester.echo', kernel } }),
+    );
+    repo.write(
+      'index/devices/tester.drive.overdub-device.json',
+      JSON.stringify({ device: { id: 'tester.drive', kernel: drive } }),
+    );
     repo.write('index/clips/tester.drive.mp3', CLIP);
     const next = repo.writeIndex((j) => {
       j.built.from = `overdub-devices@${inputs.slice(0, 9)}`;
       const keys = j.devices.find((e) => e.id === 'tester.keys');
-      j.revoked = [{ sha256: keys.sha256, reason: 'It did something it shouldn\'t.', at: '2026-10-11' }];
+      j.revoked = [{ sha256: keys.sha256, reason: "It did something it shouldn't.", at: '2026-10-11' }];
       const echo = j.devices.find((e) => e.id === 'tester.echo');
       echo.sha256 = kernelHash(kernel);
-      j.devices = [echo, { ...echo, id: 'tester.drive', name: 'Test Drive', sha256: kernelHash(drive), device: 'devices/tester.drive.overdub-device.json', preview: { ...echo.preview, wet: { clips: [{ src: 'clips/tester.drive.mp3', type: 'audio/mpeg', bytes: CLIP.length }] } } }];
+      j.devices = [
+        echo,
+        {
+          ...echo,
+          id: 'tester.drive',
+          name: 'Test Drive',
+          sha256: kernelHash(drive),
+          device: 'devices/tester.drive.overdub-device.json',
+          preview: {
+            ...echo.preview,
+            wet: { clips: [{ src: 'clips/tester.drive.mp3', type: 'audio/mpeg', bytes: CLIP.length }] },
+          },
+        },
+      ];
     });
     lines.length = 0;
-    main(['--from', repo.dir, '--out', out, '--pin', next, '--pin-file', pf], (l) => lines.push(l), () => {});
+    main(
+      ['--from', repo.dir, '--out', out, '--pin', next, '--pin-file', pf],
+      (l) => lines.push(l),
+      () => {},
+    );
     const text = lines.join('\n');
     assert.match(text, new RegExp(`overdub-devices@${repo.c2.slice(0, 7)} → overdub-devices@${next.slice(0, 7)}`));
     assert.match(text, /\*\*Added\*\*\n- Test Drive \(`tester\.drive`, [0-9a-f]{12}\)\n\n/);
     assert.match(text, /\*\*Changed\*\*\n- Test Echo \(`tester\.echo`, [0-9a-f]{12}\): new code, was [0-9a-f]{12}\n\n/);
-    assert.match(text, /\*\*Taken down\*\*\n- Test Keys \(`tester\.keys`, [0-9a-f]{12}\): revoked, "It did something it shouldn't\."$/);
+    assert.match(
+      text,
+      /\*\*Taken down\*\*\n- Test Keys \(`tester\.keys`, [0-9a-f]{12}\): revoked, "It did something it shouldn't\."$/,
+    );
     assert.equal(JSON.parse(fs.readFileSync(pf, 'utf8')).commit, next);
     repo.git('reset', '-q', '--hard', c);
   });
 
   test('summarize: an unlisted device, and a listing-only change', () => {
-    const a = { devices: [{ id: 'x.a', name: 'A', sha256: '1'.repeat(64), blurb: 'one' }, { id: 'x.b', name: 'B', sha256: '2'.repeat(64) }] };
+    const a = {
+      devices: [
+        { id: 'x.a', name: 'A', sha256: '1'.repeat(64), blurb: 'one' },
+        { id: 'x.b', name: 'B', sha256: '2'.repeat(64) },
+      ],
+    };
     const b = { devices: [{ id: 'x.a', name: 'A', sha256: '1'.repeat(64), blurb: 'two' }], revoked: [] };
     const s = summarize(a, b);
     assert.deepEqual(s.added, []);
@@ -214,6 +291,12 @@ test('untar reads a pax long name', () => {
   };
   const pad = (b) => Buffer.concat([b, Buffer.alloc((512 - (b.length % 512)) % 512)]);
   const pax = Buffer.from(rec('path', name));
-  const tar = Buffer.concat([header('PaxHeader', pax.length, 'x'), pad(pax), header('short', 2, '0'), pad(Buffer.from('ok')), Buffer.alloc(1024)]);
+  const tar = Buffer.concat([
+    header('PaxHeader', pax.length, 'x'),
+    pad(pax),
+    header('short', 2, '0'),
+    pad(Buffer.from('ok')),
+    Buffer.alloc(1024),
+  ]);
   assert.deepEqual([...untar(tar).keys()], [name]);
 });

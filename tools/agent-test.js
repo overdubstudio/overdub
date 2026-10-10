@@ -793,9 +793,9 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     // device guide, every op's fields, the lexicon); a cap so it can't regrow unnoticed
     const sys = await prompt.buildSystemPrompt();
     const tg = await run(app, 'get_guide', { topic: 'transforms' }), dg = await run(app, 'get_guide', { topic: 'devices' });
-    t.ok(sys.length < 9500 && sys.includes(prompt.ETIQUETTE) && sys.includes(prompt.NOTES_BRIEF) && !sys.includes(prompt.OPS_CHEATSHEET) && !sys.includes((dg.guide || 'x').slice(0, 400)) && /get_guide "devices"/.test(sys) && /get_guide "ops"/.test(sys)
+    t.ok(sys.length < 9750 && sys.includes(prompt.ETIQUETTE) && sys.includes(prompt.NOTES_BRIEF) && !sys.includes(prompt.OPS_CHEATSHEET) && !sys.includes((dg.guide || 'x').slice(0, 400)) && /get_guide "devices"/.test(sys) && /get_guide "ops"/.test(sys)
       && /humanize: .*amount=0\.35/.test(tg.guide || '') && /get_guide "transforms"/.test(cat.find((x) => x.name === 'transform').description) && /etiquette is in your system prompt/.test(tools.IN_APP_DESCRIPTIONS.get_guide),
-      `node: the system prompt is ${sys.length} chars (under 9,500; 29,509 before the prompt diet), with the etiquette and without the ops sheet or the device guide, which get_guide serves; get_guide "transforms" has every transform's params`);
+      `node: the system prompt is ${sys.length} chars (under 9,750: 9,500 until Start a song's lines; 29,509 before the prompt diet), with the etiquette and without the ops sheet or the device guide, which get_guide serves; get_guide "transforms" has every transform's params`);
     // Claude Code cuts an MCP tool's description at 2,048 characters (measured: a 3,000- and a 6,000-char description cost
     // the same tokens as a 2,048 one), so what an agent must say or refuse sits before that, in every tool
     const MCP_CUT = 2048, long = cat.filter((x) => x.description.length > MCP_CUT).map((x) => x.name);
@@ -2738,6 +2738,92 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const landed = await page.evaluate(() => { const o = window.overdub, t = o.store.get().tracks.find((x) => x.name === 'Chime'); return { by: o.store.get().devices['probe.trim']?.by, reg: o.devices.getDevice('probe.trim')?.source, insert: t?.inserts.find((fx) => fx.device === 'probe.trim')?.by, held: (o.trust?.held?.() || []).map((d) => d.id) }; });
   t.ok(kept.kept === true && kept.check && landed.by === 'mcp:probe' && landed.reg === 'project' && landed.insert === 'mcp:probe' && landed.held.includes('sam.chime') && realErrors(errors).length === 0,
     `Keep runs the device check and lands it, signed by the agent (${JSON.stringify(landed)}; check ok: ${kept.check?.ok}); Sam's device stays held; no page errors${realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 2).join(' | ') : ''}`);
+  await close();
+}
+
+/* ------------------------------------------------------------------ 3b. Start a song (R28, R29) */
+// docs/AGENTS.md: get_selection.start says where a Start a song run is (null with no stage open); a message sent while
+// the take is played waits in the box ("Sends when your take is in.") and goes when the stage reaches 'in'; the demo
+// agent's "loosen it" / "tighten it" / "tidy the timing" re-plan the selected clip and count the change they made.
+{
+  const { perform } = await import('./sloppy.js');
+  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast' });
+  await ready(page);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { const o = window.overdub; o.ui.setOpen('right', true); o.ui.show('agent'); });
+  await page.waitForFunction(() => window.overdub.agent.provider === 'mock', null, { timeout: 5000 }).catch(() => {});
+  const startOf = async () => (await run(page, 'get_selection', {})).start;
+  const shut = await startOf();
+  await page.evaluate(() => window.overdub.start.open({ kind: 'tap' }));
+  await page.waitForTimeout(300);
+  const K = 36, S = 38, H = 42, ROW = { [K]: 'kick', [S]: 'snare', [H]: 'hat' };
+  const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 8 }, (_, i) => [i / 2, H])];
+  const hits = perform(ROCK, { bpm: 96, bars: 3, jitter: 0.03, drift: 0.04, seed: 3, start: 0 });
+  const t0 = await page.evaluate(() => performance.now() + 40);
+  await page.evaluate(([hs]) => { for (const x of hs) window.overdub.start.tap(x.row, x.ms); }, [hits.map((x) => ({ row: ROW[x.p], ms: t0 + x.t * 1000 }))]);
+  await page.waitForTimeout(200);
+  const playing = await startOf();
+  const keys = playing ? Object.keys(playing).join() : '';
+  t.ok(shut === null && playing?.step === 'play' && playing.kind === 'tap' && playing.landed === null && keys === 'step,kind,tempo,sure,rounds,landed' && (playing.tempo === null || Number.isInteger(playing.tempo)),
+    `get_selection.start: null with no stage open, then { step: 'play', kind: 'tap', landed: null } while the beat is played (${JSON.stringify(playing)})`);
+  // a message while the take is played: it waits in the box, and the composer says when it goes
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'loosen it', send: true }));
+  await page.waitForTimeout(250);
+  const waits = await page.evaluate(() => ({ box: document.querySelector('.ag-input').value, status: document.querySelector('.ag-status')?.textContent || '', users: document.querySelectorAll('.ag-user').length, busy: window.overdub.agent.busy, lamp: !!document.querySelector('.ag-status .ag-lamp') }));
+  t.ok(waits.box === 'loosen it' && waits.status === 'Sends when your take is in.' && waits.users === 0 && !waits.busy && !waits.lamp,
+    `a message sent while the take is played waits in the box: "${waits.status}" (${JSON.stringify(waits)})`);
+  await shot('agent-start-waits');
+  // Done: the take is in; the message goes, and the demo loosens the beat it landed
+  await page.evaluate(() => { const o = window.overdub; o.start.on('land', (l) => { const c = o.store.findClip(l.clip).clip; window.__landedNotes = c.notes.map((n) => ({ id: n.id, t: n.t })); }); o.start.done(); });
+  await page.waitForFunction(() => window.overdub.start.step === 'in', null, { timeout: 5000 }).catch(() => {});
+  const inStep = await startOf();
+  const landed = await page.evaluate(() => window.overdub.start.landed());
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 1 && !window.overdub.agent.busy && /Undo takes it back|already|loosen/.test([...document.querySelectorAll('.ag-agent .ag-text')].map((x) => x.textContent).join(' ')), null, { timeout: 20000 }).catch(() => {});
+  t.ok(inStep?.step === 'in' && inStep.kind === 'tap' && Number.isInteger(inStep.tempo) && Math.abs(inStep.tempo - 96) <= 6 && typeof inStep.sure === 'boolean' && inStep.rounds === 3 && inStep.landed?.clip === landed?.clip && inStep.landed?.track === landed?.track,
+    `on 'in' it says the take: ${JSON.stringify(inStep)}`);
+  const said = async () => page.evaluate(() => ({ users: [...document.querySelectorAll('.ag-user .ag-text')].map((x) => x.textContent.trim()), reply: (() => { const ms = [...document.querySelectorAll('.ag-agent')]; const last = ms[ms.length - 1]; return last ? [...last.querySelectorAll('.ag-text')].map((x) => x.textContent).join(' ').replace(/\s+/g, ' ') : ''; })(), status: document.querySelector('.ag-status')?.textContent || '', box: document.querySelector('.ag-input').value }));
+  const moves = (clip, was) => page.evaluate(([c, w]) => { const o = window.overdub, f = o.store.findClip(c), tempo = o.store.get().tempo; const now = new Map(f.clip.notes.map((n) => [n.id, n.t])); const d = w.map((n) => Math.abs((now.get(n.id) ?? n.t) - n.t)).filter((x) => x > 1e-4); return { n: d.length, m: f.clip.notes.length, ms: d.length ? Math.round((d.reduce((a, b) => a + b, 0) / d.length) * 60000 / tempo) : 0, last: o.store.history.at(-1), notes: f.clip.notes.map((n) => ({ id: n.id, t: n.t })) }; }, [clip, was]);
+  const before = await page.evaluate(() => window.__landedNotes);
+  const loose = await moves(landed?.clip, before || []);
+  const s1 = await said();
+  const m1 = /^Loosened your beat: (\d+) of (\d+) hits moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s1.reply.trim());
+  t.ok(s1.users.join() === 'loosen it' && s1.box === '' && !/Sends when/.test(s1.status) && m1 && +m1[1] === loose.n && +m1[2] === loose.m && +m1[3] === loose.ms && loose.n > 0 && loose.last?.by === 'claude' && loose.last?.label === 'timing: loose',
+    `it went when the take was in, and the demo loosened the beat from what was played: "${s1.reply.trim()}" (measured ${loose.n} of ${loose.m}, ${loose.ms} ms; History "${loose.last?.label}" by ${loose.last?.by})`);
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'tighten it', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 2 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const tight = await moves(landed?.clip, loose.notes);
+  const s2 = await said();
+  const m2 = /^Tidied your beat: (\d+) of (\d+) hits moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s2.reply.trim());
+  const backTight = (before || []).every((n) => tight.notes.find((x) => x.id === n.id)?.t === n.t);
+  t.ok(m2 && +m2[1] === tight.n && +m2[2] === tight.m && +m2[3] === tight.ms && tight.n === loose.n && backTight && tight.last?.label === 'timing: tight',
+    `"tighten it" puts each hit back where Tight had it: "${s2.reply.trim()}" (measured ${tight.n} of ${tight.m}, ${tight.ms} ms; back as landed: ${backTight})`);
+  await page.evaluate(() => window.overdub.start.close({ to: 'song' }));
+  await page.waitForTimeout(200);
+  const after = await startOf();
+  t.ok(after === null, `closed, get_selection.start is null again (${JSON.stringify(after)})`);
+  // a clip with no take behind it: Tight is a Quantize, and Loose can't be done
+  const keys2 = await page.evaluate(() => {
+    const o = window.overdub;
+    const r = o.store.dispatch([{ type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$k', ref: 'c', clip: { start: 0, length: 4, notes: 'C4@0.06:0.5 E4@1:0.5 G4@1.94:0.5 C5@3.1:0.5' } }], { by: 'you' });
+    o.ui.select({ track: r.created.k, clip: r.created.c, notes: [] });
+    const c = o.store.findClip(r.created.c).clip;
+    return { clip: r.created.c, notes: c.notes.map((n) => ({ id: n.id, t: n.t })), hist: o.store.history.length };
+  });
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'loosen it', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 3 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const s3 = await said();
+  const hist3 = await page.evaluate(() => window.overdub.store.history.length);
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'tidy the timing', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 4 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const q = await moves(keys2.clip, keys2.notes);
+  const s4 = await said();
+  const m4 = /^Tidied your tune: (\d+) of (\d+) notes moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s4.reply.trim());
+  t.ok(/From here it can only go tighter\./.test(s3.reply) && hist3 === keys2.hist && m4 && +m4[1] === q.n && q.n === 3 && +m4[2] === 4 && +m4[3] === q.ms && q.last?.by === 'claude' && q.last?.label === 'timing: tight',
+    `with no take behind the clip, "loosen it" changes nothing ("${s3.reply.trim().slice(0, 70)}") and "tidy the timing" quantizes it: "${s4.reply.trim()}"`);
+  t.ok(realErrors(errors).length === 0, 'Start a song with the agent: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
 

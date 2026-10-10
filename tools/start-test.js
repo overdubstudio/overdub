@@ -906,4 +906,79 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   finally { await o.close(); }
 }
 
+/* ================================================================ R32: liner notes on every new surface */
+// The stage (.st-*), the coach strip (.cs-*) and the beat window (.bw-*): every rule in their stylesheets, in every
+// state and width (not only what's on screen now), has no inset stripe and no pill or round radius; each step a run
+// reaches has one .btn-go a region; and what lands is signed: the take's clip by you on its label line, the band
+// unsigned (the house).
+{
+  console.log('\nliner notes (R32)');
+  const o = await blank();
+  const { page } = o;
+  try {
+    const goes = () => E(page, () => {
+      const vis = (el) => !!el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
+      return [...document.querySelectorAll('.st-stage, .cs, [role="region"]')].filter(vis).map((r) => ({ r: r.className.split(' ')[0] || r.getAttribute('aria-label'), n: [...r.querySelectorAll('.btn-go')].filter(vis).length }));
+    });
+    const steps = [];
+    const note = async (where) => { for (const g of await goes()) steps.push({ where, ...g }); };
+    await page.click('.st-way-b[data-way="Tap a beat"]');
+    await page.waitForTimeout(300);
+    await note('play');
+    // the click view (the beat window), and back
+    await E(page, () => window.overdub.start.setView('click'));
+    await page.waitForTimeout(500);
+    await note('click view');
+    await E(page, () => window.overdub.start.setView('free'));
+    await page.waitForTimeout(300);
+    await playRock(page);
+    await page.waitForTimeout(200);
+    await note('play, 3 rounds');
+    await E(page, () => window.overdub.start.done());
+    await page.waitForTimeout(400);
+    await note('in');
+    const landed = await E(page, () => window.overdub.start.landed());
+    await E(page, () => window.overdub.start.close({ to: 'song' }));
+    await page.waitForTimeout(500);
+    await note('strip');
+    // the band, kept: one dispatch by the house
+    await E(page, () => window.overdub.coach.go('band'));
+    await page.waitForTimeout(150);
+    await E(page, () => window.overdub.coach.band());
+    await page.waitForTimeout(150);
+    await E(page, () => window.overdub.coach.preview(0));
+    for (let i = 0; i < 40 && !(await E(page, () => !!window.overdub.coach.state()?.hearing)); i++) await page.waitForTimeout(100);
+    await note('band rows');
+    await E(page, () => window.overdub.coach.keep());
+    await page.waitForTimeout(600);
+    await note('closing line');
+    const sweep = await E(page, () => {
+      const rules = [];
+      const walk = (list) => { for (const r of list) { if (r.cssRules && !r.selectorText) walk(r.cssRules); else if (r.selectorText) rules.push(r); } };
+      for (const sh of document.styleSheets) { try { walk(sh.cssRules); } catch { /* another origin's sheet */ } }
+      const ours = rules.filter((r) => /\.(st|cs|bw)-|\.cs\b/.test(r.selectorText));
+      const radius = (st) => ['border-radius', 'border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius', 'border-bottom-right-radius'].map((k) => st.getPropertyValue(k)).join(' ');
+      return { n: ours.length, sheets: [...new Set(ours.map((r) => (r.selectorText.match(/\.(st|cs|bw)-|\.cs\b/) || [''])[0]))].sort(),
+        inset: ours.filter((r) => /inset\s+-?\d+(\.\d+)?px\s+0(px)?\s+0/.test(r.style.getPropertyValue('box-shadow'))).map((r) => r.selectorText),
+        round: ours.filter((r) => /\b99px\b|50%/.test(radius(r.style))).map((r) => r.selectorText) };
+    });
+    const p = await song(page);
+    const tk = p.tracks.find((x) => x.id === landed?.track), clip = tk?.clips.find((c) => c.id === landed?.clip);
+    const band = p.tracks.filter((x) => x.id !== landed?.track && x.clips.length);
+    await E(page, () => { window.overdub.arranger?.reveal?.(0); });
+    await page.waitForTimeout(300);
+    const sig = await E(page, ([c, b]) => { const ar = window.overdub.arranger; return { take: ar.signedBy(c), label: ar.clipLabel(c), band: b.map((id) => ar.signedBy(id)) }; }, [landed?.clip, band.flatMap((x) => x.clips.map((c) => c.id))]);
+    t.ok(sweep.n > 100 && ['.bw-', '.cs-', '.st-'].every((x) => sweep.sheets.includes(x)) && !sweep.inset.length && !sweep.round.length,
+      `${sweep.n} rules in .st-*, .cs-* and .bw-* (${sweep.sheets.join(' ')}): no inset Npx 0 0 shadow, no 99px or 50% radius${sweep.inset.length || sweep.round.length ? ` (inset: ${sweep.inset.join(', ')}; round: ${sweep.round.join(', ')})` : ''}`);
+    const many = steps.filter((x) => x.n > 1);
+    // (before there's enough to keep, Done isn't the primary yet: none, then one)
+    t.ok(!many.length && steps.some((x) => x.where === 'in' && /st-stage/.test(x.r) && x.n === 1) && steps.some((x) => x.where === 'strip' && x.r === 'cs' && x.n === 1) && steps.some((x) => x.where === 'click view' && /st-stage/.test(x.r)) && steps.some((x) => x.where === 'play, 3 rounds' && x.n === 1),
+      `one .btn-go a region at each step (${[...new Set(steps.map((x) => `${x.where} ${x.r}:${x.n}`))].join('; ')})`);
+    t.ok(clip && clip.by === 'you' && clip.notes.every((n) => (n.by ?? 'you') === 'you') && sig.take === 'you' && (sig.label === undefined || /you/.test(sig.label || '')) && band.length >= 2 && sig.band.every((x) => x === ''),
+      `bylines on what landed: the take's clip signed by you (label line "${sig.label}"), the band's ${sig.band.length} clips unsigned, the house's (${JSON.stringify(sig.band)})`);
+    t.ok(!real(o.errors).length, `liner notes: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
+  } catch (e) { t.ok(false, 'liner notes threw: ' + (e.stack || e)); }
+  finally { await o.close(); }
+}
+
 t.done();

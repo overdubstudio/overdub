@@ -340,7 +340,7 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
   {
     name: 'get_selection',
     annotations: { title: 'Read the selection', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: `What the human is looking at right now: the selected track, clip (with its notes in the text format), the selected notes, the time range (beats and bars), the selected insert (with params), and the playhead. Act on THIS by default. Empty fields mean nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they're hearing a sound on a track before keeping it (the song still has the old one), else null.`,
+    description: `What the human is looking at right now: the selected track, clip (with its notes in the text format), the selected notes, the time range (beats and bars), the selected insert (with params), and the playhead. Act on THIS by default. Empty fields mean nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they're hearing a sound on a track before keeping it (the song still has the old one), else null. start: { step, kind, tempo, sure, rounds, landed } on Start a song's stage (play, hum: wait), else null.`,
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
     run(input, { app }) { return selectionInfo(app); },
   },
@@ -636,7 +636,7 @@ measure: true renders each take before showing it (a scratch copy over the targe
   {
     name: 'get_recording',
     annotations: { title: 'Check the recorder', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'Is the human recording? state: "idle", "count" (the count-in) or "rec"; the tracks the take goes onto (each with its mode: "layer", every loop pass adds into one clip, or "take", every pass a new take), where it started, the loop it records in and the pass it is on, and the notes in so far. While they record, edits to those tracks (named by track, clip or insert, or the selection when a tool defaults to it), to the timeline (tempo, meter, loop, sections, inserting or removing bars) or to any track\'s arm, and an undo or revert that would touch them, are refused with error "recording"; other tracks are fine. wait_seconds (max 120) waits for the take to end; then get_project shows it (a take\'s clips share a take group, the earlier passes muted) and get_capture has every pass.',
+    description: 'Is the human recording? state: "idle", "count" (the count-in) or "rec"; the tracks the take goes onto (each with its mode: "fold" (drums), what most passes played is kept; "layer", every loop pass adds into one clip; or "take", every pass a new take), where it started, the loop it records in and the pass it is on, and the notes in so far. While they record, edits to those tracks (named by track, clip or insert, or the selection when a tool defaults to it), to the timeline (tempo, meter, loop, sections, inserting or removing bars) or to any track\'s arm, and an undo or revert that would touch them, are refused with error "recording"; other tracks are fine. wait_seconds (max 120) waits for the take to end; then get_project shows it (a take\'s clips share a take group, the earlier passes muted) and get_capture has every pass.',
     input_schema: { type: 'object', properties: { wait_seconds: { type: 'number' } }, additionalProperties: false },
     async run(input, { app, signal }) { return getRecording(app, input, signal); },
   },
@@ -1011,6 +1011,22 @@ export function coherentSelection(app) {
   if (f && f.track.id === sel.track) return sel;
   return { ...sel, clip: null, notes: new Set() };
 }
+// Start a song (ui/start.js, app.start), read-only: where the run is and what's in so far. Numbers and ids only, no song
+// text. null when the stage isn't open. tempo: the BPM the stage shows (null while it reads "~"); sure: whether the
+// studio is sure where the 1 is (a tap) or the hum settled on a steady beat (fit 0.5 or more); rounds: times round so
+// far, or kept; landed: the clip the take went in as, once it has.
+export function startInfo(app) {
+  const s = app.start;
+  if (!s?.step) return null;
+  const tryIt = (f) => { try { return f(); } catch { return null; } };
+  const take = tryIt(() => s.take?.()), click = tryIt(() => s.click?.()), hum = s.step === 'hum' ? tryIt(() => s.hum?.()) : null, landed = tryIt(() => s.landed?.());
+  const tempo = s.step === 'play' ? tryIt(() => s.tempoShown?.())
+    : hum ? (hum.mode === 'free' ? hum.bpm : hum.over ? app.store.get().tempo : hum.speed)
+      : take ? take.bpm : null;
+  const sure = take ? (take.kind === 'hum' ? (take.fit == null ? null : take.fit >= 0.5) : take.sure ?? null) : hum?.mode === 'free' && hum.fit != null ? hum.fit >= 0.5 : null;
+  const rounds = take?.rounds ?? click?.rounds ?? (hum?.round || null);
+  return { step: s.step, kind: s.kind || null, tempo: Number.isFinite(tempo) ? Math.round(tempo) : null, sure, rounds: Number.isFinite(rounds) ? rounds : null, landed: landed?.clip ? { track: landed.track ?? null, clip: landed.clip } : null };
+}
 function selectionInfo(app) {
   const sel = coherentSelection(app);
   const p = P(app);
@@ -1056,6 +1072,7 @@ function selectionInfo(app) {
     }
   } catch { /* a nicety */ }
   out.trying = trying;
+  out.start = startInfo(app);
   const link = fromLink(app);
   return link ? { from_link: link, ...out } : out;
 }

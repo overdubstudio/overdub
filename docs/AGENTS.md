@@ -175,7 +175,7 @@ the device's presets.
 |---|---|
 | `get_project` | the song: title, tempo, key, meter, sections, tracks with instrument, inserts (with params) and clips, the selection and the last few history entries. `detail: "full"` (optionally with `track`) includes every note. A device with over 40 params is shown as its preset and what differs from it (`preset "Bokeh" + {"flt_cutoff":900}`), or what differs from its defaults. Automation lanes are listed under their track (`auto: Keyhole cutoff (fx_k) 31:600 32:4500 48:600, by claude`, held ones marked). `held` lists the song's devices kept off on this computer (see below); `from_link`, first, says the song came from someone's link and isn't the person's yet; `key_note` says when the key is a new song's default nobody chose (C minor, as Sketch treats it). |
 | `get_guide` | the studio's guides: `etiquette`, `devices` (kernel writing), `ops`, `lexicon`, `transforms` (every transform's params and defaults). Outside agents: read first. `lexicon` also returns `personal`: what this human means by warm, fat and tight, learned from their A/B picks. Follow it. |
-| `get_selection` | what the human is looking at: track, clip (with notes, and a grid for drums), selected notes, range (beats and bars), insert (with params), playhead, and the key (marked when nobody chose it yet); `from_link` as `get_project` has it; `trying`: `{ track, device }` while the person is hearing a sound on a track before keeping it (the song still has the old one, and `track.instrument` says that one; your next call that reads or changes the song puts it back first), else `null`. |
+| `get_selection` | what the human is looking at: track, clip (with notes, and a grid for drums), selected notes, range (beats and bars), insert (with params), playhead, and the key (marked when nobody chose it yet); `from_link` as `get_project` has it; `trying`: `{ track, device }` while the person is hearing a sound on a track before keeping it (the song still has the old one, and `track.instrument` says that one; your next call that reads or changes the song puts it back first), else `null`; `start`: `{ step, kind, tempo, sure, rounds, landed: { track, clip } | null }` while the person is starting a song on Start a song's stage, else `null` ([below](#start-a-song)). |
 | `get_history` | recent changes, newest first: who, label, reason, summary. Check it before redoing something. |
 | `apply_ops` | change the song: a list of ops, one undo step, signed by you, with `label` and `reason`. All or nothing. Everything it adds is signed by you: any `by` in the ops is dropped, and so are internal fields (names starting with `_`). Devices go through `define_device`, not `device.define`. Params are checked against each device first (see [Param values](#param-values)), and `preset: "<name>"` sets a named sound. Returns created ids (two creating ops of one kind with no ref come back as `section1`, `section2`, …), a compact diff (a device's line names a dozen param changes and how many more), the presets it set, or an error naming the failing op. Takes the automation ops (`auto.write`, `auto.clear`, `auto.set`) and says, in `lanes`, when a static set lands on a param whose lane plays (it only changes the value the lane holds at). Its description names each op and its fields; `get_guide "ops"` has the rest. |
 | `list_devices` | instruments and effects (`kind`, `cat`, `query`): built-ins, the Guitar Studio's pedals and amps, and devices written in this song. Each device's params (range, unit, curve, role and meaning) while the list stays under about 8,000 characters, and always for a single device; past that, names, param keys and presets, and `get_device` for the one wanted (`detail` `"params"` or `"brief"` chooses). A `cat` nothing is filed under ("guitar") lists the devices that mention the word, and the categories. |
@@ -190,7 +190,7 @@ the device's presets.
 | `propose_variations` | 2-4 op sets as A/B cards; the human holds a card to hear it (a preview, never in History) and keeps one. Waits (default 90 s) and returns the pick, or `{ status: "pending", id }`; `index` is the pick's place in your list (-1 = the original), not its letter on screen. `measure: true` measures each take against the original first. If you carry on while they're listening, your next call that reads or changes the song lets go of the card first. |
 | `get_variation_result` | poll a pending pick or question by its id, or a call that came back `offered: true` (a card to Keep): `kept: true` once it landed, `kept: false` if nothing changed. For `suggest_sounds`: `{ picked: { device, preset?, name } \| null, kept }`. A card that waits because the song came from a link says so when the person has made the song theirs since (it still waits for their Keep). |
 | `get_capture` | the human's latest (or recent) hummed, tapped or played phrase, as notes text, with its kind, tempo, key and confidence. |
-| `get_recording` | whether the human is recording (`idle`, `count` for the count-in, `rec`): the tracks the take goes onto, each with its mode (`layer`: every loop pass adds into one clip; `take`: every pass a new take, the earlier ones muted), where it started, the loop and pass, and the notes in so far; `wait_seconds` waits for the take to end. While one records, edits to its tracks or to the timeline (tempo, meter, loop, sections, bars) come back `{ error: "recording" }`; other tracks are fine. |
+| `get_recording` | whether the human is recording (`idle`, `count` for the count-in, `rec`): the tracks the take goes onto, each with its mode (`fold`, a drum track's default: the passes folded at the stop, what was played in most of them kept and the rest left out; `layer`: every loop pass adds into one clip; `take`: every pass a new take, the earlier ones muted), where it started, the loop and pass, and the notes in so far; `wait_seconds` waits for the take to end. While one records, edits to its tracks or to the timeline (tempo, meter, loop, sections, bars) come back `{ error: "recording" }`; other tracks are fine. |
 | `ask_human` | one short question, 2-4 options, shown at a natural pause (never while they record); returns the answer (or pending). |
 | `say` | post a message to the human in the Agent panel (outside agents: this is how you talk to them). |
 | `undo` | take back your latest change (never the human's). |
@@ -302,6 +302,27 @@ get_variation_result { "id": "s1x2" } → { "picked": { "device": "core.brass", 
 While they're hearing a sound before keeping it, `get_selection` says so (`trying`), and any call of yours that reads
 or changes the song puts the old sound back first (the card says why). `suggest_sounds`, `get_selection`,
 `get_variation_result`, `say`, `ask_human`, `get_recording` and `highlight` don't.
+
+### Start a song
+
+On a blank song the person starts on **Start a song**: they tap a beat, hum a tune or play the keys, at any speed, and
+the studio finds the tempo and the bar from them. Ask them to hum or tap the idea before you write anything. While
+they play on its stage, `get_selection` has `start`:
+
+```json
+{ "step": "play", "kind": "tap", "tempo": 97, "sure": true, "rounds": 3, "landed": null }
+```
+
+`step` is `play` (tapping or playing), `hum` (humming), `in` (the take is in the song, looping while they choose its
+timing and sound) or `readings` (hearing the other ways it could go); `kind` is `tap`, `hum` or `keys`. `tempo` is the
+BPM the stage shows (`null` while it's still finding it), `sure` whether it's sure where the 1 is (for a hum, whether
+the hum settled on a steady beat), `rounds` how many times round so far, and `landed` the take's track and clip once
+it's in. It holds numbers and ids, never song text. `start` is `null` when the stage isn't open.
+
+While `step` is `play` or `hum`, tools that change the song come back `{ error: "recording" }`, and a message the
+person sends the in-app agent waits in its box (*Sends when your take is in.*) until the take is in. Once it's in,
+play over their idea or build around it (`arrange_around` on `landed`); never replace their take or retime it unless
+they ask. "Tidy the timing" means the stage's Tight level: say how many notes moved.
 
 ## Ops (for `apply_ops`)
 

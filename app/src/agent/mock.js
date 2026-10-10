@@ -14,7 +14,8 @@
 // writer's), "find me a delay someone made" (the community shelf's best match, offered on a card with
 // find_community_device put_on: only the person's Try lets its code run), perceptual words (warmer, brighter, lazier…), automation ("fade it in", "open the bass filter
 // over the chorus and fade the keys out over the last bar": one lane move per clause, on the track each clause names),
-// "hum me an idea", "undo", and the nearest things it has to a new part, offered as takes on their own track: a line
+// "hum me an idea", "undo", "tidy the timing" / "tighten it" / "loosen it" on the selected notes clip (re-planned from
+// the take behind it, capture.ofClip, else quantized; the reply counts the notes it moved), and the nearest things it has to a new part, offered as takes on their own track: a line
 // over a part (built from its notes), Band's bass (or chords, drums) around a part, a part doubled an octave up.
 // Anything else (route() finds no scene: a new part, a question, a clause it can't do) gets an honest answer FIRST:
 // it's the scripted demo, the closest thing it can do (chips the panel shows) on what the ask named (its track, by name
@@ -38,6 +39,8 @@ import { chordTimeline, makeLick, findJamStyle, JAM_STYLES } from '../core/jam.j
 import { stringNumber } from '../core/fretboard.js';
 import { DEMOS } from '../core/demo.js';
 import { CAT_WORDS } from '../devices/community.js';
+import { takeOf, humReadingsOf, atLevel } from '../input/rounds.js';
+import { beatsPerBar } from '../core/music.js';
 
 const stopped = () => Object.assign(new Error('stopped'), { name: 'AbortError' });
 const sleep = (ms, signal) => new Promise((res, rej) => {
@@ -112,6 +115,10 @@ export async function runMock(app, text, { signal, emit, setStatus, fast = false
   // a track's sound ("what should this sound like", "make it a Choir Loft"): the sound card, or the instrument named
   const sounds = soundsAsk(app, t);
   if (sounds) { await sceneSounds(app, { say, tool }, sounds); setStatus(''); emit('end', { turn }); return; }
+  // the timing of the selected notes clip ("tidy the timing", "tighten it", "loosen it"): ahead of the words, so
+  // "tighten it" on a clip is its timing, not a sound
+  const timing = timingAsk(app, t);
+  if (timing) { await sceneTiming(app, { say, tool }, timing); setStatus(''); emit('end', { turn }); return; }
   const { scene, rest, clauses } = route(t);
   const ctx = { say, fine, tool, think, st, t, emit, turn, clauses, offer, ask, pick };
   // a prompt that asked for more than the script knows: say so first, with the closest thing it can do, then the part
@@ -138,6 +145,85 @@ export async function runMock(app, text, { signal, emit, setStatus, fast = false
 
   setStatus('');
   emit('end', { turn });
+}
+
+/* ------------------------------------------------------------------ the timing of a take (Start a song) */
+// "Tidy the timing" / "tighten it" is Tight, "loosen it" Loose (input/timing.js LEVELS), on the selected notes clip.
+// A clip that went in from Start a song has its take in capture (capture.ofClip: what was played as played): the
+// readings are found again from it (rounds.js takeOf for a tap, humReadingsOf for a hum), the one that is this clip
+// (its length, the song's tempo, as many notes) is put at the level, and only the notes' times change (notes.set, by
+// id). With no take behind the clip, tightening is a Quantize to 16ths, and loosening can't be done ("From here it can
+// only go tighter."). The reply counts the change it made.
+const TIMING_ASK = /\b(?:tidy|clean)(?: up)? (?:the |my |its |this |that )?timing\b|\b(?:tighten|loosen) (?:it|this|that|them|the timing|its timing)(?: up)?\b/;
+// -> { level: 'tight' | 'loose', track, clip } | null (no notes clip selected: the words go on to the script)
+export function timingAsk(app, t) {
+  t = String(t).toLowerCase().replace(/[‘’]/g, "'");
+  if (!TIMING_ASK.test(t)) return null;
+  const sel = coherentSelection(app);
+  const f = sel.clip ? app.store.findClip(sel.clip) : null;
+  if (!f || f.clip.kind !== 'notes' || !f.clip.notes.length) return null;
+  return { level: /\bloosen\b/.test(t) ? 'loose' : 'tight', track: f.track.id, clip: f.clip.id };
+}
+const r4 = (x) => Math.round(x * 10000) / 10000;
+// the take behind a clip, as a reading of it: { notes (with raw), length } | null
+function readingOfClip(app, track, clip) {
+  let ph = null;
+  try { ph = app.input?.capture?.ofClip?.(clip.id) || null; } catch { ph = null; }
+  if (!ph || !Array.isArray(ph.raw) || !ph.raw.length) return null;
+  const bpb = beatsPerBar(app.store.get().meter), tempo = app.store.get().tempo;
+  let readings = [];
+  try {
+    if (ph.src === 'tap') readings = takeOf(ph.raw, { bpb })?.readings || [];
+    else if (ph.src === 'hum') readings = humReadingsOf({ segs: ph.raw }, { bpb });
+  } catch { readings = []; }
+  const n = clip.notes.length;
+  return readings.find((rd) => Math.abs(rd.length - clip.length) < 1e-6 && Math.abs(Math.round(rd.bpm) - tempo) <= 1 && rd.notes.length === n) || null;
+}
+async function sceneTiming(app, { say, tool }, { level, track, clip: clipId }) {
+  const f = app.store.findClip(clipId);
+  if (!f) { await say('That clip isn’t in the song any more.'); return; }
+  const tr = f.track, clip = f.clip, tempo = app.store.get().tempo;
+  const drums = /drum/.test(tr.instrument?.device || '') || app.devices?.getDevice?.(tr.instrument?.device)?.cat === 'drums';
+  const what = drums ? 'beat' : 'tune', unit = drums ? 'hits' : 'notes';
+  const byT = (a, b) => a.t - b.t || a.p - b.p;
+  const before = clip.notes.map((n) => ({ ...n })).sort(byT);   // (copies: the ops change the notes in place)
+  const rd = readingOfClip(app, tr, clip);
+  let after = null;
+  if (rd) {
+    // each of the take's notes is a note of the clip: the one (of its drum, for a beat; a hum's pitches may be in the
+    // key's scale now) that sits between where it was played and where Tight puts it, as any level leaves it
+    const planned = atLevel(rd.notes, level, { length: rd.length });
+    const between = (x, a, b) => (x < Math.min(a, b) ? Math.min(a, b) - x : x > Math.max(a, b) ? x - Math.max(a, b) : 0);
+    const pool = before.slice(), pairs = [];
+    for (const [i, n] of rd.notes.entries()) {
+      let best = -1, bd = Infinity;
+      for (let j = 0; j < pool.length; j++) {
+        if (drums && pool[j].p !== n.p) continue;
+        const d = between(pool[j].t, n.raw ?? n.t, n.t) + (pool[j].p === n.p ? 0 : 0.01);
+        if (d < bd) { bd = d; best = j; }
+      }
+      if (best < 0 || bd > 0.26) { pairs.length = 0; break; }
+      pairs.push({ id: pool.splice(best, 1)[0].id, t: r4(planned[i].t) });
+    }
+    if (pairs.length === before.length) { const at = new Map(pairs.map((x) => [x.id, x.t])); after = before.map((n) => ({ id: n.id, t: at.get(n.id) })); }
+  }
+  if (!after && level === 'loose') { await say(`There’s no take behind this ${what} to loosen it back toward. From here it can only go tighter.`); return; }
+  let res;
+  const label = `timing: ${level}`, reason = level === 'tight' ? `you asked to tidy the timing of the ${what}` : `you asked to loosen the ${what}`;
+  if (after) {
+    const moves = after.filter((x, i) => Math.abs(x.t - before[i].t) > 1e-4);
+    if (!moves.length) { await say(`Your ${what} is ${level} already: none of its ${before.length} ${unit} moved.`); return; }
+    res = await tool('apply_ops', { ops: [{ type: 'notes.set', track: tr.id, clip: clip.id, notes: moves }], label, reason });
+  } else {
+    res = await tool('transform', { name: 'quantize', target: { track: tr.id, clip: clip.id }, params: { grid: 0.25, strength: 1 }, mode: 'apply', label, reason });
+  }
+  if (res?.nothing || /changed nothing/.test(res?.error || '')) { await say(`Your ${what} is ${level} already: none of its ${before.length} ${unit} moved.`); return; }
+  if (res?.error) { await say(`That didn't change: ${res.error}`); return; }
+  const now = (app.store.findClip(clip.id)?.clip.notes || []);
+  const byId = new Map(now.map((n) => [n.id, n]));
+  const shifts = before.map((n) => (byId.has(n.id) ? Math.abs(byId.get(n.id).t - n.t) : null)).filter((d) => d != null && d > 1e-4);
+  const ms = shifts.length ? Math.round((shifts.reduce((a, b) => a + b, 0) / shifts.length) * 60000 / tempo) : 0;
+  await say(`${level === 'tight' ? 'Tidied' : 'Loosened'} your ${what}: ${shifts.length} of ${before.length} ${unit} moved, ${ms} ms on average. Undo takes it back.`);
 }
 
 /* ------------------------------------------------------------------ the studio's own asks */

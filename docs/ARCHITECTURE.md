@@ -90,7 +90,9 @@ overdub/
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
                          export.js (the Song menu, files out), provenance.js, share.js, onboard.js, reference.js,
-                         start.js (Start a song: the blank song's door and its stage, app.start),
+                         start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
+                         (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
+                         coach-strip.js (the next parts, docked under the arranger, app.coach),
                          devices-io.js                                                                  [core / ui]
                          community.js (From the community in the Browser: previews, Try and its prompt; off
                          unless on localhost, COMMUNITY_LIVE)                                           [shelf]
@@ -821,6 +823,8 @@ right   Agent, Connect, History (tabs)
 ```js
 ui.panel({ id, region, title, icon?, order?, mount(el, ctx) { return { update(evt), frame(now), unmount() } } })
 ui.show(panelId, { save?, by? }) ; ui.state ; ui.select(sel) ; ui.on(type, fn) ; ui.emit(type, detail) ; ui.toast(text, { kind, action })
+ui.dock                           // a slot at the foot of the arranger, over the bottom pane: no room until something docks (the coach strip)
+ui.point(el, { ms = 2000 })       // grease-pencil crop marks on a control the studio names; unsigned, gone after ms, still under reduced motion
 ui.announce(text)                 // a screen-reader-only status line (agent edits and messages while the Agent tab is hidden)
 ui.keys.add({ key: 'Space' | 'KeyZ' | ..., mod: 'mod' | 'shift' | 'alt' | 'mod+shift' | null, run(e), when?(), label, group, global?, feature? })
 ui.state = { selection: { track, clip, notes: Set<noteId>, range: { from, to } | null, insert }, zoom: { pxPerBeat, trackH },
@@ -938,13 +942,52 @@ the only round, in both of two, in half or more of three or more; the rest stray
 snares on 2 and 4) and `readingsOf` (the other 1, the tempo halved or doubled within 60 to 180). **Done** dispatches
 `core/start.js` `planStart` once, by `'you'`: on a blank song the rounded tempo and a loop over the take, a new track
 named by `newPartFor`, one clip. The Timing words (`atLevel`) and the readings are `notes.replace` (and `clip.set`,
-`project.set`) dispatched with `join` on that transaction, so one undo takes the lot. **Hum a tune** previews a groove
-(`agent/grooves-tool.js` `putGroove` dry run) at a chosen speed; **Hum** dispatches it with the tempo and loop, then
-`app.onboard.humOver()` and `recorder.record()`. While the stage is on its play steps, `app.start.busy` is true and
-`agent/tools.js` refuses song-changing tools with `recording`. Its keys are `ui.keys` declarations with `first: true`,
-and while it's open the studio's single keys are held under it. `app.start = { open({ kind: 'tap' | 'hum' }), close(),
-step ('play' | 'hum' | 'in' | 'readings' | null), kind, busy, tap(row, perfMs), done(), again(), setLevel(level),
-readings(), useReading(i), humNow(), humFree(), leave(), landed(), take(), on('step' | 'land' | 'close', fn) }`.
+`project.set`) dispatched with `join` on that transaction, so one undo takes the lot. The take goes to capture with the
+clip's id, what was played as played (`raw`) and the rounds, so `capture.ofClip(clip)` can re-plan it later (the demo
+agent's "tidy the timing" does).
+
+**Play to a click instead** stays on the stage (`S.view` `'click'`): `ui/beatwindow.js` `mountBeatWindow` draws two
+bars (160 px a bar or more) with a ball driven by `engine.beat` (a reverse-print cell instead under reduced motion), a
+bar of count-in from a stopped transport, **Speed** and **Tap it** as `store.preview`s, and the rounds folded at each
+wrap (`foldRounds`) and played at Tight on the preview track. **Done** lands the fold through `planStart`, at the
+click's tempo. The hum steps are `ui/start-hum.js`: over a beat (H puts the beat in and records in `'take'` mode onto a
+new Melody track with one bar of count-in; the beat and the tune are one undo step through the recorder's `join`; the
+steadiest round is kept) and free (the pitch trace and the notes as they form, `humReadingsOf` for the readings, a
+side-stick tick on a preview track while they're heard). On `'in'` the stage hosts the sound card (`app.sounds.setHost`,
+`offer({ track, from: 'take', take })`; its Keep is a `.btn`, its own undo step) and its primary is the run's next part
+(`app.coach.after`).
+
+Over the song, `open({ kind, over: { track, clip } })` reopens the stage with the song as the guide: the loop over the
+clip's bars (a hum's made 4 bars, `longerPlan`, one undo step with the take), Speed and Beat hidden, the tempo never
+changed. A hum or the keys go onto a new track (`'take'` mode, the steadiest round kept); taps go over the click view
+and fold into the Drums clip (`notes.add`).
+
+While the stage is on its play steps (`'play'`, `'hum'`), `app.start.busy` is true: `agent/tools.js` refuses
+song-changing tools with `recording`, and the Agent tab holds a message until the stage reaches `'in'` or closes.
+`get_selection.start` (`agent/tools.js` `startInfo`) is `{ step, kind, tempo, sure, rounds, landed: { track, clip } |
+null }` while it's open, else `null`. Its keys are `ui.keys` declarations with `first: true`, and while it's open the
+studio's single keys are held under it.
+
+```
+app.start = { open({ kind: 'tap' | 'hum' | 'keys', view: 'free' | 'click', free, over }), close({ to, quiet }),
+  step ('play' | 'hum' | 'in' | 'readings' | null), kind, view, busy, tap(row, perfMs), done(), again(), leave(),
+  setView(view), setSpeed(bpm), tapTempo(perfMs), click(), window(), setLevel(level), readings(), useReading(i),
+  humNow(), humFree(), hum(), setTune(on), againOverBeat(), tick(), landed(), take(), tempoShown(),
+  on('step' | 'land' | 'close', fn) -> off }
+```
+
+The top bar's tempo reads "~" (`aria-valuetext` "finding the tempo") while `tempoShown()` is null on `'play'`.
+
+**The coach strip** (`ui/coach-strip.js`, `app.coach`, mounted after `start.js`) docks in `ui.dock` when the stage closes
+to the song after a landing, or on the first part of a door that doesn't use the stage (Draw a beat, Pick a groove, Play
+the keys, Ask: `app.coach.expect(door)`). Its run sheet (Beat, Tune, Band) is words, the current one over a 2 px cream
+rule; each step has one `.btn-go`, up to two text buttons and ×. Its state is `ui.state.coach` (`{ run, step, done }`),
+never stored: a reload ends the run. **Put a beat under it** opens Grooves at the song's tempo (`app.grooves.fit({ bpm,
+bar, bars })`, whose Put reads **Use it**). **Build a band around it** lists the `STYLES` rows: ↓/↑ hear one through
+`agent/arrange-tool.js` `buildBand(..., { preview: true })` (`store.preview`, nothing in History); **Keep the band** is
+one measured dispatch signed `'overdub'` (the house: unsigned on the lanes). It points at the controls it names with
+`ui.point`. `app.coach = { expect(door), after(landing), dock(door, clips?), go(step), band(), preview(i), keep(),
+notThis(), end(), state(), beatUnder() }`.
 
 **Take one** (`ui/onboard.js`, `app.onboard`): the first-run coach (hear it, take one, keep it, ask the agent, keep
 its take). Each step advances on the real event (transport, capture `add`, a kept clip by you, an agent's request or
@@ -1323,7 +1366,9 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
     the track's Input from the Inspector, else Sketch's picker; one asset per take, each pass a clip at its offset,
     the measured round trip taken off).
   - **Commit**: `planTake(project, take)` (pure) builds the ops; one `store.dispatch` by `'you'` (one undo step).
-    Layer (drum tracks; `recorder.setMode(track, 'layer' | 'take')` changes it, Sketch's **Each pass**) adds every
+    Fold (drum tracks' default: `'fold'`) keeps what was played in most passes and leaves out the rest at the stop
+    (`input/rounds.js` `foldRounds`; the toast reads "Kept {k}; left out {s}." with **Show them**). Layer
+    (`recorder.setMode(track, 'fold' | 'layer' | 'take')` changes it, Sketch's **Fold**, **Layer**, **New take**) adds every
     pass's notes into the clip under them (`notes.add`; a hit on one already there is merged, and the summary says
     how many were) and makes clips only where there are none; while it records, each hit is previewed
     (`store.preview`) so the next pass plays it. A miss is replaced, not added: when a pass closes, a hit an earlier

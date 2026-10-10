@@ -207,6 +207,52 @@ redistribution and claims nothing of the songs made with it. Contributed sounds 
 | Modifications | A subset: nine single cycles from each of 12 families, picked by measure (`node tools/akwf-bank.js --pick`). Packed losslessly into `app/src/devices/builtin/akwf.js`, which is in this repository and carried in the kernel's source; each cycle's spectrum turned to sine phase, RMS-scaled and band-limited per octave when the tables are built. `node tools/akwf-bank.js` rebuilds the module from the pinned files (`--verify` offline). |
 | Verified | 2026-10-06 |
 
+## Aachen Impulse Response Database: Echo Chamber's rooms (`core.rooms`, being built)
+
+Echo Chamber is being built on the `real-rooms` branch (intent 0006, "Real Rooms"). It isn't in the studio yet. This
+section records the source and its licence now, because the recipe already reads them. The bank's hash, the
+modifications and the QA go here when the bank is built.
+
+| | |
+|---|---|
+| Source | https://www.iks.rwth-aachen.de/en/research/tools-downloads/databases/aachen-impulse-response-database/ (the page links `air_database_release_1_4.zip`) |
+| Pinned | `air_database_release_1_4.zip` sha256 `d2fd52767505c402e8aed9299dcd046493c8254cfab2f769fcf480dc7c616a5f` (202,650,373 bytes, Last-Modified 2020-09-28); `AIR_1_4/license.txt` sha256 `576e14bfd0215f50085d9980f8586f2cd3e69b0db43cbf1cb12aa49807406347`; `AIR_1_4/readme.txt` sha256 `4bbf73d029d4696654eed903ff75648b47c86241fd0c44f568974f71230f27f0`; the twelve `.mat` files (each room's left and right ear), each by sha256, in [`tools/kits/air-rooms.js`](../tools/kits/air-rooms.js). The recipe reads only those members, by HTTP range, and holds the server to the zip's pinned size |
+| Licence | MIT. `AIR_1_4/license.txt`, read from the zip itself on 2026-10-10, is quoted in full below. The build refuses to run unless that file has the pinned hash and begins "MIT License". `readme.txt` says "This database is under the MIT license. For further details see license.txt" |
+| Author | Marco Jeub et al., RWTH Aachen University, Institute of Communication Systems (IKS; "Institute of Communication Systems and Data Processing (IND)" in the licence) |
+| What they are | Binaural room impulse responses (a dummy head's two ears) at 48 kHz, read from the `.mat` files. The Aula Carolina is only in those files. The six rooms are the Aula Carolina (a former church) at 3 m and 10 m, the lecture room at 5.56 m, the stairway at 2 m, the office at 2 m and the meeting room at 1.9 m |
+| Modifications | Not built yet |
+| Kit | Not built yet |
+| Verified | 2026-10-10 |
+
+The notice, as `license.txt` gives it (its line breaks kept). It goes into the bank's `meta.notice` as well:
+
+```text
+MIT License
+
+Copyright (c) 2011 RWTH Aachen University
+              Institute of Communication Systems and Data Processing (IND)
+              https://www.iks.rwth-aachen.de/forschung/tools-downloads/databases/aachen-impulse-response-database/
+              Marco Jeub, jeub@ind.rwth-aachen.de
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Adding a set
 
 1. Check the licence at its primary source, and pin it: the commit, and the LICENSE file's sha256.

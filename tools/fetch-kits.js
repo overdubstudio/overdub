@@ -17,9 +17,10 @@
 //                                       its .odkz carries the 24-bit PCM verbatim)
 //   ... --only <name>                   the same: just the kits whose recipe name or repo contains <name>
 //
-// The downloads are cached in tools/.out/kits-cache/ (by SHA-256), so a rebuild is offline. The build is deterministic:
-// the same upstream bytes give the same .odk bytes (integer arithmetic only, fixed key order), so the hash a device
-// pins (KIT_HASH in app/src/devices/builtin/drumkit.js) is reproducible by anyone with this script.
+// The downloads are cached in tools/.out/kits-cache/ (by SHA-256; KITS_CACHE=<dir> puts them elsewhere), so a rebuild
+// is offline. The build is deterministic: the same upstream bytes give the same .odk bytes (integer arithmetic only,
+// fixed key order), so the hash a device pins (KIT_HASH in app/src/devices/builtin/drumkit.js) is reproducible by
+// anyone with this script.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -65,7 +66,8 @@ import { CABS_HASH } from '../app/src/devices/builtin/amp-lib.js';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 const KITS_DIR = path.join(ROOT, 'app', 'kits');
-const CACHE = path.join(HERE, '.out', 'kits-cache');
+// (KITS_CACHE moves it: a big source, such as the Aachen rooms' zip, can be kept outside the checkout)
+const CACHE = process.env.KITS_CACHE ? path.resolve(process.env.KITS_CACHE) : path.join(HERE, '.out', 'kits-cache');
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 // The tail is cut after the last 20 ms window whose RMS (either channel) is at or above -70 dBFS: on a 24-bit scale,

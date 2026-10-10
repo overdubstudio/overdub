@@ -194,12 +194,12 @@ const STATE = () => {
   };
 };
 // Hum it in your own time on a blank song: Sketch's Hum is on screen under the door in the studio's default layout;
-// when it isn't, the door's Hum a tune, then "No beat; I'll hum freely" (ui/start.js). -> the presses it took
+// when it isn't, it is opened as the stage's free hum used to hand it over (ui/start.js keeps its own free hum on the
+// stage now, with its own card: tools/start-test.js). -> the presses it took (Hum a tune, then the way to Sketch)
 const humIt = async (P) => {
   if (await P.E(() => !!window.overdub.ui.isOpen?.('bottom') && !!document.querySelector('.sk-hum')?.getClientRects().length)) return 0;
-  await P.page.getByRole('button', { name: 'Hum a tune' }).click();
+  await P.E(() => { const o = window.overdub; if (o.start?.step) o.start.close({ to: 'studio' }); o.ui.show('sketch'); if (!o.ui.isOpen?.('bottom')) o.ui.setOpen?.('bottom', true); o.input.emit('sketch:mode', 'hum'); });
   await sleep(300);
-  await P.page.getByRole('button', { name: 'No beat; I’ll hum freely' }).click();
   return 2;
 };
 const tapABeat = async (P) => {

@@ -24,31 +24,42 @@
 //               lands the fold as a free take lands (planStart, one undo step by you, at the click's tempo). "Free time
 //               instead" swaps back. The click is lent for the view (on, and off again after) if it was off.
 //   'hum'       Hum over this beat: a simple beat loops at Easy 100 (Speed Slow 80 / Easy 100 / Upbeat 120, Beat
-//               Simple / Rock / Lo-fi, all previews). Hum (H) puts the beat in the song (one undo step) and records the
-//               hum over it from the next bar line (input/recorder.js, a bar to come in on); Space stops and keeps it
-//               on a new Melody track. "No beat; I'll hum freely" is Sketch's Hum, in your own time.
-//   'in'        Your beat is in the song: what was kept and left out, counted; Timing (Tight / Loose / As played, ← →),
-//               each a change joined to the landing's undo step; Hum over it (Enter, the primary); Not quite?; Back to
-//               the song (Esc).
-//   'readings'  Which one nods along with you? The other place the 1 could be and the tempo halved or doubled; picking
+//               Simple / Rock / Lo-fi, all previews). Hum (H) puts the beat in the song and records the hum over it on
+//               the stage, a bar of count-in first, each time round a take (Space stops: the steadiest round plays;
+//               the beat and the tune are one undo step). "No beat; I'll hum freely" stays on the stage: the pitch
+//               trace and the notes as they form, the ruler once the pulse is steady, and Done lands it at the best
+//               reading. Both are ui/start-hum.js.
+//   'in'        Your beat (or tune) is in the song: what was kept and left out, counted; Timing (Tight / Loose / As
+//               played, ← →), each a change joined to the landing's undo step (a hum: the In tune lamp on that line
+//               too); the sound card (ui/sounds.js, hosted here: Keep is its own undo step, ↓ tries the next sound);
+//               Hum over it (Enter, the primary; a hum's is Back to the song); Not quite?; Back to the song (Esc).
+//   'readings'  Which one nods along with you? The other place the 1 could be and the tempo halved or doubled (a hum:
+//               rounds.js humReadingsOf, a soft tick on every beat under it, and Hum it again over a beat); picking
 //               one plays it at once (joined to the landing); Use this one, or Esc puts back what was there.
 // Esc before any hit closes the stage; after hits it asks once ("Leave without keeping this take? It stays in Takes.").
 // "Skip to the studio" is always at the top right. While the stage is open the agent's song-changing tools wait
 // (app.start.busy, read by agent/tools.js's recording check) and the studio's keys stay under it.
 //
-// app.start = { open({ kind = 'tap' | 'hum', view = 'free' | 'click' }), close(), step, kind, view, busy, tap(row, perfMs), done(), again(),
+// app.start = { open({ kind = 'tap' | 'hum', view = 'free' | 'click', free (a hum: no beat) }), close(), step, kind, view, busy, tap(row, perfMs), done(), again(),
+//   humNow() (Hum over the beat), humFree() (the free hum), hum() (the hum now: { mode, on, notes, bpm, fit, ruler } or
+//   { mode: 'beat', rec, state, round, speed }), setTune(on), againOverBeat(), tick() (Promise of the reading tick's
+//   level: { take, tick, under, gain } dB),
 //   setView('free' | 'click'), setSpeed(bpm), tapTempo(perfMs), click() (the click view's take: { bpm, hits, rounds, kept, left,
 //   playAt, openAt } or null), window() (the beat window's last frame: ui/beatwindow.js state()),
 //   setLevel(level), readings(), useReading(i), landed(), take(), tempoShown() (the BPM shown while you play, or null:
 //   the top bar's "~"), on('step' | 'land' | 'close', fn) }
 // While the pulse is weak (the reading's fit under 0.5) the status line asks for one more time round; Done is never
 // blocked. A landed take goes to capture with its clip id, what was played as played and the rounds (capture.ofClip).
+// On 'in' the stage holds the sound card (app.sounds.setHost, then offer({ track, from: 'take', take })) and gives the
+// host back when it closes; the card's Keep is a .btn there (one primary a region) and the line says what plays now.
 
 import { h, css, canvas, tok, byline } from './dom.js';
 import { ROWS } from '../input/tap.js';
 import { takeOf, atLevel, moved, foldRounds } from '../input/rounds.js';
 import { LEVELS, findPulse, snapGentle } from '../input/timing.js';
 import { mountBeatWindow, OPEN } from './beatwindow.js';
+import { humStage, tuned } from './start-hum.js';
+import { noteName, keyLabel } from '../core/music.js';
 import { planStart } from '../core/start.js';
 import { putGroove } from '../agent/grooves-tool.js';
 
@@ -101,7 +112,7 @@ export default function (app) {
   const emit = (t, d) => { for (const fn of fns.get(t) || []) { try { fn(d); } catch (e) { console.error('start listener', e); } } };
 
   // the session's state (never the song's): what is open, what has been played, what landed
-  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false };
+  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false, hum: null, under: null, tune: true, tick: null, inLine: '', trying: null };
   let stage = null, body = null, statusEl = null, opener = null;
   const mainEl = () => document.querySelector('.ew-main');
   const under = () => { const m = mainEl(); return m ? [...m.children].filter((c) => c !== stage) : []; };
@@ -110,10 +121,10 @@ export default function (app) {
   /* ---------------------------------------------------------------- previews: heard, never in History */
   function release() {
     // (last made, first given back: the fold's clip sits on the pads' track)
-    for (const k of ['ckFold', 'ckTempo', 'pads', 'guide']) { const p = S[k]; S[k] = null; if (p) { try { p.release(); } catch (e) { console.error('start: preview release', e); } } }
+    for (const k of ['tick', 'ckFold', 'ckTempo', 'pads', 'guide']) { const p = S[k]; S[k] = null; if (p) { try { p.release(); } catch (e) { console.error('start: preview release', e); } } }
   }
   // (a page going away gives the previews back first, before the autosave's flush: capture runs ahead of it)
-  window.addEventListener('pagehide', () => { if (S.pads || S.guide || S.ckTempo) { try { engine.stop?.(); } catch { /* ok */ } release(); } }, true);
+  window.addEventListener('pagehide', () => { if (S.pads || S.guide || S.ckTempo || S.tick) { try { engine.stop?.(); } catch { /* ok */ } release(); } }, true);
   function padsTrack() {
     if (S.pads && store.track(S.pads.created?.pads)) return S.pads.created.pads;
     const r = store.preview({ type: 'track.add', ref: 'pads', track: { name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} } } }, { by: 'you' });
@@ -176,14 +187,14 @@ export default function (app) {
     emit('step', step);
   }
 
-  function open({ kind = 'tap', view = 'free' } = {}) {
+  function open({ kind = 'tap', view = 'free', free = false } = {}) {
     if (S.step) close({ quiet: true });
     if (store.get().tracks.some((t) => t.clips.length)) { ui.toast('Start a song is for a blank song: Song ▸ New song gives you one.'); return false; }
     try { app.input?.qwerty?.on && app.input.qwerty.toggle(false); } catch { /* ok */ }
     try { if (engine.playing) engine.stop(); } catch { /* ok */ }
-    Object.assign(S, { kind, view: 'free', ck: null, hits: [], read: null, landed: null, level: 'tight', reading: 0, before: null, gridAt: 0 });
+    Object.assign(S, { kind, view: 'free', ck: null, hits: [], read: null, landed: null, level: 'tight', reading: 0, before: null, gridAt: 0, hum: null, under: null, tune: true, inLine: '', trying: null });
     mount();
-    if (kind === 'hum') { setStep('hum'); guideOn(); }
+    if (kind === 'hum') { S.hum = { mode: 'beat', rec: false, busy: false }; setStep('hum'); if (free) hum.freeStart(); else guideOn(); }
     else { setStep('play'); padsTrack(); if (view === 'click') setView('click'); }
     requestAnimationFrame(() => { const b = stage?.querySelector('.st-first') || stage; try { b?.focus({ preventScroll: true }); } catch { /* ok */ } });
     return true;
@@ -192,6 +203,8 @@ export default function (app) {
     if (!S.step) return;
     // (a take played and not kept stays in Takes)
     if (S.step === 'play' && played()) keepInTakes();
+    if (S.step === 'hum') hum.stop({ quiet });
+    giveHost();
     const playing = S.step === 'in' || S.step === 'readings';
     if (!playing || to !== 'song') { try { if (engine.playing && (S.guide || S.step === 'play')) engine.stop(); } catch { /* ok */ } }
     release();
@@ -199,7 +212,7 @@ export default function (app) {
     clearTimeout(S.ck?.tapTimer);
     S.view = 'free'; S.ck = null;
     const was = S.step;
-    S.step = null; S.kind = null; S.asking = false;
+    S.step = null; S.kind = null; S.asking = false; S.hum = null;
     unmount();
     if (!quiet) emit('close', { from: was, to });
   }
@@ -247,6 +260,7 @@ export default function (app) {
     if (S.step === 'play') return S.view === 'click' ? landClick() : land();
     if (S.step === 'in') return next();
     if (S.step === 'readings') return useReading(S.reading, { back: true });
+    if (S.step === 'hum') return hum.done();
     return false;
   }
   function land() {
@@ -265,7 +279,9 @@ export default function (app) {
     try { app.input?.capture?.add({ src: 'tap', kind: 'drums', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: r.bpm, beat: 0, track: S.landed.track, clip: S.landed.clip, raw: S.hits.map(hitOf), rounds: r.fold.rounds, free: { bpm: r.bpm, fit: r.fit.fit, drift: r.fit.drift }, kept: [{ track: S.landed.track, clip: S.landed.clip, at: Date.now() }] }); } catch (e) { console.error('start: capture', e); }
     try { ui.select({ track: S.landed.track, clip: S.landed.clip, notes: [] }); } catch { /* ok */ }
     try { engine.play(0); } catch { /* silent engine */ }
+    S.inLine = ''; S.trying = null;
     setStep('in');
+    hostCard();
     emit('land', { ...S.landed });
     return true;
   }
@@ -442,7 +458,9 @@ export default function (app) {
     try { app.input?.capture?.add({ src: 'tap', kind: 'drums', notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })), tempo: bpm, beat: 0, track: S.landed.track, clip: S.landed.clip, raw: ck.hits.map((x) => ({ t: r4((x.g * 60) / bpm), p: x.p, v: x.v })), rounds: f.rounds, kept: [{ track: S.landed.track, clip: S.landed.clip, at: Date.now() }] }); } catch (e) { console.error('start: capture', e); }
     try { ui.select({ track: S.landed.track, clip: S.landed.clip, notes: [] }); } catch { /* ok */ }
     try { engine.play(0); } catch { /* silent engine */ }
+    S.inLine = ''; S.trying = null;
     setStep('in');
+    hostCard();
     emit('land', { ...S.landed });
     return true;
   }
@@ -461,9 +479,11 @@ export default function (app) {
     setView('click');
   }
   // the take's notes as the song has them now, for a level and a reading
-  function planned(reading = S.reading, level = S.level) {
+  function planned(reading = S.reading, level = S.level, tune = S.tune) {
     const rd = S.take.readings[reading] || S.take.readings[0];
-    return { rd, notes: atLevel(rd.notes, level, { length: rd.length }) };
+    const notes = atLevel(rd.notes, level, { length: rd.length });
+    // (a hum: in the key's scale, or as sung)
+    return { rd, notes: S.take.kind === 'hum' ? tuned(notes, S.take.key, tune) : notes };
   }
   function replan(ops, label) {
     const res = store.dispatch(ops, { by: 'you', label, join: S.landed.txn });
@@ -485,7 +505,8 @@ export default function (app) {
     i = Math.max(0, Math.min(S.take.readings.length - 1, i));
     if (i !== S.reading || hear) {
       const { rd, notes } = planned(i, S.level);
-      const blank = store.get().tracks.every((t) => t.id === S.landed.track || !t.clips.length);
+      // (the readings' tick is a preview, not the song's)
+      const blank = store.get().tracks.every((t) => t.id === S.landed.track || !t.clips.length || t.id === S.tick?.created?.tk);
       const ops = [
         ...(blank ? [{ type: 'project.set', patch: { tempo: Math.round(rd.bpm), loop: { on: true, start: 0, end: rd.length } } }] : []),
         { type: 'clip.set', track: S.landed.track, clip: S.landed.clip, patch: { length: rd.length } },
@@ -495,39 +516,104 @@ export default function (app) {
       if (!res.ok) return false;
       S.reading = i;
     }
-    if (back) setStep('in'); else draw();
+    if (back) { hum.tickOff(); setStep('in'); } else draw();
     return true;
   }
   function next() {
+    // a hum's: back to the song, playing
+    if (S.take?.kind === 'hum') { close({ to: 'song' }); return true; }
     // the next part: hum over it (Sketch's Hum, the beat looping, a bar to come in on)
     close({ to: 'song' });
     try { if (!engine.playing) engine.play(0); } catch { /* ok */ }
     app.onboard?.humOver?.();
     return true;
   }
-  // Hum over the guide beat: the beat goes in (one undo step), then the hum records over it from the next bar line
-  async function humNow() {
-    if (S.step !== 'hum' || !S.guidePlan) return false;
-    const ops = [{ type: 'project.set', patch: { tempo: S.speed, loop: { on: true, start: 0, end: 4 * bpbOf() } } }, ...S.guidePlan.ops];
-    const g = S.guide; S.guide = null;
-    try { g?.release(); } catch { /* ok */ }
-    const res = store.dispatch(ops, { by: 'you', label: `a beat to hum over, 4 bars at ${S.speed} BPM` });
-    if (!res.ok) { say(`The beat didn't go in: ${res.error}`); guideOn(); return false; }
-    S.landed = { txn: res.txn.id, track: res.created.drums || null, clip: res.created.groove || null };
-    emit('land', { ...S.landed });
-    close({ to: 'song' });
-    try { if (!engine.playing) engine.play(0); } catch { /* ok */ }
-    app.onboard?.humOver?.();
-    try { await app.input?.recorder?.record?.(); } catch (e) { console.error('start: hum take', e); }
+  // the hum's steps (ui/start-hum.js): Hum over the beat, and the free hum, both on the stage
+  const hum = humStage(app, {
+    S, say: (t) => say(t), setStep: (x) => setStep(x), draw: () => draw(), emit, bpbOf, guideOn, statusEl: () => statusEl, body: () => body,
+    dropGuide: () => dropPreview('guide'),
+    // a hum landed: the stage's step 'in', as a tapped beat's
+    landed(take, landed) {
+      S.take = take; S.landed = landed; S.level = 'tight'; S.reading = 0; S.tune = true; S.before = null; S.inLine = ''; S.trying = null;
+      try { ui.select({ track: landed.track, clip: landed.clip, notes: [] }); } catch { /* ok */ }
+      try { engine.play(0); } catch { /* silent engine */ }
+      setStep('in');
+      hostCard();
+      emit('land', { ...landed });
+    },
+  });
+  const humNow = () => (S.step === 'hum' ? hum.beatStart() : false);
+  const humFree = () => (S.step === 'hum' ? hum.freeStart() : false);
+  // "Hum it again over a beat" (a free hum's readings): the landing comes back out (it's the last step, yours), and
+  // the stage is the hum over a beat at that reading's speed
+  function againOverBeat() {
+    const rd = S.take?.readings?.[S.reading] || S.take?.readings?.[0];
+    const bpm = rd ? rd.bpm : 100;
+    const top = store.history[store.history.length - 1];
+    hum.tickOff();
+    giveHost();
+    if (!S.landed || !top || top.id !== S.landed.txn) { close({ to: 'studio' }); open({ kind: 'hum' }); hum.overBeat(bpm); return; }
+    const was = S.landed; S.landed = null;
+    try { if (engine.playing) engine.stop(); } catch { /* ok */ }
+    const u = store.undo();
+    if (u && u.ok === false) { S.landed = was; return; }
+    Object.assign(S, { take: null, level: 'tight', reading: 0, before: null, kind: 'hum', hum: { mode: 'beat', rec: false, busy: false } });
+    setStep('hum');
+    hum.overBeat(bpm);
+  }
+  // In tune (a hum): the notes in the key's scale, or as sung; a change joined to the landing
+  function setTune(on) {
+    if (!S.take || S.take.kind !== 'hum' || !S.landed || !store.findClip(S.landed.clip)) return false;
+    const { notes } = planned(S.reading, S.level, !!on);
+    const res = replan([{ type: 'notes.replace', track: S.landed.track, clip: S.landed.clip, notes: notes.map(({ p, t, d, v }) => ({ p, t, d, v })) }], on ? 'in tune' : 'as sung');
+    if (!res.ok) return false;
+    S.tune = !!on;
+    draw();
     return true;
   }
-  function humFree() {
-    close({ to: 'studio' });
-    ui.show('sketch');
-    if (!ui.isOpen?.('bottom')) ui.setOpen?.('bottom', true);
-    app.input?.emit?.('sketch:mode', 'hum');
+
+  /* ---------------------------------------------------------------- the sound card, on 'in' */
+  let cardSlot = null, hostWas;   // (hostWas undefined: the stage isn't holding the card)
+  function hostCard() {
+    const snd = app.sounds;
+    if (!snd?.offer || !S.landed?.track || !S.take || !cardSlot?.isConnected) return;
+    if (hostWas === undefined) {
+      const mine = (a) => (S.landed && a?.track === S.landed.track && cardSlot?.isConnected ? cardSlot : typeof hostWas === 'function' ? hostWas(a) : null);
+      try { hostWas = snd.setHost(mine) ?? null; } catch { hostWas = null; }
+    }
+    const isHum = S.take.kind === 'hum';
+    const take = { kind: isHum ? 'notes' : 'drums', src: isHum ? 'hum' : 'tap', committed: true, start: 0, end: S.take.length };
+    try { snd.offer({ track: S.landed.track, from: 'take', take, asked: true, focus: false }); } catch (e) { console.error('start: sounds', e); }
+  }
+  function giveHost() {
+    if (hostWas === undefined) return;
+    const snd = app.sounds;
+    try { if (snd?.el && cardSlot?.contains(snd.el)) snd.close(); } catch { /* ok */ }
+    try { snd?.setHost?.(hostWas); } catch { /* ok */ }
+    hostWas = undefined; cardSlot = null;
+  }
+  // ↓ on 'in' tries the next sound on the card (then the card's own keys have it)
+  function tryNext(d) {
+    const rows = [...(cardSlot?.querySelectorAll('.snd-row') || [])];
+    if (!rows.length) return false;
+    let i = rows.findIndex((r) => r.classList.contains('sel'));
+    if (i < 0) i = Math.max(0, rows.findIndex((r) => r.dataset.now === '1'));
+    const j = Math.max(0, Math.min(rows.length - 1, i + d));
+    try { rows[j].focus({ preventScroll: true }); } catch { /* ok */ }
+    rows[j].click();
+    return true;
   }
   function leave() {
+    const hs = S.step === 'hum' ? hum.state() : null;
+    if (hs && !S.asking && ((hs.mode === 'free' && hs.notes) || (hs.mode === 'beat' && hs.rec))) {
+      S.asking = true;
+      const rec = hs.mode === 'beat';
+      statusEl.replaceChildren(rec ? 'Stop here? What you hummed goes in as it is. ' : 'Leave without keeping this hum? It stays in Takes. ',
+        h('button.btn.btn-txt', { type: 'button', onclick: () => { S.asking = false; if (rec) hum.beatDone(); else close({ to: 'studio' }); } }, rec ? 'Stop' : 'Leave'), ' ',
+        h('button.btn.btn-txt', { type: 'button', onclick: () => { S.asking = false; say(''); } }, rec ? 'Keep going' : 'Stay'));
+      return;
+    }
+    if (S.step === 'readings') hum.tickOff();
     if (S.step === 'play' && played() && !S.asking) {
       S.asking = true;
       statusEl.replaceChildren('Leave without keeping this take? It stays in Takes. ',
@@ -586,15 +672,9 @@ export default function (app) {
           h('button.btn.st-done.st-first', { type: 'button', onclick: () => done() }, 'Done ', h('kbd', 'Space'))));
       syncPlay();
     } else if (S.step === 'hum') {
-      alt.append(h('button.btn.btn-txt', { type: 'button', onclick: humFree }, 'No beat; I’ll hum freely'));
-      const choice = (label, items, cur, set) => h('div.st-choice', { role: 'radiogroup', 'aria-label': label }, h('span.st-choice-l.t3', label),
-        items.map(([word, val]) => h('button.st-word', { type: 'button', role: 'radio', 'aria-checked': String(val === cur), onclick: () => { set(val); guideOn(); draw(); } }, typeof val === 'number' ? `${word} ${val}` : word)));
-      body.replaceChildren(
-        h('div.st-head', h('div', h('h2.st-title.disp', 'Hum over this beat.'), h('p.st-sub', 'Press Hum and the beat counts you in for a bar. Hum anything, as many times round as you like. Space stops.'))),
-        choice('Speed', SPEEDS, S.speed, (v) => { S.speed = v; }),
-        choice('Beat', BEATS, S.beat, (v) => { S.beat = v; }),
-        h('div.st-humwrap', h('button.btn.btn-go.st-hum.st-first', { type: 'button', onclick: () => humNow() }, h('span.st-dot', { 'aria-hidden': 'true' }), 'Hum ', h('kbd', 'H'))),
-        h('footer.st-foot', statusEl, h('span.t3.st-phones', 'Headphones keep the beat out of your hum.')));
+      hum.draw(body, alt);
+    } else if (S.step === 'in' && S.take?.kind === 'hum') {
+      drawHumIn();
     } else if (S.step === 'in') {
       const r = S.take, rd = r.readings[S.reading] || r.readings[0], bars = Math.max(1, Math.round(rd.length / bpbOf()));
       const t = S.landed && store.track(S.landed.track);
@@ -610,24 +690,23 @@ export default function (app) {
       body.replaceChildren(
         h('div.st-head', h('div', h('h2.st-title.disp', 'Your beat is in the song.'),
           h('p.st-sub', `${t?.name || 'Drums'}, ${bars === 1 ? 'bar 1' : `bars 1–${bars}`} at ${Math.round(rd.bpm)} BPM, played by `, byline('you', { app }), '. ', foldLine, ' ', h('span.t3', 'Undo takes it out.')))),
-        h('div.st-gridwrap', grid.cv),
-        h('div.st-timing', h('span.st-choice-l.t3', 'Timing'),
-          h('div.st-choice', { role: 'radiogroup', 'aria-label': 'Timing' }, LEVELS.map((lv) => h('button.st-word', { type: 'button', role: 'radio', 'aria-checked': String(lv === S.level), onclick: () => setLevel(lv) }, LEVEL_WORD[lv]))),
-          h('span.st-level.t2', { role: 'status' }, levelLine)),
+        h('div.st-inrow', h('div.st-inleft', h('div.st-gridwrap', grid.cv), timingLine(levelLine, null)), slot()),
         h('footer.st-foot', statusEl,
           h(unsure ? 'p.st-unsure' : 'span', unsure ? 'The studio isn’t sure where the 1 is. ' : null,
             r.readings.length > 1 ? h('button.btn.btn-txt.st-notquite', { type: 'button', onclick: () => { S.before = S.reading; setStep('readings'); } }, unsure ? 'Hear the other ways it could go.' : 'Not quite? Hear the other ways it could go.') : null),
           h('button.btn.btn-txt.st-back', { type: 'button', onclick: () => close({ to: 'song' }) }, 'Back to the song'),
           h('button.btn.btn-go.st-next.st-first', { type: 'button', onclick: () => next() }, 'Hum over it')));
-      say('');
+      say(S.inLine || '');
       drawGrid();
     } else if (S.step === 'readings') {
-      const r = S.take;
-      const why = { kick: 'bar 1 starts on your first kick', snare: 'bar 1 starts on your first snare', first: 'bar 1 starts on your first hit', slower: 'slower: one bar is what was two', faster: 'quicker: one bar is what was half' };
+      const r = S.take, isHum = r.kind === 'hum';
+      const why = isHum
+        ? { first: 'the beat the studio heard in you', count: 'another count of the same tune', pickup: 'bar 1 on your second note: the first was a pickup', slower: 'half as quick: one beat is what was two', faster: 'twice as quick: one beat is what was half' }
+        : { kick: 'bar 1 starts on your first kick', snare: 'bar 1 starts on your first snare', first: 'bar 1 starts on your first hit', slower: 'slower: one bar is what was two', faster: 'quicker: one bar is what was half' };
       // (two readings that both start on a kick: the second says where its bar 1 is, counted from the first's)
       const words = (rd, i) => {
         const first = r.readings[0];
-        if (i > 0 && rd.why === first.why && rd.bpm === first.bpm) {
+        if (!isHum && i > 0 && rd.why === first.why && rd.bpm === first.bpm) {
           const d = ((rd.shift - first.shift) % rd.length + rd.length) % rd.length;
           return `bar 1 starts ${d === 1 ? 'a beat' : `${d} beats`} later, on another ${rd.why === 'first' ? 'hit' : rd.why}`;
         }
@@ -639,14 +718,51 @@ export default function (app) {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); useReading((S.reading + (e.key === 'ArrowDown' ? 1 : r.readings.length - 1)) % r.readings.length); body.querySelector('.st-reading.sel')?.focus(); }
       });
       body.replaceChildren(
-        h('div.st-head', h('div', h('h2.st-title.disp', 'Which one nods along with you?'), h('p.st-sub', 'Each plays your beat. Pick the one that feels right; it plays as soon as you pick it.'))),
+        h('div.st-head', h('div', h('h2.st-title.disp', 'Which one nods along with you?'), h('p.st-sub', isHum ? 'Each plays your tune, with a soft tick on every beat. Pick the one that feels right; it plays as soon as you pick it.' : 'Each plays your beat. Pick the one that feels right; it plays as soon as you pick it.'))),
         list,
         h('footer.st-foot', statusEl,
-          r.click ? null : h('button.btn.btn-txt', { type: 'button', onclick: () => againOverClick() }, 'Or play it again over a click.'),
+          isHum ? (r.free ? h('button.btn.btn-txt.st-overbeat', { type: 'button', onclick: () => againOverBeat() }, 'Hum it again over a beat') : null)
+            : r.click ? null : h('button.btn.btn-txt', { type: 'button', onclick: () => againOverClick() }, 'Or play it again over a click.'),
           h('button.btn.btn-txt', { type: 'button', onclick: () => leave() }, 'Back'),
           h('button.btn.btn-go.st-use', { type: 'button', onclick: () => useReading(S.reading, { back: true }) }, 'Use this one')));
       requestAnimationFrame(() => body?.querySelector('.st-reading.sel')?.focus());
+      // (a hum's reading plays with a tick on every beat under it, on a preview track)
+      if (isHum) hum.tickOn(r.readings[S.reading] || r.readings[0]);
     }
+  }
+  // the Timing line: the three words, what the level moved, and (a hum) the In tune lamp
+  function timingLine(levelLine, tune) {
+    return h('div.st-timing', h('span.st-choice-l.t3', 'Timing'),
+      h('div.st-choice', { role: 'radiogroup', 'aria-label': 'Timing' }, LEVELS.map((lv) => h('button.st-word', { type: 'button', role: 'radio', 'aria-checked': String(lv === S.level), onclick: () => setLevel(lv) }, LEVEL_WORD[lv]))),
+      h('span.st-level.t2', { role: 'status' }, levelLine), tune);
+  }
+  // where the sound card sits on 'in' (the same node across redraws, so the card stays put)
+  function slot() { if (!cardSlot) cardSlot = h('div.st-card'); return cardSlot; }
+  // a hum's 'in': what landed, in words (the key, the speed, what it's over, the round kept), Timing and In tune, the
+  // card with the hum's sounds; a free hum whose pulse was weak says so, and offers the other readings or a beat
+  function drawHumIn() {
+    const r = S.take, rd = r.readings[S.reading] || r.readings[0], bars = Math.max(1, Math.round(rd.length / bpbOf()));
+    const t = S.landed && store.track(S.landed.track);
+    const bpm = Math.round(rd.bpm), key = r.key ? keyLabel(r.key) : 'no key';
+    const barsW = bars === 1 ? 'bar 1' : `bars 1–${bars}`;
+    const sub = r.free
+      ? [`${t?.name || 'Melody'}, ${barsW} at ${bpm} BPM, in ${key}, sung by `, byline('you', { app }), '. ', h('span.t3', 'Undo takes it out.')]
+      : [`${t?.name || 'Melody'}, ${barsW} at ${bpm} BPM, in ${key}, over ${r.over}. `, r.rounds > 1 ? `Kept round ${r.kept}, the steadiest of ${r.rounds}.` : 'One time round, kept as you sang it.', ' ', h('span.t3', 'Undo takes it out.')];
+    grid = canvas('st-grid');
+    const mv = moved(rd.notes, S.level, { bpm: rd.bpm });
+    const levelLine = S.level === 'played' ? 'As you sang it.' : `${LEVEL_WORD[S.level]} moved ${plural(mv.n, 'note')}${mv.n ? `, ${mv.ms} ms on average` : ''}.`;
+    const tune = h('button.tog.st-tune', { type: 'button', 'aria-pressed': String(!!S.tune), title: `On: your notes in ${key}. Off: as sung`, onclick: () => setTune(!S.tune) }, 'In tune');
+    const weak = r.free && r.readings.length > 1 && !(r.fit?.fit >= 0.5);
+    const other = r.readings.length > 1 ? h('button.btn.btn-txt.st-notquite', { type: 'button', onclick: () => { S.before = S.reading; setStep('readings'); } }, weak ? 'Hear the other ways it could go' : 'Not quite? Hear the other ways it could go.') : null;
+    body.replaceChildren(
+      h('div.st-head', h('div', h('h2.st-title.disp', 'Your tune is in the song.'), h('p.st-sub', ...sub))),
+      h('div.st-inrow', h('div.st-inleft', h('div.st-gridwrap', grid.cv), timingLine(levelLine, tune)), slot()),
+      h('footer.st-foot', statusEl,
+        weak ? h('p.st-unsure.st-promoted', `It’s in at ${bpm} BPM, but the hum didn’t settle on a steady beat. `, other, ', or ', h('button.btn.btn-txt.st-overbeat', { type: 'button', onclick: () => againOverBeat() }, 'hum it again over a beat'), '.')
+          : h('span', other),
+        h('button.btn.btn-go.st-back.st-first', { type: 'button', onclick: () => close({ to: 'song' }) }, 'Back to the song')));
+    say(S.inLine || '');
+    drawGrid();
   }
   function syncPlay() {
     if (S.step !== 'play' || !body || S.view === 'click') return;
@@ -738,20 +854,22 @@ export default function (app) {
     const g = grid.g, W = grid.w, H = grid.h;
     g.clearRect(0, 0, W, H);
     const { rd, notes } = planned();
-    const rowsP = [...new Set(rd.notes.map((n) => n.p))].sort((a, b) => b - a);
+    const rowsP = [...new Set(notes.map((n) => n.p))].sort((a, b) => b - a);
     const lab = 54, L = rd.length, bx = (b) => lab + (b / L) * (W - lab - 4), rowH = H / Math.max(3, rowsP.length);
     const lineC = tok('--line'), line2 = tok('--line-2'), text = tok('--text'), text3 = tok('--text-3'), accent = tok('--accent');
     const bpb = bpbOf();
     for (let b = 0; b <= L; b += 0.5) { g.fillStyle = b % bpb === 0 ? line2 : lineC; if (b % 1 === 0) g.fillRect(Math.round(bx(b)), 0, 1, H); }
     g.font = `600 11px ${tok('--font-ui') || 'sans-serif'}`; g.textBaseline = 'middle';
-    const name = (p) => ({ 35: 'Kick', 36: 'Kick', 38: 'Snare', 40: 'Snare', 42: 'Hat', 46: 'Open', 49: 'Crash' }[p] || `Note ${p}`);
+    const name = (p) => (S.take.kind === 'hum' ? noteName(p) : { 35: 'Kick', 36: 'Kick', 38: 'Snare', 40: 'Snare', 42: 'Hat', 46: 'Open', 49: 'Crash' }[p] || `Note ${p}`);
     rowsP.forEach((p, i) => { g.fillStyle = text3; g.fillText(name(p), 0, rowH * (i + 0.5)); });
     const cw = Math.max(4, (W - lab) / (L * 4) - 3);
     for (const n of notes) {
       const i = rowsP.indexOf(n.p);
-      g.fillStyle = text; g.fillRect(Math.round(bx(n.t)) + 1, rowH * i + rowH * 0.25, cw, rowH * 0.5);
+      // (a hum's notes as long as they were sung; a hit is a cell)
+      const w = S.take.kind === 'hum' ? Math.max(4, bx(Math.min(L, n.t + (n.d || 0.25))) - bx(n.t) - 2) : cw;
+      g.fillStyle = text; g.fillRect(Math.round(bx(n.t)) + 1, rowH * i + rowH * 0.25, w, rowH * 0.5);
       // where you hit it, in pencil
-      const raw = rd.notes.find((x) => x.p === n.p && x.t === n.t)?.raw;
+      const raw = rd.notes.find((x) => x.t === n.t && (x.p === n.p || S.take.kind === 'hum'))?.raw;
       if (raw != null && Math.abs(raw - n.t) > 0.01) { g.fillStyle = text3; g.fillRect(Math.round(bx(Math.max(0, Math.min(L, raw)))), rowH * i + rowH * 0.15, 1, rowH * 0.7); }
     }
     // the playhead, leader green
@@ -759,7 +877,7 @@ export default function (app) {
   }
 
   /* ---------------------------------------------------------------- the loop and the keys */
-  ui.panel({ id: 'start', region: 'top', title: 'Start a song', mount: (el) => { el.hidden = true; el.style.display = 'none'; return { frame(now) { if (!S.step) return; if (S.step === 'play') { if (S.view === 'click') clickFrame(now); else drawWin(now); } else if (S.step === 'in' && grid) drawGrid(now); } }; } });
+  ui.panel({ id: 'start', region: 'top', title: 'Start a song', mount: (el) => { el.hidden = true; el.style.display = 'none'; return { frame(now) { if (!S.step) return; if (S.step === 'play') { if (S.view === 'click') clickFrame(now); else drawWin(now); } else if (S.step === 'hum') hum.frame(now); else if (S.step === 'in' && grid) drawGrid(now); } }; } });
   const isOpen = () => !!S.step;
   const on = (step) => () => S.step === step;
   // (first: ahead of the keys a mode declares, Tap's F J K L among them; Space needn't be, as no other Space with a
@@ -782,8 +900,14 @@ export default function (app) {
   K('ArrowLeft', clickView, () => speedStep(-1), 'Slower (Start a song)', { hidden: true });
   K('ArrowRight', clickView, () => speedStep(1), 'Quicker (Start a song)', { hidden: true });
   K('Enter', on('in'), () => next(), 'The next part: Hum over it (Start a song)', { hidden: true });
-  K('KeyH', on('hum'), () => humNow(), 'Hum over the beat (Start a song)', { hidden: true });
-  K('Space', on('hum'), () => humNow(), 'Hum over the beat (Start a song)', { hidden: true });
+  // the hum (over the beat or free): H, Space and Enter start it, and stop it into the song; ⌫ starts a free hum again
+  K('KeyH', on('hum'), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true });
+  // (first, unlike the other steps' Space: the recorder's own Space, stop and keep, is live while the hum records)
+  K('Space', on('hum'), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true, first: true });
+  K('Enter', () => S.step === 'hum' && !document.activeElement?.closest?.('button'), () => hum.done(), 'Hum, or Done (Start a song)', { hidden: true });
+  K('Backspace', on('hum'), () => hum.again(), 'Hum again (Start a song)', { hidden: true });
+  // the sound card on 'in': ↓ tries the next sound
+  K('ArrowDown', () => S.step === 'in' && !!cardSlot?.querySelector('.snd-row') && !cardSlot.contains(document.activeElement), () => tryNext(1), 'Try the next sound (Start a song)', { hidden: true });
   K('ArrowRight', on('in'), () => setLevel(LEVELS[Math.min(LEVELS.length - 1, LEVELS.indexOf(S.level) + 1)]), 'Looser timing (Start a song)', { hidden: true });
   K('ArrowLeft', on('in'), () => setLevel(LEVELS[Math.max(0, LEVELS.indexOf(S.level) - 1)]), 'Tighter timing (Start a song)', { hidden: true });
   K('Escape', isOpen, () => leave(), 'Leave Start a song', { hidden: true, global: true });
@@ -791,16 +915,29 @@ export default function (app) {
   store.on('change', (e) => {
     if (!S.step) return;
     if (e.kind === 'load') { close({ quiet: true }); return; }
-    if ((S.step === 'in' || S.step === 'readings') && S.landed && !store.findClip(S.landed.clip)) { close({ to: 'studio' }); }
+    if ((S.step === 'in' || S.step === 'readings') && S.landed && !store.findClip(S.landed.clip)) { close({ to: 'studio' }); return; }
+    // the card's Keep (its own undo step): the line says what the track plays now
+    if (S.landed && (S.step === 'in' || S.step === 'readings') && e.kind === 'do') {
+      const op = (e.ops || []).find((o) => o.type === 'instrument.set' && o.track === S.landed.track);
+      if (op) {
+        const t = store.track(S.landed.track), def = app.devices?.getDevice?.(op.device);
+        S.inLine = `${t?.name || 'The track'} plays ${S.trying || def?.name || op.device} now.`;
+        if (S.step === 'in') say(S.inLine);
+      }
+    }
   });
+  // (the sound on trial, by name, for that line)
+  ui.on?.('sounds', (d) => { const tr = d?.trying; if (tr && S.landed && tr.track === S.landed.track && tr.name) S.trying = tr.name; });
   // while a take is played on the stage, the agent's song-changing tools wait (agent/tools.js reads app.start.busy)
   const api = app.start = {
     open, close: (o) => close(o), tap, done, again, setLevel, useReading: (i) => useReading(i), humNow, humFree, leave, setView, setSpeed, tapTempo,
+    hum: () => (S.step === 'hum' ? hum.state() : null), setTune, againOverBeat, tick: () => hum.tick(),
     click: () => (S.ck ? { bpm: S.ck.bpm, hits: S.ck.hits.length, rounds: S.ck.folded, kept: S.ck.fold ? S.ck.fold.notes.length : 0, left: S.ck.fold ? S.ck.fold.strays.length : 0, fold: S.ck.fold ? S.ck.fold.notes.map(({ p, t }) => ({ p, t })) : [], playAt: S.ck.playAt, openAt: S.ck.openAt } : null),
     window: () => (bw ? bw.state() : null),
     readings: () => (S.take ? S.take.readings.map((r) => ({ bpm: r.bpm, why: r.why, length: r.length })) : []),
     landed: () => (S.landed ? { ...S.landed } : null),
-    take: () => (S.read || S.take ? { hits: S.hits.length, bpm: (S.take || S.read).bpm, length: (S.take || S.read).length, loop: (S.take || S.read).loop.bars, rounds: (S.take || S.read).fold.rounds, kept: (S.take || S.read).fold.notes.length, strays: (S.take || S.read).fold.strays.length, sure: (S.take || S.read).downbeat.sure, level: S.level, reading: S.reading } : null),
+    take: () => (S.take?.kind === 'hum' ? { kind: 'hum', free: !!S.take.free, bpm: S.take.readings[S.reading]?.bpm ?? S.take.bpm, length: S.take.length, fit: S.take.fit?.fit ?? null, rounds: S.take.rounds, kept: S.take.kept, key: S.take.key, level: S.level, reading: S.reading, tune: S.tune }
+      : S.read || S.take ? { hits: S.hits.length, bpm: (S.take || S.read).bpm, length: (S.take || S.read).length, loop: (S.take || S.read).loop.bars, rounds: (S.take || S.read).fold.rounds, kept: (S.take || S.read).fold.notes.length, strays: (S.take || S.read).fold.strays.length, sure: (S.take || S.read).downbeat.sure, level: S.level, reading: S.reading } : null),
     // the BPM the stage shows while you play (the top bar reads it; "~" until then): null before six hits over three
     // seconds, and off the play step
     tempoShown: () => (S.step !== 'play' ? null : S.view === 'click' && S.ck ? Math.round(S.ck.bpm) : showBpm() ? Math.round(S.read.bpm) : null),
@@ -841,7 +978,7 @@ const CSS = `
 .st-pad:focus-visible, .st-word:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
 .st-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: auto; padding-top: 12px; border-top: var(--rule); }
 .st-status { flex: 1 1 260px; margin: 0; color: var(--text-2); font-size: 13px; min-height: 18px; }
-.st-done, .st-next, .st-use, .st-hum { height: 40px; padding: 0 18px; font-size: 14px; }
+.st-done, .st-next, .st-use, .st-hum, .st-back.btn-go { height: 40px; padding: 0 18px; font-size: 14px; }
 .st-done[aria-disabled="true"] { color: var(--text-3); }
 .st-choice { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; }
 .st-choice-l { min-width: 56px; font-size: 12px; }
@@ -858,8 +995,16 @@ const CSS = `
 .st-phones { font-size: 12px; }
 .st-speed { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 22px; }
 .st-tapit { color: var(--text-3); }
-.st-readings .ledger-row { --ledger-cols: 96px 1fr auto; cursor: pointer; padding: 12px 8px; }
-.st-rbpm { font-size: 18px; }
+.st-readings .ledger-row { --ledger-cols: 132px 1fr auto; cursor: pointer; padding: 12px 8px; }
+.st-hwin { display: block; width: 100%; height: clamp(140px, 26vh, 220px); }
+.st-tune { margin-left: auto; }
+.st-inrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 28px; align-items: start; }
+.st-inleft { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.st-card { width: min(400px, 34vw); }
+.st-card:empty { display: none; }
+.st-promoted { flex: 1 1 420px; line-height: 1.6; }
+.st-promoted .btn-txt { padding: 0; height: auto; vertical-align: baseline; }
+.st-rbpm { font-size: 18px; white-space: nowrap; }
 /* the door: a ledger of ways in, each row the full width */
 .st-door { max-width: 760px; width: 100%; }
 .st-ways { margin: 4px 0 12px; border-top: var(--rule); }
@@ -870,6 +1015,10 @@ const CSS = `
 .st-way-arrow { color: var(--text-3); justify-self: end; }
 .st-notime { margin: 6px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 13px; }
 .ar-empty .ar-empty-agent { color: var(--text-2); }
+@media (max-width: 1100px) {
+  .st-inrow { grid-template-columns: minmax(0, 1fr); }
+  .st-card { width: auto; }
+}
 @media (max-width: 900px) {
   .st-stage { position: fixed; inset: 0; z-index: 200; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); }
   .st-body { gap: 12px; padding-top: 12px; }
@@ -880,8 +1029,9 @@ const CSS = `
   .st-pad { height: 120px; font-size: 16px; }
   .st-pad kbd { display: none; }
   .st-win { height: 120px; }
+  .st-hwin { height: 150px; }
   .st-foot { position: sticky; bottom: 0; background: var(--bg); }
-  .st-stage .st-done, .st-stage .st-next, .st-stage .st-use, .st-stage .st-hum { height: 48px; flex: 1 1 100%; }
+  .st-stage .st-done, .st-stage .st-next, .st-stage .st-use, .st-stage .st-hum, .st-stage .st-back.btn-go { height: 48px; flex: 1 1 100%; }
   .st-stage .st-hum { height: 40vh; max-height: 260px; width: 100%; font-size: 22px; }
   .st-alt .btn-txt, .st-skip { font-size: 12.5px; }
   .ledger.st-ways > li.st-way { grid-template-columns: 1fr 20px; padding: 8px 0; }

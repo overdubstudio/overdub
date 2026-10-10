@@ -44,10 +44,11 @@
 //                                         layers every pass into one clip, or stacks a new take (everything else, audio
 //                                         always); a choice sticks per track
 //   recorder.countIn / setCountIn(bars)   0, 1 (default) or 2 bars (localStorage overdub:record)
-//   recorder.record({ countIn?, audio?, quantize? }) -> Promise<take | null>   stopped: the count-in from the playhead;
+//   recorder.record({ countIn?, audio?, quantize?, join? }) -> Promise<take | null>   stopped: the count-in from the playhead;
 //                                         playing: recording starts at a bar line with a whole bar to come in on (a loop
 //                                         of 2 bars or less: its top; quantize: false, now), the wait counted ('count',
-//                                         live().counting); before the loop, at its start
+//                                         live().counting); before the loop, at its start. join: a transaction (by you)
+//                                         the take's commit is one undo step with, while it is still the newest
 //   recorder.stop({ keepPlaying?, why?, at? }) -> Promise<commit | null>  the take into the song (R punches out and
 //                                         keeps playing; Space stops; the killswitch, a seek or a hidden tab commit too;
 //                                         a seek ends the take where it was, not where the playhead jumped: at)
@@ -1016,7 +1017,7 @@ export function createRecorder(app, input, opts = {}) {
     const h = store.history, lastTx = h[h.length - 1], t = store.track(m.track);
     if (lastTx && lastTx.id === m.txn && t && !t.clips.length) { try { store.undo({ id: m.txn, redo: false }); } catch { /* ok */ } }
   }
-  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null } = {}) {
+  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null } = {}) {
     if (R) return R;
     const au = audio ? store.track(audio) : targetFor('audio');
     // A sound on trial on a track this take records onto is kept first, said before it happens (the instrument change
@@ -1053,6 +1054,9 @@ export function createRecorder(app, input, opts = {}) {
       const aimed = tid && [targetFor('pads'), targetFor('keys'), hum ? targetFor('hum') : null].some((x) => x && x.id === tid);
       if (lastTx && lastTx.by === 'you' && lastTx.ops.length === 1 && lastTx.ops[0].type === 'track.add' && tr && !tr.clips.length && aimed) made = { track: tid, txn: lastTx.id, name: tr.name };
     }
+    // (join: a change made for this take just before it, by the caller: Start a song's beat to hum over. The take is
+    // one undo step with it, as with a track made for the take, while it is still the newest change)
+    if (!made && join) made = { track: null, txn: join, name: null };
     const isFree = free ?? (capture && !rec.captureClick && !engine.playing && silentSong());
     if (isFree) return recordFree({ hum, made });
     const p = P();

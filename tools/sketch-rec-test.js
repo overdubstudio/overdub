@@ -962,10 +962,14 @@ async function blank({ fakeAudio = null } = {}) {
   await s.page.evaluate(async () => { await window.overdub.engine.start(); });
   const ev = (f, a) => s.page.evaluate(f, a);
   // the blank song's door (ui/start.js): Tap a beat with a click is the first minute (the stage's "Play to a click
-  // instead" is its own click view now), and Hum it in
-  // your own time is Hum a tune's "No beat; I'll hum freely" (Sketch's Hum)
-  const VIA = { 'Tap a beat': ['Tap a beat', 'Play to a click instead'], 'Hum it': ['Hum a tune', 'No beat; I’ll hum freely'] };
+  // instead" is its own click view now), and Hum it is Sketch's Hum (the stage's "No beat; I'll hum freely" stays on
+  // the stage now: this suite checks Sketch's, so it goes there as the stage used to send it)
+  const VIA = { 'Tap a beat': ['Tap a beat', 'Play to a click instead'] };
   const door = async (label) => {
+    if (label === 'Hum it') {
+      await ev(() => { const o = window.overdub; if (o.start?.step) o.start.close({ to: 'studio' }); o.ui.show('sketch'); if (!o.ui.isOpen?.('bottom')) o.ui.setOpen?.('bottom', true); o.input.emit('sketch:mode', 'hum'); });
+      return;
+    }
     const [way, then] = VIA[label] || [label, null];
     await ev((l) => [...document.querySelectorAll('.ar-empty-actions button')].find((b) => b.textContent.trim() === l)?.click(), way);
     if (then) { await s.page.waitForTimeout(250); await ev((l) => [...document.querySelectorAll('.st-stage button')].find((b) => b.textContent.trim() === l)?.click(), then); }

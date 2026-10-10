@@ -303,6 +303,12 @@ if (!bank) {
       `qa.json: every room passes the R13 bar or names its waiver (${qa.rows.map((r) => `${r.label} ${r.pass ? 'passes' : 'waiver pending: ' + r.checks.filter((c) => !c.pass).length + ' of ' + r.checks.length + ' checks miss'}`).join('; ')})`);
     for (const r of qa.rows) T.note(`${r.label}: ${r.checks.map((c) => `${c.pass ? '' : 'MISS '}${c.name} ${c.detail}`).join('; ')}`);
     ok(qa.rows.every((r) => r.built > 0 && r.fit.D + 0 === bank.samples.find((s) => s.id === r.id).fit.D), `the tail has built up by tx: D puts its plateau there (built ${qa.rows.map((r) => r.built + ' ms').join(', ')} after its input)`);
+    // docs/SOUNDS.md's QA line is what AJ makes the waiver call from (Q3): it names every room's decay-curve miss
+    // (the deciding check, Q1) as qa.json has it
+    const line = (fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'SOUNDS.md'), 'utf8').match(/^\| QA \| `tools\/\.out\/library\/rooms\/qa\.json`.*$/m) || [''])[0];
+    const edc = qa.rows.map((r) => [r.label, r.checks.find((c) => c.name === 'decay curves 250 Hz-4 kHz')]).filter(([, c]) => c && !c.pass);
+    const unsaid = edc.filter(([, c]) => !line.includes(c.worst.toFixed(2)));
+    ok(line && !unsaid.length, `docs/SOUNDS.md's QA line names each room's decay-curve miss (${edc.map(([l, c]) => `${l} ${c.worst.toFixed(2)} dB`).join(', ')})${unsaid.length ? `: it leaves out ${unsaid.map(([l]) => l).join(', ')}` : ''}`);
     T.note(`R7's rule (twice the mixing time, to the next 10 ms, 80-200 ms) would give ${qa.rows.map((r) => `${r.label} ${r.txRule}`).join(', ')} ms; the spec's listed values ship`);
   }
 }

@@ -596,10 +596,11 @@ Without `new`, it opens the section on the entry in the current song. An id the 
 device "<id>"."* Then the parameter is removed from the address bar, as `?device=` is. While the shelf is off
 (section "Where it's on"), the parameter is ignored and removed.
 
-**Framing.** The studio's meta CSP can't set `frame-ancestors`, and only `server/relay.js` sends
-`frame-ancestors 'none'` today. `server/serve.js` sends `X-Frame-Options: DENY` and
-`Content-Security-Policy: frame-ancestors 'none'` for `/app/` and `/community/`, so no other site can frame the prompt
-and steer a click into it. CloudFront needs the same response headers before the shelf is on.
+**Framing.** The studio's meta CSP can't set `frame-ancestors`, so it comes as a header. `server/serve.js` sends
+`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Content-Type-Options: nosniff` on
+every response, so no other site can frame the prompt and steer a click into it. On CloudFront the same two frame
+headers come from the response headers policy `deploy/headers.sh` makes (`overdub-headers`; the preview's
+`overdub-next-headers` adds noindex), on every path. It has to have run on the live distribution before the shelf is on.
 
 ### Index source
 
@@ -655,7 +656,9 @@ nothing on other browsers), or say in the toast why there's no sound.
 ## 4. The site gallery: `site/community/`
 
 `site/community/index.html` + `community.css` + `community.js` (an external module, so the page's CSP needs no new
-inline hash). It follows the library page's layout (`app/library.html`): the face on its shelf, the paperwork under a
+inline hash). Its public address is `/community/` (`deploy/path-rewrite.js` and `server/serve.js` map it; `/community`
+redirects there, and `/site/community/` still serves the page, canonical to `https://overdubstudio.com/community/`). Its
+own files are linked by absolute paths, so both addresses load the same ones. It follows the library page's layout (`app/library.html`): the face on its shelf, the paperwork under a
 hairline, sections under a heavy rule. No cards and no stripes.
 
 - **Reads the same index** with the same reader (`/app/src/devices/community.js`), from
@@ -888,8 +891,9 @@ All browser suites open Chromium through `tools/pw.js` (QUIET), on their own ser
   - The hostile fixture renders numbers or nothing in the gallery's faces.
   - No site page links to it.
   - `deploy.sh` holds it back, and `app/community/` is in `.gitignore`.
-- `tools/community-test.js` also checks the local server's headers: `/app/` and `/community/` responses carry
-  `X-Frame-Options: DENY` and `frame-ancestors 'none'`; static responses carry `X-Content-Type-Options: nosniff`.
+- `tools/community-test.js` also checks the local server's headers: `/app/`, `/site/community/`, `/community/` and the
+  rest carry `X-Frame-Options: DENY`, `frame-ancestors 'none'` and `X-Content-Type-Options: nosniff`; and it runs
+  `deploy/headers.sh` dry and against a fake `aws` (made once, set on the distribution, a second run changes nothing).
 - `tools/brand-test.js`:
   - The new CSS has no `border-radius: 99px`/`50%` and no coloured `border-left`/inset-shadow edges.
   - The new copy has no "safe", "secure", "sandboxed" (the worklet is not a sandbox), "verified", "marketplace", "buy",

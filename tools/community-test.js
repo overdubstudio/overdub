@@ -23,6 +23,9 @@
 //   - the deploy, dry (a stub aws, a fixture overdub-devices repo: tools/fixtures/community-repo.js): the pinned shelf is
 //     staged with the index and device files no-cache and the MP3s audio/mpeg no-cache, no WAV; a pin that doesn't
 //     match deploys nothing; held back while COMMUNITY_LIVE is false at REF, and with no checkout then it goes on
+//   - the frame headers: the local server sends frame-ancestors 'none', X-Frame-Options DENY and nosniff on /app/, the
+//     gallery at both its paths and the rest; deploy/headers.sh's policy, dry (live and --next), and against a fake aws
+//     (tools/fixtures/fake-aws.js): made, set on the distribution, a second run changes nothing, a hand edit is undone
 //   - brand: no pills or coloured edges in the new CSS; no "safe", "secure", "sandboxed", "verified", "marketplace",
 //     "buy", "price" or "free trial" in the new copy
 //   node tools/community-test.js      (screenshots: tools/.out/community-*.png)
@@ -569,6 +572,72 @@ await section('deploy', async () => {
     } else {
       T.ok(held.status === 0 && /^ {2}app\/community\/community-index\.json/m.test(held.out), 'deploy: with COMMUNITY_LIVE true at HEAD the shelf ships');
     }
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// the frame headers (R9, R10): the local server sends them on every path; deploy/headers.sh plans the CloudFront
+// policy dry, and against a fake aws (tools/fixtures/fake-aws.js) makes it, sets it on the distribution, and on a second
+// run changes nothing
+await section('headers', async () => {
+  const ROOT = path.join(HERE, '..');
+  const { startServer } = await import('../server/serve.js');
+  const srv = await startServer({ port: 0, quiet: true });
+  try {
+    const want = { 'content-security-policy': "frame-ancestors 'none'", 'x-frame-options': 'DENY', 'x-content-type-options': 'nosniff' };
+    for (const u of ['/app/', '/site/community/', '/community/', '/', '/app/src/main.js', '/nowhere.txt']) {
+      const r = await fetch(srv.url + u);
+      const got = Object.keys(want).filter((k) => r.headers.get(k) !== want[k]);
+      T.ok(!got.length, `local ${u} (${r.status}): frame-ancestors 'none', X-Frame-Options DENY and nosniff${got.length ? ' (wrong: ' + got.map((k) => `${k}=${r.headers.get(k)}`).join(', ') + ')' : ''}`);
+    }
+  } finally { await srv.close(); }
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'community-headers-'));
+  try {
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    const base = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null' };
+    for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'DIST', 'DRY_RUN']) delete base[k];
+    const run = (args, env) => { const r = spawnSync('bash', [path.join(ROOT, 'deploy/headers.sh'), ...args], { cwd: ROOT, encoding: 'utf8', env: { ...base, ...env } }); return { status: r.status, out: (r.stdout || '') + (r.stderr || ''), stdout: r.stdout || '' }; };
+    // dry: a stub that fails if called
+    fs.writeFileSync(path.join(bin, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    const live = run([], { DRY_RUN: '1' }), next = run(['--next'], { DRY_RUN: '1' }), only = run(['--policy-only'], { DRY_RUN: '1' });
+    const policyOf = (out) => { const m = /\n((?: {4}.*\n)+)/.exec(out); try { return JSON.parse(m[1]); } catch { return null; } };
+    const lp = policyOf(live.out), np = policyOf(next.out);
+    const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
+    T.ok(clean(live) && clean(next) && clean(only), `headers.sh, dry: live, --next and --policy-only run without calling AWS (exit ${live.status}, ${next.status}, ${only.status})`);
+    const sec = lp && lp.SecurityHeadersConfig;
+    T.ok(lp && lp.Name === 'overdub-headers' && sec.StrictTransportSecurity.AccessControlMaxAgeSec === 31536000 && sec.ContentTypeOptions.Override === true
+      && sec.ReferrerPolicy.ReferrerPolicy === 'strict-origin-when-cross-origin' && sec.XSSProtection.Protection && sec.XSSProtection.ModeBlock,
+      'headers.sh: the live policy keeps the managed set (HSTS a year, nosniff, strict-origin-when-cross-origin, XSS protection with mode block)');
+    T.ok(lp && sec.FrameOptions.FrameOption === 'DENY' && sec.FrameOptions.Override === true && sec.ContentSecurityPolicy.ContentSecurityPolicy === "frame-ancestors 'none'" && sec.ContentSecurityPolicy.Override === true && lp.CustomHeadersConfig.Quantity === 0,
+      'headers.sh: X-Frame-Options DENY and CSP frame-ancestors \'none\', both with override, and no custom header on the live site');
+    T.ok(np && np.Name === 'overdub-next-headers' && JSON.stringify(np.SecurityHeadersConfig) === JSON.stringify(sec) && np.CustomHeadersConfig.Items.some((h) => h.Header === 'X-Robots-Tag' && h.Value === 'noindex, nofollow'),
+      'headers.sh --next: the same security headers, plus X-Robots-Tag: noindex, nofollow');
+    T.ok(only.stdout.trim() === 'RHPDRYRUN' && /update-distribution --id EDRYRUN/.test(live.out) && !/update-distribution/.test(only.out), `headers.sh --policy-only prints only the policy id and touches no distribution (${only.stdout.trim()})`);
+
+    // against a fake aws: the distribution on the managed policy, one more behaviour on it and one on its own policy
+    const MANAGED = '67f7725c-6f97-4210-82d7-5512b31e9d03';
+    fs.writeFileSync(path.join(bin, 'aws'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(HERE, 'fixtures/fake-aws.js')}" "$@"\n`, { mode: 0o755 });
+    const state = path.join(tmp, 'state.json'), log = path.join(tmp, 'log');
+    fs.writeFileSync(state, JSON.stringify({ dists: { E1: { etag: 'D0', config: { Comment: 'live', DefaultCacheBehavior: { TargetOriginId: 's3', ResponseHeadersPolicyId: MANAGED },
+      CacheBehaviors: { Quantity: 2, Items: [{ PathPattern: '/relay/*', ResponseHeadersPolicyId: MANAGED }, { PathPattern: '/api/*', ResponseHeadersPolicyId: 'CORSPOLICY' }] } } } } }));
+    const fake = (args) => { fs.writeFileSync(log, ''); const r = run(args, { DIST: 'E1', FAKE_AWS_STATE: state, FAKE_AWS_LOG: log }); return { ...r, calls: fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)[1]) }; };
+    const first = fake([]);
+    const st1 = JSON.parse(fs.readFileSync(state, 'utf8'));
+    const d1 = st1.dists.E1.config;
+    T.ok(first.status === 0 && first.calls.includes('create-response-headers-policy') && first.calls.includes('update-distribution') && st1.policies.RHP1?.config.Name === 'overdub-headers',
+      `headers.sh, first run: makes overdub-headers and updates the distribution (exit ${first.status}; ${first.calls.join(', ')})${first.status ? ': ' + first.out.slice(-300) : ''}`);
+    T.ok(d1.DefaultCacheBehavior.ResponseHeadersPolicyId === 'RHP1' && d1.CacheBehaviors.Items[0].ResponseHeadersPolicyId === 'RHP1' && d1.CacheBehaviors.Items[1].ResponseHeadersPolicyId === 'CORSPOLICY' && d1.Comment === 'live' && d1.DefaultCacheBehavior.TargetOriginId === 's3',
+      'headers.sh: the default behaviour and any on the managed policy move to it; a behaviour with its own policy and the rest of the config are kept');
+    const second = fake([]);
+    T.ok(second.status === 0 && !second.calls.some((c) => /^(create|update)-/.test(c)) && /up to date/.test(second.out) && /already sends/.test(second.out),
+      `headers.sh, second run: changes nothing (${second.calls.join(', ')})`);
+    st1.policies.RHP1.config.SecurityHeadersConfig.FrameOptions.FrameOption = 'SAMEORIGIN';
+    fs.writeFileSync(state, JSON.stringify(st1));
+    const drift = fake([]);
+    const st2 = JSON.parse(fs.readFileSync(state, 'utf8'));
+    T.ok(drift.status === 0 && drift.calls.includes('update-response-headers-policy') && !drift.calls.includes('update-distribution') && st2.policies.RHP1.config.SecurityHeadersConfig.FrameOptions.FrameOption === 'DENY',
+      `headers.sh: a policy changed by hand is put back with If-Match, and the distribution left alone (${drift.calls.join(', ')})`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 

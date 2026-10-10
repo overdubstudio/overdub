@@ -42,12 +42,38 @@ Moving the shelf forward is a pull request that changes only `deploy/community-p
 (`.github/PULL_REQUEST_TEMPLATE/community-pin.md`). Adding needs the second person to accept the PR; a takedown pin
 merges at once and is reviewed after (overdub-devices' `docs/TAKEDOWN.md`).
 
+## The response headers (`deploy/headers.sh`)
+
+Both distributions send a custom response headers policy in place of CloudFront's managed SecurityHeadersPolicy:
+`overdub-headers` on the live site, `overdub-next-headers` on the preview. It keeps the managed policy's values (HSTS
+for a year, `nosniff`, `strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`) with two changes, both
+with override on and on every path: `X-Frame-Options: DENY` (not SAMEORIGIN) and
+`Content-Security-Policy: frame-ancestors 'none'`. Nothing on the site is framed by another page, and the community
+shelf's trust prompt mustn't be. A header CSP holding only `frame-ancestors` adds to the pages' `<meta>` CSPs; it doesn't
+loosen them. The preview's copy adds `X-Robots-Tag: noindex, nofollow`. `server/serve.js` sends the same frame headers
+and `nosniff` locally.
+
+`deploy/headers.sh` makes the policy or brings it up to date (If-Match), then sets it on the distribution's default
+behaviour, and on any behaviour still on the managed policy, only when one differs; a second run changes nothing.
+`setup.sh` and `next/setup.sh` call it. For a distribution that already exists:
+
+```sh
+DRY_RUN=1 deploy/headers.sh            # the plan, no AWS calls (--next for the preview)
+deploy/headers.sh                      # live: deploy/.distribution-id, else the overdubstudio.com alias (DIST=<id> to name it)
+deploy/headers.sh --next               # the preview
+```
+
+CloudFront takes a few minutes to roll the change out. Then
+`curl -sI https://overdubstudio.com/app/ | grep -iE 'frame|content-security'` shows both headers.
+`aws cloudfront get-response-headers-policy --id 67f7725c-6f97-4210-82d7-5512b31e9d03` shows the managed values it
+copies.
+
 ## How the preview works
 
 `deploy/next/setup.sh` (once; re-running skips what exists) makes the bucket `next.overdubstudio.com`, an ACM
 certificate for that name validated by a CNAME in the overdubstudio.com zone, a copy of the path-rewrite function whose
 home is `next.overdubstudio.com` (so its own paths resolve and nothing redirects testers to the live site), a response
-headers policy with the managed security headers plus `X-Robots-Tag: noindex, nofollow`, the distribution, the bucket
+headers policy (`deploy/headers.sh --next`: the live site's headers plus `X-Robots-Tag: noindex, nofollow`), the distribution, the bucket
 policy that lets only that distribution read, and the A/AAAA alias. It writes the distribution id to
 `deploy/.next-distribution-id` (gitignored); `deploy.sh --next` reads it, or looks the distribution up by its alias.
 

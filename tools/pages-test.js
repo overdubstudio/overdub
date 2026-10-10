@@ -472,6 +472,39 @@ for (const width of [1440, 390]) {
   t.ok(!banned.length, `the gallery's copy says nothing about safety, verification or selling${banned.length ? ' (' + [...new Set(banned)].join(', ') + ')' : ''}`);
 }
 
+// ---- the gallery's public path (R22): /community/ serves the page here and on CloudFront, /community redirects to it
+// (the query kept), and /site/community/ stays, canonical to /community/. deploy/path-rewrite.js runs here in a vm on
+// fake viewer-request events, as CloudFront would run it.
+{
+  console.log('\nthe gallery at /community/');
+  const vm = await import('node:vm');
+  const { startServer } = await import('../server/serve.js');
+  const srv = await startServer({ port: 0, quiet: true });
+  try {
+    const [a, b] = await Promise.all(['/community/', '/site/community/'].map((u) => fetch(srv.url + u)));
+    const [ta, tb] = await Promise.all([a.text(), b.text()]);
+    t.ok(a.status === 200 && b.status === 200 && ta === tb && /<title>Community shelf/.test(ta), `/community/ and /site/community/ both serve the gallery (${a.status}, ${b.status})`);
+    t.ok(/<link rel="canonical" href="https:\/\/overdubstudio\.com\/community\/">/.test(tb), 'the gallery is canonical to https://overdubstudio.com/community/');
+    const r = await fetch(srv.url + '/community?kind=effect', { redirect: 'manual' });
+    t.ok(r.status === 301 && r.headers.get('location') === '/community/?kind=effect', `/community is a 301 to /community/, the query kept (${r.status} ${r.headers.get('location')})`);
+  } finally { await srv.close(); }
+  // the page's own references are absolute, so it works from either path
+  const html = fs.readFileSync(path.join(ROOT, 'site/community/index.html'), 'utf8');
+  const rel = [...html.matchAll(/\b(?:src|href)="([^"]+)"/g)].map((m) => m[1]).filter((u) => !/^(\/|https?:|#|mailto:)/.test(u));
+  t.ok(!rel.length, `the gallery's src and href are absolute, so /community/ and /site/community/ load the same files${rel.length ? ' (relative: ' + rel.join(', ') + ')' : ''}`);
+
+  const sandbox = {};
+  vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'deploy/path-rewrite.js'), 'utf8'), sandbox);
+  const ev = (uri, host = 'overdubstudio.com', querystring = {}) => sandbox.handler({ request: { uri, querystring, headers: host ? { host: { value: host } } : {} } });
+  const g = ev('/community/'), noDot = ev('/community', 'overdubstudio.com', { kind: { value: 'effect' } }), other = ev('/community/', 'overdub.ajsmithhq.com');
+  t.ok(g.uri === '/site/community/index.html' && ev('/site/community/').uri === '/site/community/index.html' && ev('/').uri === '/site/index.html' && ev('/app/').uri === '/app/index.html',
+    `path-rewrite.js: /community/ maps to /site/community/index.html, and /site/community/, / and /app/ still map (${g.uri})`);
+  t.ok(noDot.statusCode === 301 && noDot.headers.location.value === '/community/?kind=effect', `path-rewrite.js: /community is a 301 to /community/, the query kept (${noDot.statusCode} ${noDot.headers?.location?.value})`);
+  t.ok(other.statusCode === 301 && other.headers.location.value === 'https://overdubstudio.com/community/' && ev('/app', 'www.overdubstudio.com').headers.location.value === 'https://overdubstudio.com/app',
+    `path-rewrite.js: another host still redirects to the same path on overdubstudio.com (${other.headers?.location?.value})`);
+  t.ok(/^var HOME = 'overdubstudio\.com';$/m.test(fs.readFileSync(path.join(ROOT, 'deploy/path-rewrite.js'), 'utf8')), "path-rewrite.js still starts its home as var HOME = 'overdubstudio.com'; (deploy/next/setup.sh seds that line)");
+}
+
 // ---- claims: what the public copy, the deck and the launch drafts say is still true of the product
 {
   console.log('\nclaims');

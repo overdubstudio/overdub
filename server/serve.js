@@ -30,6 +30,7 @@ export function resolvePath(urlPath) {
   let p = decodeURIComponent(urlPath.split('?')[0]);
   if (p === '/' || p === '') p = '/site/index.html';
   else if (p === '/llms.txt') p = '/site/llms.txt';
+  else if (p === '/community/') p = '/site/community/index.html';   // the gallery's public path (deploy/path-rewrite.js too)
   else if (p === '/app' || p === '/app/') p = '/app/index.html';
   else if (!path.extname(p) && !p.endsWith('/')) {
     // /site/foo -> /site/foo/index.html when it is a directory
@@ -65,15 +66,26 @@ function siteConfig(res) {
   res.end(JSON.stringify(api ? { cloud: { api } } : {}));
 }
 
+// Sent on every response, as CloudFront's policy sends them on the live site (deploy/headers.sh): no other page may
+// frame this one (the trust prompt and the Browser are clicks worth stealing), and no file is read as another type.
+export const FRAME_HEADERS = {
+  'content-security-policy': "frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+};
+
 export function startServer({ port = Number(process.env.PORT) || 3279, host = '127.0.0.1', quiet = false } = {}) {
   const server = http.createServer(async (req, res) => {
     try {
+      for (const [k, v] of Object.entries(FRAME_HEADERS)) res.setHeader(k, v);
       if (!ADDRESS.test(String(req.headers.host || ''))) {
         res.writeHead(403, { 'content-type': 'text/plain' });
         return res.end('forbidden: ask for localhost');
       }
       const url = new URL(req.url, 'http://localhost');
       for (const r of routes) if (url.pathname.startsWith(r.prefix) && (await r.handler(req, res, url))) return;
+      // /community answers as CloudFront's no-dot rule does: a permanent redirect to the slash, the query kept
+      if (url.pathname === '/community') { res.writeHead(301, { location: '/community/' + url.search, 'cache-control': 'no-store' }); return res.end(); }
       if (url.pathname === '/app/site-config.json' && !fs.existsSync(path.join(ROOT, 'app/site-config.json'))) return siteConfig(res);
       const abs = resolvePath(url.pathname);
       // the community shelf's bundled copy (gitignored; overdub-devices' tools/index.js writes it): when there isn't one,

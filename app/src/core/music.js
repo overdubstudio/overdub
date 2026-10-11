@@ -159,7 +159,8 @@ export const validMeter = (m) => Array.isArray(m) && m.length === 2 && Number.is
 // bent to a recording. The grid is piecewise linear between anchors and runs on past the last one at the last
 // segment's tempo (and before beat 0 at the first's). anchors[0] is { beat: 0, sec: 0 }; beat and sec rise strictly;
 // every segment's tempo is 20..400; at most MAP_ANCHORS anchors (project.js LIMITS.anchors). Anchors are seconds, not
-// tempo steps, so rounding never adds up. clip: the id of the audio clip the grid follows (the conformed clip).
+// tempo steps, so rounding never adds up. clip: the id of the audio clip the grid follows (the conformed clip);
+// clipStart: the beat that clip starts at on this grid (so a move that leaves the grid behind can be measured: R8).
 // A song without one has one tempo, p.tempo, and every conversion below is the expression it always was.
 //
 //   beatToSec(p, beat) / secToBeat(p, sec)   song beat <-> seconds from beat 0 (the old (beat, bpm) and (sec, bpm)
@@ -172,6 +173,7 @@ export const validMeter = (m) => Array.isArray(m) && m.length === 2 && Number.is
 //   mapNominal(anchors)                      the median segment tempo, to 0.01 (p.tempo while a map is set)
 //   mapInsert / mapRemove (map, at, beats)   the map after time.insert / time.remove; shiftMap(map, beats) moves the
 //                                            grid with its recording (a whole-bar move of the conformed clip)
+//   mapStats(p)                              nominal, the bar tempos' range, the free spans, the conformed clip's drift
 export const MAP_ANCHORS = 4096;
 const anchorsOf = (p) => { const m = p && p.tempoMap; return m && Array.isArray(m.anchors) && m.anchors.length >= 2 ? m.anchors : null; };
 // the segment [A[i], A[i + 1]] that holds x (by beat or by sec), clamped to the first and last
@@ -270,6 +272,15 @@ export function mapNominal(anchors) {
   return Math.min(400, Math.max(20, Math.round(mid * 100) / 100));
 }
 const withAnchors = (map, anchors) => ({ ...map, anchors });
+// the map's clipStart (where the conformed clip starts on this grid) after the beats at `at` moved by `beats` (a beat
+// at or after `at` moves; one inside a removed span is lost, so the field goes)
+function movedStart(map, at, beats, removed = 0) {
+  if (!Number.isFinite(map.clipStart)) return map;
+  const { clipStart, ...rest } = map, s = clipStart;
+  if (s < at - 1e-9) return map;
+  if (removed && s < at + removed - 1e-9) return rest;
+  return { ...map, clipStart: Math.round((s + beats) * 1e6) / 1e6 };
+}
 // an anchor at beat b (at the seconds the map gives it), unless one is there
 function withAnchorAt(A, b) {
   if (A.some((a) => Math.abs(a.beat - b) < 1e-9)) return A;
@@ -282,20 +293,22 @@ function withAnchorAt(A, b) {
 // is one tempo already, so nothing moves.
 export function mapInsert(map, at, beats) {
   const A = map.anchors, last = A[A.length - 1];
-  if (!(beats > 0) || at >= last.beat - 1e-9) return withAnchors(map, A.map((a) => ({ ...a })));
+  if (!(beats > 0)) return withAnchors(map, A.map((a) => ({ ...a })));
+  if (at >= last.beat - 1e-9) return withAnchors(movedStart(map, at, beats), A.map((a) => ({ ...a })));
   const B = withAnchorAt(A, at), secs = beats * (60 / mapTempo(A, at)), out = [];
   for (const a of B) {
     if (a.beat < at - 1e-9) out.push({ ...a });
     else if (a.beat < at + 1e-9) out.push({ ...a }, { beat: at + beats, sec: a.sec + secs });
     else out.push({ beat: a.beat + beats, sec: a.sec + secs });
   }
-  return withAnchors(map, out);
+  return withAnchors(movedStart(map, at, beats), out);
 }
 // time.remove: beats [at, at + beats) go; the anchors inside go with them, the ones after move back by those beats and
 // the seconds the map gave them, and the grid after the cut keeps its tempo.
 export function mapRemove(map, at, beats) {
   const A = map.anchors, last = A[A.length - 1], end = at + beats;
-  if (!(beats > 0) || at >= last.beat - 1e-9) return withAnchors(map, A.map((a) => ({ ...a })));
+  if (!(beats > 0)) return withAnchors(map, A.map((a) => ({ ...a })));
+  if (at >= last.beat - 1e-9) return withAnchors(movedStart(map, at, -beats, beats), A.map((a) => ({ ...a })));
   const B = withAnchorAt(withAnchorAt(A, at), end), secs = mapSec(B, end) - mapSec(B, at);
   const out = [];
   for (const a of B) {
@@ -304,13 +317,42 @@ export function mapRemove(map, at, beats) {
   }
   // (past the old last anchor the grid ran at the last segment's tempo: it still does, from the cut on)
   if (out.length < 2) out.push({ beat: at + 4, sec: mapSec(B, at) + 4 * (60 / mapTempo(B, end)) });
-  return withAnchors(map, out);
+  return withAnchors(movedStart(map, at, -beats, beats), out);
 }
 // The grid moved with its recording by `beats` (a whole-bar move of the conformed clip: ui/arranger.js carries the map
 // in the same dispatch): later by inserting that many beats at beat 0, earlier by removing them.
 export function shiftMap(map, beats) {
   if (!(Math.abs(beats) > 1e-9)) return withAnchors(map, map.anchors.map((a) => ({ ...a })));
   return beats > 0 ? mapInsert(map, 0, beats) : mapRemove(map, 0, -beats);
+}
+
+// What a map says about itself (spec 0014 R28, R31), for the arranger and get_project:
+//   mapStats(p) -> { nominal, lo, hi (the 5th and 95th percentile bar tempo, to 0.1), free: [[fromBeat, toBeat]],
+//     clip, drift (ms: how far the conformed clip sits off its grid, or null) } | null without a map
+// A free span is a stretch past the first downbeat with no anchor for more than a bar (the analysis anchors every
+// downbeat it hears; where it heard no pulse the grid runs straight between the anchors either side). The drift: the
+// conformed clip's recording starts at song second beatToSec(clip.start) - offset; on its grid that is
+// beatToSec(clipStart). A move by less than a bar, or one that didn't carry the map, leaves the two apart (R8).
+export function mapStats(p) {
+  const A = anchorsOf(p);
+  if (!A) return null;
+  const bpb = beatsPerBar(p.meter), tempos = [], free = [];
+  for (let i = 1; i < A.length - 1; i++) {
+    const a = A[i], b = A[i + 1], tm = (60 * (b.beat - a.beat)) / (b.sec - a.sec);
+    if (b.beat - a.beat > bpb + 1e-6) free.push([a.beat, b.beat]); else tempos.push(tm);
+  }
+  if (!tempos.length) for (let i = 1; i < A.length; i++) tempos.push((60 * (A[i].beat - A[i - 1].beat)) / (A[i].sec - A[i - 1].sec));
+  tempos.sort((x, y) => x - y);
+  const one = (x) => Math.round(x * 10) / 10;
+  const lo = one(tempos[Math.floor(tempos.length * 0.05)]), hi = one(tempos[Math.ceil(tempos.length * 0.95) - 1]);
+  const m = p.tempoMap;
+  let drift = null;
+  if (m.clip && Number.isFinite(m.clipStart)) {
+    for (const t of p.tracks || []) for (const c of t.clips || []) {
+      if (c.id === m.clip) drift = Math.round((mapSec(A, c.start) - (+c.offset || 0) - mapSec(A, m.clipStart)) * 1000);
+    }
+  }
+  return { nominal: mapNominal(A), lo, hi, free, clip: m.clip || null, drift };
 }
 
 // "bar.beat.sixteenth" (1-based), as a DAW shows it

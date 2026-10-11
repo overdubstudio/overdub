@@ -1,4 +1,6 @@
 // The Song menu (the right end of the top bar): new, open, save, and every way out of Overdub. A mix as a 24-bit WAV,
+// the release (the mix from its first sound to its tail, muted tracks out, with its loudness and true peak measured,
+// spec 0014 R33),
 // stems (one WAV per track, in a zip), MIDI (a Standard MIDI File, type 1), the project file (.overdub.json), and
 // the attribution log: who did what, when, and why (the provenance record). Nothing is lost: replacing the song (New
 // song, a demo, a file) asks first in the menu, keeps the old one in Recent songs (the menu's own list, the newest six,
@@ -11,7 +13,7 @@
 //   provenance(app) -> the attribution log (an object)
 //
 // app.exporter = { encodeWav, encodeMidi, zipStore, provenance, newSong(), openDemo(), openFile(), loadText(text, name),
-//                  saveProject(), exportMix(), exportStems(), exportMidi(), exportLog(), exportDawproject(), openReport(), busy,
+//                  saveProject(), exportMix(), exportRelease(), lastRelease(), exportStems(), exportMidi(), exportLog(), exportDawproject(), openReport(), busy,
 //                  recent() -> [{ id, title, at, tracks }], openRecent(i), putAside(song, msg) (a song main.js replaced on the way in),
 //                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone) }
 // The simple view (ui/workspace.js) puts the file rows away (data-feature="files": open a file, the imports, stems, MIDI,
@@ -28,6 +30,7 @@ import { DEMOS, demoById } from '../core/demo.js';
 import { dawprojectFiles } from '../core/dawproject.js';
 import { hasTempoMap, mapSec, mapTempo } from '../core/music.js';
 import { installProvenance, openProvenanceReport } from './provenance.js';
+import { lufs, truePeak } from '../audio/measure.js';
 
 /* ================================================================ WAV */
 export function encodeWav(buf, { bits = 24 } = {}) {
@@ -55,6 +58,28 @@ export function encodeWav(buf, { bits = 24 } = {}) {
     }
   }
   return out;
+}
+
+/* ================================================================ the release (spec 0014 R33) */
+// A render trimmed to the music: from the first sample above `floor` (dBFS) to the last, plus `pad` seconds after it
+// (the end of the tail), on every channel alike. -> { sampleRate, channels, from, to } (from / to: samples in the input)
+export function releaseTrim(buf, { floor = -90, pad = 0.05 } = {}) {
+  const chans = buf.channels || Array.from({ length: buf.numberOfChannels }, (_, i) => buf.getChannelData(i));
+  const sr = buf.sampleRate, n = chans[0]?.length || 0, th = Math.pow(10, floor / 20);
+  let a = n, b = -1;
+  for (const x of chans) {
+    for (let i = 0; i < Math.min(a, n); i++) if (Math.abs(x[i]) > th) { a = i; break; }
+    for (let i = n - 1; i > b; i--) if (Math.abs(x[i]) > th) { b = i; break; }
+  }
+  if (b < a) return { sampleRate: sr, channels: chans.map(() => new Float32Array(0)), from: 0, to: 0 };
+  const to = Math.min(n, b + 1 + Math.round(pad * sr));
+  return { sampleRate: sr, channels: chans.map((x) => x.slice(a, to)), from: a, to };
+}
+// "Release: 3:41, −9.2 LUFS, peak −0.4 dBTP" (the minus as a minus sign, one decimal)
+export function releaseLine({ seconds, lufs: l, peak }) {
+  const n = (x) => (Math.round(x * 10) / 10).toFixed(1).replace('-', '−');
+  const s = Math.max(0, Math.round(seconds));
+  return `Release: ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}, ${n(l)} LUFS, peak ${n(peak)} dBTP`;
 }
 
 /* ================================================================ MIDI (SMF type 1) */
@@ -416,6 +441,29 @@ export default function (app) {
       return wav;
     } catch (e) { console.error(e); ui.toast('Could not export the mix: ' + e.message, { kind: 'bad' }); return null; } finally { setBusy(null); }
   }
+  // Export release: the whole song as a 24-bit WAV from its first sound to the end of its tail, muted tracks left out
+  // (a render plays nothing muted), measured (audio/measure.js: integrated loudness and true peak) and said in the toast
+  async function exportRelease() {
+    if (busy) return ui.toast('Already exporting…');
+    const p = store.get();
+    if (!p.tracks.some((t) => t.clips.length)) return ui.toast('There’s nothing to release yet: no clips on any track');
+    setBusy({ label: 'Rendering the release', done: 0, total: 1 });
+    try {
+      const buf = await render({ tail: 6 });
+      const cut = releaseTrim(buf);
+      const seconds = cut.channels[0].length / cut.sampleRate;
+      if (!seconds) { ui.toast('The release would be silent: every track is muted, or nothing plays.', { kind: 'bad' }); return null; }
+      const m = { seconds, lufs: lufs(cut), peak: truePeak(cut) };
+      const wav = encodeWav(cut, { bits: 24 });
+      download(`${safeName(p.title)} (release).wav`, wav, 'audio/wav');
+      const out = leftOut();
+      const line = releaseLine(m);
+      ui.toast(`${line}. ${safeName(p.title)} (release).wav, 24-bit, ${cut.sampleRate / 1000} kHz.${out}`, { kind: out ? 'info' : 'ok', ms: 9000 });
+      lastRelease = { ...m, line, bytes: wav.length };
+      return wav;
+    } catch (e) { console.error(e); ui.toast('Could not export the release: ' + e.message, { kind: 'bad' }); return null; } finally { setBusy(null); }
+  }
+  let lastRelease = null;
   async function exportStems() {
     if (busy) return ui.toast('Already exporting…');
     const p = store.get();
@@ -476,7 +524,7 @@ export default function (app) {
   }
   const openReport = () => openProvenanceReport(app);
 
-  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, openDemo, putAside, openFile, loadText, saveProject, exportMix, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
+  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, openDemo, putAside, openFile, loadText, saveProject, exportMix, exportRelease, lastRelease: () => lastRelease, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
     recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, openMenu: (anchor) => openMenu(anchor) };
 
   /* ---------------------------------------------------- the menu */
@@ -554,6 +602,7 @@ export default function (app) {
       ...recentRows,
       h('div.sm-sep', 'Export'),
       item('wave', 'Mix', 'WAV, 24-bit, 48 kHz', `${mod}⇧E`, exportMix),
+      item('wave', 'Release', 'the song from its first sound to its tail, muted tracks out, measured', null, exportRelease, '.sm-release'),
       item('panelBottom', 'Stems', 'one WAV per track, zipped', null, exportStems, '', 'files'),
       item('keys', 'MIDI', 'Standard MIDI File, one track per part', null, exportMidi, '', 'files'),
       item('copy', 'DAWproject', '.dawproject: tracks, notes and audio for another DAW', null, exportDawproject, '', 'files'),

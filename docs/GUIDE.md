@@ -52,9 +52,9 @@ agent gave. `⌘Z` undoes the latest edit.
 
 ## Start a song
 
-Every blank song (**New song**, **Make your own**) opens on its door: **Tap a beat**, **Hum a tune** or **Play the
-keys**, and, with no playing in time, **Draw a beat**, **Pick a groove** or **Ask** your agent. `↑` `↓` walk the three
-ways. Nothing sounds until you press one, and the door never shows over a song with tracks in it.
+Every blank song (**New song**, **Make your own**) opens on its door: **Tap a beat**, **Hum a tune**, **Play the
+keys** or **Flip a song**, and, with no playing in time, **Draw a beat**, **Pick a groove** or **Ask** your agent.
+`↑` `↓` walk the four ways. Nothing sounds until you press one, and the door never shows over a song with tracks in it.
 
 **Tap a beat** opens a stage over the song. There's no click: tap `F` `J` `K` `L` (or the four pads; on a phone they
 fire as your finger lands) at whatever speed feels right, and keep going round. Your first hit starts the clock and
@@ -84,6 +84,37 @@ the song and records your hum over it from the next bar line; `Space` stops, and
 `Esc` before you've played anything closes the stage; after, it asks once (*Leave without keeping this take? It stays
 in Takes.*). **Skip to the studio** is always top right. While you play on the stage, an agent's changes to the song
 wait until it's in.
+
+## Flip a song
+
+**Flip a song** on the door brings in a song you own and gets it ready for you to make the drop over it. Pick one file
+(the song) or several (its stems: files with *vocals*, *acapella* or *voice*, *drums*, *bass*, or *other* or *inst*
+in their names; the one that matches none is the song itself). The files stay on your computer; nothing is fetched
+from a link.
+
+It lands at once, one undo step: the song on a track named **Original**, the stems on **Vocals**, **Drums**, **Bass**
+and **Other**. The vocal plays; the rest are on hand, muted (`M` on a header brings one back). Then the studio does the
+chores while you play, scroll and work. One line at the foot of the arranger says where it is:
+
+- **Splitting… 40%.** Only where this site splits songs (it's off on overdubstudio.com for now: bring the stems as
+  files). It says the wait first, timed on your computer; with no graphics card to do it, it asks before it starts
+  (**Split on the processor** or **Skip the split**). The stems land as their own undo step.
+- **Finding the beat…**, **Marking sections…** The grid then follows the recording: its downbeats sit on the bar
+  lines, and the recording is never stretched. The tempo readout says **Tempo, follows Original** over the song's
+  middle tempo; it won't take a new tempo while the grid follows the recording. Spans with no beat to hear (a free
+  intro, a breakdown) are hatched and marked *free*. The key is set, the sections are named (with their own key where
+  it changes), and the chords sit muted on a **Chords** track. All of it is one undo step.
+
+The toast says what landed: *Flip: Night Bus is in. Grid follows the recording, 95.9 BPM, drifting 94.4–97.0. Key B
+major. 4 sections.* If the studio isn't sure of the beat it asks **Which one nods along with the vocal?**: the grid it
+found, twice as fast, half as fast, and the 1 in another place, each played with the click over the recording. Pick
+one and it plays; **Use this one** keeps it (one undo step); **Back** (`Esc`) puts back what was there. **Other
+readings** on the toast asks any time. **Cancel** on the line stops the chores; what landed stays.
+
+Dragging **Original** by whole bars takes the grid with it; by less, the grid stays where it was and your agent can
+tell you how far off the recording sits. From there the drop is yours, and your agent is a sound design partner (it
+reads `get_guide "workflows"`): ask it to make the growl dirtier in the chorus, and it measures before and after.
+**Export release** in the Song menu gives you the finished song.
 
 ## Find anything
 
@@ -740,6 +771,7 @@ The Song menu's **Export** section:
 | | what you get |
 |---|---|
 | **Mix** (`⌘⇧E`) | the song as a WAV, 24-bit, 48 kHz |
+| **Release** | the song as a WAV from its first sound to the end of its tail, muted tracks left out, with its loudness and true peak in the toast (*Release: 3:41, −9.2 LUFS, peak −0.4 dBTP*) |
 | **Stems** | one WAV per track, in a zip |
 | **MIDI** | a Standard MIDI File, one track per part |
 | **DAWproject** | a `.dawproject` for Bitwig Studio, Studio One, Cubase and others: tempo, tracks with their mixer settings, notes, audio clips and sections. Overdub's own devices can't travel, so each becomes a named placeholder with its settings. Put your own instrument on each track; the notes are all there. |

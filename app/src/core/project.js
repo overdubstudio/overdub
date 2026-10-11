@@ -12,7 +12,7 @@
 // The normalisers keep them (canonical: sorted, clamped where the range is known, empty lanes dropped), so a load, an
 // undo of a removal and cleanProject never drop a lane.
 
-import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace, checkAnchors, mapNominal, MAP_ANCHORS } from './music.js';
+import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace, checkAnchors, mapNominal, mapStats, MAP_ANCHORS } from './music.js';
 import { normAuto, lanesOf, formatPoints, specFor } from './automation.js';
 
 export const FORMAT = 'overdub/0';
@@ -332,14 +332,16 @@ export function isValidReference(r) {
   return !!(r && typeof r === 'object' && typeof r.name === 'string' && r.profile && typeof r.profile === 'object' && Number.isFinite(r.profile.lufs));
 }
 
-// A tempo map as the song keeps it ({ anchors: [{ beat, sec }], clip? }: music.js "The tempo map"), or null with the
-// reason when it isn't one. Strict: a map is kept as it is or not at all, never repaired into a different grid.
+// A tempo map as the song keeps it ({ anchors: [{ beat, sec }], clip?, clipStart? }: music.js "The tempo map"), or
+// null with the reason when it isn't one. Strict: a map is kept as it is or not at all, never repaired into a different grid.
 export function normTempoMap(m) {
   if (!isObj(m)) return { map: null, why: 'the tempo map is not an object' };
   const why = checkAnchors(m.anchors);
   if (why) return { map: null, why };
   const map = { anchors: m.anchors.map((a) => ({ beat: a.beat, sec: a.sec })) };
   if (typeof m.clip === 'string' && m.clip) map.clip = m.clip;
+  // (where the conformed clip starts on this grid: get_project measures a move that left it behind, R8)
+  if (map.clip && typeof m.clipStart === 'number' && Number.isFinite(m.clipStart) && m.clipStart >= 0) map.clipStart = m.clipStart;
   return { map, why: null };
 }
 
@@ -470,12 +472,29 @@ function laneLine(p, { track, insert, param, lane, device }, devices, bpb) {
 
 // The compact, readable view of a song an agent gets from get_project. detail: 'summary' (no notes) | 'full'.
 // held(id): a song device this browser holds (devices/trust.js: its code hasn't been allowed to run here), or null
+// A tempo map in one line (spec 0014 R31): "Grid follows Original: 68.4 BPM nominal, 66.9–70.2, 2 free spans; key D
+// minor", and the conformed clip's drift when a move left it off its grid (R8). null without a map.
+export function mapLine(p) {
+  const st = mapStats(p);
+  if (!st) return null;
+  let clip = null;
+  for (const t of p.tracks || []) for (const c of t.clips || []) if (c.id === st.clip) clip = c.name || t.name;
+  const range = st.hi - st.lo >= 0.1 ? `, ${st.lo.toFixed(1)}–${st.hi.toFixed(1)}` : '';
+  const free = st.free.length ? `, ${st.free.length} free span${st.free.length === 1 ? '' : 's'} (beats ${st.free.map(([a, b]) => `${a}–${b}`).join(', ')})` : '';
+  let line = `Grid follows ${clip || 'a recording'}: ${st.nominal} BPM nominal${range}${free}; ${p.key ? `key ${keyLabel(p.key)}` : 'no key'}`;
+  line += ' (a tempo map: beats land where the recording put them; tempo.map changes it, project.set tempo is refused)';
+  if (st.drift != null && Math.abs(st.drift) >= 1) line += `. ${clip || 'The recording'} is off its grid by ${st.drift} ms (moved without the map: a move by whole bars in the arranger carries it)`;
+  return line;
+}
+
 export function summarize(p, { detail = 'full', track = null, devices = null, held = null } = {}) {
   const bpb = beatsPerBar(p.meter);
   const lines = [];
   lines.push(`"${p.title}" — ${p.tempo} bpm, ${p.meter.join('/')}, ${keyLabel(p.key)}, ${Math.ceil(songEnd(p) / bpb)} bars (${bpb} beats per bar; all times are in beats)`);
+  const grid = mapLine(p);
+  if (grid) lines.push(grid);
   if (p.loop?.on) lines.push(`loop: beats ${p.loop.start}–${p.loop.end}`);
-  if (p.sections?.length) lines.push('sections: ' + p.sections.map((s) => `${s.name} [${s.start}–${s.start + s.length}] (${s.id})`).join(', '));
+  if (p.sections?.length) lines.push('sections: ' + p.sections.map((s) => `${s.name} [${s.start}–${s.start + s.length}] (${s.id})${s.key ? ` key ${s.key}` : ''}`).join(', '));
   const isHeld = (id) => !!(held && held(id));
   const dname = (id) => {
     if (isHeld(id)) return `${held(id).name} (${id}, held: kept off, ${held(id).kind === 'instrument' ? 'silent' : 'bypassed'})`;

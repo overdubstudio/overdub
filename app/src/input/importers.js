@@ -12,7 +12,10 @@
 //   midiSummary(plan, fileName) -> the toast text
 //
 // In the page (export default): app.importers = { parseSmf, planMidiImport, importMidi(bytes | File, { name, at }),
-//   importAudio([File | { name, buffer }], { track, beat }), decodeAudio(arrayBuffer), pickMidi(), pickAudio({ track, beat }) }.
+//   importAudio([File | { name, buffer }], { track, beat }), decodeAudio(arrayBuffer), pickMidi(), pickAudio({ track, beat }),
+//   importFlip(files) and pickFlip(run) (Flip a song, ui/flip.js: one or more files of a song the person owns, each
+//   labelled by its name, labelStem(name): vocals, drums, bass, other, or the original), labelStem }.
+// Local files only: nothing here ever fetches audio from a link.
 // A file dropped on the arranger lands where it was dropped (app.arranger.locate); MIDI dropped elsewhere starts at
 // bar 1, audio dropped elsewhere goes on a new audio track at the playhead's bar. ui/reference.js takes its own drops.
 // An audio clip's length in beats is its seconds at the song's tempo, or on the song's tempo map from where it lands
@@ -20,6 +23,8 @@
 
 import { newId, songEnd, LIMITS } from '../core/project.js';
 import { beatsPerBar, validMeter, hasTempoMap, beatToSec, secToBeat } from '../core/music.js';
+import { labelStem, labelFiles, songNameOf } from '../core/flip.js';
+export { labelStem };
 import { css } from '../ui/dom.js';
 
 /* ================================================================ SMF */
@@ -402,6 +407,24 @@ export default function (app) {
     return { ok: true, txn: r.txn, clips, tracks: trackIds, assets: assets.map((a) => a.id), text };
   }
 
+  // importFlip(files) -> { name, files: [{ role, name, buf }], failed: [names] }: Flip a song's files decoded and
+  // labelled (core/flip.js labelFiles: a lone file is the original; several are stems by their names, the one matching
+  // none the original). Nothing lands here: ui/flip.js plans the step.
+  async function importFlip(items) {
+    items = (Array.isArray(items) ? items : [items]).filter(Boolean);
+    const roles = labelFiles(items.map((it) => it.name || 'audio'));
+    const files = [], failed = [];
+    for (const [i, it] of items.entries()) {
+      const nm = it.name || 'audio';
+      try {
+        const buf = toBufferLike(it.buffer) || toBufferLike(it) || await decodeAudio(await it.arrayBuffer());
+        if (!buf || !buf.length) throw new Error('no audio in it');
+        files.push({ role: roles[i], name: nm, buf });
+      } catch { failed.push(nm); }
+    }
+    return { name: songNameOf(items.map((it) => it.name || 'audio')), files, failed };
+  }
+
   function pick(accept, run) {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = accept; inp.multiple = true; inp.style.display = 'none';
@@ -410,7 +433,10 @@ export default function (app) {
     inp.click();
   }
   const pickMidi = () => pick('.mid,.midi,.kar,.rmi,audio/midi,audio/x-midi', async (fs) => { for (const f of fs) await importMidi(f); });
-  const pickAudio = ({ track = null, beat = null } = {}) => pick('audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aif,.aiff', (fs) => importAudio(fs, { track, beat }));
+  const AUDIO_ACCEPT = 'audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aif,.aiff';
+  const pickAudio = ({ track = null, beat = null } = {}) => pick(AUDIO_ACCEPT, (fs) => importAudio(fs, { track, beat }));
+  // one or more files for Flip a song (the same formats; several are bring-your-own stems): run(files)
+  const pickFlip = (run) => pick(AUDIO_ACCEPT, run);
 
   /* ---------------------------------------------------------------- drops */
   // where a drop lands: the arranger's lanes give a track and a beat (snapped to the grid); its headers a track
@@ -470,6 +496,6 @@ export default function (app) {
   });
   window.addEventListener('dragend', hideHint);
 
-  app.importers = { parseSmf, planMidiImport, midiSummary, deviceFor, importMidi, importAudio, decodeAudio, pickMidi, pickAudio, isMidiFile, isAudioFile, songEnd: () => songEnd(P()) };
+  app.importers = { parseSmf, planMidiImport, midiSummary, deviceFor, importMidi, importAudio, importFlip, labelStem, decodeAudio, pickMidi, pickAudio, pickFlip, isMidiFile, isAudioFile, songEnd: () => songEnd(P()) };
   return app.importers;
 }

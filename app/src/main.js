@@ -41,6 +41,7 @@ const MODULES = [
   './ui/share.js', // share links (#s=…): the listening banner, Make it yours, the share_link tool
   './ui/onboard.js', // "Take one": the first-run coach (never under navigator.webdriver unless forced)
   './ui/start.js', // Start a song: the blank song's door and its stage (app.start); after onboard.js, whose first minute and Hum over it it hands on to
+  './ui/flip.js', // Flip a song: the door's fourth way in (app.flip): the import, the split, the analysis and its readings
   './ui/preview.js', // the Preview ribbon, on next.overdubstudio.com only (app/site-config.json says which site this is)
   './analytics.js', // last: anonymous counts on the live site only (see the file); nothing anywhere else
 ];

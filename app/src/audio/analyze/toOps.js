@@ -7,11 +7,12 @@
 //     offset 0, so nothing is cut); the sections with their keys (section.add, when the song has none yet); the chords
 //     as block chords in one notes clip on a muted track named Chords (when there is no Chords track yet)
 //   readingOps(p, result, reading, { clips }) -> ops    the grid alone: meter, map and placement (R27: picking another
-//     reading replaces the map in one step)
+//     reading replaces the map in one step); the map keeps clipStart (where the conformed clip sits on it), and each
+//     audio clip's length becomes its recording's seconds on the new grid
 //   flipSummary(result, reading?, { clip }) -> 'Grid follows Original, 68.4 BPM, drifting 66.9-70.2. Key D minor.
 //     8 sections.'
 // reading: a reading from result.readings, or its id ('found' when left out). clips: [{ track, clip }] (ids).
-import { beatsPerBar, mapBeat } from '../../core/music.js';
+import { beatsPerBar, mapBeat, mapSec } from '../../core/music.js';
 
 const r4 = (x) => Math.round(x * 1e4) / 1e4;
 const pick = (result, reading) => (reading && typeof reading === 'object' ? reading : result.readings.find((r) => r.id === (reading || 'found')) || result.readings[0]);
@@ -21,9 +22,29 @@ export function readingOps(p, result, reading, { clips = [] } = {}) {
   if (!R) return [];
   const ops = [];
   if (beatsPerBar(p.meter) !== R.bpb) ops.push({ type: 'project.set', patch: { meter: [R.bpb, 4] } });
-  ops.push({ type: 'tempo.map', map: { anchors: R.anchors.map((a) => ({ beat: a.beat, sec: a.sec })), ...(clips[0] ? { clip: clips[0].clip } : {}) } });
-  for (const c of clips) ops.push({ type: 'clip.set', track: c.track, clip: c.clip, patch: { start: R.start } });
+  ops.push({ type: 'tempo.map', map: { anchors: R.anchors.map((a) => ({ beat: a.beat, sec: a.sec })), ...(clips[0] ? { clip: clips[0].clip, clipStart: R.start } : {}) } });
+  for (const c of clips) {
+    // an audio clip lasts its seconds on the new grid (from where it now starts), so none of the recording is cut
+    const len = audioBeats(p, c.clip, R);
+    ops.push({ type: 'clip.set', track: c.track, clip: c.clip, patch: { start: R.start, ...(len ? { length: len } : {}) } });
+  }
   return ops;
+}
+
+// the beats an audio clip's recording lasts on reading R's grid, starting where R places it (null: not an audio clip
+// this song knows the length of)
+function audioBeats(p, clipId, R) {
+  for (const t of (p && p.tracks) || []) {
+    for (const c of t.clips || []) {
+      if (c.id !== clipId) continue;
+      const a = c.kind === 'audio' && p.assets && p.assets[c.asset];
+      const secs = a && Number.isFinite(a.duration) ? a.duration - (+c.offset || 0) : NaN;
+      if (!(secs > 0)) return null;
+      const s0 = mapSec(R.anchors, R.start);
+      return Math.max(1 / 16, r4(mapBeat(R.anchors, s0 + secs) - R.start));
+    }
+  }
+  return null;
 }
 
 // a time in the recording -> a beat on the reading's grid

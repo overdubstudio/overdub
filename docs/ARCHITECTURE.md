@@ -62,6 +62,8 @@ overdub/
   app/src/audio/         measure.js (the ears: LUFS, true peak, spectrum...), testsignals.js            [dsp]
                          analyze/ (Flip a song's chores: beats, the tempo map and its readings, tuning, key,
                          chords, sections; a Worker, the overdub-analysis cache, resultToOps)       [analyze]
+  app/src/core/flip.js   Flip a song as ops: labelStem / labelFiles (a file's role by its name), songNameOf,
+                         planFlip (the import, one step), planStems (the split's stems, the house's step)  [core]
   app/src/jobs/          the job layer: index.js (jobs.run, progress, cancel), cache.js (overdub-jobs), fake.js
                          (the tests' runner), stems/ (the local stems runner, off without a site config:
                          dsp.js, pool.js + dsp-worker.js, runner.js)                                 [jobs]
@@ -96,6 +98,7 @@ overdub/
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
                          export.js (the Song menu, files out), provenance.js, share.js, onboard.js, reference.js,
                          start.js (Start a song: the blank song's door and its stage, app.start),
+                         flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
                          community.js (From the community in the Browser: previews, Try and its prompt; off
                          unless on localhost, COMMUNITY_LIVE)                                           [shelf]
@@ -136,7 +139,7 @@ All musical time is in **beats** (quarter notes, floats). One meter; one tempo, 
 Project = {
   format: 'overdub/0', id: 'p_k3j9x2', title: 'Untitled', tempo: 120, meter: [4, 4],
   key: { root: 'C', scale: 'minor' } | null,           // scale names: music.js SCALES
-  tempoMap?: { anchors: [{ beat, sec }], clip? },        // the grid follows a recording (below); tempo is its nominal
+  tempoMap?: { anchors: [{ beat, sec }], clip?, clipStart? },   // the grid follows a recording (below); tempo is its nominal
   loop: { on: false, start: 0, end: 16 },               // beats
   tracks: [Track],
   sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color?, key? }],   // key: the section's own key ("F# minor"), forever, optional
@@ -173,12 +176,13 @@ DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 
 
 ### The tempo map
 
-A song may carry `tempoMap: { anchors: [{ beat, sec }, …], clip? }` (optional, top level, forever): the grid follows a
+A song may carry `tempoMap: { anchors: [{ beat, sec }, …], clip?, clipStart? }` (optional, top level, forever): the grid follows a
 recording instead of the recording following the grid. The grid is piecewise linear between anchors and runs on past
 the last at the last segment's tempo (and before beat 0 at the first's). `anchors[0]` is `{ beat: 0, sec: 0 }`; beat
 and sec rise strictly; every segment is 20..400 BPM; at most `LIMITS.anchors` (4,096). Anchors are seconds, not tempo
 steps, so rounding never adds up. `clip` names the audio clip the grid follows (the conformed clip), which is never
-stretched. `cleanProject` keeps a map exactly or drops it whole with a warning; it never repairs one into another grid.
+stretched; `clipStart` (kept only with `clip`) is the beat that clip starts at on this grid, so a move that left the
+recording behind its grid can be measured (`mapStats(p).drift`, in ms: get_project says it). `cleanProject` keeps a map exactly or drops it whole with a warning; it never repairs one into another grid.
 While a map is set `tempo` is its nominal tempo (the median segment tempo, to 0.01), `project.set { tempo }` is refused
 ("The grid follows Original. Clear the map to set a tempo."), and the map changes only through `tempo.map`.
 
@@ -191,7 +195,17 @@ handed the map's segments: `kernel/worklet.js`). Readers that want a nominal tem
 defaults) keep reading `p.tempo`. `time.insert` / `time.remove` carry the map with the recording (anchors after the
 point move by the inserted beats and the seconds the map gives them there); `section.duplicate` over the mapped span is
 refused in this slice ("This part follows a recording; copying it would break the grid"); `shiftMap(map, beats)` moves
-the grid with its recording for a whole-bar move of the conformed clip. The MIDI export writes a tempo event per
+the grid with its recording for a whole-bar move of the conformed clip (the arranger's drag: `clip.move` and
+`tempo.map` in one dispatch; the conformed clip moves by whole snap steps from where it sits, so a bar's move is a bar;
+less than a bar, or a move that doesn't carry the map, leaves the map alone). `time.insert`, `time.remove` and
+`shiftMap` carry `clipStart` too. `mapStats(p)` gives the nominal tempo, the 5th-95th percentile bar tempos, the free
+spans (past the first downbeat, more than a bar with no anchor: where the analysis heard no pulse) and the drift.
+
+In the arranger the axis stays in beats, so the bar lines stay evenly spaced and every note, section and lane keeps its
+place; what follows the map is the recording itself: an audio clip's waveform is drawn in its own seconds through the
+map, so its downbeats sit on the bar lines. Free spans are hatched in pencil over the lanes and marked "free" on the
+bar strip; the transport's tempo readout shows the nominal tempo under "Tempo, follows Original" and says why it won't
+take a tempo. The MIDI export writes a tempo event per
 segment, the DAWproject export a held tempo point per anchor (and a warp per anchor inside an audio clip).
 
 Format note: an older build opening a mapped song keeps the field (the top-level spread on load) and plays a constant
@@ -882,8 +896,9 @@ readingOps(p, result, reading, { clips }) → ops       // the grid alone: picki
 - **Sections** (`sections.js`): per-bar chroma, a 12-band log-mel timbre and level; a self-similarity matrix; Foote
   novelty with a ±8-bar checkerboard; boundaries on bar lines favouring 4 and 8 bars; repeats from the lag; named by
   the spec's rules (Intro, Verse, Chorus, Bridge, Outro, Part A…, repeats numbered). Proposals: the person renames.
-- **What the song keeps** is only the conclusions (`toOps.js`): `tempo.map` (its `clip` the conformed one), the
-  clips placed, the key, `section.add` with `key`, and the chords as block chords on a muted track named Chords. A
+- **What the song keeps** is only the conclusions (`toOps.js`): `tempo.map` (its `clip` the conformed one, and
+  `clipStart` where that clip sits on it), the clips placed (each audio clip's length its recording's seconds on the
+  new grid), the key, `section.add` with `key`, and the chords as block chords on a muted track named Chords. A
   later analyser never changes an old song.
 - **The cache** (`cache.js`): IndexedDB `overdub-analysis` (a storage name, forever), keyed by the input's SHA-256 and
   `ANALYZER_VERSION`; in memory where IndexedDB is refused.
@@ -1069,7 +1084,34 @@ named by `newPartFor`, one clip. The Timing words (`atLevel`) and the readings a
 `agent/tools.js` refuses song-changing tools with `recording`. Its keys are `ui.keys` declarations with `first: true`,
 and while it's open the studio's single keys are held under it. `app.start = { open({ kind: 'tap' | 'hum' }), close(),
 step ('play' | 'hum' | 'in' | 'readings' | null), kind, busy, tap(row, perfMs), done(), again(), setLevel(level),
-readings(), useReading(i), humNow(), humFree(), leave(), landed(), take(), on('step' | 'land' | 'close', fn) }`.
+readings(), useReading(i), humNow(), humFree(), leave(), landed(), take(), on('step' | 'land' | 'close', fn),
+choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i), back() }), pickChoice(i) }`. `choose` is the
+readings step for another flow (step `'choose'`): its rows, picking one calls `pick` (it plays), Use this one `use`,
+and Back, Esc or any other way out `back`.
+
+**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014): the
+door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
+local files only, nothing is ever fetched from a link). `importers.importFlip` decodes and labels them
+(`core/flip.js` `labelFiles`: a lone file is the original; several are stems by their names, vocal / acapella /
+voice, drums / perc, bass, other / inst, and the one matching none the original). The import is one step by `'you'`,
+"Flip: <name>" (`planFlip`): Original, then Vocals, Drums, Bass and Other, every clip at beat 0, offset 0; the vocal
+plays and the rest are muted (track mute); with no vocal stem, or with a split to come, the original plays. Then the
+chores, never modal: when the site's stems runner is on (`jobs/` `pageJobs`) and no stems were brought, its estimate
+(the graphics card's wait goes ahead; the processor's, or a machine under 8 GB, asks on the line: Split on the
+processor or Skip the split), the split, and its stems landing as their own step by the house, "Stems from <name>"
+(`planStems`: after the original, at its place, the vocal playing and the original muted). Then the analysis
+(`analyzeAudio`, in its Worker, on the stems and the mix), landing as one step by the house, "Grid, key and sections
+from <name>" (`resultToOps` on every clip of the flip, the original the conformed one), and the toast that says what
+landed ("Flip: Night Bus is in. Grid follows the recording, 95.9 BPM, drifting 94.4–97.0. Key B major. 4 sections."),
+with **Other readings**. When the analysis is unsure (`result.sure` false) the readings step opens by itself
+(`app.start.choose`): "Which one nods along with the vocal?", each reading played from the bar before its first
+downbeat with the click on; picks are `readingOps` by `'you'` joined into one step; Back undoes them (or puts the
+found grid back when something came between). The progress line is the arranger's (`syncJob` in its `frame`:
+`app.flip.line()`): one sentence ("Splitting… 40%. About 7 s on this computer's graphics card.", "Finding the
+beat…", "Marking sections…"), a hairline that fills while the split measures, and its actions (Cancel). An undo of
+the import ends the chores quietly. The analysis, its ops and the job layer load on the first flip, not with the
+studio. `app.flip = { pick(), flip(files, { split? }), line(), cancel(), readings(), busy, idle(), last(),
+useJobs(jobs) }` (`useJobs`: the tests' fake runner).
 
 **Take one** (`ui/onboard.js`, `app.onboard`): the first-run coach (hear it, take one, keep it, ask the agent, keep
 its take). Each step advances on the real event (transport, capture `add`, a kept clip by you, an agent's request or
@@ -1628,7 +1670,12 @@ AGENTS.md documents each tool in the catalog; by job:
   server's `instructions`), the voice, `NOTES_BRIEF` (notes text, drum grids, time) and one line each pointing at the
   rest. Every API call re-reads the system prompt, so what only some requests need stays a `get_guide` topic away:
   the kernel guide (`kernel/guide.js`, topic `devices`), `OPS_CHEATSHEET` + `NOTES_FORMAT` (`ops`), the lexicon
-  (`lexicon`) and the transforms' params (`transforms`); `tools/agent-test.js` caps the prompt's size and the
+  (`lexicon`), the transforms' params (`transforms`), the genres (`genres`, `agent/genres.js`) and the workflows
+  (`workflows`, `agent/workflows.js`: section `flip`, the agent's job in a flip: the chores are done, sound design is
+  its job, the drop is the person's, and `arrange_song`, `arrange_around`, `make_jam_track`, `drum_track` and
+  `suggest_riff` are never offered there); get_project's summary says a map in one line ("Grid follows Original: 68.4
+  BPM nominal, 66.9–70.2, 2 free spans; key D minor", `core/project.js` `mapLine`, with the conformed clip's drift)
+  and each section's key; `tools/agent-test.js` caps the prompt's size and the
   catalog's. The in-app agent gets `IN_APP_DESCRIPTIONS` (`agent/tools.js`) in place of a few catalog descriptions
   that would repeat its prompt. The system prompt is frozen per conversation (prompt caching); the live context
   travels in each user message.
@@ -1780,7 +1827,10 @@ studio shows the Connect tab (off, it shows only on a local studio with `?relay=
   moved onto another song. `guardDevices` moves a song's devices off built-in and house-shelf ids to `guest.<slug>` (a
   link) or `you.<slug>` (an opened file), with the tracks that use them; kernels past 256 KB stay out. History and the
   provenance report name a fork's origin.
-- **Files out** (`ui/export.js`, the Song menu, `app.exporter`): the mix (24-bit, 48 kHz WAV), stems (one WAV per
+- **Files out** (`ui/export.js`, the Song menu, `app.exporter`): the mix (24-bit, 48 kHz WAV), the release
+  (`exportRelease`: the mix rendered with a 6 s tail and trimmed by `releaseTrim` from the first sample over −90 dBFS
+  to the last, plus 50 ms; muted tracks are out because a render plays nothing muted; `measure.js` `lufs` and
+  `truePeak` in the toast: "Release: 3:41, −9.2 LUFS, peak −0.4 dBTP"), stems (one WAV per
   track, zipped, lined up by `probeLatency`), MIDI, DAWproject, the provenance report, the attribution log (JSON:
   every transaction with its author, time, label and ops) and the project file (`.overdub.json`). The mix and the
   stems render held devices as silence and pass-throughs and say so ("Left out: Tin Whistle, kept off on this

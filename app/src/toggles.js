@@ -19,8 +19,13 @@
 //   auditToggles(config, registry, { registryName }) -> { on, errors, deployOff }   pure: deploy.sh and prod-check
 //   deployDefaults() -> { [id]: 'on' }      the deploy: 'on' entries
 //
+// A toggle's life: merged off, then on for developers (?on=), then on for everyone (deploy/site-config.json) when its
+// backlog items are done or waived, then retired in a cleanup PR once it has been on a while (docs/ARCHITECTURE.md).
+//
 // No DOM at import: Node imports this (deploy.sh, the unit tests). A toggle never changes how a saved song sounds: it
-// hides only the ways to add more (nothing under core/, audio/, kernel/ or devices/registry.js reads it).
+// hides only the ways to add more (nothing under core/, audio/, kernel/ or devices/registry.js reads it). Agent tools:
+// a tool's toggle: '<id>' field (agent/tools.js runTool) and get_guide's GUIDE_TOGGLES / guidePart. Hiding an off
+// feature's devices from the Browser, Find and list_devices (a toggle on the device definition) is device.rooms's work.
 
 import { cloudOverride } from './site-config.js';
 

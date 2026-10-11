@@ -463,7 +463,7 @@ export default async function (app) {
   if (acct) {
     window.addEventListener('focus', () => { if (account() && R.state === 'on') hello(); if (account()) loadGrants({ soon: true }); });
     ui.on?.('show', (e) => { if (e?.id === 'connect' && account()) loadGrants({ soon: true }); });
-    // signing in (here, or by the link in another tab of this browser) connects; signing out stops at once
+    // signing in connects; signing out stops at once
     acct.on('state', (st) => {
       if (st === 'signed-in') { if (account() && R.enabled && (R.state === 'off')) { stop(); set('connecting'); connect(); } loadGrants(); }
       else if (st === 'signed-out' && account()) { stop(); ticket = null; R.grants = null; set('off'); }
@@ -487,7 +487,7 @@ function mountCard(el, app, R) {
     reconnecting: ['busy', 'Reconnecting…'],
     on: ['ready', 'On: waiting for Claude'],
   };
-  const A = { email: '', code: '', busy: false, error: '', confirm: null, copied: 0, copiedCmd: 0, older: false };   // the account card's own state
+  const A = { error: '', confirm: null, copied: 0, copiedCmd: 0, older: false };   // the account card's own state
   function render() {
     if (R.mode === 'account') return renderAccount();
     if (R.notice && ui.visible?.('connect')) R.seen();   // shown on screen once: gone on the next visit
@@ -518,7 +518,7 @@ function mountCard(el, app, R) {
     )));
   }
 
-  // Account mode: sign in (email, then the code), then one URL for every Claude app.
+  // Account mode: sign in with Google (a popup), then one URL for every Claude app.
   function renderAccount() {
     const acct = R.account;
     const head = (sub) => h('div.rc-title', h('span.rc-orb', icon('bolt', { size: 18 })), h('div', h('b', 'Connect to Claude'), h('span', sub)));
@@ -526,29 +526,15 @@ function mountCard(el, app, R) {
     const err = why ? h('p.rc-err', { role: 'alert' }, why) : null;
     const linkInstead = h('button.rc-rotate.rc-to-link', { onclick: () => R.setMode('link') }, 'Use a private link instead (no account)');
     if (acct.state !== 'signed-in') {
-      const inbox = acct.state === 'check-inbox';
-      const email = h('input.ew-input.rc-email', { type: 'email', placeholder: 'you@example.com', autocomplete: 'email', 'aria-label': 'Email', value: A.email, disabled: inbox || A.busy, oninput: (e) => { A.email = e.target.value; } });
-      const code = h('input.ew-input.rc-code', { inputmode: 'numeric', autocomplete: 'one-time-code', placeholder: '6-digit code', 'aria-label': 'Code from the email', value: A.code, maxlength: 12, oninput: (e) => { A.code = e.target.value; } });
-      const send = async () => {
-        A.error = ''; A.busy = true; render();
-        try { await acct.signIn(A.email, { frameHost: el.querySelector('.rc-bot-host') }); } catch (e) { A.error = e.message; }
-        A.busy = false; render();
-        el.querySelector('.rc-code')?.focus();
-      };
-      const enter = async () => {
-        A.error = ''; A.busy = true; render();
-        try { await acct.enterCode(A.email, A.code); A.code = ''; } catch (e) { A.error = e.message; }
-        A.busy = false; render();
-      };
+      const waiting = acct.state === 'waiting';
+      // the popup opens in this click (acct.signIn), before anything is awaited, or the browser blocks it
+      const go = () => { A.error = ''; acct.signIn(); render(); };
       el.replaceChildren(h('div.rc-wrap', h('div.rc-card',
         head('claude.ai, the Claude apps and Claude Code'),
         h('p.rc-p', 'Sign in to connect. A free Overdub account lets Claude find this studio from any Claude app. No card, no credits.'),
-        h('form.rc-row', { onsubmit: (e) => { e.preventDefault(); if (!inbox) send(); } }, email,
-          inbox ? null : h('button.ew-btn.ew-btn-agent.rc-send', { type: 'submit', disabled: A.busy }, A.busy ? 'Sending…' : 'Send code')),
-        h('div.rc-bot-host'),
-        inbox ? h('p.rc-p.rc-inbox', { role: 'status' }, `Check your inbox: a code is on its way to ${A.email || acct.pendingEmail}. Type it here, or open the link in this browser.`) : null,
-        inbox ? h('form.rc-row', { onsubmit: (e) => { e.preventDefault(); enter(); } }, code, h('button.ew-btn.ew-btn-agent.rc-enter', { type: 'submit', disabled: A.busy }, 'Sign in')) : null,
-        inbox ? h('button.rc-rotate', { onclick: () => { acct.cancelSignIn(); A.code = ''; render(); } }, 'Use a different email') : null,
+        waiting ? h('p.rc-p.rc-waiting', { role: 'status' }, 'Waiting for Google. Finish signing in in the window that opened; this tab notices on its own.')
+          : h('div.rc-row', h('button.ew-btn.ew-btn-agent.rc-google', { type: 'button', onclick: go }, 'Continue with Google')),
+        waiting ? h('button.rc-rotate.rc-cancel', { type: 'button', onclick: () => { acct.cancelSignIn(); render(); } }, 'Cancel') : null,
         err,
         h('div.rc-row.rc-foot', linkInstead),
       )));
@@ -670,11 +656,8 @@ const CSS = `
 .rc-rotate { background: none; border: 0; padding: 0; color: var(--text-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px; }
 .rc-rotate:hover { color: var(--text); }
 .rc-small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-email, .rc-code { flex: 1; min-width: 0; }
 .rc-cmd { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-2); padding: 6px 8px; border-radius: var(--r-2); background: var(--bg-3); overflow-x: auto; white-space: nowrap; }
 .rc-err { margin: 0; font-size: 12px; color: var(--bad, var(--warn)); }
-.rc-bot-host:empty { display: none; }
-.rc-bot-host iframe { width: 100%; height: 72px; border: 0; }
 .rc-apps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .rc-app { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--text-2); }
 .rc-app-name { min-width: 0; } .rc-app-name b { color: var(--text); font-weight: 600; } .rc-app-name .rc-small { display: block; white-space: normal; }

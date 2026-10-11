@@ -1626,7 +1626,7 @@ Browser, Find and <code>list_devices</code>, a <code>toggle</code> on a device d
 goes in <code>GUIDE_TOGGLES</code> (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
 through <code>guidePart(id, text)</code>, which is empty while off. The in-app system prompt doesn't vary with toggles.</li>
 <li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
-(<code>ui/community.js</code>, <code>site/community/community.js</code>) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
+(<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
 </ul>
 <p><strong>Add one:</strong> one entry in <code>TOGGLES</code>, off (the unit test checks the shape and the count), and <code>on('&lt;id&gt;')</code> at each way in
 (a menu item, a Browser row, a door, <code>toggle:</code> on a tool); then its entry in <code>overdub-intents</code>'s <code>toggles/TOGGLES.md</code>

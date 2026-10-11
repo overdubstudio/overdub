@@ -1733,7 +1733,7 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
   goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
-  (`ui/community.js`, `site/community/community.js`) still decide until the shelf's follow-up reads `on()` for them.
+  (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
 
 **Add one:** one entry in `TOGGLES`, off (the unit test checks the shape and the count), and `on('<id>')` at each way in
 (a menu item, a Browser row, a door, `toggle:` on a tool); then its entry in `overdub-intents`'s `toggles/TOGGLES.md`

@@ -517,7 +517,7 @@ the index only) and a Try whose dispatch failed after its allow.</li>
 <p>Instruments and effects people asked their agents for, from the community repo (<code>overdub-devices</code>), in the Browser
 under <strong>From the community</strong>. Nothing is sold, priced or rated. The spec is COMMUNITY-SHELF.md;
 SECURITY.md says what runs when. Off on the live site (<code>COMMUNITY_LIVE</code>); Try is held (<code>TRY_ON</code>) until the switch (the
-worklet's built-ins are frozen now), and a developer on localhost turns it on with localStorage <code>overdub:community-try</code> = <code>1</code>.
+worklet's realm is frozen now), and a developer on localhost turns it on with localStorage <code>overdub:community-try</code> = <code>1</code>.
 The switch is one commit that sets both flags and links the gallery; COMMUNITY-SHELF.md, &quot;Where it's on&quot;, lists what
 has to hold before it.</p>
 <ul>
@@ -566,12 +566,15 @@ checks), gets <code>dsp</code> (the stdlib, <code>kernel/dsp.js</code>) and noth
 share link, a device file or any agent, and the shadowed names are not a boundary: <code>[].constructor.constructor</code> still
 reaches the realm's <code>Function</code>. What makes it safe is where it runs: the AudioWorkletGlobalScope has no DOM, no
 localStorage (the person's songs and settings), no cookies and no network. It isn't isolated: a kernel shares the realm
-with every other device in its audio context. Before any kernel runs the processor freezes the built-ins they share
-(<code>freezeRealm</code> in <code>worklet.js</code>: <code>Object</code>, <code>Function</code>, <code>Array</code>, the typed arrays and <code>%TypedArray%</code>, <code>ArrayBuffer</code>,
-<code>MessagePort</code>, <code>Promise</code>, <code>Math</code>, <code>JSON</code> and their prototypes) and the functions' <code>constructor</code> throws, so one kernel
-can't patch what another uses; and it stamps each node's messages with the def's id (<code>processorOptions.device</code>), so
-a kernel can't report as another device. Reading the realm is still possible (an indirect <code>eval</code> reaches it; SECURITY.md
-says what stays open). The Node renderer doesn't freeze. On the main thread, <code>host.compileKernel(src)</code> is a
+with every other device in its audio context. Before any kernel runs the processor freezes that scope
+(<code>freezeRealm</code> in <code>worklet.js</code>): the global object (its bindings fixed, no new ones), every object reachable from it
+through properties and prototypes, and the intrinsics no global names (the iterator prototypes); the functions'
+<code>constructor</code> throws; and each node gets its own dsp stdlib (<code>kernelCore</code> takes a function that makes one), so its
+classes' prototypes aren't shared. One kernel can't patch what another uses. <code>kernel/processor.js</code> imports
+<code>devices/worklets/end.js</code> first, so END has wrapped <code>registerProcessor</code> before the freeze for the graph worklets that
+load later. The processor also stamps each node's messages with the def's id (<code>processorOptions.device</code>), so
+a kernel can't report as another device. Still open (SECURITY.md): reading the realm (an indirect <code>eval</code> reaches it),
+and a kernel data file two devices name, which is one writable decoded copy per context. The Node renderer doesn't freeze. On the main thread, <code>host.compileKernel(src)</code> is a
 parse only (<code>new Function</code> is built and never called) for a fast syntax error with its line; every other refusal
 (no <code>create()</code>, a bad <code>poly</code>, <code>Math.random</code> at compile time) comes back from the worklet as a compile-stage error.
 Never call <code>kernelCompiler(...).compile()</code> on the page. The Node renderer (<code>tools/render.js</code>) has no such scope: a

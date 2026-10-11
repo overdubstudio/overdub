@@ -15,7 +15,7 @@ import { analyze, pickInput, ANALYZER_VERSION } from '../app/src/audio/analyze/i
 import { resultToOps, readingOps, flipSummary } from '../app/src/audio/analyze/toOps.js';
 import { analyzeAudio } from '../app/src/audio/analyze/client.js';
 import { createAnalysisCache, inputKey } from '../app/src/audio/analyze/cache.js';
-import { checkAnchors, mapSec, parsePc } from '../app/src/core/music.js';
+import { beatToSec, checkAnchors, mapSec, parsePc } from '../app/src/core/music.js';
 import { createStore } from '../app/src/core/store.js';
 import { createProject, cleanProject } from '../app/src/core/project.js';
 import { keyOf } from '../app/src/audio/measure.js';
@@ -120,6 +120,28 @@ const flipProject = () => {
   const dbl = res.readings.find((r) => r.id === 'double');
   store.dispatch(readingOps(store.get(), res, dbl, { clips: [{ track: tid, clip: 'c_orig' }] }), { by: 'you', label: 'Twice as fast' });
   ok(store.get().tempoMap.anchors.length === dbl.anchors.length && store.get().tracks[0].clips[0].start === dbl.start && Math.abs(store.get().tempo - dbl.tempo) < 1e-9, `picking the double reading replaces the map and the placement (${store.get().tempo} BPM)`);
+  // the sections and the chords follow the grid (R27): each stays at its point in the recording, and the found grid
+  // put back puts them back exactly
+  {
+    const recSecs = (q) => { const s0 = beatToSec(q, q.tracks[0].clips[0].start); return q.sections.map((x) => beatToSec(q, x.start) - s0); };
+    const chordSecs = (q) => { const s0 = beatToSec(q, q.tracks[0].clips[0].start), c = q.tracks.find((t) => t.name === 'Chords').clips[0]; return c.notes.map((n) => beatToSec(q, c.start + n.t) - s0); };
+    store.undo();
+    const pf = store.get(), fs = recSecs(pf), fc = chordSecs(pf), barSec = (4 * 60) / dbl.tempo;
+    store.dispatch(readingOps(pf, res, dbl, { clips: [{ track: tid, clip: 'c_orig' }] }), { by: 'you', label: 'Twice as fast' });
+    const pd = store.get(), ds = recSecs(pd), dc = chordSecs(pd);
+    const worstS = Math.max(...ds.slice(1).map((x, i) => Math.abs(x - fs[i + 1]))), worstC = Math.max(...dc.map((x, i) => Math.abs(x - fc[i])));
+    ok(ds.length === fs.length && worstS <= barSec / 2 + 1e-6 && worstC <= (60 / dbl.tempo) / 2 + 0.05, `on another reading the sections and chords stay where they are in the recording (worst section ${worstS.toFixed(3)} s, within half its bar; worst chord ${worstC.toFixed(3)} s)`);
+    const found = res.readings.find((r) => r.id === 'found');
+    store.dispatch(readingOps(store.get(), res, found, { clips: [{ track: tid, clip: 'c_orig' }] }), { by: 'you', label: 'the grid as it was' });
+    const pb = store.get(), chf = (q) => JSON.stringify(q.tracks.find((t) => t.name === 'Chords').clips[0].notes.map((n) => [n.p, n.t, n.d]));
+    ok(JSON.stringify(pb.sections.map((x) => [x.name, x.start, x.length, x.key])) === JSON.stringify(pf.sections.map((x) => [x.name, x.start, x.length, x.key])) && chf(pb) === chf(pf), 'the found grid picked again puts the sections, their keys and the chords back exactly');
+    // a section the person moved goes by its seconds
+    store.dispatch([{ type: 'section.set', section: pb.sections[2].id, patch: { start: pb.sections[2].start + 4 } }], { by: 'you' });
+    const pe = store.get(), es = recSecs(pe);
+    store.dispatch(readingOps(pe, res, dbl, { clips: [{ track: tid, clip: 'c_orig' }] }), { by: 'you' });
+    const moved = recSecs(store.get());
+    ok(Math.abs(moved[2] - es[2]) <= barSec / 2 + 1e-6, `a section the person moved keeps its point in the recording too (${es[2].toFixed(2)} s -> ${moved[2].toFixed(2)} s)`);
+  }
   // a reading's own sections: on another grid the times go to that grid's bar lines
   const store2 = flipProject();
   store2.dispatch(resultToOps(store2.get(), res, 'double', { clips: [{ track: store2.get().tracks[0].id, clip: 'c_orig' }] }), { by: 'overdub' });

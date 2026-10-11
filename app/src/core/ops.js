@@ -8,7 +8,7 @@
 // References: ops that create things accept `ref: 'name'`; later ops in the SAME transaction can name the new thing
 // as '$name' (track: '$bass', clip: '$verse1'). ctx.refs holds them.
 
-import { normTrack, normClip, normInsert, normKey, idNotes, sortNotes, newId, isValidReference, isTakeId, LIMITS, plainText, cleanName, isColor, NAME_MAX, TITLE_MAX, normTempoMap } from './project.js';
+import { normTrack, normClip, normInsert, normKey, idNotes, sortNotes, newId, isValidReference, isTakeId, LIMITS, plainText, cleanName, isColor, NAME_MAX, TITLE_MAX, normTempoMap, isSectionKey } from './project.js';
 import { parseNotes, parseGrid, normNote, validMeter, isPlace, mapNominal } from './music.js';
 import { TUNING_IDS } from './fretboard.js';
 import { ARRANGEMENT_OPS } from './arrangement.js';
@@ -707,6 +707,7 @@ export const OPS = {
     const s = op.section || {};
     const sec = { id: s.id || newId('s'), name: sectionName(s.name), start: Math.max(0, Number(s.start) || 0), length: Math.max(1, Number(s.length) || 16) };
     if (isColor(s.color)) sec.color = s.color;
+    if (s.key != null) { if (!isSectionKey(s.key)) throw new Error('a section key is a key\'s name, like "F# minor" or "Bb major"'); sec.key = plainText(s.key); }
     p.sections.push(sec);
     p.sections.sort(byStart);
     if (op.ref) ctx.refs[op.ref] = sec.id;
@@ -719,7 +720,8 @@ export const OPS = {
     const inv = {};
     const patch = op.patch || {};
     for (const [k, v] of Object.entries(patch)) {
-      if (!['name', 'start', 'length', 'color'].includes(k)) throw new Error(`section.set can't change "${k}" (name, start, length, color)`);
+      if (!['name', 'start', 'length', 'color', 'key'].includes(k)) throw new Error(`section.set can't change "${k}" (name, start, length, color, key)`);
+      if (k === 'key' && v !== null && !isSectionKey(v)) throw new Error('a section key is a key\'s name, like "F# minor" or "Bb major" (null clears it)');
       if (k === 'start' && !(fin(v) && v >= 0)) throw new Error('start must be a number >= 0');
       if (k === 'length' && !(fin(v) && v > 0)) throw new Error('length must be a number of beats > 0');
       if (k === 'name') checkName(v);
@@ -727,7 +729,7 @@ export const OPS = {
     }
     for (const [k, v] of Object.entries(patch)) {
       inv[k] = sec[k] === undefined ? null : sec[k];
-      if (v === null) delete sec[k]; else sec[k] = k === 'name' ? plainText(v) : v;
+      if (v === null) delete sec[k]; else sec[k] = k === 'name' || k === 'key' ? plainText(v) : v;
     }
     p.sections.sort(byStart);
     return { inverse: [{ type: 'section.set', section: sec.id, patch: inv }] };

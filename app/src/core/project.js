@@ -107,6 +107,9 @@ const textName = (v, fallback) => (typeof v === 'string' && v ? v : typeof v ===
 // it. Every other character stays as it was written.
 const UNSEEN = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 export const plainText = (s) => String(s).replace(UNSEEN, '');
+// A section's own key (optional, forever): a key's name as people write it, "F# minor", "Bb major" (the analysis of an
+// imported song sets it where a section leaves the song's key). Anything else is no key.
+export const isSectionKey = (k) => typeof k === 'string' && /^[A-G][#b]? [a-z]+$/.test(plainText(k)) && k.length <= 24;
 // The longest name a track, clip, section, marker, device or preset can have (the longest the studio ships is a
 // guitar rig's 24 characters; the importers and the rename fields stop at 32 to 80), and a title (project.set's limit).
 export const NAME_MAX = 100;
@@ -364,7 +367,7 @@ export function cleanProject(p, { warn = null } = {}) {
   out.loop = { ...base.loop, ...(isObj(p.loop) ? p.loop : {}) };
   // (a loaded note the studio can't place is left out; the ops read theirs through music.js normNote)
   out.tracks = objs(p.tracks).map((t, i) => { const nt = normTrack(t, i); for (const c of nt.clips) if (c.kind === 'notes') { c.notes = c.notes.filter(playable); idNotes(c); } return nt; });
-  out.sections = objs(p.sections).map((s) => ({ id: s.id || newId('s'), name: cleanName(s.name, 'Section'), start: finite(s.start), length: finite(s.length) || 16, ...(isColor(s.color) ? { color: s.color } : {}) }));
+  out.sections = objs(p.sections).map((s) => ({ id: s.id || newId('s'), name: cleanName(s.name, 'Section'), start: finite(s.start), length: finite(s.length) || 16, ...(isColor(s.color) ? { color: s.color } : {}), ...(isSectionKey(s.key) ? { key: plainText(s.key) } : {}) }));
   // (in the order the ops keep: by start, then id, so the first edit and its undo don't reshuffle ties)
   const byStart = (x, y) => x.start - y.start || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
   for (const t of out.tracks) t.clips.sort(byStart);

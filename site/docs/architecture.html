@@ -49,7 +49,7 @@
 <li><a href="#ops-and-the-store">Ops and the store</a></li>
 <li><a href="#devices">Devices</a><ol><li><a href="#who-runs-a-songs-code-devicestrustjs">Who runs a song's code (devices/trust.js)</a></li><li><a href="#the-community-shelf-uicommunityjs-devicescommunityjs">The community shelf (ui/community.js, devices/community.js)</a></li><li><a href="#instance">Instance</a></li><li><a href="#kernels-the-format-agents-write">Kernels (the format agents write)</a></li></ol></li>
 <li><a href="#the-engine">The engine</a><ol><li><a href="#the-canonical-render-and-the-preview">The canonical render and the preview</a></li></ol></li>
-<li><a href="#the-ears-audiomeasurejs">The ears (audio/measure.js)</a></li>
+<li><a href="#the-ears-audiomeasurejs">The ears (audio/measure.js)</a><ol><li><a href="#the-analysis-audioanalyze">The analysis (audio/analyze/)</a></li></ol></li>
 <li><a href="#the-ui">The UI</a><ol><li><a href="#device-windows-uipluginjs-appplugin">Device windows (ui/plugin.js, app.plugin)</a></li><li><a href="#the-jam-room-uijamjs-appjam">The Jam room (ui/jam.js, app.jam)</a></li><li><a href="#the-transport-uitransportjs-apptransport">The transport (ui/transport.js, app.transport)</a></li><li><a href="#lanes-in-the-arranger-uilanesjs-apparranger">Lanes in the arranger (ui/lanes.js, app.arranger)</a></li><li><a href="#tokens-appstyletokenscss-names-fixed-values-are-the-brands">Tokens (app/style/tokens.css; names fixed, values are the brand's)</a></li></ol></li>
 <li><a href="#capture-and-bringing-material-in">Capture and bringing material in</a></li>
 <li><a href="#the-agent-layer">The agent layer</a></li>
@@ -61,7 +61,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 114 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 118 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -120,6 +120,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
                          kernel in a child process), fallback.js, assets.js (audio in IndexedDB), clock.js   [engine]
   app/src/audio/         measure.js (the ears: LUFS, true peak, spectrum...), testsignals.js            [dsp]
+                         analyze/ (Flip a song's chores: beats, the tempo map and its readings, tuning, key,
+                         chords, sections; a Worker, the overdub-analysis cache, resultToOps)       [analyze]
   app/src/devices/       registry.js (fixed), trust.js (which song devices run here), graph.js + kit.js (graph devices:
                          bypass, glide, the PFX kit), worklets/ (the kit's END and envelope follower modules),
                          guitar/ (ported pedals, amps, cabs, rigs)                                     [guitar]
@@ -187,7 +189,7 @@ module via <code>css(id, text)</code> from <code>ui/dom.js</code>, using the tok
   tempoMap?: { anchors: [{ beat, sec }], clip? },        <span class="c">// the grid follows a recording (below); tempo is its nominal</span>
   loop: { on: false, start: 0, end: 16 },               <span class="c">// beats</span>
   tracks: [Track],
-  sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color? }],
+  sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color?, key? }],   <span class="c">// key: the section's own key (&quot;F# minor&quot;), forever, optional</span>
   devices: { [id]: DeviceSource },                       <span class="c">// devices written in this project (kernels), travel with it</span>
   assets: { [id]: { kind: 'audio', name, sr, channels, duration } },   <span class="c">// the samples live in IndexedDB (engine/assets.js)</span>
   master: { gain: 0, inserts: [Insert], auto?: { gain?: Lane } },   <span class="c">// gain in dB</span>
@@ -363,8 +365,8 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>notes.set</code></td><td><code>track</code>, <code>clip</code>, <code>notes: [{ id, p?, t?, d?, v?, s?, f? }]</code> (<code>s</code> and <code>f</code> together, the note's place on the neck; <code>s: null</code> clears it)</td></tr>
 <tr><td><code>notes.replace</code></td><td><code>track</code>, <code>clip</code>, <code>notes: [Note] | &quot;text&quot;</code> (or <code>grid</code>)</td></tr>
 <tr><td><code>notes.restore</code></td><td>internal: the inverse of <code>notes.remove</code> (puts notes back with their ids); not in <code>OP_TYPES</code></td></tr>
-<tr><td><code>section.add</code></td><td><code>section: { name, start, length, color? }</code>, <code>ref?</code></td></tr>
-<tr><td><code>section.set</code> / <code>section.remove</code></td><td><code>section</code> (object, id or name), <code>patch: { name?, start?, length?, color? }</code></td></tr>
+<tr><td><code>section.add</code></td><td><code>section: { name, start, length, color?, key? }</code>, <code>ref?</code> (<code>key</code>: the section's own key's name, <code>&quot;F# minor&quot;</code>)</td></tr>
+<tr><td><code>section.set</code> / <code>section.remove</code></td><td><code>section</code> (object, id or name), <code>patch: { name?, start?, length?, color?, key? }</code></td></tr>
 <tr><td><code>section.duplicate</code></td><td><code>section</code>, <code>to?</code> (beats; default right after it), <code>push?</code> (make room there first), <code>ref?</code></td></tr>
 <tr><td><code>time.insert</code> / <code>time.remove</code></td><td><code>at</code>, <code>length</code> (beats, across the whole song: clips, sections, the loop, the tempo map)</td></tr>
 <tr><td><code>tempo.map</code></td><td><code>map: { anchors: [{ beat, sec }], clip? } | null</code>, <code>tempo?</code> (sets or clears the tempo map; set, <code>tempo</code> becomes its nominal; cleared, the grid plays at <code>tempo</code> if given, else the nominal it had. The inverse restores both exactly)</td></tr>
@@ -802,6 +804,52 @@ loudness and true peak, a drop's short-term loudness, crest, low-end mono-ness a
 first. <code>render_and_measure { targets }</code> puts them in words for an agent.</p>
 <p>Bands: sub &lt; 60 Hz, low 60-250, low-mid 250-500, mid 500-2k, high-mid 2-4k, presence 4-8k, air &gt; 8k. dB values never
 go below −120, so results survive JSON. Pure JS: it runs in Node (the bench, the canonical render) and the browser.</p>
+<h3 id="the-analysis-audioanalyze"><a class="h-link" href="#the-analysis-audioanalyze">The analysis (<code>audio/analyze/</code>)</a></h3>
+<p>What Flip a song (spec 0014) does to a recording once it is in: the chores. Pure JS, zero dependencies,
+deterministic (Float64, fixed order, no <code>Math.random</code>): the same input gives byte-identical JSON in Node and in a
+Worker, which is where the studio runs it (<code>client.js</code> → <code>worker.js</code>), so nothing waits on it.</p>
+<div class="code" data-lang="js"><pre><code>analyze({ sr, mix?, stems?: { vocals?, drums?, bass?, other? } }, { onProgress? }) → {
+  version: ANALYZER_VERSION, input: 'drums' | 'stems' | 'mix' | 'vocals', lowConfidence, sure, why: [...],
+  bpb, tempo, beats: [s], free: [[t0, t1]], tuning /* cents */, key: { root, scale, name },
+  readings: [{ id: 'found' | 'double' | 'half' | 'downbeat' | 'twothirds', why, tempo, bpb, start, off, anchors }],
+  chords: [{ start, end, t0, t1, root, quality, name }], sections: [{ name, start, length, t0, t1, key? }],
+}
+analyzeAudio(input, { onProgress, signal, cache }) → Promise&lt;{ result, key, cached, ms }&gt;   <span class="c">// client.js</span>
+resultToOps(p, result, reading, { clips }) → ops      <span class="c">// toOps.js: what the song keeps (house-signed, one step)</span>
+readingOps(p, result, reading, { clips }) → ops       <span class="c">// the grid alone: picking another reading</span></code></pre></div>
+<ul>
+<li><strong>Inputs, in order.</strong> The beat from the drum stem, else the non-vocal stems summed, else the mix; the vocal alone only
+when nothing else exists, and then the result is low confidence. The harmony from the bass and other stems (else the
+mix). Everything is downmixed and resampled to 22,050 Hz (<code>resample.js</code>); chroma reads 11,025 Hz and the bass
+2,756.25 Hz.</li>
+<li><strong>Beats</strong> (<code>onset.js</code>, <code>tempo.js</code>, <code>beats.js</code>): log spectral flux in four bands (STFT 2,048 / hop 256); a tempogram
+(8 s windows every 1 s, 50–220 BPM, a log-Gaussian prior at 120) whose period is a Viterbi path over the windows;
+Ellis's dynamic-programming beats held to that period; each beat moved onto its attack; a median and a two-bar line
+through the intervals. Where the tempogram's salience is low or the beats have nothing under them the time is
+<strong>free</strong>: no beats, no anchors, the grid straight between its neighbours.</li>
+<li><strong>Downbeats and the map</strong> (<code>downbeats.js</code>, <code>map.js</code>): the kick, the snare and the harmony's change at each beat,
+scored by the tap door's weights (<code>input/rounds.js</code> <code>accentScore</code>), a Viterbi over the bar phase, 3/4 when the
+accents repeat in threes. One anchor a downbeat, placed by the spec's rule: the recording starts at beat
+<code>bpb·k − d/s</code> (offset 0), its first downbeat <code>d</code> on a bar line, and the map's first segment runs at the first bar's
+tempo. The <strong>readings</strong> are whole maps too: double, half, the other downbeat, and two thirds when the pulse is in
+threes. <code>sure</code> is false (show them) when the 1 is unclear, the half or double tempo scores close, most of the
+recording is free, or only a vocal was read.</li>
+<li><strong>Key and chords</strong> (<code>chroma.js</code>, <code>key.js</code>, <code>chords.js</code>): tuning first (a histogram of peaks' cents off A440), then
+treble and bass chroma pooled to half bars on the map, read by <code>core/jam.js</code>'s own recogniser (<code>chordViterbi</code>,
+limited to maj, min, 5 and 7); the key from <code>measure.js</code> <code>keyOf</code> with Temperley's profiles, checked against the
+chords (mostly diatonic) and between relatives by the tonic the chords lean on. A section gets its own key only
+when it beats the song's by a margin.</li>
+<li><strong>Sections</strong> (<code>sections.js</code>): per-bar chroma, a 12-band log-mel timbre and level; a self-similarity matrix; Foote
+novelty with a ±8-bar checkerboard; boundaries on bar lines favouring 4 and 8 bars; repeats from the lag; named by
+the spec's rules (Intro, Verse, Chorus, Bridge, Outro, Part A…, repeats numbered). Proposals: the person renames.</li>
+<li><strong>What the song keeps</strong> is only the conclusions (<code>toOps.js</code>): <code>tempo.map</code> (its <code>clip</code> the conformed one), the
+clips placed, the key, <code>section.add</code> with <code>key</code>, and the chords as block chords on a muted track named Chords. A
+later analyser never changes an old song.</li>
+<li><strong>The cache</strong> (<code>cache.js</code>): IndexedDB <code>overdub-analysis</code> (a storage name, forever), keyed by the input's SHA-256 and
+<code>ANALYZER_VERSION</code>; in memory where IndexedDB is refused.</li>
+<li><strong>Measured</strong> by <code>tools/beat-bench.js</code> on seeded synthetic songs (<code>tools/fake-song.js</code>), its gates asserted by
+<code>tools/analyze-test.js</code>; <code>--dir</code> scores your own records locally and never commits them.</li>
+</ul>
 <h2 id="the-ui"><a class="h-link" href="#the-ui">The UI</a></h2>
 <p><code>app/src/ui/shell.js</code> lays out regions and owns the one animation loop and the key handler:</p>
 <div class="code"><pre><code>top     transport bar and the Song menu; then the workspace's note and Find anything (div.ew-ws; with the agent
@@ -1612,12 +1660,13 @@ the rest. Audio starts on the first gesture. URL switches: <code>?new</code>, <c
 <h2 id="testing"><a class="h-link" href="#testing">Testing</a></h2>
 <p><code>tools/pw.js</code> opens the studio in Chromium (WebKit and Firefox too, for <code>compat-test</code> and <code>phone-test</code>) on its own
 server on a free port (<code>open('/app/')</code>), with fake media and autoplay allowed, so suites run in parallel. The fake mic plays a file
-(<code>open(…, { fakeAudio })</code>): <code>tools/fake-wav.js</code> writes the ones the checks use (a hummed line, a beatbox). Each area
+(<code>open(…, { fakeAudio })</code>): <code>tools/fake-wav.js</code> writes the ones the checks use (a hummed line, a beatbox; <code>fakeSong</code>, a whole band with its beats, chords and sections known). Each area
 adds <code>tools/&lt;area&gt;-test.js</code> that prints <code>ok</code>/<code>FAIL</code> lines and exits 1 on failure; fail on page errors (<code>errors</code> from
 <code>open</code>). Screenshots go to <code>tools/.out/</code>. <code>node tools/run-all.js</code> runs every suite (<code>PAR=3</code> at a time by default) and
 leaves its totals in <code>tools/.out/run-all.json</code>, which <code>tools/pages-test.js</code> holds the public check count to.
 Benchmarks that aren't gates: <code>tools/perf-check.js</code>, <code>tools/hum-bench.js</code>, OverdubBench (<code>tools/bench/</code>, BENCH.md),
-and <code>tools/prod-check.js</code> against the live site.</p>
+and <code>tools/prod-check.js</code> against the live site. <code>tools/beat-bench.js</code> is a gate on its synthetic songs (through
+<code>analyze-test</code>) and a local scorer on real records (<code>--dir</code>), whose audio is never committed.</p>
     </article>
     <nav class="pager" aria-label="Next and previous">
       <a class="pager-prev" href="remote-mcp.html"><small>Previous</small>Remote MCP</a>

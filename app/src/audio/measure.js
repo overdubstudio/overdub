@@ -317,18 +317,25 @@ function pearson(a, b) {
   let num = 0, da = 0, db = 0; for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; num += x * y; da += x * x; db += y * y; }
   return da > 0 && db > 0 ? num / Math.sqrt(da * db) : 0;
 }
+// Temperley's (Kostka-Payne) profiles: flatter on the tonic, firmer on the scale; better on chords than on lines.
+const TP_MAJOR = [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0];
+const TP_MINOR = [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0];
 // Krumhansl-Schmuckler: correlate the chroma with the 24 rotated key profiles. confidence = the best correlation
-// (0..1); `alt` is the runner up (often the relative major/minor).
-export function keyOf(chromaVec) {
+// (0..1); `alt` is the runner up (often the relative major/minor). profile: 'krumhansl' (the default, what measure()
+// reports) or 'temperley' (the audio analysis, audio/analyze/key.js). all: true adds every key's correlation, best first.
+export function keyOf(chromaVec, { profile = 'krumhansl', all: wantAll = false } = {}) {
   if (!chromaVec) return null;
   const all = [];
-  for (let root = 0; root < 12; root++) for (const [scale, prof] of [['major', KS_MAJOR], ['minor', KS_MINOR]]) {
+  const [MAJ, MIN] = profile === 'temperley' ? [TP_MAJOR, TP_MINOR] : [KS_MAJOR, KS_MINOR];
+  for (let root = 0; root < 12; root++) for (const [scale, prof] of [['major', MAJ], ['minor', MIN]]) {
     const rot = prof.map((_, i) => prof[(i - root + 12) % 12]);
     all.push({ root: NAMES[root], scale, r: pearson(chromaVec, rot) });
   }
   all.sort((a, b) => b.r - a.r);
   const [best, alt] = all;
-  return { root: best.root, scale: best.scale, confidence: r2(Math.max(0, best.r)), alt: { root: alt.root, scale: alt.scale, confidence: r2(Math.max(0, alt.r)) } };
+  const out = { root: best.root, scale: best.scale, confidence: r2(Math.max(0, best.r)), alt: { root: alt.root, scale: alt.scale, confidence: r2(Math.max(0, alt.r)) } };
+  if (wantAll) out.all = all;
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------- measure

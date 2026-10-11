@@ -60,6 +60,8 @@ overdub/
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
                          kernel in a child process), fallback.js, assets.js (audio in IndexedDB), clock.js   [engine]
   app/src/audio/         measure.js (the ears: LUFS, true peak, spectrum...), testsignals.js            [dsp]
+                         analyze/ (Flip a song's chores: beats, the tempo map and its readings, tuning, key,
+                         chords, sections; a Worker, the overdub-analysis cache, resultToOps)       [analyze]
   app/src/devices/       registry.js (fixed), trust.js (which song devices run here), graph.js + kit.js (graph devices:
                          bypass, glide, the PFX kit), worklets/ (the kit's END and envelope follower modules),
                          guitar/ (ported pedals, amps, cabs, rigs)                                     [guitar]
@@ -134,7 +136,7 @@ Project = {
   tempoMap?: { anchors: [{ beat, sec }], clip? },        // the grid follows a recording (below); tempo is its nominal
   loop: { on: false, start: 0, end: 16 },               // beats
   tracks: [Track],
-  sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color? }],
+  sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color?, key? }],   // key: the section's own key ("F# minor"), forever, optional
   devices: { [id]: DeviceSource },                       // devices written in this project (kernels), travel with it
   assets: { [id]: { kind: 'audio', name, sr, channels, duration } },   // the samples live in IndexedDB (engine/assets.js)
   master: { gain: 0, inserts: [Insert], auto?: { gain?: Lane } },   // gain in dB
@@ -333,8 +335,8 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `notes.set` | `track`, `clip`, `notes: [{ id, p?, t?, d?, v?, s?, f? }]` (`s` and `f` together, the note's place on the neck; `s: null` clears it) |
 | `notes.replace` | `track`, `clip`, `notes: [Note] \| "text"` (or `grid`) |
 | `notes.restore` | internal: the inverse of `notes.remove` (puts notes back with their ids); not in `OP_TYPES` |
-| `section.add` | `section: { name, start, length, color? }`, `ref?` |
-| `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color? }` |
+| `section.add` | `section: { name, start, length, color?, key? }`, `ref?` (`key`: the section's own key's name, `"F# minor"`) |
+| `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color?, key? }` |
 | `section.duplicate` | `section`, `to?` (beats; default right after it), `push?` (make room there first), `ref?` |
 | `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop, the tempo map) |
 | `tempo.map` | `map: { anchors: [{ beat, sec }], clip? } \| null`, `tempo?` (sets or clears the tempo map; set, `tempo` becomes its nominal; cleared, the grid plays at `tempo` if given, else the nominal it had. The inverse restores both exactly) |
@@ -834,6 +836,56 @@ first. `render_and_measure { targets }` puts them in words for an agent.
 
 Bands: sub < 60 Hz, low 60-250, low-mid 250-500, mid 500-2k, high-mid 2-4k, presence 4-8k, air > 8k. dB values never
 go below −120, so results survive JSON. Pure JS: it runs in Node (the bench, the canonical render) and the browser.
+
+### The analysis (`audio/analyze/`)
+
+What Flip a song (spec 0014) does to a recording once it is in: the chores. Pure JS, zero dependencies,
+deterministic (Float64, fixed order, no `Math.random`): the same input gives byte-identical JSON in Node and in a
+Worker, which is where the studio runs it (`client.js` → `worker.js`), so nothing waits on it.
+
+```js
+analyze({ sr, mix?, stems?: { vocals?, drums?, bass?, other? } }, { onProgress? }) → {
+  version: ANALYZER_VERSION, input: 'drums' | 'stems' | 'mix' | 'vocals', lowConfidence, sure, why: [...],
+  bpb, tempo, beats: [s], free: [[t0, t1]], tuning /* cents */, key: { root, scale, name },
+  readings: [{ id: 'found' | 'double' | 'half' | 'downbeat' | 'twothirds', why, tempo, bpb, start, off, anchors }],
+  chords: [{ start, end, t0, t1, root, quality, name }], sections: [{ name, start, length, t0, t1, key? }],
+}
+analyzeAudio(input, { onProgress, signal, cache }) → Promise<{ result, key, cached, ms }>   // client.js
+resultToOps(p, result, reading, { clips }) → ops      // toOps.js: what the song keeps (house-signed, one step)
+readingOps(p, result, reading, { clips }) → ops       // the grid alone: picking another reading
+```
+
+- **Inputs, in order.** The beat from the drum stem, else the non-vocal stems summed, else the mix; the vocal alone only
+  when nothing else exists, and then the result is low confidence. The harmony from the bass and other stems (else the
+  mix). Everything is downmixed and resampled to 22,050 Hz (`resample.js`); chroma reads 11,025 Hz and the bass
+  2,756.25 Hz.
+- **Beats** (`onset.js`, `tempo.js`, `beats.js`): log spectral flux in four bands (STFT 2,048 / hop 256); a tempogram
+  (8 s windows every 1 s, 50–220 BPM, a log-Gaussian prior at 120) whose period is a Viterbi path over the windows;
+  Ellis's dynamic-programming beats held to that period; each beat moved onto its attack; a median and a two-bar line
+  through the intervals. Where the tempogram's salience is low or the beats have nothing under them the time is
+  **free**: no beats, no anchors, the grid straight between its neighbours.
+- **Downbeats and the map** (`downbeats.js`, `map.js`): the kick, the snare and the harmony's change at each beat,
+  scored by the tap door's weights (`input/rounds.js` `accentScore`), a Viterbi over the bar phase, 3/4 when the
+  accents repeat in threes. One anchor a downbeat, placed by the spec's rule: the recording starts at beat
+  `bpb·k − d/s` (offset 0), its first downbeat `d` on a bar line, and the map's first segment runs at the first bar's
+  tempo. The **readings** are whole maps too: double, half, the other downbeat, and two thirds when the pulse is in
+  threes. `sure` is false (show them) when the 1 is unclear, the half or double tempo scores close, most of the
+  recording is free, or only a vocal was read.
+- **Key and chords** (`chroma.js`, `key.js`, `chords.js`): tuning first (a histogram of peaks' cents off A440), then
+  treble and bass chroma pooled to half bars on the map, read by `core/jam.js`'s own recogniser (`chordViterbi`,
+  limited to maj, min, 5 and 7); the key from `measure.js` `keyOf` with Temperley's profiles, checked against the
+  chords (mostly diatonic) and between relatives by the tonic the chords lean on. A section gets its own key only
+  when it beats the song's by a margin.
+- **Sections** (`sections.js`): per-bar chroma, a 12-band log-mel timbre and level; a self-similarity matrix; Foote
+  novelty with a ±8-bar checkerboard; boundaries on bar lines favouring 4 and 8 bars; repeats from the lag; named by
+  the spec's rules (Intro, Verse, Chorus, Bridge, Outro, Part A…, repeats numbered). Proposals: the person renames.
+- **What the song keeps** is only the conclusions (`toOps.js`): `tempo.map` (its `clip` the conformed one), the
+  clips placed, the key, `section.add` with `key`, and the chords as block chords on a muted track named Chords. A
+  later analyser never changes an old song.
+- **The cache** (`cache.js`): IndexedDB `overdub-analysis` (a storage name, forever), keyed by the input's SHA-256 and
+  `ANALYZER_VERSION`; in memory where IndexedDB is refused.
+- **Measured** by `tools/beat-bench.js` on seeded synthetic songs (`tools/fake-song.js`), its gates asserted by
+  `tools/analyze-test.js`; `--dir` scores your own records locally and never commits them.
 
 ## The UI
 
@@ -1723,9 +1775,10 @@ analytics, plugin, jam, site }` plus the panels that publish an API (`arranger`,
 
 `tools/pw.js` opens the studio in Chromium (WebKit and Firefox too, for `compat-test` and `phone-test`) on its own
 server on a free port (`open('/app/')`), with fake media and autoplay allowed, so suites run in parallel. The fake mic plays a file
-(`open(…, { fakeAudio })`): `tools/fake-wav.js` writes the ones the checks use (a hummed line, a beatbox). Each area
+(`open(…, { fakeAudio })`): `tools/fake-wav.js` writes the ones the checks use (a hummed line, a beatbox; `fakeSong`, a whole band with its beats, chords and sections known). Each area
 adds `tools/<area>-test.js` that prints `ok`/`FAIL` lines and exits 1 on failure; fail on page errors (`errors` from
 `open`). Screenshots go to `tools/.out/`. `node tools/run-all.js` runs every suite (`PAR=3` at a time by default) and
 leaves its totals in `tools/.out/run-all.json`, which `tools/pages-test.js` holds the public check count to.
 Benchmarks that aren't gates: `tools/perf-check.js`, `tools/hum-bench.js`, OverdubBench (`tools/bench/`, BENCH.md),
-and `tools/prod-check.js` against the live site.
+and `tools/prod-check.js` against the live site. `tools/beat-bench.js` is a gate on its synthetic songs (through
+`analyze-test`) and a local scorer on real records (`--dir`), whose audio is never committed.

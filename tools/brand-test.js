@@ -288,6 +288,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   const BRAND = ['Archivo', 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible Mono'];
   const PAGES = [['the studio', '/app/?demo', BRAND, 'html[data-ready="1"]'], ['the landing page', '/', BRAND, null], ['a docs page', '/site/docs/guide.html', BRAND, null],
     ['the device faces (gallery)', '/app/gallery.html?only=pedal.quack,amp.punk,core.keys', ['Rubik Dirt', 'Silkscreen', 'Atkinson Hyperlegible Next'], null]];
+  // the studio fetches some 250 modules before its fonts (main had them at entries 247-249), and a browser keeps only
+  // 250 resource timings by default and drops the rest, so the font files went missing from the list, not the page:
+  // room for every entry on each page, and a full buffer is a failure of this check rather than a quiet miss
+  await page.addInitScript(() => performance.setResourceTimingBufferSize(5000));
   const off = [];
   page.on('request', (r) => { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol) && u.host !== new URL(base).host) off.push(u.host); });
   for (const [what, route, want, ready] of PAGES) {
@@ -300,10 +304,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
       await document.fonts.ready;
       const name = (x) => String(x.family).replace(/^["']|["']$/g, '');
       const loaded = [...new Set([...document.fonts].filter((x) => x.status === 'loaded').map(name))];
-      const files = performance.getEntriesByType('resource').filter((e) => /\.woff2(\?|$)/.test(e.name)).map((e) => e.name);
-      return { missing: want.filter((w) => !loaded.includes(w)), loaded, files, foreign: files.filter((u) => !u.startsWith(location.origin + '/app/style/fonts/')) };
+      const all = performance.getEntriesByType('resource'), files = all.filter((e) => /\.woff2(\?|$)/.test(e.name)).map((e) => e.name);
+      return { full: all.length >= 5000, missing: want.filter((w) => !loaded.includes(w)), loaded, files, foreign: files.filter((u) => !u.startsWith(location.origin + '/app/style/fonts/')) };
     }, want);
-    T.ok(!f.missing.length && f.files.length && !f.foreign.length, `${what}: ${want.join(', ')} loaded, from ${f.files.length - f.foreign.length} font files in /app/style/fonts/${f.missing.length ? '; not loaded: ' + f.missing.join(', ') : ''}${f.foreign.length ? `; ${f.foreign.length} from elsewhere: ${f.foreign.slice(0, 2).join(', ')}` : ''}`);
+    T.ok(!f.full && !f.missing.length && f.files.length && !f.foreign.length, `${what}: ${want.join(', ')} loaded, from ${f.files.length - f.foreign.length} font files in /app/style/fonts/${f.full ? ' (the resource timing buffer filled, so some files may be missing from the count)' : ''}${f.missing.length ? '; not loaded: ' + f.missing.join(', ') : ''}${f.foreign.length ? `; ${f.foreign.length} from elsewhere: ${f.foreign.slice(0, 2).join(', ')}` : ''}`);
     if (route.startsWith('/app/?demo')) {
       // the top bar's title fits itself once the bar settles, however early the fonts arrive (this is the page's second
       // load, so they're quick: with the faces in before the bar settled, "Night Shift" used to stay cut at 18 px)

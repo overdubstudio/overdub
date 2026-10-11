@@ -10,13 +10,12 @@
 //    app/src/engine/node/render.js to the SHA-256 tools/golden.json pins, twice the same.
 // 2. The browser's OfflineAudioContext render (engine/render.js, the studio's preview) of each kernel-only scene
 //    matches the Node render within -90 dBFS, sample for sample (tools/pw.js). A scene marked `exact: true` (Echo
-//    Chamber's, whose numbers never pass through Math.exp or sin) is held bit for bit: its effect, run by Chromium's
-//    AudioWorklet and by Node's KernelCore on the scene's own input and params, must give the same samples, every
-//    one; any that differs FAILs it and the difference is printed (how many, the worst, the first). The whole scene is
-//    held to -90 dB like the rest and its differing samples are counted: the house's song path after the effect
-//    moves a few hundred samples by one step of 2^-20 in Stairwell's scene too, from the same first one (most likely the
-//    master's safety soft clip, Chrome's WaveShaper as render.js computes it: a scene whose effect passes its input
-//    unchanged is bit-identical), and changing that would move old scenes (spec 0006 R34/R35: reported to AJ).
+//    Chamber's, whose numbers never pass through Math.exp or sin) is held bit for bit (spec 0006 R34, nothing
+//    relaxed): its effect, run by Chromium's AudioWorklet and by Node's KernelCore on the scene's own input and
+//    params, and the whole scene through the song path must each give the same samples, every one; any that differs
+//    FAILs it and the difference is printed (how many, the worst, the first). The house's one known last-bit
+//    difference on these scenes is an audio clip's 3 ms fade-in (Chrome's linear ramp against render.js's clipVoice:
+//    measured, 41 of its 144 frames on the DI strum); golden-scenes.js starts the strum after it.
 //
 // THE RULE: golden.json is never regenerated casually. A hash that moves means the sound moved. Regenerate a scene only
 // when a change to that sound is intended (a device's DSP was changed on purpose, a new scene was added), regenerate
@@ -228,7 +227,8 @@ if (process.env.NODE_ONLY || updating !== undefined) {
         let dd = 0, dw = 0, df = null;
         for (const [a, b, c] of [[dch[0], nL, 0], [dch[1], nR, 1]]) for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) { dd++; const d = Math.abs(a[i] - b[i]); if (d > dw) dw = d; if (!df || i < df.i) df = { c, i, browser: a[i], node: b[i] }; }
         t.ok(!dd && !dev.errors.length && dev.data === 'ready', `${s.name}: the effect is bit-identical in Chromium's worklet and Node's KernelCore (exact; ${(x.length / 48000).toFixed(0)} s, bank ${dev.data})${dd ? ': ' + dd + ' samples differ, worst ' + fmtDb(dbfs(dw)) + ' dBFS, the first at frame ' + df.i + ' (channel ' + df.c + ': browser ' + df.browser + ', Node ' + df.node + ')' : ''}${dev.errors.length ? ' ERRORS ' + dev.errors.join(' | ') : ''}`);
-        t.ok(same && dbfs(worst) <= PARITY_DB, `${s.name}: the scene in the browser and Node differ by at most ${fmtDb(dbfs(worst))} dBFS (${diff ? diff + ' samples differ in the song path, the first at frame ' + first.i + ': not bit-identical as R34 asks, reported to AJ' : 'bit-identical'})${out.report.length ? ' REPORT ' + JSON.stringify(out.report) : ''}`);
+        // and the whole scene, through the song path, bit for bit too (R34: nothing is relaxed; any difference FAILs)
+        t.ok(same && !diff, `${s.name}: the whole scene is bit-identical in the browser and Node (exact)${diff ? ': ' + diff + ' samples differ, worst ' + fmtDb(dbfs(worst)) + ' dBFS, the first at frame ' + first.i + ' (channel ' + first.c + ': browser ' + first.browser + ', Node ' + first.node + ')' : ''}${out.report.length ? ' REPORT ' + JSON.stringify(out.report) : ''}`);
         continue;
       }
       t.ok(same && dbfs(worst) <= PARITY_DB,

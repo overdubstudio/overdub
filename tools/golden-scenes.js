@@ -149,13 +149,23 @@ function sampledScenes() {
 const AMPS = new Set(['core.stack', 'core.cab', 'core.bassrig']);
 const ampHere = () => ampScenes().map((s) => [s, Object.values(s.data || {}).every((h) => fs.existsSync(dataPath(h)))]);
 // Echo Chamber's six rooms on the DI strum (AULA, the default, unnamed), each pinned with the bank's hash: a new bank
-// is a new scene. Exact: browser and Node bit-identical (its coefficients come from the series, never Math.exp/sin)
+// is a new scene. Exact: browser and Node bit-identical, the whole scene (its coefficients come from the series, never
+// Math.exp/sin). The strum starts 4 ms in (192 frames of silence ahead of it), after the clip's 3 ms fade-in: Chrome's
+// linearRampToValueAtTime and render.js's clipVoice round some of that ramp's frames differently in the last bit (41
+// of its 144 on the plain strum, measured, every audio-clip scene alike), and the room spreads those into its whole
+// tail. That is the house's -90 dB rounding, not the device's; past the fade the song path is exact, so R34 holds
+// the whole scene bit for bit (tools/golden-test.js)
+const PAD = 192;
+let PADDED = null;
 function roomScenes() {
   const def = EFFECTS.find((d) => d.id === 'core.rooms');
   if (!def) return [];
   const tag = '#' + ROOMS_HASH.slice(7, 19), here = fs.existsSync(dataPath(ROOMS_HASH));
   return ROOM_LABELS.map((label, i) => {
     const s = effectScene(def);
+    if (!PADDED) { const x = s.assets.a_distrm.channels[0]; PADDED = new Float32Array(x.length + PAD); PADDED.set(x, PAD); }
+    s.assets.a_distrm = { sr: 48000, channels: [PADDED] };
+    s.project.assets.a_distrm = { ...s.project.assets.a_distrm, name: 'DI strum, 4 ms in', duration: PADDED.length / 48000 };
     s.name = 'fx:core.rooms' + (i ? ':' + label.toLowerCase().replace(/ /g, '-') : '') + tag;
     if (i) s.project.tracks[0].inserts[0].params = { room: i };
     return [{ ...s, exact: true, data: { aachen: ROOMS_HASH } }, here];

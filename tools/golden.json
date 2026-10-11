@@ -7,7 +7,7 @@
     "v8": "13.6.233.17-node.49",
     "arch": "arm64",
     "platform": "darwin",
-    "date": "2026-10-10"
+    "date": "2026-10-11"
   },
   "scenes": {
     "inst:core.poly": {
@@ -604,7 +604,7 @@
       "peak": -1.1
     },
     "fx:core.rooms#edab2a95720b": {
-      "sha256": "06c54e9e5a10175c0e92a28aebf18168607632a6a68bce587d77d3d94bdcc828",
+      "sha256": "5bb2b701c2a0582a73c876d3d7808fbeaab4702cbdf77bec21fac6f518a5fdb6",
       "frames": 576000,
       "lufs": -21.19,
       "truePeak": -10.35,
@@ -614,7 +614,7 @@
       }
     },
     "fx:core.rooms:aula-far#edab2a95720b": {
-      "sha256": "5f739e1cfcbdbd73f37b378e184f7784f2a31e11a92fd973872730e6b595e30f",
+      "sha256": "f04c30ea96fcb6db4f96d3feb0d022ba68de94600acf4e40296c4caef0b3e098",
       "frames": 576000,
       "lufs": -21.17,
       "truePeak": -10.07,
@@ -624,7 +624,7 @@
       }
     },
     "fx:core.rooms:lecture#edab2a95720b": {
-      "sha256": "b5bd9c682f5ccb406c8011a0a0cfec025fb2579321c7c513db0418970f743ee9",
+      "sha256": "d181fcc911ad4ea3b8cf673057ea890bd36cf96555defd587559f8f7eaa7d48c",
       "frames": 576000,
       "lufs": -21.29,
       "truePeak": -10.15,
@@ -634,9 +634,9 @@
       }
     },
     "fx:core.rooms:stairs#edab2a95720b": {
-      "sha256": "d509e63c0faeba37cdcf47cb345402de40e204d1ad05d55fe69ce9dc6d1d24ee",
+      "sha256": "9f7a8ffb3d58843353943dd478842adab37f60d48ef81459e2de062541964bd2",
       "frames": 576000,
-      "lufs": -21.1,
+      "lufs": -21.09,
       "truePeak": -9.91,
       "peak": -9.91,
       "data": {
@@ -644,7 +644,7 @@
       }
     },
     "fx:core.rooms:office#edab2a95720b": {
-      "sha256": "2efa7d666441e93d4ce3496c8cc7f555f41850523965f9491eeea2f5a3c23892",
+      "sha256": "ce777e99cb9586e81775b2e1e5ae60702b2b72adb83e387ee45225de18fc33a9",
       "frames": 576000,
       "lufs": -21.17,
       "truePeak": -9.44,
@@ -654,7 +654,7 @@
       }
     },
     "fx:core.rooms:meeting#edab2a95720b": {
-      "sha256": "be3c5d56e2e592783c3612e5498f9122100a6a2c8eb552071d497a696291acb7",
+      "sha256": "30c2c351ed67ee174b7779a838417e1eafb853b4fd052a7edda4187685081378",
       "frames": 576000,
       "lufs": -21.06,
       "truePeak": -9.7,

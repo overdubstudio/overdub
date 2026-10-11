@@ -1699,11 +1699,13 @@ off line uses it), a one-line `about`, its intent, and is off unless the config 
 most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has been on for a while.
 
 - **The config.** The deploy's `app/site-config.json` carries `"toggles": { "<id>": "on" | "off" }`. Only the exact
-  string `"on"` turns one on; no file, `{}`, no key, an unreadable file or a non-object means all off. An id the
+  string `"on"` turns one on; no file (a 404 or 410), `{}`, no key or a non-object means all off. An id the
   registry doesn't know is ignored with one console warning.
 - **Boot.** `main.js` starts the read at the top of boot, beside the device imports, and waits for it (at most 4 s,
-  `CONFIG_WAIT_MS`) before the first module starts, so `on()` is final and synchronous everywhere. A config that misses
-  the cap leaves every toggle off for that load.
+  `CONFIG_WAIT_MS`) before the first module starts, so `on()` is final and synchronous everywhere. A config this load
+  couldn't see (a network error, a 5xx or an HTML error page, JSON that doesn't parse, or past the cap) is not a file
+  that turns everything off: the `deploy: 'on'` defaults stand in for that load (`bootConfig`), so a blip never takes
+  Connect away from someone whose agent is driving their studio. A late answer changes nothing.
 - **`on(id)`.** Code asks `on(id)` and never reads a constant or the config itself. An id the registry doesn't have
   throws (`no toggle "relays"`), so a typo fails loudly; the unit test scans `app/` and `site/` for every `on('…')`
   literal. In Node, or before boot's read, it answers off. `app.toggles.on(id)` and `app.toggles.list()` (`[{ id, name,

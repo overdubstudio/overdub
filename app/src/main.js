@@ -242,10 +242,12 @@ async function boot() {
     since: () => trust.since,
   };
   // the feature toggles (app/src/toggles.js): final before any module starts, so on() is synchronous everywhere. A
-  // config that misses the cap leaves every toggle off for this load (and a later answer doesn't change that)
+  // config this load couldn't see (failed, or past the cap) gives the deploy's defaults (relay) for this load, not
+  // all off, and a later answer doesn't change that (toggles.js bootConfig)
   const cfg = await configRead;
-  if (cfg === 'late') console.warn(`overdub: site-config.json took over ${CONFIG_WAIT_MS / 1000} s; the deploy's toggles are off for this load`);
-  toggles.applyToggles(cfg && cfg !== 'late' ? { toggles: cfg.toggles } : null, { search: location.search, host: location.hostname });
+  if (cfg === 'late') console.warn(`overdub: site-config.json took over ${CONFIG_WAIT_MS / 1000} s; only the deploy's defaults are on for this load`);
+  else if (!cfg || cfg.read === 'failed') console.warn("overdub: site-config.json couldn't be read; only the deploy's defaults are on for this load");
+  toggles.applyToggles(toggles.bootConfig(cfg), { search: location.search, host: location.hostname });
   app.toggles = { on: toggles.on, list: toggles.list };
   window.overdub = app;
   app.ui = createShell(root, app);

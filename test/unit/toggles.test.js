@@ -15,7 +15,9 @@ import {
   applyToggles,
   auditToggles,
   deployDefaults,
+  bootConfig,
 } from '../../app/src/toggles.js';
+import { loadSiteConfig } from '../../app/src/site-config.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const NINE = [
@@ -228,6 +230,69 @@ describe('readToggles: what turns a toggle on', () => {
     );
     assert.deepEqual(onIds(readToggles({}, { search: `${relay}&${cloud}`, host: 'overdubstudio.com' })), []);
     assert.deepEqual(onIds(readToggles({}, { search: '?relay=not-a-url', host: 'localhost' })), []);
+  });
+});
+
+describe('boot: a config this load could not see keeps the deploy defaults', () => {
+  const LIVE = { search: '', host: 'overdubstudio.com' };
+  const json =
+    (body, status = 200) =>
+    async () =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const html = (status) => async () =>
+    new Response('<html>Service Unavailable</html>', { status, headers: { 'content-type': 'text/html' } });
+  const boot = async (fetch) => {
+    const cfg = await loadSiteConfig({ fetch, fresh: true, search: '', host: 'overdubstudio.com' });
+    applyToggles(bootConfig(cfg), LIVE);
+    return {
+      read: cfg.read,
+      on: list()
+        .filter((t) => t.on)
+        .map((t) => t.id),
+    };
+  };
+  const cases = [
+    [
+      'a network error',
+      async () => {
+        throw new TypeError('Failed to fetch');
+      },
+      'failed',
+      ['relay'],
+    ],
+    ['a 503 HTML page (CloudFront)', html(503), 'failed', ['relay']],
+    ['a 200 HTML page', html(200), 'failed', ['relay']],
+    [
+      'JSON that does not parse',
+      async () => new Response('{"toggles": {', { headers: { 'content-type': 'application/json' } }),
+      'failed',
+      ['relay'],
+    ],
+    ['a 404: no file', html(404), 'absent', []],
+    ['a 410', json({}, 410), 'absent', []],
+    ['{}', json({}), 'ok', []],
+    ['a file that turns relay off', json({ toggles: { relay: 'off' } }), 'ok', []],
+    ['the live file', json({ toggles: { relay: 'on', accounts: 'on' } }), 'ok', ['relay', 'accounts']],
+  ];
+  for (const [name, fetch, read, want] of cases) {
+    test(`${name}: read ${read}, on ${JSON.stringify(want)}`, async () => {
+      const r = await boot(fetch);
+      assert.equal(r.read, read);
+      assert.deepEqual(r.on, want);
+    });
+  }
+  test("past main.js's cap ('late') or a read that threw (null): the deploy defaults, and nothing else", () => {
+    for (const cfg of ['late', null, undefined]) {
+      applyToggles(bootConfig(cfg), LIVE);
+      assert.deepEqual(
+        list()
+          .filter((t) => t.on)
+          .map((t) => t.id),
+        Object.keys(deployDefaults()),
+      );
+    }
+    assert.deepEqual(Object.keys(deployDefaults()), ['relay']);
+    applyToggles(null, {});
   });
 });
 

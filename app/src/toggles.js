@@ -18,6 +18,9 @@
 //   applyToggles(config, { search, host })  sets what on() answers (main.js, once per load), logs one warning
 //   auditToggles(config, registry, { registryName }) -> { on, errors, deployOff }   pure: deploy.sh and prod-check
 //   deployDefaults() -> { [id]: 'on' }      the deploy: 'on' entries
+//   bootConfig(read) -> { toggles }         what boot applies, from loadSiteConfig's answer, null (it threw) or 'late'
+//                          (past main.js's cap): the file's toggles when it was read or is absent (a 404: all off);
+//                          the deploy's defaults when this load couldn't see it, so relay doesn't vanish on a blip
 //
 // A toggle's life: merged off, then on for developers (?on=), then on for everyone (deploy/site-config.json) when its
 // backlog items are done or waived, then retired in a cleanup PR once it has been on a while (docs/ARCHITECTURE.md).
@@ -83,6 +86,19 @@ export function deployDefaults() {
   const out = {};
   for (const t of TOGGLES) if (t.deploy === 'on') out[t.id] = 'on';
   return out;
+}
+
+/**
+ * What boot hands applyToggles, from what this load managed to read. A file this load couldn't see (a network error,
+ * a 5xx or an HTML error page, JSON that doesn't parse, or slower than main.js's cap) isn't a file that turns
+ * everything off: the deploy's defaults stand in, as they did before the registry (relay was a constant). Only a
+ * file that is plainly not there (404, 410) means all off. Pure.
+ * @param {{ toggles?: unknown, read?: string } | null | 'late' | undefined} read
+ * @returns {{ toggles: unknown }}
+ */
+export function bootConfig(read) {
+  if (read && typeof read === 'object' && (read.read === 'ok' || read.read === 'absent')) return { toggles: read.toggles ?? null };
+  return { toggles: deployDefaults() };
 }
 
 const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);

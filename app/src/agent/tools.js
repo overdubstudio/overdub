@@ -270,7 +270,7 @@ const TARGET_SCHEMA = {
   },
 };
 // get_guide's topics, said once for both its descriptions
-const GUIDE_TOPICS = '"etiquette" (how to work with the human here: scope, proposals vs direct edits, measuring), "devices" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), "ops" (every op and the notes / drum-grid text formats), "lexicon" (musical words → perceptual axes, for adjust; plus "personal": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), "transforms" (every transform with its params and defaults), "genres" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to), "workflows" (section "flip": a song flipped here; sound design is yours, the drop theirs).';
+const GUIDE_TOPICS = '"etiquette" (how to work with the human here: scope, proposals vs direct edits, measuring), "devices" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), "ops" (every op and the notes / drum-grid text formats), "lexicon" (musical words → perceptual axes, for adjust; plus "personal": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), "transforms" (every transform with its params and defaults), "genres" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to), "workflows" (flip: a song brought in).';
 // Descriptions the in-app agent (agent/claude.js) gets in place of the catalog's: its system prompt already carries the
 // etiquette, so get_guide doesn't send it to read that again (the prompt diet; outside agents keep the catalog's).
 export const IN_APP_DESCRIPTIONS = {
@@ -319,7 +319,7 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
     name: 'get_guide',
     annotations: { title: 'Read a guide', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     description: `Read one of the studio's guides (outside agents don't get Overdub's system prompt, so read these first): ${GUIDE_TOPICS}`,
-    input_schema: { type: 'object', properties: { topic: { type: 'string', enum: ['etiquette', 'devices', 'ops', 'lexicon', 'transforms', 'genres', 'workflows'] }, section: { type: 'string', description: 'genres: one genre (bass-music, metal); workflows: flip' } }, required: ['topic'], additionalProperties: false },
+    input_schema: { type: 'object', properties: { topic: { type: 'string', enum: ['etiquette', 'devices', 'ops', 'lexicon', 'transforms', 'genres', 'workflows'] }, section: { type: 'string', description: 'genres: bass-music or metal; workflows: flip' } }, required: ['topic'], additionalProperties: false },
     async run(input) {
       switch (input.topic) {
         case 'genres': { const { genresGuide } = await import('./genres.js'); return { guide: genresGuide(input.section || null) }; }

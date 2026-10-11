@@ -873,7 +873,9 @@ function mountTransport(el, app) {
     tempo.setAttribute('aria-valuetext', `${Number.isInteger(pr.tempo) && !mapped ? pr.tempo : pr.tempo.toFixed(1)} BPM${mapped ? `, nominal: the grid ${follows}` : ''}`);
     tempoLab.textContent = mapped ? `Tempo, ${follows}` : 'Tempo';
     tempo.classList.toggle('tp-tempo-map', mapped);
-    tempo.title = mapped ? `The nominal tempo: the grid ${follows} (a tempo map). Clear the map to set one tempo.` : 'Tempo in BPM: drag up or down (Shift: fine), click to type, scroll to nudge';
+    // (while a take locks it, the title says so and this waits in dataset.title for the lock to lift)
+    const tempoTitle = mapped ? `The nominal tempo: the grid ${follows} (a tempo map). Clear the map to set one tempo.` : 'Tempo in BPM: drag up or down (Shift: fine), click to type, scroll to nudge';
+    if (tempo.dataset.title) tempo.dataset.title = tempoTitle; else tempo.title = tempoTitle;
     meterV.textContent = pr.meter.join('/');
     meterB.setAttribute('aria-label', `Meter ${pr.meter.join('/')}`);
     keyV.replaceChildren(...(pr.key ? [h('span.tp-key-l', `${pr.key.root} ${keyName(pr.key.scale)}`), h('span.tp-key-s', `${pr.key.root} ${SHORT[pr.key.scale] || keyName(pr.key.scale)}`)] : [h('span.tp-dim', 'none')]));

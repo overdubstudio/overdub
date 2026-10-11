@@ -824,7 +824,11 @@ switched on, even locally. All three are built now.
    `[].constructor.constructor` and patch `MessagePort.prototype.postMessage` or the typed-array prototypes. That lets
    it fake `{ type: 'error' | 'log', message }` traffic for any device and bend what other devices output, and with it
    what `render_and_measure` and `adjust` report to the agent. Freezing `Object`, `Function`, `Array`, the typed
-   arrays, `MessagePort` and their prototypes, after the dsp stdlib is built, closes that. The worklet also labels each
+   arrays, `MessagePort` and their prototypes, after the dsp stdlib is built, closes that. (After review, 2026-10-11:
+   that list left the global bindings and the iterator, `Map`, `String` and other prototypes open, and the dsp
+   stdlib's classes shared. The freeze now takes the global object and everything reachable from it and from the
+   unnamed intrinsics, each node gets its own dsp stdlib, and `kernel-test` walks the scope from a kernel and finds
+   nothing unfrozen. Still open, in SECURITY.md: a kernel data file two devices name is one writable decoded copy.) The worklet also labels each
    message with the device id it knows a kernel by, never one the kernel supplies. `golden-test` must not move.
 2. **Trust is stored only after the check passes** (section 3, step 5).
 3. **The prompt says what the code can and can't do** (section 3, "The trust prompt").

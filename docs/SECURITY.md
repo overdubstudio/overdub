@@ -70,8 +70,10 @@ runs; and text in a song written to steer an agent.
   this page load, or from now on if the person ticks the box) and puts it on as one step. The song gets the entry's
   name, blurb and request, never the file's. Only the studio's own copy of the index can take a hash back (its deny
   list). Try itself is held (`TRY_ON`) until the switch. What stays open once it's on, plainly: an allowed shelf
-  kernel still shares the audio thread's realm with every other device in the song (frozen, so it can't patch what
-  they use or report as one of them, but it can read the realm: an indirect `eval` reaches its globals); a kernel
+  kernel still shares the audio thread's realm with every other device in the song (frozen, global bindings and all,
+  so it can't patch what they use or report as one of them, but it can read the realm: an indirect `eval` reaches its
+  globals; and a kernel data file two devices both name is decoded once per audio context, so a kernel that names a
+  kit another device plays can rewrite that kit's samples under it); a kernel
   can tell when it's being rendered for the shelf (the device check's test signals, an offline context), so the
   check can't prove how it behaves in a song; and it runs in the tab with the person's songs (no DOM, storage or
   network in that scope, but the same tab). No agent tool reaches trust: `find_community_device`
@@ -133,7 +135,7 @@ runs; and text in a song written to steer an agent.
 | `?relay=` worked on the live site (shows Connect; could send a tab's token to a local port) | Low | Fixed (`e53e3a9`); the relay's trial switch, `?connect=1`, showed Connect for the hosted relay only, and now the relay is live Connect shows for everyone, still pointed only at the hosted relay |
 | The bridge took any request without an Origin, so a page could take over the live tab (denial of service) | Low | Fixed (`62f4c8a`) |
 | `Infinity` from a song file reached clip positions; a deeply nested link threw | Low | Fixed (`2e39267`) |
-| Kernels in one audio context share the worklet's built-in prototypes | Low | Fixed: frozen before any kernel runs, the functions' `constructor` throws, and each node's messages carry its own device id (`d59e2ed`); the realm itself is still shared (below) |
+| Kernels in one audio context share the worklet's built-in prototypes | Low | Fixed: before any kernel runs the scope is frozen, its global bindings (`Float32Array`, `registerProcessor`, no new globals) and every object reachable from them or from the intrinsics no global names (the iterator prototypes among them); each node gets its own dsp stdlib; the functions' `constructor` throws; and each node's messages carry its own device id (`d59e2ed`, the global bindings and iterators after review). `kernel-test` walks the scope from a kernel and finds nothing unfrozen. Still open: the realm is read-shared (below), and a kernel data file two devices name is one decoded copy per context, writable by either kernel |
 | Google Fonts on every page: each visitor's IP goes to Google, and CSS can read attribute values on the key's page | Low | Fixed: the fonts are files on the site (`app/style/fonts.css`), no page asks Google for anything, and the policies name no font or style host (`font-src 'self'`); the provenance report takes the same files, inside it when it is saved |
 | The relay's memory and capacity limits; its origin secret travels in SSM command parameters | Low, before it ships | Fixed: caps on bodies, held and unread bytes, sessions, streams and calls in flight, a rate limit per address (an IPv6 /64), `429`/`503` with `Retry-After` (calls in flight: a tool error saying when); the instance reads the secret from Parameter Store |
 | Analytics: only words from a fixed list are sent, but CloudFront's logs keep IP, browser and referrer for 90 days | Info | Disclosed; AJ's call |

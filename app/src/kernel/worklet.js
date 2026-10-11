@@ -173,7 +173,12 @@ export function kernelCompiler(scope) {
 //   core.block(iL, iR, L, R, frame, kL?, kR?) render L/R (n = L.length) for the block starting at absolute `frame`
 //                                             (iL/iR: the effect's input, or null; kL/kR: a keyed effect's key, or
 //                                             null for silence); false once ended
+// dsp: the stdlib object every node's kernel gets, or a function that makes one, called once per node. The worklet
+// passes the function: the stdlib's classes (an osc's, a filter's prototype) are then each node's own, so one device's
+// kernel can't patch the methods another device's oscillators run (freezeRealm can't reach them; freezing them would
+// make a kernel's `osc.freq = 440`, harmless today, throw). The Node renderer passes the one object.
 export function kernelCore(SR, dsp, kernelCompiler) {
+  const dspFor = typeof dsp === 'function' ? dsp : () => dsp;
   const FADE = Math.round(0.02 * SR);       // hot reload crossfade
   const STEAL = Math.round(0.005 * SR);     // a stolen voice fades out over 5 ms
   const QUIET = Math.round(0.25 * SR);      // a released voice that stays under -100 dBFS this long is freed
@@ -196,7 +201,7 @@ export function kernelCore(SR, dsp, kernelCompiler) {
     // One compiled kernel instance and (for instruments) its voices.
     constructor(proc, k, seed) {
       this.proc = proc; this.k = k; this.kind = proc.kind;
-      this.inst = k.create({ sr: SR, seed, dsp, params: proc.specs, poly: proc.poly, data: proc.data });
+      this.inst = k.create({ sr: SR, seed, dsp: proc.dsp, params: proc.specs, poly: proc.poly, data: proc.data });
       const bad = proc.C.shape(this.inst, this.kind);
       if (bad) throw new Error(bad);
       this.latency = +this.inst.latency || 0;
@@ -357,7 +362,8 @@ export function kernelCore(SR, dsp, kernelCompiler) {
       this.logs = 0;
       const self = this;
       this.console = { log(...a) { self.log(a); }, warn(...a) { self.log(a); }, error(...a) { self.log(a); } };
-      this.C = kernelCompiler({ dsp, console: this.console });
+      this.dsp = dspFor();
+      this.C = kernelCompiler({ dsp: this.dsp, console: this.console });
       // params: current (smoothed) values in p, targets in tgt
       this.p = {}; this.tgt = {}; this.cont = []; this.logc = [];
       for (const s of this.specs) {
@@ -673,33 +679,60 @@ export function kernelCore(SR, dsp, kernelCompiler) {
   return KernelCore;
 }
 
-// Freeze the built-ins every kernel in this audio context shares (docs/SECURITY.md). Kernels from different devices
-// run in one AudioWorkletGlobalScope, and `[].constructor.constructor` or an indirect eval reaches its globals past
-// every shadowed name. Frozen, what a kernel reaches can't be patched under another device: no wrapping
-// Float32Array.prototype.set to rewrite its samples, no hooking MessagePort.prototype.postMessage to take its port, no
-// getter on Object.prototype. The function prototypes' `constructor` becomes a stub that throws first, so the literal
-// `[].constructor.constructor(...)` fails too (kernelCompiler's `new Function` uses the global binding, which is
-// untouched). The realm is still shared: this stops patching, not reading. Called once, after the dsp stdlib and
-// KernelCore are built and before any kernel runs. The Node renderer never calls it (its kernels run under Node's
-// permission model instead, tools/node-permissions.js).
+// Freeze the realm every kernel in this audio context shares (docs/SECURITY.md). Kernels from different devices run in
+// one AudioWorkletGlobalScope, and `[].constructor.constructor` or an indirect eval reaches its globals past every
+// shadowed name. So everything a kernel can reach from that scope is frozen: the global object itself (its bindings:
+// no `globalThis.Float32Array = ...`, no wrapping `registerProcessor` under the modules loaded after this one, no new
+// globals) and, from it, every object reachable through own properties (values, getters and setters) and prototypes,
+// plus the intrinsics no global names (the iterator prototypes, the generators' and the iterator helpers'). Nothing a
+// kernel reaches can then be patched under another device: no wrapping Float32Array.prototype.set to rewrite its
+// samples, no hooking MessagePort.prototype.postMessage to take its port, no getter on Object.prototype, no patched
+// %ArrayIteratorPrototype%.next under its for...of or its spread. The function prototypes' `constructor` becomes a stub
+// that throws first, so the literal `[].constructor.constructor(...)` fails too (kernelCompiler's `new Function` uses
+// the global binding, which is untouched). Each node gets its own dsp stdlib (kernelCore), so the stdlib's class
+// prototypes aren't shared either. The realm is still shared: this stops patching, not reading. Called once, after the
+// dsp stdlib and KernelCore are built and before any kernel runs; the module every graph worklet goes in behind
+// (devices/worklets/end.js) has run by then (kernel/processor.js imports it first), since it wraps registerProcessor
+// once per scope. Returns what wouldn't freeze ([] on every engine we test; tools/kernel-test.js checks a kernel finds
+// nothing unfrozen). The Node renderer never calls it (its kernels run under Node's permission model instead,
+// tools/node-permissions.js).
 export function freezeRealm() {
   const G = /** @type {any} */ (globalThis);
   const fnProtos = [Function.prototype, Object.getPrototypeOf(async function () {}), Object.getPrototypeOf(function* () {}), Object.getPrototypeOf(async function* () {})];
   const stub = () => { throw new TypeError('the Function constructor is not available to kernels'); };
-  Object.freeze(stub);
   for (const p of fnProtos) Object.defineProperty(p, 'constructor', { value: stub, writable: false, enumerable: false, configurable: false });
-  const TA = Object.getPrototypeOf(Int8Array); // %TypedArray%
-  const ctors = [Object, Function, Array, ArrayBuffer, Promise, TA,
-    Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array,
-    G.BigInt64Array, G.BigUint64Array, G.Float16Array, G.MessagePort];
-  for (const C of ctors) {
-    if (typeof C !== 'function') continue;
-    Object.freeze(C);
-    if (C.prototype) Object.freeze(C.prototype);
+  const seen = new Set(), todo = [];
+  const add = (/** @type {any} */ v) => { if (((typeof v === 'object' && v !== null) || typeof v === 'function') && !seen.has(v)) { seen.add(v); todo.push(v); } };
+  const tryAdd = (/** @type {() => any} */ f) => { try { add(f()); } catch { /* not on this engine */ } };
+  add(G); add(stub);
+  for (const p of fnProtos) add(p); // (the generators' prototypes come with theirs: %GeneratorFunction.prototype%.prototype)
+  // the intrinsics no global names: reached here through an instance's prototype
+  tryAdd(() => Object.getPrototypeOf([][Symbol.iterator]()));
+  tryAdd(() => Object.getPrototypeOf(new Map()[Symbol.iterator]()));
+  tryAdd(() => Object.getPrototypeOf(new Set()[Symbol.iterator]()));
+  tryAdd(() => Object.getPrototypeOf(''[Symbol.iterator]()));
+  tryAdd(() => Object.getPrototypeOf(/./[Symbol.matchAll]('')));
+  tryAdd(() => Object.getPrototypeOf([].values().map((x) => x)));                       // %IteratorHelperPrototype%
+  tryAdd(() => Object.getPrototypeOf(G.Iterator.from({ next() { return { done: true }; } }))); // %WrapForValidIteratorPrototype%
+  tryAdd(() => Object.getPrototypeOf(new G.Intl.Segmenter().segment('')[Symbol.iterator]()));
+  while (todo.length) {
+    const o = todo.pop();
+    let keys = [];
+    try { keys = Reflect.ownKeys(o); } catch { /* an exotic object: frozen below or listed */ }
+    for (const k of keys) {
+      let d;
+      try { d = Object.getOwnPropertyDescriptor(o, k); } catch { continue; }
+      if (!d) continue;
+      if ('value' in d) add(d.value); else { add(d.get); add(d.set); }
+    }
+    try { add(Object.getPrototypeOf(o)); } catch { /* none */ }
   }
-  for (const p of fnProtos) Object.freeze(p);
-  Object.freeze(Math);
-  Object.freeze(JSON);
+  const failed = [];
+  for (const o of seen) {
+    try { Object.freeze(o); } catch { /* listed below */ }
+    if (!Object.isFrozen(o)) failed.push(typeof o === 'function' ? o.name || 'a function' : (o && o.constructor && o.constructor.name) || 'an object');
+  }
+  return failed;
 }
 
 // The processor. Runs inside the AudioWorkletGlobalScope (kernel/processor.js calls it there): a thin wrapper that
@@ -707,7 +740,7 @@ export function freezeRealm() {
 // (processorOptions.device), stamped here, never one a kernel supplies: a kernel's console and its faults reach the
 // host as { type: 'log' | 'error', ..., device }, and a log or a process error never carries an id.
 export function overdubKernelWorklet(overdubDsp, kernelCompiler, kernelCore) {
-  const KernelCore = kernelCore(sampleRate, overdubDsp(sampleRate), kernelCompiler);
+  const KernelCore = kernelCore(sampleRate, () => overdubDsp(sampleRate), kernelCompiler);
   freezeRealm();
   // kernel data, decoded once in this audio context: hash -> the decoded file (or null: it didn't decode)
   const DATA = new Map();

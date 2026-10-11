@@ -27,8 +27,9 @@
 //     the song is the file's code under the index's words: name, blurb, nod, request and look come from the entry the
 //     person saw, never from the file. A new track gets a two-bar part to hear it on (an empty track plays silence), and
 //     an effect already on the track isn't stacked a second time.
-//   - Try is also held behind TRY_ON until the switch (the worklet's built-in prototypes are frozen now:
-//     kernel/worklet.js freezeRealm). On a local host, localStorage 'overdub:community-try' = '1' lets a developer use
+//   - Try is also held behind TRY_ON until the switch (the worklet's realm is frozen now, its global bindings and
+//     everything reachable from them, and each node gets its own dsp stdlib: kernel/worklet.js freezeRealm; what a
+//     kernel can still do to another device, it can only through a kernel data file both name, SECURITY.md). On a local host, localStorage 'overdub:community-try' = '1' lets a developer use
 //     it before then.
 //
 //   app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),

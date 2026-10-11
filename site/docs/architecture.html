@@ -1594,11 +1594,13 @@ off line uses it), a one-line <code>about</code>, its intent, and is off unless 
 most 15 at once (<code>MAX_TOGGLES</code>, held by the unit test), each retired once it has been on for a while.</p>
 <ul>
 <li><strong>The config.</strong> The deploy's <code>app/site-config.json</code> carries <code>&quot;toggles&quot;: { &quot;&lt;id&gt;&quot;: &quot;on&quot; | &quot;off&quot; }</code>. Only the exact
-string <code>&quot;on&quot;</code> turns one on; no file, <code>{}</code>, no key, an unreadable file or a non-object means all off. An id the
+string <code>&quot;on&quot;</code> turns one on; no file (a 404 or 410), <code>{}</code>, no key or a non-object means all off. An id the
 registry doesn't know is ignored with one console warning.</li>
 <li><strong>Boot.</strong> <code>main.js</code> starts the read at the top of boot, beside the device imports, and waits for it (at most 4 s,
-<code>CONFIG_WAIT_MS</code>) before the first module starts, so <code>on()</code> is final and synchronous everywhere. A config that misses
-the cap leaves every toggle off for that load.</li>
+<code>CONFIG_WAIT_MS</code>) before the first module starts, so <code>on()</code> is final and synchronous everywhere. A config this load
+couldn't see (a network error, a 5xx or an HTML error page, JSON that doesn't parse, or past the cap) is not a file
+that turns everything off: the <code>deploy: 'on'</code> defaults stand in for that load (<code>bootConfig</code>), so a blip never takes
+Connect away from someone whose agent is driving their studio. A late answer changes nothing.</li>
 <li><strong><code>on(id)</code>.</strong> Code asks <code>on(id)</code> and never reads a constant or the config itself. An id the registry doesn't have
 throws (<code>no toggle &quot;relays&quot;</code>), so a typo fails loudly; the unit test scans <code>app/</code> and <code>site/</code> for every <code>on('…')</code>
 literal. In Node, or before boot's read, it answers off. <code>app.toggles.on(id)</code> and <code>app.toggles.list()</code> (<code>[{ id, name, on, by: 'site' | 'url' | 'off' }]</code>) are the same for the console and the tests.</li>

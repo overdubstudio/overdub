@@ -153,8 +153,166 @@ export const beatsPerBar = (meter) => (meter ? meter[0] * (4 / meter[1]) : 4);
 // make a bar a billionth of a beat long.
 export const METER_UNITS = [1, 2, 4, 8, 16, 32];
 export const validMeter = (m) => Array.isArray(m) && m.length === 2 && Number.isInteger(m[0]) && m[0] >= 1 && m[0] <= 32 && METER_UNITS.includes(m[1]);
-export const beatToSec = (b, bpm) => (b * 60) / bpm;
-export const secToBeat = (s, bpm) => (s * bpm) / 60;
+
+/* ---------------------------------------------------------------- the tempo map */
+// A song may carry tempoMap: { anchors: [{ beat, sec }, ...], clip? } (docs/ARCHITECTURE.md, "The tempo map"): the grid
+// bent to a recording. The grid is piecewise linear between anchors and runs on past the last one at the last
+// segment's tempo (and before beat 0 at the first's). anchors[0] is { beat: 0, sec: 0 }; beat and sec rise strictly;
+// every segment's tempo is 20..400; at most MAP_ANCHORS anchors (project.js LIMITS.anchors). Anchors are seconds, not
+// tempo steps, so rounding never adds up. clip: the id of the audio clip the grid follows (the conformed clip).
+// A song without one has one tempo, p.tempo, and every conversion below is the expression it always was.
+//
+//   beatToSec(p, beat) / secToBeat(p, sec)   song beat <-> seconds from beat 0 (the old (beat, bpm) and (sec, bpm)
+//                                            forms still work: a number first is a bare tempo)
+//   tempoAt(p, beat)                         the tempo at that beat (p.tempo without a map)
+//   timeline(p, from)                        the conversions a render or a scheduler needs, from beat `from`; without
+//                                            a map each is the expression the renders always used, so old songs
+//                                            render to the same samples
+//   checkAnchors(anchors) -> null | why      the strict check (no repair: a bad map is refused or dropped whole)
+//   mapNominal(anchors)                      the median segment tempo, to 0.01 (p.tempo while a map is set)
+//   mapInsert / mapRemove (map, at, beats)   the map after time.insert / time.remove; shiftMap(map, beats) moves the
+//                                            grid with its recording (a whole-bar move of the conformed clip)
+export const MAP_ANCHORS = 4096;
+const anchorsOf = (p) => { const m = p && p.tempoMap; return m && Array.isArray(m.anchors) && m.anchors.length >= 2 ? m.anchors : null; };
+// the segment [A[i], A[i + 1]] that holds x (by beat or by sec), clamped to the first and last
+function segOf(A, x, k) {
+  let lo = 0, hi = A.length - 2;
+  if (x < A[1][k]) return 0;
+  if (x >= A[hi][k]) return hi;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (A[mid][k] <= x) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+export function mapSec(A, b) { const i = segOf(A, b, 'beat'), a = A[i], c = A[i + 1]; return a.sec + ((b - a.beat) * (c.sec - a.sec)) / (c.beat - a.beat); }
+export function mapBeat(A, s) { const i = segOf(A, s, 'sec'), a = A[i], c = A[i + 1]; return a.beat + ((s - a.sec) * (c.beat - a.beat)) / (c.sec - a.sec); }
+export function mapTempo(A, b) { const i = segOf(A, b, 'beat'), a = A[i], c = A[i + 1]; return (60 * (c.beat - a.beat)) / (c.sec - a.sec); }
+
+/** @param {any} p a song, or (the old form) a beat @param {number} b a beat, or (the old form) a tempo */
+export function beatToSec(p, b) {
+  if (typeof p === 'number') return (p * 60) / b;
+  const A = anchorsOf(p);
+  return A ? mapSec(A, b) : (b * 60) / (+p.tempo || 120);
+}
+/** @param {any} p a song, or (the old form) seconds @param {number} s seconds, or (the old form) a tempo */
+export function secToBeat(p, s) {
+  if (typeof p === 'number') return (p * s) / 60;
+  const A = anchorsOf(p);
+  return A ? mapBeat(A, s) : (s * (+p.tempo || 120)) / 60;
+}
+export function tempoAt(p, b) {
+  const A = anchorsOf(p);
+  return A ? mapTempo(A, b) : +p.tempo || 120;
+}
+export const hasTempoMap = (p) => !!anchorsOf(p);
+// Seconds that `beats` beats from beat `at` take (an audio clip's offset after a cut): beats * (60 / p.tempo) without a map.
+export function beatSecs(p, beats, at) {
+  const A = anchorsOf(p);
+  return A ? mapSec(A, at + beats) - mapSec(A, at) : beats * (60 / p.tempo);
+}
+// How many beats before beat `at` lie `secs` seconds earlier (secs / (60 / p.tempo) without a map).
+export function beatsBefore(p, at, secs) {
+  const A = anchorsOf(p);
+  return A ? at - mapBeat(A, mapSec(A, at) - secs) : secs / (60 / p.tempo);
+}
+
+// The clock of a render or a scheduler that starts at beat `from` (time 0 there):
+//   sec(beat), beat(sec), bpmAt(beat), spbAt(beat), span(a, b) (seconds from beat a to b), mapped, bpm, spb
+//   segments(): [{ time, beat, bpm }] from `from` on, where each map segment starts (the kernels' transport)
+// Without a map these are the renders' own expressions ((beat - from) * spb, from + sec / spb), so a song without a
+// map renders bit for bit as it did.
+export function timeline(p, from = 0) {
+  const bpm = +p.tempo || 120, spb = 60 / bpm;
+  const A = anchorsOf(p);
+  if (!A) {
+    return { mapped: false, bpm, spb, sec: (b) => (b - from) * spb, beat: (s) => from + s / spb, bpmAt: (_b) => bpm, spbAt: (_b) => spb,
+      span: (a, b) => (b - a) * spb, segments: () => [{ time: 0, beat: from, bpm }] };
+  }
+  const s0 = mapSec(A, from);
+  return {
+    mapped: true, bpm, spb, anchors: A,
+    sec: (b) => mapSec(A, b) - s0,
+    beat: (s) => (s === 0 ? from : mapBeat(A, s + s0)),
+    bpmAt: (b) => mapTempo(A, b),
+    spbAt: (b) => 60 / mapTempo(A, b),
+    span: (a, b) => mapSec(A, b) - mapSec(A, a),
+    segments: () => {
+      const out = [{ time: 0, beat: from, bpm: mapTempo(A, from) }];
+      for (let i = segOf(A, from, 'beat') + 1; i < A.length - 1; i++) if (A[i].beat > from) out.push({ time: A[i].sec - s0, beat: A[i].beat, bpm: mapTempo(A, A[i].beat) });
+      return out;
+    },
+  };
+}
+
+const finNum = (x) => typeof x === 'number' && Number.isFinite(x);
+// null when `anchors` is a map the studio can play, else why not (a sentence).
+export function checkAnchors(anchors) {
+  if (!Array.isArray(anchors)) return 'anchors must be a list of { beat, sec }';
+  if (anchors.length < 2) return 'a map needs at least two anchors ({ beat: 0, sec: 0 } and one more)';
+  if (anchors.length > MAP_ANCHORS) return `a map holds up to ${MAP_ANCHORS} anchors (this one has ${anchors.length})`;
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i];
+    if (!a || typeof a !== 'object' || !finNum(a.beat) || !finNum(a.sec)) return `anchor ${i} must be { beat, sec } with finite numbers`;
+    if (i === 0 && (a.beat !== 0 || a.sec !== 0)) return 'the first anchor must be { beat: 0, sec: 0 }';
+    if (i > 0) {
+      const b = anchors[i - 1];
+      if (!(a.beat > b.beat && a.sec > b.sec)) return `anchors must rise: anchor ${i} (beat ${a.beat}, ${a.sec} s) is not after anchor ${i - 1}`;
+      const bpm = (60 * (a.beat - b.beat)) / (a.sec - b.sec);
+      if (!(bpm >= 20 - 1e-9 && bpm <= 400 + 1e-9)) return `the segment from beat ${b.beat} runs at ${Math.round(bpm * 100) / 100} BPM; a tempo is 20..400`;
+    }
+  }
+  return null;
+}
+// The map's nominal tempo: the median segment tempo, rounded to 0.01 (p.tempo while the map is set).
+export function mapNominal(anchors) {
+  const ts = [];
+  for (let i = 1; i < anchors.length; i++) ts.push((60 * (anchors[i].beat - anchors[i - 1].beat)) / (anchors[i].sec - anchors[i - 1].sec));
+  ts.sort((a, b) => a - b);
+  const n = ts.length, mid = n % 2 ? ts[(n - 1) / 2] : (ts[n / 2 - 1] + ts[n / 2]) / 2;
+  return Math.min(400, Math.max(20, Math.round(mid * 100) / 100));
+}
+const withAnchors = (map, anchors) => ({ ...map, anchors });
+// an anchor at beat b (at the seconds the map gives it), unless one is there
+function withAnchorAt(A, b) {
+  if (A.some((a) => Math.abs(a.beat - b) < 1e-9)) return A;
+  const s = mapSec(A, b), out = A.filter((a) => a.beat < b);
+  out.push({ beat: b, sec: s }, ...A.filter((a) => a.beat > b));
+  return out;
+}
+// time.insert: `beats` beats at beat `at`, at the tempo the map has there; the anchors after it move by those beats
+// and those seconds (so a recording moved right by the same beats stays on its grid). Past the last anchor the grid
+// is one tempo already, so nothing moves.
+export function mapInsert(map, at, beats) {
+  const A = map.anchors, last = A[A.length - 1];
+  if (!(beats > 0) || at >= last.beat - 1e-9) return withAnchors(map, A.map((a) => ({ ...a })));
+  const B = withAnchorAt(A, at), secs = beats * (60 / mapTempo(A, at)), out = [];
+  for (const a of B) {
+    if (a.beat < at - 1e-9) out.push({ ...a });
+    else if (a.beat < at + 1e-9) out.push({ ...a }, { beat: at + beats, sec: a.sec + secs });
+    else out.push({ beat: a.beat + beats, sec: a.sec + secs });
+  }
+  return withAnchors(map, out);
+}
+// time.remove: beats [at, at + beats) go; the anchors inside go with them, the ones after move back by those beats and
+// the seconds the map gave them, and the grid after the cut keeps its tempo.
+export function mapRemove(map, at, beats) {
+  const A = map.anchors, last = A[A.length - 1], end = at + beats;
+  if (!(beats > 0) || at >= last.beat - 1e-9) return withAnchors(map, A.map((a) => ({ ...a })));
+  const B = withAnchorAt(withAnchorAt(A, at), end), secs = mapSec(B, end) - mapSec(B, at);
+  const out = [];
+  for (const a of B) {
+    if (a.beat < at + 1e-9) out.push({ ...a });
+    else if (a.beat > end + 1e-9) out.push({ beat: a.beat - beats, sec: a.sec - secs });
+  }
+  // (past the old last anchor the grid ran at the last segment's tempo: it still does, from the cut on)
+  if (out.length < 2) out.push({ beat: at + 4, sec: mapSec(B, at) + 4 * (60 / mapTempo(B, end)) });
+  return withAnchors(map, out);
+}
+// The grid moved with its recording by `beats` (a whole-bar move of the conformed clip: ui/arranger.js carries the map
+// in the same dispatch): later by inserting that many beats at beat 0, earlier by removing them.
+export function shiftMap(map, beats) {
+  if (!(Math.abs(beats) > 1e-9)) return withAnchors(map, map.anchors.map((a) => ({ ...a })));
+  return beats > 0 ? mapInsert(map, 0, beats) : mapRemove(map, 0, -beats);
+}
+
 // "bar.beat.sixteenth" (1-based), as a DAW shows it
 export function posLabel(beat, meter = [4, 4]) {
   const bpb = beatsPerBar(meter);

@@ -26,6 +26,7 @@ import { isProjectFormat, stableIds, cleanProject } from '../core/project.js';
 import { guardDevices } from '../core/share.js';
 import { DEMOS, demoById } from '../core/demo.js';
 import { dawprojectFiles } from '../core/dawproject.js';
+import { hasTempoMap, mapSec, mapTempo } from '../core/music.js';
 import { installProvenance, openProvenanceReport } from './provenance.js';
 
 /* ================================================================ WAV */
@@ -64,11 +65,38 @@ const txt = (s) => [...new TextEncoder().encode(String(s || ''))];
 function chunk(type, bytes) { return [...txt(type), (bytes.length >>> 24) & 255, (bytes.length >>> 16) & 255, (bytes.length >>> 8) & 255, bytes.length & 255, ...bytes]; }
 function meta(type, data) { return [0xff, type, ...vlq(data.length), ...data]; }
 
+const tempoMeta = (us) => meta(0x51, [(us >> 16) & 255, (us >> 8) & 255, us & 255]);
+// [[tick, bytes]]: the song's tempo, or (a tempo map) one event at each anchor's tick. Each segment's microseconds per
+// quarter note are rounded with the error carried into the next, so every anchor lands within a microsecond or so of
+// its time however long the song is.
+function tempoEvents(p, ppq, tempo) {
+  if (!hasTempoMap(p)) return [[0, tempoMeta(tempo)]];
+  const A = p.tempoMap.anchors, out = [];
+  let tick = 0, us = 0;
+  for (let i = 0; i < A.length; i++) {
+    const t0 = Math.round(A[i].beat * ppq);
+    if (i && t0 <= tick) continue;   // (two anchors inside one tick: the later one's tempo starts there)
+    let j = i + 1;
+    while (j < A.length && Math.round(A[j].beat * ppq) <= t0) j++;
+    const next = A[j];
+    let q;
+    if (next) {
+      const t1 = Math.round(next.beat * ppq), want = mapSec(A, t1 / ppq) * 1e6;
+      q = Math.round((want - us) / ((t1 - t0) / ppq));
+      us += (q * (t1 - t0)) / ppq;
+    } else q = Math.round(60e6 / mapTempo(A, A[i].beat));
+    q = Math.max(1, Math.min(0xffffff, q));
+    out.push([t0, tempoMeta(q)]);
+    tick = t0;
+  }
+  return out;
+}
+
 export function encodeMidi(p, { ppq = 480, isDrums = null } = {}) {
   const tempo = Math.round(60000000 / (+p.tempo || 120));
   const [num, den] = Array.isArray(p.meter) ? p.meter : [4, 4];
-  // the tempo track: name, tempo, time signature, key signature, section markers
-  const evs = [[0, meta(0x03, txt(p.title || 'Untitled'))], [0, meta(0x51, [(tempo >> 16) & 255, (tempo >> 8) & 255, tempo & 255])], [0, meta(0x58, [num, Math.round(Math.log2(den)), 24, 8])]];
+  // the tempo track: name, tempo (one event per segment of a tempo map), time signature, key signature, section markers
+  const evs = [[0, meta(0x03, txt(p.title || 'Untitled'))], ...tempoEvents(p, ppq, tempo), [0, meta(0x58, [num, Math.round(Math.log2(den)), 24, 8])]];
   if (p.key && (p.key.scale === 'major' || p.key.scale === 'minor') && p.key.root in PCS) {
     const minor = p.key.scale === 'minor';
     let sf = FIFTHS[(PCS[p.key.root] + (minor ? 3 : 0)) % 12];

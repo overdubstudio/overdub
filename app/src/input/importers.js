@@ -3,7 +3,8 @@
 //
 //   parseSmf(bytes) -> { format, ppq, smpte, tempo, tempos, meter, key, markers, parts, end, warnings }
 //       SMF types 0, 1 (and 2, read as 1). Running status, note-on at velocity 0 as a note-off, FIFO note pairing,
-//       the tempo map (the first tempo is kept: Overdub has one tempo), time and key signatures, track names,
+//       the tempo map (the first tempo is kept as the song's; every change is listed in tempos, { beat, bpm, us }),
+//       time and key signatures, track names,
 //       markers, program changes. Parts are one per (track, channel): type 0 files split by channel.
 //       Times are in beats (quarter notes): ticks / ppq, so tempo changes never move a note off its beat.
 //   deviceFor(part) -> a built-in instrument id: channel 10 -> core.drums, else the GM program's family, else the name.
@@ -14,9 +15,11 @@
 //   importAudio([File | { name, buffer }], { track, beat }), decodeAudio(arrayBuffer), pickMidi(), pickAudio({ track, beat }) }.
 // A file dropped on the arranger lands where it was dropped (app.arranger.locate); MIDI dropped elsewhere starts at
 // bar 1, audio dropped elsewhere goes on a new audio track at the playhead's bar. ui/reference.js takes its own drops.
+// An audio clip's length in beats is its seconds at the song's tempo, or on the song's tempo map from where it lands
+// (core/music.js): a recording is never stretched; the grid can bend to it instead.
 
 import { newId, songEnd, LIMITS } from '../core/project.js';
-import { beatsPerBar, validMeter } from '../core/music.js';
+import { beatsPerBar, validMeter, hasTempoMap, beatToSec, secToBeat } from '../core/music.js';
 import { css } from '../ui/dom.js';
 
 /* ================================================================ SMF */
@@ -170,7 +173,8 @@ export function parseSmf(input) {
   return {
     format, ppq, smpte, tracks: raw.length,
     tempo: tempo ? Math.round(tempo * 100) / 100 : null,
-    tempos: tempos.map((x) => ({ beat: r4(toBeats(x.tick)), bpm: Math.round(x.bpm * 100) / 100 })),
+    // (us: the file's own microseconds per quarter note, unrounded: a tempo map read back exactly)
+    tempos: tempos.map((x) => ({ beat: r4(toBeats(x.tick)), bpm: Math.round(x.bpm * 100) / 100, us: Math.round(60e6 / x.bpm) })),
     tempoChanges: Math.max(0, distinctTempos.size - 1),
     meter: timesigs.length ? timesigs[0].meter : null,
     key: keysigs.find((k) => k.key)?.key || null,
@@ -372,7 +376,9 @@ export default function (app) {
       let tref;
       if (i === 0 && target && target.kind === 'audio') tref = target.id;
       else { ops.push({ type: 'track.add', ref: 'au' + i, index: index++, track: { name: base, kind: 'audio', instrument: null } }); tref = '$au' + i; }
-      const length = Math.max(1 / 16, Math.round(d.buf.duration * (p.tempo / 60) * 10000) / 10000);
+      // (in beats: the seconds it lasts at the song's tempo, or on its tempo map from where it lands; never stretched)
+      const beats = hasTempoMap(p) ? secToBeat(p, beatToSec(p, at) + d.buf.duration) - at : d.buf.duration * (p.tempo / 60);
+      const length = Math.max(1 / 16, Math.round(beats * 10000) / 10000);
       ops.push({ type: 'clip.add', track: tref, ref: 'ac' + i, clip: { kind: 'audio', start: at, length, asset: id, offset: 0, gain: 0, name: base } });
     });
     // the samples first (IndexedDB), then the document: a clip never names an asset that isn't there

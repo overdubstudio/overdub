@@ -12,7 +12,7 @@
 // The normalisers keep them (canonical: sorted, clamped where the range is known, empty lanes dropped), so a load, an
 // undo of a removal and cleanProject never drop a lane.
 
-import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace } from './music.js';
+import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace, checkAnchors, mapNominal, MAP_ANCHORS } from './music.js';
 import { normAuto, lanesOf, formatPoints, specFor } from './automation.js';
 
 export const FORMAT = 'overdub/0';
@@ -275,7 +275,8 @@ export function songEnd(p) {
 // (core/store.js) are held to these: room for any real arrangement, small enough that the song still autosaves and
 // the tab keeps up. A song that already holds more (an old file) still opens and can be edited; it just can't grow.
 // Automation: lanePoints in one lane, songPoints in all of them (a point is ~20 bytes; recordings are thinned).
-export const LIMITS = { clipNotes: 20000, songNotes: 50000, clips: 4096, beats: 8192, lanePoints: 10000, songPoints: 50000 };
+// anchors: the most a tempo map holds (one per bar of a 3-minute song is about 100; music.js MAP_ANCHORS).
+export const LIMITS = { clipNotes: 20000, songNotes: 50000, clips: 4096, beats: 8192, lanePoints: 10000, songPoints: 50000, anchors: MAP_ANCHORS };
 const count = (n) => Number(n).toLocaleString('en-US');
 // What a song holds: { clips, notes, clipNotes (the most in one clip), end (the last beat a clip or section reaches),
 // points (automation points in all lanes), lanePoints (the most in one lane) }. Lanes don't extend the end.
@@ -328,9 +329,21 @@ export function isValidReference(r) {
   return !!(r && typeof r === 'object' && typeof r.name === 'string' && r.profile && typeof r.profile === 'object' && Number.isFinite(r.profile.lufs));
 }
 
+// A tempo map as the song keeps it ({ anchors: [{ beat, sec }], clip? }: music.js "The tempo map"), or null with the
+// reason when it isn't one. Strict: a map is kept as it is or not at all, never repaired into a different grid.
+export function normTempoMap(m) {
+  if (!isObj(m)) return { map: null, why: 'the tempo map is not an object' };
+  const why = checkAnchors(m.anchors);
+  if (why) return { map: null, why };
+  const map = { anchors: m.anchors.map((a) => ({ beat: a.beat, sec: a.sec })) };
+  if (typeof m.clip === 'string' && m.clip) map.clip = m.clip;
+  return { map, why: null };
+}
+
 // Bring a loaded document up to shape (older or hand-written JSON). A song saved under the old name (format
 // '<old>/0', house parts signed by the old house id) comes back as this format, signed by HOUSE.
-export function cleanProject(p) {
+// warn({ kind, message }): what was dropped on the way (a bad tempo map); without it, console.warn.
+export function cleanProject(p, { warn = null } = {}) {
   if (!isObj(p)) p = {};
   const base = createProject();
   const out = { ...base, ...p, format: FORMAT };
@@ -339,6 +352,14 @@ export function cleanProject(p) {
   out.meter = validMeter(p.meter) ? p.meter.slice() : base.meter;
   const tempo = Number(p.tempo);
   out.tempo = Number.isFinite(tempo) && p.tempo !== null && p.tempo !== '' ? Math.min(400, Math.max(20, tempo)) : base.tempo;
+  // the tempo map: kept whole or dropped whole (with a warning); while it is set, tempo is its nominal tempo
+  if ('tempoMap' in out) {
+    const { map, why } = normTempoMap(p.tempoMap);
+    if (map) { out.tempoMap = map; out.tempo = mapNominal(map.anchors); } else {
+      delete out.tempoMap;
+      if (p.tempoMap != null) (warn || ((w) => console.warn('overdub:', w.message)))({ kind: 'tempoMap', message: `the song's tempo map was dropped (${why}): the grid plays at ${out.tempo} BPM` });
+    }
+  }
   if (p.key !== null) out.key = isObj(p.key) && typeof p.key.root === 'string' && typeof p.key.scale === 'string' ? p.key : base.key;
   out.loop = { ...base.loop, ...(isObj(p.loop) ? p.loop : {}) };
   // (a loaded note the studio can't place is left out; the ops read theirs through music.js normNote)

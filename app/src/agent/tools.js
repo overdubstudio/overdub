@@ -23,7 +23,7 @@
 // tab is connected (catalogSchemas(): these plus the page-registered tools' schemas from extra-schemas.js).
 
 import { createStore } from '../core/store.js';
-import { formatNotes, beatsPerBar, keyLabel, noteName, formatGrid, parsePc, kitNotes, NOTES_HINT } from '../core/music.js';
+import { formatNotes, beatsPerBar, keyLabel, noteName, formatGrid, parsePc, kitNotes, NOTES_HINT, hasTempoMap, beatToSec as songBeatToSec } from '../core/music.js';
 import { songEnd, summarize } from '../core/project.js';
 import { normParam, normPresets, presetOf, presetParams } from '../devices/registry.js';
 import { diffProjects, opsSummary, targetsOf, isArrangementOp, laneLine, laneParam, laneValue } from './diff.js';
@@ -554,7 +554,8 @@ Words people disagree on (warm/cold, fat, tight): the first time, adjust doesn't
       endPlay(app);
       app.engine.play(rg.from);
       const s = st(app);
-      const secs = app.engine.beatToSec ? app.engine.beatToSec(rg.to - rg.from) : ((rg.to - rg.from) * 60) / P(app).tempo;
+      // (on a tempo map the range lasts what the map says: core/music.js)
+      const secs = hasTempoMap(P(app)) ? songBeatToSec(P(app), rg.to) - songBeatToSec(P(app), rg.from) : app.engine.beatToSec ? app.engine.beatToSec(rg.to - rg.from) : ((rg.to - rg.from) * 60) / P(app).tempo;
       // the stop at the end belongs to this playback only: any stop, seek, new play or take after it (the human's,
       // usually) lets it go, so it never cuts into what they started
       s.playOff = app.engine.on?.('transport', (e) => { if (e && ['stop', 'seek', 'recording', 'countin-end'].includes(e.why)) endPlay(app); }) || null;
@@ -1788,7 +1789,9 @@ function barSlices(app, from, to) {
   for (let b0 = Math.floor(from / bpb + 1e-9) * bpb; b0 < to - 1e-9 && out.length < 64; b0 += bpb) out.push({ bar: Math.round(b0 / bpb) + 1, from: Math.max(from, b0), to: Math.min(to, b0 + bpb) });
   return out;
 }
-function measureSlice(app, M, buf, start, from, to) { return M.measure(buf, { from: beatSec(app, from - start), to: beatSec(app, to - start) }); }
+// (seconds into a buffer that starts at beat `start`: on a tempo map, the map's seconds between them)
+const sliceSec = (app, start, b) => (hasTempoMap(P(app)) ? songBeatToSec(P(app), b) - songBeatToSec(P(app), start) : beatSec(app, b - start));
+function measureSlice(app, M, buf, start, from, to) { return M.measure(buf, { from: sliceSec(app, start, from), to: sliceSec(app, start, to) }); }
 function trend(xs) {
   if (xs.length < 2) return '';
   const d = xs.slice(1).map((x, i) => x - xs[i]), up = d.every((x) => x > -0.3), down = d.every((x) => x < 0.3);

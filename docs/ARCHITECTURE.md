@@ -124,12 +124,14 @@ module via `css(id, text)` from `ui/dom.js`, using the tokens below.
 
 ## The project document
 
-All musical time is in **beats** (quarter notes, floats). One tempo and one meter for v0.
+All musical time is in **beats** (quarter notes, floats). One meter; one tempo, unless the song carries a tempo map
+(below: the grid bent to a recording).
 
 ```js
 Project = {
   format: 'overdub/0', id: 'p_k3j9x2', title: 'Untitled', tempo: 120, meter: [4, 4],
   key: { root: 'C', scale: 'minor' } | null,           // scale names: music.js SCALES
+  tempoMap?: { anchors: [{ beat, sec }], clip? },        // the grid follows a recording (below); tempo is its nominal
   loop: { on: false, start: 0, end: 16 },               // beats
   tracks: [Track],
   sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color? }],
@@ -163,6 +165,33 @@ Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   // a place on the neck: both or neither
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
 ```
+
+### The tempo map
+
+A song may carry `tempoMap: { anchors: [{ beat, sec }, …], clip? }` (optional, top level, forever): the grid follows a
+recording instead of the recording following the grid. The grid is piecewise linear between anchors and runs on past
+the last at the last segment's tempo (and before beat 0 at the first's). `anchors[0]` is `{ beat: 0, sec: 0 }`; beat
+and sec rise strictly; every segment is 20..400 BPM; at most `LIMITS.anchors` (4,096). Anchors are seconds, not tempo
+steps, so rounding never adds up. `clip` names the audio clip the grid follows (the conformed clip), which is never
+stretched. `cleanProject` keeps a map exactly or drops it whole with a warning; it never repairs one into another grid.
+While a map is set `tempo` is its nominal tempo (the median segment tempo, to 0.01), `project.set { tempo }` is refused
+("The grid follows Original. Clear the map to set a tempo."), and the map changes only through `tempo.map`.
+
+Every beat↔second conversion goes through `core/music.js`: `beatToSec(p, beat)`, `secToBeat(p, sec)`, `tempoAt(p,
+beat)`, and `timeline(p, from)` for a render or a scheduler. Without a map each is the expression the code always used,
+so a song without one plays, renders and hashes exactly as before. With one: the live transport times every beat
+through the map (engine.js "Time"), the offline and Node renders place notes, clips and lanes by it, an audio clip's
+seconds into its file are the map's, and kernels' `bpm()` is the segment's tempo (offline, the worklet's transport is
+handed the map's segments: `kernel/worklet.js`). Readers that want a nominal tempo (labels, the jam room, devices'
+defaults) keep reading `p.tempo`. `time.insert` / `time.remove` carry the map with the recording (anchors after the
+point move by the inserted beats and the seconds the map gives them there); `section.duplicate` over the mapped span is
+refused in this slice ("This part follows a recording; copying it would break the grid"); `shiftMap(map, beats)` moves
+the grid with its recording for a whole-bar move of the conformed clip. The MIDI export writes a tempo event per
+segment, the DAWproject export a held tempo point per anchor (and a warp per anchor inside an audio clip).
+
+Format note: an older build opening a mapped song keeps the field (the top-level spread on load) and plays a constant
+grid at `tempo`. Its audio still plays in seconds; its notes drift from the recording. That is accepted: the map is
+additive, and a later build reads it back.
 
 Ids: prefix + 6 base36 chars (`t_`, `c_`, `fx_`, `s_`, `a_`, `p_`); note ids are `n` + a counter per clip,
 never reused while the store has history (undo finds notes by id, so a freed id stays freed). Ids seed instruments'
@@ -307,7 +336,8 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `section.add` | `section: { name, start, length, color? }`, `ref?` |
 | `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color? }` |
 | `section.duplicate` | `section`, `to?` (beats; default right after it), `push?` (make room there first), `ref?` |
-| `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop) |
+| `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop, the tempo map) |
+| `tempo.map` | `map: { anchors: [{ beat, sec }], clip? } \| null`, `tempo?` (sets or clears the tempo map; set, `tempo` becomes its nominal; cleared, the grid plays at `tempo` if given, else the nominal it had. The inverse restores both exactly) |
 | `clip.repeat` | `track`, `clip`, `times` (2..64, in all), `mode?: 'copies' \| 'loop'`, `ref?` |
 | `clip.split` | `track`, `clip`, `at` (a song beat inside it), `ref?` (the right half) |
 | `master.set` | `patch: { gain?, clip? }` (gain dB, −96..24; clip `'soft'` or `'clean'`, below) |
@@ -650,7 +680,7 @@ engine.render({ from = 0, to = engine.songEnd(), tracks = null, sr = 48000, tail
 engine.probeLatency({ tracks, withMix }) → Promise<{ tracks, max }>   // stems render with latencyMax: max, so they line up
 engine.settled() → Promise            // every strip matches the document
 engine.songEnd()                      // beats
-engine.beatToSec(b) ; engine.secToBeat(s)   // at the song's tempo (the practice speed doesn't change them)
+engine.beatToSec(b) ; engine.secToBeat(s)   // at the song's tempo, or on its tempo map (the practice speed doesn't change them)
 engine.rate = 0.25..2                 // practice speed (the Jam room's 50-100%): the transport runs at tempo × rate, live
                                       // only, never in the song, History or a render; audio clips sit out below 1 (they
                                       // can't slow down in tune) and pick up again at 1. The transport event says rate.

@@ -26,15 +26,17 @@ import { gridClock } from './clock.js';
 import { notesIn, audioIn, playBuffer, autoIn, lanesOf, mixGrid, laneValue, GRID } from './schedule.js';
 import { noteExpr } from '../kernel/expr.js';
 import { beatsPerBarOf, frame } from './util.js';
+import { timeline } from '../core/music.js';
 
 export async function renderProject(p, { from = 0, to, tracks = null, sr = 48000, tail = 2, assets, report = null, latencyMax = 0, trims = null } = {}) {
-  const bpm = +p.tempo || 120, spb = 60 / bpm;
+  // (the song's clock from `from`: a tempo map's, or (b - from) * spb as it always was: core/music.js timeline)
+  const tl = timeline(p, from), bpm = tl.mapped ? tl.bpmAt(from) : tl.bpm, spb = tl.spb;
   if (!(to > from)) throw new Error(`render: empty range ${from}..${to}`);
   await notHeld();
-  const len = Math.max(1, Math.ceil(((to - from) * spb + Math.max(0, tail)) * sr));
+  const len = Math.max(1, Math.ceil((tl.sec(to) + Math.max(0, tail)) * sr));
   const c = new OfflineAudioContext({ numberOfChannels: 2, length: len, sampleRate: sr });
   const bpb = beatsPerBarOf(p.meter);
-  const clock = gridClock(c, { bpm, beatsPerBar: bpb, from, playing: true });
+  const clock = gridClock(c, { bpm, beatsPerBar: bpb, from, playing: true, timeline: tl.mapped ? tl : null });
   const opts = { clock, bpm: () => bpm, report, meters: false };
 
   const master = new Strip(c, { ...opts, id: 'master', master: true, dest: c.destination });
@@ -81,7 +83,7 @@ export async function renderProject(p, { from = 0, to, tracks = null, sr = 48000
   const latency = { tracks: lat, comp, max, master: master.latency(), total: 0 };
   latency.total = latency.max + latency.master;
 
-  const T = (beat) => frame(c, (beat - from) * spb);
+  const T = (beat) => frame(c, tl.sec(beat));
   // notes, time-ordered with offs before ons at equal times (a repeated note releases the previous one first)
   const ev = [];
   for (const n of notesIn(p, from, to, { chase: true, tracks: want })) {
@@ -95,7 +97,7 @@ export async function renderProject(p, { from = 0, to, tracks = null, sr = 48000
     if (!inst) continue;
     const t = e.t + held(e.n.track);
     try {
-      if (e.on) inst.noteOn(e.n.note.p, Number.isFinite(e.n.note.v) ? e.n.note.v : 0.8, t, noteExpr(e.n.note, spb, e.n.into));
+      if (e.on) inst.noteOn(e.n.note.p, Number.isFinite(e.n.note.v) ? e.n.note.v : 0.8, t, noteExpr(e.n.note, tl.mapped ? tl.spbAt(e.n.at) : spb, e.n.into));
       else inst.noteOff(e.n.note.p, t);
     } catch (err) { report && report({ kind: 'note', track: e.n.track, message: err.message }); }
   }
@@ -103,9 +105,9 @@ export async function renderProject(p, { from = 0, to, tracks = null, sr = 48000
     const buf = bufs.get(a.clip.asset), s = strips.get(a.track);
     if (!buf) { report && report({ kind: 'asset', track: a.track, asset: a.clip.asset, message: `audio asset "${a.clip.asset}" is missing` }); continue; }
     if (!s) continue;
-    playBuffer(c, buf, s.head, { t0: T(a.at) + held(a.track), offset: (+a.clip.offset || 0) + a.into * spb, t1: T(a.end) + held(a.track), gainDb: +a.clip.gain || 0 });
+    playBuffer(c, buf, s.head, { t0: T(a.at) + held(a.track), offset: (+a.clip.offset || 0) + (a.intoSec ?? a.into * spb), t1: T(a.end) + held(a.track), gainDb: +a.clip.gain || 0 });
   }
-  scheduleLanes(c, p, { from, len, spb, sr, want, strips, master, held });
+  scheduleLanes(c, p, { from, len, tl, sr, want, strips, master, held });
   const out = await c.startRendering();
   master.dispose();
   for (const s of strips.values()) s.dispose();
@@ -146,14 +148,14 @@ async function notHeld() {
 export const GRAPH_STEP = 0.02; // seconds between a graph device's automation points
 
 // Every lane in the render, handed over before it starts (see the header). held(track): its compensation in seconds.
-function scheduleLanes(c, p, { from, len, spb, sr, want, strips, master, held }) {
+function scheduleLanes(c, p, { from, len, tl, sr, want, strips, master, held }) {
   const lanes = lanesOf(p, { tracks: [...want, 'master'] });
   if (!lanes.length) return;
-  const T = (beat) => frame(c, (beat - from) * spb);
+  const T = (beat) => frame(c, tl.sec(beat));
   const stripOf = (track) => (track === 'master' ? master : strips.get(track));
   const hOf = (track) => (track === 'master' ? 0 : held(track));
   // kernels: segments
-  for (const g of autoIn(p, from, from + len / sr / spb, { chase: true, lanes: lanes.filter((L) => L.kind === 'device') })) {
+  for (const g of autoIn(p, from, tl.beat(len / sr), { chase: true, lanes: lanes.filter((L) => L.kind === 'device') })) {
     const s = stripOf(g.track), inst = s && s.instance(g.insert);
     if (!inst || !inst.auto) continue;
     const h = hOf(g.track);
@@ -173,7 +175,7 @@ function scheduleLanes(c, p, { from, len, spb, sr, want, strips, master, held })
     const base = w.insert === 'instrument' ? spec.instrument && spec.instrument.params : (spec.inserts.find((x) => x.id === w.insert) || {}).params;
     const h = hOf(w.track), dur = len / sr;
     for (let t = GRAPH_STEP; t < dur; t += GRAPH_STEP) {
-      const v = { ...(base || {}) }, beat = from + (t - h) / spb;
+      const v = { ...(base || {}) }, beat = tl.beat(t - h);
       for (const L of w.L) { const x = laneValue(L.lane, beat, L.spec); if (x != null) v[L.param] = x; }
       try { inst.set(v, { at: t }); } catch { /* a device that can't take it */ }
     }
@@ -190,7 +192,7 @@ function scheduleLanes(c, p, { from, len, spb, sr, want, strips, master, held })
     const s = stripOf(L.track);
     if (!s) continue;
     const h = hOf(L.track);
-    const G = mixGrid(L.lane, L.param, n, (fr) => from + (fr / sr - h) / spb);
+    const G = mixGrid(L.lane, L.param, n, (fr) => tl.beat(fr / sr - h));
     if (L.param === 'gain') ramp(s.fader.gain, G.g);
     else if (s.panL) { ramp(s.panL.gain, G.l); ramp(s.panR.gain, G.r); }
   }

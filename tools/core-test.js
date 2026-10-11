@@ -61,6 +61,8 @@ const tr = s2.get().tracks[1], cl = tr.clips[0], fx = s2.get().tracks[2].inserts
 const trials = [
   { type: 'project.set', patch: { tempo: 101, title: 'X', key: { root: 'D', scale: 'dorian' }, loop: { on: false } } },
   { type: 'track.add', track: { name: 'New', kind: 'audio' }, index: 1 },
+  // (the tempo map: core/music.js; tools/tempomap-test.js holds the rest)
+  { type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat: 4, sec: 2.5 }, { beat: 8, sec: 5.1 }], clip: 'c_x' } },
   { type: 'track.remove', track: tr.id },
   { type: 'track.move', track: tr.id, index: 3 },
   { type: 'track.set', track: tr.id, patch: { name: 'B', gain: -9, pan: 0.5, mute: true } },

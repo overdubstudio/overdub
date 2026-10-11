@@ -45,7 +45,7 @@
       <summary>On this page</summary>
       <nav aria-label="On this page"><ol>
 <li><a href="#layout-and-ownership">Layout and ownership</a></li>
-<li><a href="#the-project-document">The project document</a><ol><li><a href="#automation-lanes-coreautomationjs">Automation lanes (core/automation.js)</a></li><li><a href="#the-notes-text-format-for-agents-and-the-console">The notes text format (for agents and the console)</a></li></ol></li>
+<li><a href="#the-project-document">The project document</a><ol><li><a href="#the-tempo-map">The tempo map</a></li><li><a href="#automation-lanes-coreautomationjs">Automation lanes (core/automation.js)</a></li><li><a href="#the-notes-text-format-for-agents-and-the-console">The notes text format (for agents and the console)</a></li></ol></li>
 <li><a href="#ops-and-the-store">Ops and the store</a></li>
 <li><a href="#devices">Devices</a><ol><li><a href="#who-runs-a-songs-code-devicestrustjs">Who runs a song's code (devices/trust.js)</a></li><li><a href="#the-community-shelf-uicommunityjs-devicescommunityjs">The community shelf (ui/community.js, devices/community.js)</a></li><li><a href="#instance">Instance</a></li><li><a href="#kernels-the-format-agents-write">Kernels (the format agents write)</a></li></ol></li>
 <li><a href="#the-engine">The engine</a><ol><li><a href="#the-canonical-render-and-the-preview">The canonical render and the preview</a></li></ol></li>
@@ -61,7 +61,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 112 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 114 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -179,10 +179,12 @@ than writing into theirs. Never commit; the orchestrator commits.</p>
 <code>Math.random</code> in anything that makes sound (seed it), every audible change ramps (no clicks), CSS injected once per
 module via <code>css(id, text)</code> from <code>ui/dom.js</code>, using the tokens below.</p>
 <h2 id="the-project-document"><a class="h-link" href="#the-project-document">The project document</a></h2>
-<p>All musical time is in <strong>beats</strong> (quarter notes, floats). One tempo and one meter for v0.</p>
+<p>All musical time is in <strong>beats</strong> (quarter notes, floats). One meter; one tempo, unless the song carries a tempo map
+(below: the grid bent to a recording).</p>
 <div class="code" data-lang="js"><pre><code>Project = {
   format: 'overdub/0', id: 'p_k3j9x2', title: 'Untitled', tempo: 120, meter: [4, 4],
   key: { root: 'C', scale: 'minor' } | null,           <span class="c">// scale names: music.js SCALES</span>
+  tempoMap?: { anchors: [{ beat, sec }], clip? },        <span class="c">// the grid follows a recording (below); tempo is its nominal</span>
   loop: { on: false, start: 0, end: 16 },               <span class="c">// beats</span>
   tracks: [Track],
   sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color? }],
@@ -215,6 +217,28 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   <span class="c">// a place on the neck: both or neither</span>
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }</code></pre></div>
+<h3 id="the-tempo-map"><a class="h-link" href="#the-tempo-map">The tempo map</a></h3>
+<p>A song may carry <code>tempoMap: { anchors: [{ beat, sec }, …], clip? }</code> (optional, top level, forever): the grid follows a
+recording instead of the recording following the grid. The grid is piecewise linear between anchors and runs on past
+the last at the last segment's tempo (and before beat 0 at the first's). <code>anchors[0]</code> is <code>{ beat: 0, sec: 0 }</code>; beat
+and sec rise strictly; every segment is 20..400 BPM; at most <code>LIMITS.anchors</code> (4,096). Anchors are seconds, not tempo
+steps, so rounding never adds up. <code>clip</code> names the audio clip the grid follows (the conformed clip), which is never
+stretched. <code>cleanProject</code> keeps a map exactly or drops it whole with a warning; it never repairs one into another grid.
+While a map is set <code>tempo</code> is its nominal tempo (the median segment tempo, to 0.01), <code>project.set { tempo }</code> is refused
+(&quot;The grid follows Original. Clear the map to set a tempo.&quot;), and the map changes only through <code>tempo.map</code>.</p>
+<p>Every beat↔second conversion goes through <code>core/music.js</code>: <code>beatToSec(p, beat)</code>, <code>secToBeat(p, sec)</code>, <code>tempoAt(p, beat)</code>, and <code>timeline(p, from)</code> for a render or a scheduler. Without a map each is the expression the code always used,
+so a song without one plays, renders and hashes exactly as before. With one: the live transport times every beat
+through the map (engine.js &quot;Time&quot;), the offline and Node renders place notes, clips and lanes by it, an audio clip's
+seconds into its file are the map's, and kernels' <code>bpm()</code> is the segment's tempo (offline, the worklet's transport is
+handed the map's segments: <code>kernel/worklet.js</code>). Readers that want a nominal tempo (labels, the jam room, devices'
+defaults) keep reading <code>p.tempo</code>. <code>time.insert</code> / <code>time.remove</code> carry the map with the recording (anchors after the
+point move by the inserted beats and the seconds the map gives them there); <code>section.duplicate</code> over the mapped span is
+refused in this slice (&quot;This part follows a recording; copying it would break the grid&quot;); <code>shiftMap(map, beats)</code> moves
+the grid with its recording for a whole-bar move of the conformed clip. The MIDI export writes a tempo event per
+segment, the DAWproject export a held tempo point per anchor (and a warp per anchor inside an audio clip).</p>
+<p>Format note: an older build opening a mapped song keeps the field (the top-level spread on load) and plays a constant
+grid at <code>tempo</code>. Its audio still plays in seconds; its notes drift from the recording. That is accepted: the map is
+additive, and a later build reads it back.</p>
 <p>Ids: prefix + 6 base36 chars (<code>t_</code>, <code>c_</code>, <code>fx_</code>, <code>s_</code>, <code>a_</code>, <code>p_</code>); note ids are <code>n</code> + a counter per clip,
 never reused while the store has history (undo finds notes by id, so a freed id stays freed). Ids seed instruments'
 randomness, so the demos are built with <code>stableIds(p, seed)</code> (<code>core/project.js</code>) and sound the same for everyone.</p>
@@ -342,7 +366,8 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>section.add</code></td><td><code>section: { name, start, length, color? }</code>, <code>ref?</code></td></tr>
 <tr><td><code>section.set</code> / <code>section.remove</code></td><td><code>section</code> (object, id or name), <code>patch: { name?, start?, length?, color? }</code></td></tr>
 <tr><td><code>section.duplicate</code></td><td><code>section</code>, <code>to?</code> (beats; default right after it), <code>push?</code> (make room there first), <code>ref?</code></td></tr>
-<tr><td><code>time.insert</code> / <code>time.remove</code></td><td><code>at</code>, <code>length</code> (beats, across the whole song: clips, sections, the loop)</td></tr>
+<tr><td><code>time.insert</code> / <code>time.remove</code></td><td><code>at</code>, <code>length</code> (beats, across the whole song: clips, sections, the loop, the tempo map)</td></tr>
+<tr><td><code>tempo.map</code></td><td><code>map: { anchors: [{ beat, sec }], clip? } | null</code>, <code>tempo?</code> (sets or clears the tempo map; set, <code>tempo</code> becomes its nominal; cleared, the grid plays at <code>tempo</code> if given, else the nominal it had. The inverse restores both exactly)</td></tr>
 <tr><td><code>clip.repeat</code></td><td><code>track</code>, <code>clip</code>, <code>times</code> (2..64, in all), <code>mode?: 'copies' | 'loop'</code>, <code>ref?</code></td></tr>
 <tr><td><code>clip.split</code></td><td><code>track</code>, <code>clip</code>, <code>at</code> (a song beat inside it), <code>ref?</code> (the right half)</td></tr>
 <tr><td><code>master.set</code></td><td><code>patch: { gain?, clip? }</code> (gain dB, −96..24; clip <code>'soft'</code> or <code>'clean'</code>, below)</td></tr>
@@ -643,7 +668,7 @@ engine.render({ from = 0, to = engine.songEnd(), tracks = null, sr = 48000, tail
 engine.probeLatency({ tracks, withMix }) → Promise&lt;{ tracks, max }&gt;   <span class="c">// stems render with latencyMax: max, so they line up</span>
 engine.settled() → Promise            <span class="c">// every strip matches the document</span>
 engine.songEnd()                      <span class="c">// beats</span>
-engine.beatToSec(b) ; engine.secToBeat(s)   <span class="c">// at the song's tempo (the practice speed doesn't change them)</span>
+engine.beatToSec(b) ; engine.secToBeat(s)   <span class="c">// at the song's tempo, or on its tempo map (the practice speed doesn't change them)</span>
 engine.rate = 0.25..2                 <span class="c">// practice speed (the Jam room's 50-100%): the transport runs at tempo × rate, live</span>
                                       <span class="c">// only, never in the song, History or a render; audio clips sit out below 1 (they</span>
                                       <span class="c">// can't slow down in tune) and pick up again at 1. The transport event says rate.</span>

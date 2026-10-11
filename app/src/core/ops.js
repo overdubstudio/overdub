@@ -8,8 +8,8 @@
 // References: ops that create things accept `ref: 'name'`; later ops in the SAME transaction can name the new thing
 // as '$name' (track: '$bass', clip: '$verse1'). ctx.refs holds them.
 
-import { normTrack, normClip, normInsert, normKey, idNotes, sortNotes, newId, isValidReference, isTakeId, LIMITS, plainText, cleanName, isColor, NAME_MAX, TITLE_MAX } from './project.js';
-import { parseNotes, parseGrid, normNote, validMeter, isPlace } from './music.js';
+import { normTrack, normClip, normInsert, normKey, idNotes, sortNotes, newId, isValidReference, isTakeId, LIMITS, plainText, cleanName, isColor, NAME_MAX, TITLE_MAX, normTempoMap } from './project.js';
+import { parseNotes, parseGrid, normNote, validMeter, isPlace, mapNominal } from './music.js';
 import { TUNING_IDS } from './fretboard.js';
 import { ARRANGEMENT_OPS } from './arrangement.js';
 import { MIXER, paramSpec, parsePoints, normPoints, pointsPrint, rt, mkPoint, pointBy, signPoints } from './automation.js';
@@ -69,6 +69,12 @@ function checkKey(p, ctx, tid, key, fxId, device) {
     }
   }
   return { track: src.id };
+}
+// The clip a tempo map follows, by name ("Original"), for a sentence.
+function mapClipName(p) {
+  const id = p.tempoMap && p.tempoMap.clip;
+  for (const t of p.tracks) for (const c of t.clips) if (c.id === id) return c.name || t.name || 'the recording';
+  return 'a recording';
 }
 function checkDevice(ctx, id, kind) {
   // (an undo, redo or revert puts back exactly what was there, loaded in this browser or not)
@@ -387,6 +393,7 @@ export const OPS = {
       // (and plain: its control and bidi characters are dropped, as a name's are)
       if (k === 'title' && !(typeof v === 'string' && plainText(v).length <= TITLE_MAX)) throw new Error(`title must be text, ${TITLE_MAX} characters at most`);
       if (k === 'tempo' && !(fin(v) && v >= 20 && v <= 400)) throw new Error('tempo must be a number from 20 to 400');
+      if (k === 'tempo' && p.tempoMap) throw new Error(`The grid follows ${mapClipName(p)}. Clear the map to set a tempo.`);
       if (k === 'meter' && !validMeter(v)) throw new Error('meter must be [beats, unit]: 1 to 32 beats, unit 1, 2, 4, 8, 16 or 32, e.g. [4, 4] or [6, 8]');
       if (k === 'key' && v !== null && !(v && typeof v.root === 'string' && typeof v.scale === 'string')) throw new Error('key must be { root: "C", scale: "minor" } or null');
       if (k === 'loop' && !(v && typeof v === 'object')) throw new Error('loop must be { on, start, end } in beats');
@@ -395,6 +402,25 @@ export const OPS = {
     }
     for (const [k, v] of Object.entries(next)) { inv[k] = clone(p[k]); p[k] = v; }
     return { inverse: [{ type: 'project.set', patch: inv }] };
+  },
+
+  // The tempo map (core/music.js "The tempo map"): map { anchors: [{ beat, sec }], clip? } sets it (and tempo becomes
+  // its nominal tempo), null clears it (the grid plays at the tempo it had, or at `tempo` when given: the inverse
+  // puts back exactly the tempo there was).
+  'tempo.map'(p, op) {
+    let next = null;
+    if (op.map !== null) {
+      const { map, why } = normTempoMap(op.map);
+      if (!map) throw new Error(`tempo.map needs map: { anchors: [{ beat: 0, sec: 0 }, { beat, sec }, …], clip? } or null to clear it: ${why}`);
+      next = map;
+    }
+    if ('tempo' in op && op.tempo != null && !(fin(op.tempo) && op.tempo >= 20 && op.tempo <= 400)) throw new Error('tempo must be a number from 20 to 400');
+    const inverse = [{ type: 'tempo.map', map: p.tempoMap ? clone(p.tempoMap) : null, tempo: p.tempo }];
+    if (next) { p.tempoMap = next; p.tempo = mapNominal(next.anchors); } else {
+      delete p.tempoMap;
+      if (fin(op.tempo)) p.tempo = op.tempo;
+    }
+    return { inverse };
   },
 
   'track.add'(p, op, ctx) {

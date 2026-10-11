@@ -602,6 +602,13 @@
       "lufs": -7.26,
       "truePeak": -1.1,
       "peak": -1.1
+    },
+    "flip:tempo-map": {
+      "sha256": "85a4399a930f657bb09618a21c6db6c678c51c986ae98c286a7edfa94a0f5a9d",
+      "frames": 1028616,
+      "lufs": -27.36,
+      "truePeak": -0.53,
+      "peak": -0.53
     }
   }
 }

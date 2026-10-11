@@ -480,11 +480,18 @@ try {
   // checkDevice's cpu (its 4 s render on the DI strum) for core.rooms at its heaviest room (AULA, its default: the
   // longest early cut) against core.verb at its defaults, the median of 5 each, alternating, in this one page. At
   // most 1.5x (spec 0006 R36; tools/rooms-test.js holds the same in Node). Without the aachen bank it plays nothing
-  // and is skipped. Measured at commit: about 2.0x here (1.4x in Node). The early convolver alone costs more than
-  // Stairwell in Chromium's worklet, and R36's cuts don't reach the bar: the early cut barely moves it (MEETING, 80 ms,
-  // within 6% of AULA, 150 ms), the tail has no modulation to take off, and other body partitions (256, 512, 2048)
-  // are slower than 1024. Per AJ's Q4 the miss is reported, not cut further and not raised: over 1.5x, this prints a
-  // note for AJ instead of failing; the budget stays 1.5x.
+  // and is skipped. Measured about 1.8-2.0x here (1.4x in Node). R36's three cuts, each measured on AULA in this
+  // page (checkDevice, median of 7-9, alternating with Stairwell; a probe copy of the kernel source per variant):
+  // 1. the early cut: AULA's 150 ms cut to 100 ms gives about 1.84x, to 50 ms about 1.80x;
+  // 2. the tail's modulation: none to take off (every room's fit has mod 0);
+  // 3. head FFT tuning: the convolver's bit-identical tuning (no per-butterfly sign branch, both channels' products
+  //    in one pass, block boundaries by mask) takes about 12% off Echo Chamber's mean block in Chromium's worklet
+  //    (0.0283 to 0.0250 ms); a 256- or 512-frame head (latency, alignment and every fit moved) about 1.80x / 1.88x,
+  //    and all three together (50 ms, head 256) about 1.88x. (On this page's main thread, 4 s at AULA's length costs
+  //    the convolver about 24 ms, its head alone 12 ms, the tail 10 ms.)
+  // The worst block in Chromium's worklet (the mean of 4,000 cycles per phase of the 8-block cycle, Date.now ticks):
+  // 0.08 ms, the body's phase (under R36's 0.5 ms). Per AJ's Q4 the miss is reported, not cut further and not raised:
+  // over 1.5x, this prints a note for AJ instead of failing; the budget stays 1.5x.
   console.log('cpu: Echo Chamber against Stairwell');
   const rc = await page.evaluate(async () => {
     const { check } = window.K;

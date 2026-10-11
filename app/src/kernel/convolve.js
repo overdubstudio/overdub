@@ -48,6 +48,8 @@ export function fft(n) {
   // the complex FFT's twiddles e^(-2 pi i k / M), k < M/2, and the split's e^(-2 pi i k / n), k <= M/2
   const cr = new Float64Array(H), ci = new Float64Array(H);
   for (let k = 0; k < H; k++) { const a = (2 * Math.PI * k) / M; cr[k] = dcos(a); ci[k] = -dsin(a); }
+  const cn = new Float64Array(H); // -ci: the inverse's (conjugate) twiddles, so a butterfly never branches on sign
+  for (let k = 0; k < H; k++) cn[k] = -ci[k];
   const wr = new Float64Array(H + 1), wi = new Float64Array(H + 1);
   for (let k = 0; k <= H; k++) { const a = (2 * Math.PI * k) / n; wr[k] = dcos(a); wi[k] = -dsin(a); }
   // the bit-reversed order of M
@@ -70,11 +72,12 @@ export function fft(n) {
       zr[i + 1] = d0r + tr; zi[i + 1] = d0i + ti;
       zr[i + 3] = d0r - tr; zi[i + 3] = d0i - ti;
     }
+    const cw = sign < 0 ? ci : cn;
     for (let len = 8; len <= M; len <<= 1) {
       const half = len >> 1, step = M / len;
       for (let i = 0; i < M; i += len) {
         for (let j = 0, k = 0; j < half; j++, k += step) {
-          const w1 = cr[k], w2 = sign < 0 ? ci[k] : -ci[k];
+          const w1 = cr[k], w2 = cw[k];
           const p = i + j, q = p + half;
           const xr = zr[q] * w1 - zi[q] * w2, xi = zr[q] * w2 + zi[q] * w1;
           zr[q] = zr[p] - xr; zi[q] = zi[p] - xi;
@@ -134,7 +137,8 @@ function level(B, a, P, ffts) {
     xr: new Float64Array(P * K), xi: new Float64Array(P * K),   // the input spectra, a ring of P
     slot: 0,
     hr, hi,
-    frame: new Float64Array(N), tr: new Float64Array(K), ti: new Float64Array(K), yr: new Float64Array(K), yi: new Float64Array(K), out: new Float64Array(N),
+    frame: new Float64Array(N), tr: new Float64Array(K), ti: new Float64Array(K), out: new Float64Array(N),
+    yr: [new Float64Array(K), new Float64Array(K)], yi: [new Float64Array(K), new Float64Array(K)],   // per channel
   };
 }
 
@@ -202,20 +206,39 @@ export function convolver(taps, opts = {}) {
     const s0 = L.slot * K;
     L.F.forward(fr, L.tr, L.ti);
     L.xr.set(L.tr, s0); L.xi.set(L.ti, s0);
-    const due = t - B + L.a + D;
-    for (let c = 0; c < C; c++) {
-      const yr = L.yr, yi = L.yi, Hr = L.hr[c], Hi = L.hi[c];
-      yr.fill(0); yi.fill(0);
+    const due = t - B + L.a + D, xr = L.xr, xi = L.xi;
+    // every partition's spectrum against the input spectra behind it, both channels in one pass over the inputs
+    // (each channel's sums run in the same order as one channel alone: the same doubles)
+    const yr0 = L.yr[0], yi0 = L.yi[0], Hr0 = L.hr[0], Hi0 = L.hi[0];
+    yr0.fill(0); yi0.fill(0);
+    if (C === 2) {
+      const yr1 = L.yr[1], yi1 = L.yi[1], Hr1 = L.hr[1], Hi1 = L.hi[1];
+      yr1.fill(0); yi1.fill(0);
       for (let p = 0; p < L.used; p++) {
         let sl = L.slot - p; if (sl < 0) sl += L.P;
-        const xo = sl * K, ho = p * K, xr = L.xr, xi = L.xi;
+        const xo = sl * K, ho = p * K;
         for (let k = 0; k < K; k++) {
-          const ar = xr[xo + k], ai = xi[xo + k], br = Hr[ho + k], bi = Hi[ho + k];
-          yr[k] += ar * br - ai * bi;
-          yi[k] += ar * bi + ai * br;
+          const ar = xr[xo + k], ai = xi[xo + k], h = ho + k;
+          const br = Hr0[h], bi = Hi0[h], cr = Hr1[h], ci = Hi1[h];
+          yr0[k] += ar * br - ai * bi;
+          yi0[k] += ar * bi + ai * br;
+          yr1[k] += ar * cr - ai * ci;
+          yi1[k] += ar * ci + ai * cr;
         }
       }
-      L.F.inverse(yr, yi, L.out);
+    } else {
+      for (let p = 0; p < L.used; p++) {
+        let sl = L.slot - p; if (sl < 0) sl += L.P;
+        const xo = sl * K, ho = p * K;
+        for (let k = 0; k < K; k++) {
+          const ar = xr[xo + k], ai = xi[xo + k], br = Hr0[ho + k], bi = Hi0[ho + k];
+          yr0[k] += ar * br - ai * bi;
+          yi0[k] += ar * bi + ai * br;
+        }
+      }
+    }
+    for (let c = 0; c < C; c++) {
+      L.F.inverse(L.yr[c], L.yi[c], L.out);
       const R = ring[c], o = L.out;
       for (let i = 0; i < B; i++) { const q = (due + i) & OM; R[q] += o[B + i]; }
     }
@@ -257,7 +280,7 @@ export function convolver(taps, opts = {}) {
           if (two) { const h1 = dt[1]; let s1 = 0; for (let k = 0; k < DIRECT; k++) s1 += h1[k] * hist[b - k]; yr += s1; }
         }
         t++;
-        for (let j = 0; j < levels.length; j++) { const L = levels[j]; if (L.used && (t % L.B) === 0) blockDone(L); }
+        for (let j = 0; j < levels.length; j++) { const L = levels[j]; if (L.used && (t & (L.B - 1)) === 0) blockDone(L); }
         outL[i] = yl;
         if (outR) outR[i] = two ? yr : yl;
       }

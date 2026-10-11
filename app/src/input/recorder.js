@@ -108,8 +108,12 @@ import { createAutorec } from './autorec.js';
 import { snapGentle, tightness, blend, leanOf, placeTake } from './timing.js';
 import { newPartFor } from '../core/sounds.js';
 import { foldRounds } from './rounds.js';
+import { on as toggleOn } from '../toggles.js';
 
 const SAVE = 'overdub:record';
+// A drum track's default for each pass: Fold with the start.slice2 toggle on (app/src/toggles.js), Layer while it's off
+// (as main had it). Fold stays a mode either way: a take that asks for it folds.
+export const drumMode = () => (toggleOn('start.slice2') ? 'fold' : 'layer');
 const EPS = 1e-6, MIN_CLIP = 0.25, MIN_NOTE = 1 / 64;
 const EARLY = 0.5;          // a note in the count-in's last eighth counts as the downbeat (people anticipate it)
 const MISS = 0.35;          // two hits on one drum, in different passes, this close (beats) as played: one meant hit
@@ -613,7 +617,7 @@ export function createRecorder(app, input, opts = {}) {
     input.emit('keys:track', { track: id, name: np.name, device: np.device, text });
     return store.track(id);
   }
-  const modeFor = (tr) => { const t = typeof tr === 'string' ? store.track(tr) : tr; if (!t) return 'take'; if (t.kind === 'audio') return 'take'; return modes.get(t.id) || (isDrumTrack(t) ? 'fold' : 'take'); };
+  const modeFor = (tr) => { const t = typeof tr === 'string' ? store.track(tr) : tr; if (!t) return 'take'; if (t.kind === 'audio') return 'take'; return modes.get(t.id) || (isDrumTrack(t) ? drumMode() : 'take'); };
   const layered = (m) => m === 'layer' || m === 'fold';   // (Fold records as Layer does; only the stop folds)
 
   /* ---- time: every event on the transport's unwrapped grid (engine.gridBeat: what is heard now) */
@@ -647,7 +651,7 @@ export function createRecorder(app, input, opts = {}) {
     const key = track ? track.id : '+' + (extra.src === 'hum' ? 'hum' : kind);
     let pt = r.parts.get(key);
     if (!pt) {
-      const mode = kind === 'audio' ? 'take' : track ? modeFor(track) : kind === 'drums' ? 'fold' : 'take';
+      const mode = kind === 'audio' ? 'take' : track ? modeFor(track) : kind === 'drums' ? drumMode() : 'take';
       pt = { track: track ? track.id : null, kind: kind === 'audio' ? 'audio' : 'notes', drums: kind === 'drums', mode, passes: new Map(), name: extra.name || null, srcs: new Set(), previews: [] };
       // (no track to record onto: a new one, named and sounded as every new track is: core/sounds.js newPartFor)
       if (!track) pt.newTrack = newPartFor(kind === 'drums' ? 'pads' : extra.part || (extra.src === 'hum' ? 'hum' : 'keys'), P());

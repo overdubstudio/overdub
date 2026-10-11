@@ -43,7 +43,6 @@ const SPEC = [
   ['Song', 'position', 'Where you are', 'Bar and beat of the playhead, and the beat lights.'],
   ['Song', 'song-settings', 'Song settings', 'Beats per bar, tap the tempo, the click.'],
   ['Song', 'tracks', 'Track tools', 'Add tracks, snap, zoom, and colours.'],
-  ['Song', 'start', 'Start a song', 'Play one idea at any speed; the studio keeps time.'],
   ['Song', 'redo', 'Redo', 'Put back what Undo took away.'],
   ['Recording', 'record-options', 'Recording options', 'Count-in, layering takes and timing.'],
   ['Agent', 'history', 'History', 'Everything that changed, who changed it, and how to take it back.'],

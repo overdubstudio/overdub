@@ -396,13 +396,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(400);
     const blank = await E(() => { const c = document.querySelector('.ar-empty-card'); const b = c && [...c.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Tap a beat'); return { card: !!c && c.getClientRects().length > 0, primary: b?.classList.contains('btn-go') }; });
     T.ok(blank.card && blank.primary, `a blank song's first screen offers Tap a beat first (${JSON.stringify(blank)})`);
-    // (Tap a beat opens Start a song's stage, ui/start.js, whose "Play to a click instead" stays on the stage: the first
-    // minute is the tour's, reached from there)
+    // (Tap a beat opens Start a song's stage, ui/start.js; its "Play to a click instead" is the first minute: the
+    // start.slice2 toggle is off here, so it is slice 1's stage, ui/start-slice1.js)
     await E(() => [...document.querySelectorAll('.ar-empty-card button')].find((x) => x.textContent.trim() === 'Tap a beat')?.click());
     await sleep(300);
-    const sv = await E(() => { [...document.querySelectorAll('.st-stage button')].find((x) => x.textContent.trim() === 'Play to a click instead')?.click(); return { step: window.overdub.start.step, view: window.overdub.start.view }; });
-    T.ok(sv.step === 'play' && sv.view === 'click', `Play to a click instead stays on the stage, over a click (${JSON.stringify(sv)})`);
-    await E(() => { window.overdub.start.close({ to: 'studio' }); return window.overdub.onboard.firstMinute('tap'); });
+    await E(() => [...document.querySelectorAll('.st-stage button')].find((x) => x.textContent.trim() === 'Play to a click instead')?.click());
     await sleep(900);
     const nb = await E(() => { const o = window.overdub, p = o.store.get(); return { tracks: p.tracks.map((t) => t.name), loop: p.loop, playing: o.engine.playing, click: o.engine.metronome, step: o.onboard.step, card: !!document.querySelector('.ob') }; });
     T.ok(nb.tracks.includes('Drums') && nb.loop.on && nb.loop.end - nb.loop.start === 8 && nb.playing && nb.click && nb.card && nb.step === 'take', `and, with a click, it starts the first minute on a new Drums track (${JSON.stringify(nb)})`);
@@ -537,9 +535,10 @@ for (const w of [1280, 1366, 1440]) {
 
 /* ================================================================ R on a drum track folds the passes (Fold, the default) */
 // Three times round a 1-bar loop on Drums with R: what's played in two of three rounds or more stays; a kick played in
-// one round only is left out (in Takes with its pass), and the toast says so with Show them.
+// one round only is left out (in Takes with its pass), and the toast says so with Show them. Fold is a drum track's
+// default with the start.slice2 toggle on (?on=, a local studio); off, it's Layer (tools/start-test.js checks that).
 {
-  const s = await open('/app/', { width: 1440, height: 900 });
+  const s = await open('/app/', { query: 'on=start.slice2', width: 1440, height: 900 });
   const { page, errors } = s;
   const E = (fn, a) => page.evaluate(fn, a);
   try {

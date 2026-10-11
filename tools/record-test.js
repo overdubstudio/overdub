@@ -605,10 +605,12 @@ try {
   await page.keyboard.press('Backquote');
   await reset();
 
-  /* ---- Fold, a drum track's default: three passes, a kick played in one only is left out, and the toast counts it */
+  /* ---- Fold: three passes, a kick played in one only is left out, and the toast counts it. Fold is a drum track's
+     default only with the start.slice2 toggle on (transport-rec-test checks that); this page has it off, so the track is
+     set to Fold, as a person picks it in Sketch's Each pass */
   await page.evaluate(() => { const app = window.overdub; app.store.dispatch([{ type: 'project.set', patch: { loop: { on: true, start: 0, end: 4 } } }, { type: 'track.add', ref: 'd', track: { name: 'Kit', instrument: { device: 'core.drums' } } }], { by: 'you', label: 'setup' }); });
   const kit2 = await page.evaluate(() => window.overdub.store.get().tracks.find((x) => x.name === 'Kit').id);
-  const fmode = await page.evaluate((d) => { const app = window.overdub; app.store.dispatch({ type: 'track.set', track: d, patch: { arm: true } }, { by: 'you' }); app.input.setMode('tap'); app.engine.seek(0); return app.input.recorder.modeFor(d); }, kit2);
+  const fmode = await page.evaluate((d) => { const app = window.overdub; app.store.dispatch({ type: 'track.set', track: d, patch: { arm: true } }, { by: 'you' }); app.input.setMode('tap'); app.engine.seek(0); return app.input.recorder.setMode(d, 'fold'); }, kit2);
   await page.keyboard.press('KeyR');
   for (const [b, k] of [[1, 'KeyF'], [2, 'KeyJ'], [5, 'KeyF'], [6, 'KeyJ'], [7, 'KeyF'], [9, 'KeyF'], [10, 'KeyJ']]) { await until(b, { grid: true }); await tapKey(k, 50); }
   await until(11.5, { grid: true });
@@ -617,7 +619,7 @@ try {
   const fk = await page.evaluate((d) => { const app = window.overdub, tr = app.store.track(d); return { clips: tr.clips.map((c) => c.notes.map((n) => n.p + '@' + n.t).join(' ')), last: app.input.recorder.last, show: !!document.querySelector('.ew-toast .rec-show'), hist: app.store.history.slice(-1)[0]?.label }; }, kit2);
   const fToast = await lastToast();
   const fkd = await page.evaluate(() => window.__kd.filter((x) => ['KeyF', 'KeyJ'].includes(x.code)).slice(-7).map((x) => x.beat?.toFixed(2)).join(' '));
-  t.ok(fmode === 'fold' && fk.clips.length === 1 && fk.clips[0] === '36@1 38@2' && fk.hist === 'record Kit', `Fold is a drum track's default: three passes, the kick on 4 played once is left out, the rest kept where it's in two of three or more (${fk.clips.join(' | ')}; played at ${fkd})`);
+  t.ok(fmode === 'fold' && fk.clips.length === 1 && fk.clips[0] === '36@1 38@2' && fk.hist === 'record Kit', `Fold: three passes, the kick on 4 played once is left out, the rest kept where it's in two of three or more (${fk.clips.join(' | ')}; played at ${fkd})`);
   t.ok(/Kept 2; left out 1\..*Show them/.test(fToast) && fk.show, `the toast counts it, with Show them ("${fToast.slice(0, 140)}")`);
   await reset();
 

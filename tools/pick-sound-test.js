@@ -194,20 +194,20 @@ const STATE = () => {
   };
 };
 // Hum it in your own time on a blank song: Sketch's Hum is on screen under the door in the studio's default layout;
-// when it isn't, it is opened as the stage's free hum used to hand it over (ui/start.js keeps its own free hum on the
-// stage now, with its own card: tools/start-test.js). -> the presses it took (Hum a tune, then the way to Sketch)
+// when it isn't, the door's Hum a tune, then "No beat; I'll hum freely" (ui/start.js). -> the presses it took
 const humIt = async (P) => {
   if (await P.E(() => !!window.overdub.ui.isOpen?.('bottom') && !!document.querySelector('.sk-hum')?.getClientRects().length)) return 0;
-  await P.E(() => { const o = window.overdub; if (o.start?.step) o.start.close({ to: 'studio' }); o.ui.show('sketch'); if (!o.ui.isOpen?.('bottom')) o.ui.setOpen?.('bottom', true); o.input.emit('sketch:mode', 'hum'); });
+  await P.page.getByRole('button', { name: 'Hum a tune' }).click();
   await sleep(300);
+  await P.page.getByRole('button', { name: 'No beat; I’ll hum freely' }).click();
   return 2;
 };
 const tapABeat = async (P) => {
   await P.page.getByRole('button', { name: 'Tap a beat' }).click();
-  // (on a blank song Tap a beat opens Start a song's stage, ui/start.js, whose click view stays on the stage: this path
-  // is the first minute, R to record, as the tour reaches it)
+  // (on a blank song Tap a beat opens Start a song's stage, ui/start.js: "Play to a click instead" is the first minute,
+  // R to record, as this path has always been)
   await sleep(300);
-  if (await P.E(() => !!window.overdub.start?.step)) await P.E(() => { window.overdub.start.close({ to: 'studio' }); return window.overdub.onboard.firstMinute('tap'); });
+  if (await P.E(() => !!window.overdub.start?.step)) await P.page.getByRole('button', { name: 'Play to a click instead' }).click();
   await sleep(1500);
   await P.page.keyboard.press('r');
   await sleep(2300);

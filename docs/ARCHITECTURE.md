@@ -1781,6 +1781,13 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
   (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
+- **`start.slice2`** (Start a song, the rest of it) is read in a few places. `ui/start.js` hands its door and stage to
+  `ui/start-slice1.js` (slice 1, as main had it) while it's off. `ui/coach-strip.js` doesn't start. `input/recorder.js`
+  `drumMode()` is a drum track's default for each pass: Fold on, Layer off (the arranger and Sketch read it too). The
+  others are the top bar's "~" (`ui/transport.js`), Song ▸ Start a song (`ui/export.js`), Find's Start a song (a
+  `toggle` on the feature in `ui/workspace.js`), the agent pane holding a message mid-take (`agent/panel.js`),
+  `get_selection.start` (null while off) and the demo agent's "tidy the timing" (`agent/mock.js`). The system prompt's
+  two Start a song lines stay either way. A clip the stage or a fold made loads and plays the same with it off.
 
 **Add one:** one entry in `TOGGLES`, off (the unit test checks the shape and the count), and `on('<id>')` at each way in
 (a menu item, a Browser row, a door, `toggle:` on a tool); then its entry in `overdub-intents`'s `toggles/TOGGLES.md`

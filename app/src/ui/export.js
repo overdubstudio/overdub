@@ -14,7 +14,8 @@
 //                  saveProject(), exportMix(), exportStems(), exportMidi(), exportLog(), exportDawproject(), openReport(), busy,
 //                  recent() -> [{ id, title, at, tracks }], openRecent(i), putAside(song, msg) (a song main.js replaced on the way in),
 //                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone),
-//                  startSong({ anchor }) (Song ▸ Start a song: the stage on a blank song, else New song's question first) }
+//                  startSong({ anchor }) (Song ▸ Start a song: the stage on a blank song, else New song's question first;
+//                  the row and this are the start.slice2 toggle's, app/src/toggles.js: off, there is no row and it's false) }
 // The simple view (ui/workspace.js) puts the file rows away (data-feature="files": open a file, the imports, stems, MIDI,
 // DAWproject and the reports) and keeps New song, the demos, Save, Share a link, Export mix and Take one; on a phone the
 // Song key itself is More's first row, not the top bar's.
@@ -28,6 +29,7 @@ import { guardDevices } from '../core/share.js';
 import { DEMOS, demoById } from '../core/demo.js';
 import { dawprojectFiles } from '../core/dawproject.js';
 import { installProvenance, openProvenanceReport } from './provenance.js';
+import { on as toggleOn } from '../toggles.js';
 
 /* ================================================================ WAV */
 export function encodeWav(buf, { bits = 24 } = {}) {
@@ -341,7 +343,7 @@ export default function (app) {
     return app.start ? app.start.open({ kind: 'tap' }) : false;
   }
   function startSong({ anchor = null } = {}) {
-    if (!app.start) return false;
+    if (!app.start || !toggleOn('start.slice2')) return false;
     if (blankSong()) return app.start.open({ kind: 'tap' });
     openMenu(anchor, { ask: 'start' });
     return null;   // (asked: the answer is the person's)
@@ -513,7 +515,7 @@ export default function (app) {
       h('div.sm-head', h('b', p.title), h('small', `${p.tempo} bpm, ${p.tracks.length} track${p.tracks.length === 1 ? '' : 's'}`)),
       h('button.sm-i.sm-new', { onclick: (e) => ask(e.currentTarget, 'Start a new song?', 'New song', newSong) }, h('span', h('b', 'New song'), h('small', 'a blank reel'))),
       // Start a song: the same blank reel, and the stage on it (ui/start.js); a blank song needs no question
-      app.start ? h('button.sm-i.sm-start', { onclick: (e) => { if (blankSong()) { pop.close(); app.start.open({ kind: 'tap' }); } else ask(e.currentTarget, 'Start a new song?', 'Start a song', startFresh); } }, h('span', h('b', 'Start a song'), h('small', 'a blank reel, then your idea'))) : null,
+      app.start && toggleOn('start.slice2') ? h('button.sm-i.sm-start', { onclick: (e) => { if (blankSong()) { pop.close(); app.start.open({ kind: 'tap' }); } else ask(e.currentTarget, 'Start a new song?', 'Start a song', startFresh); } }, h('span', h('b', 'Start a song'), h('small', 'a blank reel, then your idea'))) : null,
       // a new song with the first minute on it (Take one's beat, then a tune over it): the welcome's main action
       app.onboard?.ownSong ? h('button.sm-i.sm-own', { onclick: (e) => ask(e.currentTarget, 'Make a song of your own?', 'Make your own', () => app.onboard.ownSong()) }, h('span', h('b', 'Make your own'), h('small', 'a new song: a beat and a tune in two minutes'))) : null,
       bf ? item('history', `Back to “${(bf.title || 'Untitled').slice(0, 32)}”`, 'your song from before Make it yours', null, () => replaceSong(bf, `Back to “${bf.title || 'Untitled'}”. “${p.title}” is kept: Undo brings it back.`), '.sm-before-fork') : null,

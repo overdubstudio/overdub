@@ -20,6 +20,7 @@ import * as personal from './lexicon-personal.js';
 import { isLocalHost } from './bridge.js';
 import { cloudPanel } from './cloud-panel.js';
 import { HOSTED_NAME } from './cloud.js';
+import { on as toggleOn } from '../toggles.js';
 
 const FEED_KEY = 'overdub:agent:feed:';
 const FEED_MAX = 140;
@@ -733,7 +734,7 @@ function mountPanel(el, app) {
     }
     // Start a song's stage on its play steps (app.start.busy): the message waits in the box and goes when the take is
     // in (the stage reaches 'in') or the stage closes; the agent never answers into a take being played
-    if (app.start?.busy) { wait(text); return; }
+    if (toggleOn('start.slice2') && app.start?.busy) { wait(text); return; }   // (the start.slice2 toggle's: app/src/toggles.js)
     // Claude on Overdub credits: a free move runs here; otherwise sign in first, and the price is on screen before it goes
     if (agent.provider === 'cloud' && cu.gate(text) !== 'go') return;
     const scope = contextOff ? '' : scopeLabel(app);

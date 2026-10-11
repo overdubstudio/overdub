@@ -2818,7 +2818,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 // agent's "loosen it" / "tighten it" / "tidy the timing" re-plan the selected clip and count the change they made.
 {
   const { perform } = await import('./sloppy.js');
-  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast' });
+  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast&on=start.slice2' });
   await ready(page);
   await page.waitForTimeout(500);
   await page.evaluate(() => { const o = window.overdub; o.ui.setOpen('right', true); o.ui.show('agent'); });

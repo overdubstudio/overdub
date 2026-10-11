@@ -1082,7 +1082,7 @@ function selectionInfo(app) {
     }
   } catch { /* a nicety */ }
   out.trying = trying;
-  out.start = startInfo(app);
+  out.start = on('start.slice2') ? startInfo(app) : null;   // (the start.slice2 toggle's: off, always null)
   const link = fromLink(app);
   return link ? { from_link: link, ...out } : out;
 }

@@ -286,6 +286,33 @@ const fake = await fakeCloud();
   await close();
 }
 
+/* ------------------------------------------------------------------ 1c. it takes both: the cloud.agent toggle and cloud.api */
+{
+  const { page, context, errors, close } = await studio(fake, { config: 'none' });
+  const look = async (config) => {
+    await context.route('**/app/site-config.json', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(config) }));
+    const before = fake.log.length;
+    await page.reload({ waitUntil: 'load' });
+    await ready(page);
+    await page.evaluate(() => window.overdub.site.ready);
+    await page.evaluate(() => { const e = window.overdub; e.ui.setOpen('right', true); e.ui.show('agent'); document.querySelector('.ag-hbtns .ag-hbtn:last-child')?.click(); });
+    await sleep(600);
+    const out = await page.evaluate(() => ({ cloud: !!window.overdub.agent.cloud, row: !!document.querySelector('.ag-kc-cloud'), toggle: window.overdub.toggles.on('cloud.agent') }));
+    await context.unroute('**/app/site-config.json');
+    return { ...out, asked: fake.log.length - before };
+  };
+  const apiOnly = await look({ cloud: { api: fake.origin }, toggles: { relay: 'on' } });
+  t.ok(!apiOnly.cloud && !apiOnly.row && !apiOnly.toggle && apiOnly.asked === 0,
+    `a site config naming cloud.api without the cloud.agent toggle: off, no row in settings, ${apiOnly.asked} requests to the service`);
+  const toggleOnly = await look({ toggles: { relay: 'on', 'cloud.agent': 'on' } });
+  t.ok(!toggleOnly.cloud && !toggleOnly.row && toggleOnly.toggle && toggleOnly.asked === 0,
+    `the cloud.agent toggle without a cloud.api: off as well, no row, ${toggleOnly.asked} requests`);
+  const both = await look({ cloud: { api: fake.origin }, toggles: { relay: 'on', 'cloud.agent': 'on' } });
+  t.ok(both.cloud && both.row && both.asked > 0, `both: the hosted agent is offered (row ${both.row}, ${both.asked} requests to the service)`);
+  t.ok(realErrors(errors).length === 0, 'no page errors (toggle and api)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
 /* ------------------------------------------------------------------ 2. sign in: three states, the link, the code */
 {
   const { page, context, errors, close, shot } = await studio(fake, { config: 'query' });

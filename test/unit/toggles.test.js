@@ -310,11 +310,9 @@ describe('the source scans', () => {
     assert.deepEqual(where.filter((f) => /toggles\.js['"]/.test(fs.readFileSync(f, 'utf8'))).map(rel), []);
   });
   test('the constant switches are only the ones still to move', () => {
-    // RELAY_LIVE and ACCOUNT_LIVE go when relay, accounts and cloud.agent move to on() (this branch's next commit).
-    // shelf-live's follow-up moves these to on('community') / on('community.try') and empties this list.
+    // relay, accounts and cloud.agent read on() now. shelf-live's follow-up moves these to on('community') /
+    // on('community.try') and empties this list.
     const ALLOWED = [
-      'app/src/agent/remote.js: RELAY_LIVE',
-      'app/src/agent/remote.js: ACCOUNT_LIVE',
       'app/src/ui/community.js: COMMUNITY_LIVE',
       'app/src/ui/community.js: TRY_ON',
       'site/community/community.js: COMMUNITY_LIVE',
@@ -324,5 +322,23 @@ describe('the source scans', () => {
       for (const m of fs.readFileSync(f, 'utf8').matchAll(/export const ([A-Z_]+_(?:LIVE|ON)) = (?:true|false)/g))
         found.push(`${rel(f)}: ${m[1]}`);
     assert.deepEqual(found.sort(), ALLOWED.slice().sort());
+  });
+  test('the retired switches are gone from the code, the docs and the deploy: RELAY_LIVE, ACCOUNT_LIVE, relayPreview', () => {
+    const text = (dir, out = []) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) text(p, out);
+        else if (/\.(m?js|html|md|sh|json|css|txt|conf|ya?ml)$/.test(e.name)) out.push(p);
+      }
+      return out;
+    };
+    const files = ['app', 'docs', 'site/docs', 'deploy'].flatMap((d) => text(path.join(ROOT, d)));
+    assert.ok(files.length > 50);
+    const hits = [];
+    for (const f of files)
+      for (const m of fs.readFileSync(f, 'utf8').matchAll(/\b(RELAY_LIVE|ACCOUNT_LIVE|relayPreview)\b/g))
+        hits.push(`${rel(f)}: ${m[1]}`);
+    assert.deepEqual(hits, []);
   });
 });

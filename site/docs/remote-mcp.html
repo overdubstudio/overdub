@@ -73,10 +73,11 @@ custom connector, and it hands each tool call to the studio tab the human has op
                                                                                ◀── POST /s/&lt;token&gt;/result ─────────  { id, result }
                                                     (every tab request carries x-overdub-tab-secret; the URL never does)</code></pre></div>
 <h2 id="for-the-human"><a class="h-link" href="#for-the-human">For the human</a></h2>
-<p><strong>Live.</strong> The relay runs at <code>https://overdub-relay.ajsmithhq.com</code>, and every studio shows the Connect tab
-(<code>RELAY_LIVE = true</code> in <code>app/src/agent/remote.js</code>). Turning that off again hides the tab on the live site except for a
-browser that opened <code>/app/?connect=1</code> (<code>relayPreview</code>, the switch from the relay's trial; <code>?connect=0</code> undoes it). It
-reveals Connect for the hosted relay and nothing else; <code>?relay=</code> stays local-only.</p>
+<p><strong>Live.</strong> The relay runs at <code>https://overdub-relay.ajsmithhq.com</code>, and every studio shows the Connect tab: the
+<code>relay</code> feature toggle (<code>on('relay')</code>, <code>app/src/toggles.js</code>) is on, and every deploy writes it on (<code>deploy: 'on'</code>;
+<code>tools/prod-check.js</code> fails if it's off). Turned off in <code>deploy/site-config.json</code>, the live site has no Connect tab, no
+<code>app.remote</code> and no request to the relay; only a local studio with <code>?relay=</code> shows it. The relay trial's <code>?connect=1</code>
+switch is retired: no link switches a studio on the live site.</p>
 <ol>
 <li>Open the studio, then the <strong>Connect</strong> tab in the right pane (next to Agent and History), and press <strong>Turn on</strong>.</li>
 <li>Copy the <strong>connector URL</strong>, <code>https://overdub-relay.ajsmithhq.com/s/&lt;token&gt;/mcp</code>.</li>
@@ -234,7 +235,7 @@ Sessions live for 24 hours idle.</p>
 <code>RELAY = 'https://overdub-relay.ajsmithhq.com'</code>. <code>?relay=http://localhost:&lt;port&gt;</code> overrides it for tests and local
 work, and only when the studio itself runs on localhost (<code>relayOverride</code>): on the live site it is ignored, so a
 crafted link can't show the Connect tab or point someone's tab at another relay. The studio's Content Security
-Policy allows the hosted relay's origin in <code>connect-src</code>, and loopback for local work; <code>RELAY_LIVE</code> (on) shows the
+Policy allows the hosted relay's origin in <code>connect-src</code>, and loopback for local work; the <code>relay</code> toggle (on) shows the
 Connect tab on the live site.</p>
 <h2 id="limits"><a class="h-link" href="#limits">Limits</a></h2>
 <p>Every number is in <code>DEFAULTS</code> in <code>server/relay.js</code>, with why it is what it is. The relay runs on a t4g.nano (512 MB),
@@ -475,7 +476,7 @@ links only.</li>
 <tr><td><code>RELAY_OAUTH_DEV</code></td><td><code>1</code> allows <code>http://localhost</code> for the URLs above; never in a deploy</td></tr>
 </tbody></table></div>
 <p>The browser's mode is kept in <code>overdub:remote-mode</code> from the first load, so a reload or a new tab stays in account
-mode. In the studio, account mode turns on with <code>ACCOUNT_LIVE</code> in <code>app/src/agent/remote.js</code>, or locally with both
+mode. In the studio, account mode turns on with the <code>accounts</code> toggle (<code>on('accounts')</code>, <code>app/src/toggles.js</code>), or locally with both
 <code>?relay=http://localhost:&lt;port&gt;</code> and <code>?cloud=http://localhost:&lt;port&gt;</code>. <code>tools/relay-test.js</code> covers it with a fake
 account service.</p>
 <h2 id="files"><a class="h-link" href="#files">Files</a></h2>

@@ -104,7 +104,7 @@ overdub/
                          lexicon.js + lexicon-personal.js, panel.js (chat UI), history.js, presence.js, diff.js,
                          keep.js (a song from a link: what waits for Keep), bridge.js (page side of MCP),
                          remote.js (page side of the relay), cloud.js, cloud-kind.js, cloud-panel.js (Claude
-                         on Overdub credits; off unless app/site-config.json names it),
+                         on Overdub credits; off unless the cloud.agent toggle and cloud.api are set),
                          community-tool.js (find_community_device)                                     [agent layer]
   tools/                 pw.js (browser harness, fixed), <area>-test.js checks, run-all.js, render.js, bench/
   integrations/          the Claude Code plugin and skill, configs for other MCP clients, check.js
@@ -1589,10 +1589,11 @@ from the shell), adds it and the API version to the page's Messages API request,
 old in-browser key, is deleted on load and noted once (`overdub:agent:key-retired`). The public site has no `/local/`.
 
 **Claude on Overdub credits** (provider `'cloud'`; built, not switched on): Claude run by Overdub's own service and
-paid for with credits, for people without a Claude of their own. It's off unless the deploy names the service in
-`app/site-config.json` (gitignored; `app/src/site-config.js` reads it once per load, `server/serve.js` answers it from
-`OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships `deploy/site-config.json` or `{}`); `?cloud=`
-points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
+paid for with credits, for people without a Claude of their own. It's off unless the deploy both turns the
+`cloud.agent` toggle on and names the service in `app/site-config.json` (gitignored; `app/src/site-config.js` reads it
+once per load, `server/serve.js` answers both from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh`
+ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles); a `cloud.api` alone turns nothing on.
+`?cloud=` points a local studio at a local service only, and counts as the toggle there. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
 - `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (an email link, or its 6-digit code in a tab the
@@ -1627,8 +1628,8 @@ over `/s/<token>/{hello,events,result}`. The tab side takes the tab's secret in 
 one-way hash of it, so the connector URL alone can't pose as the tab), and `tools/list` is the relay's own catalog
 (`server/relay-catalog.json`), never the tab's. `agent/remote.js` (`app.remote`, the right-region "Connect" tab) is
 the page side; its calls run with `by: 'claude.ai'` (`kind: 'agent'`, added with `store.addAuthor`). It is live at
-overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`; `RELAY_LIVE` in `agent/remote.js` is on, so every
-studio shows the Connect tab (off, it shows only on a local studio with `?relay=` or after `?connect=1`).
+overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`; the `relay` toggle (`on('relay')`) is on, so every
+studio shows the Connect tab (off, there is no tab and no `app.remote`, except on a local studio with `?relay=`).
 
 ## Songs in and out
 

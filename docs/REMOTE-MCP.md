@@ -413,8 +413,8 @@ that speaks both it and the older ones falls back to `initialize` with a server 
 ## Accounts: one URL, signed in with Overdub
 
 Built and tested, not deployed, and off unless configured. With it, every Claude app adds the same connector URL,
-`https://relay.overdubstudio.com/mcp`, and the person signs in with a free Overdub account (email, then a 6-digit
-code) instead of copying a private link per browser. The account service is the OAuth authorization server; the relay
+`https://relay.overdubstudio.com/mcp`, and the person signs in with a free Overdub account (Continue with Google, in a
+popup) instead of copying a private link per browser. The account service is the OAuth authorization server; the relay
 is the resource server and keeps no database.
 
 - **Claude's side.** A request to `/mcp` without a good access token gets `401` with

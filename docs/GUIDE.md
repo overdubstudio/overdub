@@ -649,7 +649,7 @@ only: put it on a public address and anyone who reaches it spends your key.
 Hosting a copy of the site? The studio has a hosted agent built in, Claude on Overdub credits, but it's Overdub's own
 service and it's off in your copy: it only turns on when the site has an `app/site-config.json` naming a service, and
 the repo has none. Without one, the studio shows nothing of it and connects to no one. (Pointing it at a service of
-your own also means adding that service to the page's `connect-src` and `frame-src`, in `app/index.html`.)
+your own also means adding that service to the page's `connect-src`, in `app/index.html`.)
 
 ## Build a device
 

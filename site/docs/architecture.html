@@ -1496,10 +1496,12 @@ paid for with credits, for people without a Claude of their own. It's off unless
 points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's <code>GET /v1/config</code>.</p>
 <ul>
-<li><code>agent/cloud.js</code> (<code>app.agent.cloud</code>) is the account: the sign-in (an email link, or its 6-digit code in a tab the
-link wasn't opened in; the tab polls <code>/v1/me</code> while it waits), the balance, top up, credits back, where the credits
-went, deleting the account. Every request is <code>credentials: 'include'</code>; the session is an httpOnly cookie on the
-service's origin. <code>canonicalBundle</code> and <code>bundleVersion</code> give the prompt bundle's version, the same on both sides.</li>
+<li><code>agent/cloud.js</code> (<code>app.agent.cloud</code>) is the account: the sign-in (Continue with Google opens
+<code>/v1/auth/google?return=studio</code> in a popup, in the click itself; the service's done page posts
+<code>{ type: 'overdub:signed-in' }</code>, taken only from the service's exact origin, and the tab also polls <code>/v1/me</code> while it
+waits), the balance, top up, credits back, where the credits went, deleting the account. Every request is
+<code>credentials: 'include'</code>; the session is an httpOnly cookie on the service's origin. <code>canonicalBundle</code> and
+<code>bundleVersion</code> give the prompt bundle's version, the same on both sides.</li>
 <li><code>agent/claude.js</code> decides the provider in this order: the demo agent if it's on, Claude Code if chosen, a server
 key, then credits only if the person chose them (<code>overdub:agent-provider</code>). An ask on credits is
 <code>POST /v1/agent/actions { kind, moreTime, promptVersion }</code> (one <code>Idempotency-Key</code> per Send), then one

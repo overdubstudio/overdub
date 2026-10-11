@@ -62,6 +62,9 @@ overdub/
   app/src/audio/         measure.js (the ears: LUFS, true peak, spectrum...), testsignals.js            [dsp]
                          analyze/ (Flip a song's chores: beats, the tempo map and its readings, tuning, key,
                          chords, sections; a Worker, the overdub-analysis cache, resultToOps)       [analyze]
+  app/src/jobs/          the job layer: index.js (jobs.run, progress, cancel), cache.js (overdub-jobs), fake.js
+                         (the tests' runner), stems/ (the local stems runner, off without a site config:
+                         dsp.js, pool.js + dsp-worker.js, runner.js)                                 [jobs]
   app/src/devices/       registry.js (fixed), trust.js (which song devices run here), graph.js + kit.js (graph devices:
                          bypass, glide, the PFX kit), worklets/ (the kit's END and envelope follower modules),
                          guitar/ (ported pedals, amps, cabs, rigs)                                     [guitar]
@@ -887,6 +890,46 @@ readingOps(p, result, reading, { clips }) → ops       // the grid alone: picki
 - **Measured** by `tools/beat-bench.js` on seeded synthetic songs (`tools/fake-song.js`), its gates asserted by
   `tools/analyze-test.js`; `--dir` scores your own records locally and never commits them.
 
+### Jobs and the stems runner (`jobs/`)
+
+Long work on a person's audio that the studio does once and keeps (spec 0014 section C). Stems are the first kind.
+
+```js
+const jobs = createJobs({ runners: { stems }, cache })   // or await pageJobs(): the runner the site config allows
+await jobs.estimate({ kind: 'stems', input })            // → { device, wait, measured, download, firstTime, warn, text }
+await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress, signal })
+  → { kind, key, cached, model, result: { sr, stems: { drums, bass, other, vocals } /* channels each */ }, ms }
+```
+
+- **A job returns sound, never ops.** The caller lands stems in the song as assets (`asset.add`), so playback and
+  renders read stored samples and never depend on which runner made them, or whether one is still around.
+- **The cache** (`cache.js`): IndexedDB `overdub-jobs` (a storage name, forever), keyed by the kind, the input's
+  SHA-256 (its rate and every channel as 32-bit floats), the model's id and its version; in memory where IndexedDB is
+  refused. A second run of the same input never reaches the runner; a cancelled job (an `AbortSignal`) rejects with
+  `AbortError` and leaves nothing behind.
+- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless `app/site-config.json`
+  has `stems: { model, runtime, sha256, id?, bytes? }` (`site-config.js` `stemsConfig`: both URLs https:, or http: on
+  this machine, as for `cloud`; `server/serve.js` answers it from `OVERDUB_STEMS_MODEL`, `_RUNTIME` and `_SHA256` when
+  there's no file). With no entry nothing is fetched or imported. With one, the model is fetched, checked against the
+  pinned SHA-256 before anything uses it (a mismatch is refused and the runtime never loaded), and kept in Cache
+  Storage (`overdub-models`); ONNX Runtime Web is loaded by a dynamic `import()` of `stems.runtime`. No weights and
+  no runtime are in this repo (`.gitignore`, and `tools/jobs-test.js` fails on a tracked one). WebGPU first, then
+  WebAssembly on one thread (the studio isn't cross-origin isolated).
+- **The DSP** (`stems/dsp.js`) is demucs' own around the network: the normalised STFT (4,096 / hop 1,024, the
+  periodic Hann window) as `_spec` and `_ispec` do it, two real channels through one complex FFT, segments of 7.8 s
+  with 25% overlap and a triangular crossfade (`apply_model`, shifts 0), and `separate.py`'s whole-song normalising.
+  The network sees `mix` [1, 2, 343980] and `mag` [1, 4, 2048, 336] and answers `zx` and `xt`. Its spectrograms are
+  made in a pool of module workers (`pool.js`, up to six) while the network runs, and the answers are added in
+  segment order, with the FFT's tables computed by series rather than `Math.sin`, so a split is the same samples in
+  Node and in Chromium. Input at another rate goes to 44.1 kHz and back through `audio/analyze/resample.js` with its
+  phases interpolated.
+- **The estimate** (R22): WebGPU or the CPU, the download the first time, and the wait: before the first run a guess
+  from the spike's figures on AJ's Mac (`PRIOR`, said as "Roughly"), after it the warm-up's own time a segment ("About
+  25 s on this computer's graphics card."). Under 8 GB of `navigator.deviceMemory` it warns first.
+- **Tests never download a model.** `fake.js` knows a few inputs and their stems and reports scripted progress;
+  `tools/jobs-test.js` drives the real runner on a fake runtime with an identity network (each segment's interior
+  reconstructs to −122 dB, the joined song through the time branch to −150 dB).
+
 ## The UI
 
 `app/src/ui/shell.js` lays out regions and owns the one animation loop and the key handler:
@@ -1673,7 +1716,8 @@ old in-browser key, is deleted on load and noted once (`overdub:agent:key-retire
 **Claude on Overdub credits** (provider `'cloud'`; built, not switched on): Claude run by Overdub's own service and
 paid for with credits, for people without a Claude of their own. It's off unless the deploy names the service in
 `app/site-config.json` (gitignored; `app/src/site-config.js` reads it once per load, `server/serve.js` answers it from
-`OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships `deploy/site-config.json` or `{}`); `?cloud=`
+`OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships `deploy/site-config.json` or `{}`; its other
+switch is the stems runner, "Jobs and the stems runner" above); `?cloud=`
 points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 

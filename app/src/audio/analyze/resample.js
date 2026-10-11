@@ -5,6 +5,10 @@
 //                                                           rate, cut off at 0.47 of it), 1,024 phases a sample with
 //                                                           the nearest taken: about 90 dB down, plenty for envelopes
 //                                                           and chroma
+//   resample(x, from, to, { interp: true })                 the same filter with the phases interpolated (the stems
+//                                                           runner's way in and out of 44.1 kHz, jobs/stems/runner.js):
+//                                                           twice the work; a 48k-44.1k-48k round trip measured
+//                                                           18-33 dB cleaner (about −92 dB)
 // The analysis runs at 22,050 Hz (onsets, tempo, timbre) and 11,025 Hz (chroma); the bass chroma at 2,756.25 Hz.
 
 export function downmix(input) {
@@ -40,16 +44,21 @@ function tableFor(ratio) {
   return t;
 }
 
-export function resample(x, from, to) {
+export function resample(x, from, to, { interp = false } = {}) {
   if (from === to) return Float64Array.from(x);
   const ratio = from / to, n = Math.floor((x.length * to) / from), out = new Float64Array(n);
   const { tab, half, taps } = tableFor(ratio), len = x.length;
   for (let i = 0; i < n; i++) {
-    const pos = i * ratio, i0 = Math.floor(pos), ph = Math.round((pos - i0) * PHASES), base = i0 - half + 1, row = ph * taps;
-    let acc = 0;
-    if (base >= 0 && base + taps <= len) for (let j = 0; j < taps; j++) acc += x[base + j] * tab[row + j];
-    else for (let j = 0; j < taps; j++) { const k = base + j; if (k >= 0 && k < len) acc += x[k] * tab[row + j]; }
-    out[i] = acc;
+    const pos = i * ratio, i0 = Math.floor(pos), base = i0 - half + 1;
+    const at = (row) => {
+      let acc = 0;
+      if (base >= 0 && base + taps <= len) for (let j = 0; j < taps; j++) acc += x[base + j] * tab[row + j];
+      else for (let j = 0; j < taps; j++) { const k = base + j; if (k >= 0 && k < len) acc += x[k] * tab[row + j]; }
+      return acc;
+    };
+    if (!interp) { out[i] = at(Math.round((pos - i0) * PHASES) * taps); continue; }
+    const f = (pos - i0) * PHASES, p0 = Math.floor(f), t = f - p0;
+    out[i] = t ? (1 - t) * at(p0 * taps) + t * at((p0 + 1) * taps) : at(p0 * taps);
   }
   return out;
 }

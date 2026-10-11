@@ -16,6 +16,10 @@
 // roots, chords held on a pad (stabbed on the beat in the intro and outro, the quiet edges), a sung line on the
 // chord tones. Sections differ as records do: the chorus louder and brighter, the bridge on its own progression.
 // Deterministic: a seeded generator, never Math.random; oscillators by recurrence, so it is quick.
+//
+//   fakeMix({ seconds, sr, seed }) -> { mix (Float32Array planar [2, L]), L }   a stereo test signal for the stems
+//       runner's DSP (tools/jobs-test.js): 48 partials a side between 40 Hz and 12 kHz at seeded levels and phases,
+//       and a small offset. Band-limited on purpose: nothing near Nyquist, which the model's spectrogram drops.
 
 const MAJOR = [0, 2, 4, 5, 7, 9, 11], MINOR = [0, 2, 3, 5, 7, 8, 10];
 export const SONG_FORM = [['Intro', 4], ['Verse', 8], ['Chorus', 8], ['Verse', 8], ['Chorus', 8], ['Bridge', 8], ['Chorus', 8], ['Outro', 4]];
@@ -36,6 +40,17 @@ function chordOf(key, deg) {
 }
 const PROGS_MAJOR = [[0, 4, 5, 3], [0, 5, 3, 4], [5, 3, 0, 4], [0, 3, 4, 3], [3, 0, 4, 5], [1, 4, 0, 0], [5, 4, 3, 4]];
 const PROGS_MINOR = [[0, 5, 2, 6], [0, 3, 4, 0], [0, 5, 6, 4], [3, 6, 2, 5], [0, 6, 5, 6], [5, 6, 0, 0], [3, 4, 0, 5]];
+
+export function fakeMix({ seconds = 10, sr = 44100, seed = 1 } = {}) {
+  const R = rng(seed * 2246822519 + 7), L = Math.round(seconds * sr), mix = new Float32Array(2 * L);
+  for (let c = 0; c < 2; c++) {
+    const parts = Array.from({ length: 48 }, () => ({ w: (2 * Math.PI * (40 * Math.pow(300, R()))) / sr, a: 0.02 + 0.03 * R(), ph: 2 * Math.PI * R() }));
+    const x = new Float64Array(L).fill(c ? -0.02 : 0.03);
+    for (const p of parts) for (let i = 0; i < L; i++) x[i] += p.a * Math.sin(p.w * i + p.ph);
+    mix.set(x, c * L);
+  }
+  return { mix, L };
+}
 
 export function fakeSong({ seed = 1, bpm = 100, bpb = 4, drift = 'steady', freeIntro = 0, sr = 44100, form = SONG_FORM, tuning = 0, pickup = false } = {}) {
   const R = rng(seed * 2654435761 + 12345);

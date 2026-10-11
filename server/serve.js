@@ -58,11 +58,17 @@ export function byteRange(header, size) {
 
 // The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, the studio's hosted
 // agent is off ({}), unless OVERDUB_CLOUD_ORIGIN names a service to try it against (a local overdub-cloud, say):
-// `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js`. Read on each request, so a test can set it.
+// `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js`. The stems runner is off too, unless
+// OVERDUB_STEMS_MODEL, OVERDUB_STEMS_RUNTIME and OVERDUB_STEMS_SHA256 name a model you exported and the runtime to run
+// it, for trying it locally (served from this machine; nothing in the repo holds either). Read on each request, so a
+// test can set them.
 function siteConfig(res) {
-  const api = String(process.env.OVERDUB_CLOUD_ORIGIN || '').trim();
+  const env = (k) => String(process.env[k] || '').trim();
+  const api = env('OVERDUB_CLOUD_ORIGIN');
+  const cfg = api ? { cloud: { api } } : {};
+  if (env('OVERDUB_STEMS_MODEL')) cfg.stems = { model: env('OVERDUB_STEMS_MODEL'), runtime: env('OVERDUB_STEMS_RUNTIME'), sha256: env('OVERDUB_STEMS_SHA256') };
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(api ? { cloud: { api } } : {}));
+  res.end(JSON.stringify(cfg));
 }
 
 export function startServer({ port = Number(process.env.PORT) || 3279, host = '127.0.0.1', quiet = false } = {}) {

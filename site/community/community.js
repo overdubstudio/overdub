@@ -11,17 +11,15 @@
 //   ?kind=instrument|effect  ?cat=<cat>  ?q=<words>   the filters, kept in the address so a view can be linked
 //
 // Shipped with the site (deploy/deploy.sh), but no page links here yet.
-// On any host but localhost / 127.0.0.1 the page reads nothing (COMMUNITY_LIVE below, as the studio's is). The deploy's
-// emergency off, "community": "off" in /app/site-config.json (app/src/site-config.js), turns it off on any host, as it
-// does the studio's: the page says the shelf isn't on and reads no index.
+// The page keeps the studio's switch, the community toggle (app/src/toggles.js, imported, so it is the same rule): off
+// unless /app/site-config.json says "toggles": { "community": "on" }, or this page is on localhost / 127.0.0.1 and opened
+// with ?on=community. Off, the page says the shelf isn't on and reads no index; named "off" (the emergency off) it
+// says so in its own words.
 import { renderFace } from '/app/src/ui/faces.js';
 import { DEVICE_CATS } from '/app/src/devices/registry.js';
 import { readIndex, resolveUrl, sourceLink, filterEntries as sharedFilter, ASKED_MAX } from '/app/src/devices/community.js';
 import { loadSiteConfig } from '/app/src/site-config.js';
-
-// Keep in step with COMMUNITY_LIVE in app/src/ui/community.js (tools/pages-test.js checks they agree once it exists).
-// The page doesn't import that module: it's the studio's UI, and this page wants only its switch.
-export const COMMUNITY_LIVE = false;
+import { applyToggles, bootConfig, on as toggleOn } from '/app/src/toggles.js';
 
 export const DEFAULT_INDEX = '/app/community/community-index.json';
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
@@ -42,11 +40,14 @@ export function filterEntries(entries, { kind = 'all', cat = 'all', q = '', tier
 
 /* ------------------------------------------------------------------------------------------------ where the index is */
 export const localPage = (host = location.hostname) => host === 'localhost' || host === '127.0.0.1';
-export const shelfOn = () => COMMUNITY_LIVE || localPage();
-// the emergency off, read once per page load: -> true when the site config says "community": "off"
-export const SITE_CONFIG = '/app/site-config.json';
-export async function shelfOff() {
-  try { return (await loadSiteConfig({ url: SITE_CONFIG }))?.community === 'off'; } catch { return false; }
+// the community toggle, read once per page load as the studio reads it (site-config.js, then toggles.js):
+// -> { on, emergency } where emergency is off by name ("toggles": { "community": "off" })
+export async function shelfState({ search = location.search, host = location.hostname } = {}) {
+  let cfg = null;
+  try { cfg = await loadSiteConfig(); } catch { cfg = null; }
+  applyToggles(bootConfig(cfg), { search, host });
+  const on = toggleOn('community'), t = cfg?.toggles;
+  return { on, emergency: !on && !!t && typeof t === 'object' && t.community === 'off' };
 }
 
 // -> { url, bundled } or { error }. A path on this site, or http://localhost:* / 127.0.0.1:* while this page is local.
@@ -55,7 +56,7 @@ export function indexSource(param = new URLSearchParams(location.search).get('co
   let u;
   try { u = new URL(param, location.href); } catch { return { error: 'bad' }; }
   const local = /^http:$/.test(u.protocol) && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
-  const ok = u.origin === location.origin ? /^https?:$/.test(u.protocol) : !COMMUNITY_LIVE && localPage() && local;
+  const ok = u.origin === location.origin ? /^https?:$/.test(u.protocol) : localPage() && local;
   if (!ok || u.username || u.password) return { error: 'host' };
   return { url: u.href, bundled: u.origin === location.origin && u.pathname === DEFAULT_INDEX };
 }
@@ -195,7 +196,9 @@ export function landsOn(e) {
 export function studioLink(e, src) {
   if (e.tier === 'house') return `/app/?new&device=${encodeURIComponent(e.id)}`;
   const def = new URL(DEFAULT_INDEX, location.href).href;
-  return `/app/?new&community-device=${encodeURIComponent(e.id)}${src.url !== def ? `&community=${encodeURIComponent(src.url)}` : ''}`;
+  // a local page opened with ?on= (the developer's way to the shelf) hands it on, so the studio's shelf is on too
+  const on = localPage() ? new URLSearchParams(location.search).get('on') : null;
+  return `/app/?new&community-device=${encodeURIComponent(e.id)}${src.url !== def ? `&community=${encodeURIComponent(src.url)}` : ''}${on ? `&on=${encodeURIComponent(on)}` : ''}`;
 }
 const shortDate = (s) => { const d = new Date(s); return Number.isNaN(+d) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }); };
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -313,8 +316,9 @@ export async function boot(root = document) {
     $('#filters').hidden = true;
   };
 
-  if (!shelfOn()) { empty('The community shelf isn’t on here yet.'); return done({ off: true }); }
-  if (await shelfOff()) { empty('The community shelf isn’t on here at the moment.'); return done({ off: true, emergency: true }); }
+  const sw = await shelfState();
+  if (sw.emergency) { empty('The community shelf isn’t on here at the moment.'); return done({ off: true, emergency: true }); }
+  if (!sw.on) { empty('The community shelf isn’t on here yet.'); return done({ off: true }); }
   const src = indexSource();
   if (src.error) { empty('This page can read a shelf from this site or from localhost only.'); return done({ refused: true }); }
   const idx = await loadIndex(src);

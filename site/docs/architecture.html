@@ -94,12 +94,12 @@ are covered by <code>tools/compat-test.js</code>.</li>
   server/relay.js        the hosted relay for claude.ai (REMOTE-MCP.md; live)                         [agent layer]
                          relay-catalog.json: the tools it lists, generated (tools/relay-catalog.js)
   site/                  landing page, press/, docs/ (built by tools/docs-build.js), llms.txt         [brand]
-                         community/ (the community shelf's gallery, public at /community/; unlinked and reading
-                         nothing off localhost until the switch, COMMUNITY_LIVE)
+                         community/ (the community shelf's gallery, public at /community/; unlinked, and reading
+                         nothing until the community toggle is on)
   app/community/         the community shelf's bundled snapshot: gitignored, filled from overdub-devices
                          at deploy/community-pin.json's commit by tools/community-pull.js: the index,
                          devices/ (one device file per entry) and clips/ (MP3 only); deploy.sh ships it
-                         no-cache once COMMUNITY_LIVE is true at the ref, and holds it back before    [shelf]
+                         no-cache once the site config names the community toggle, else holds it back [shelf]
   app/index.html         the studio page; app/library.html the device shelf; app/gallery.html          [core]
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/&lt;family&gt;/: each woff2 and its licence)         [brand]
@@ -156,8 +156,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          export.js (the Song menu, files out), provenance.js, share.js, onboard.js, reference.js,
                          start.js (Start a song: the blank song's door and its stage, app.start),
                          devices-io.js                                                                  [core / ui]
-                         community.js (From the community in the Browser: previews, Try and its prompt; off
-                         unless on localhost, COMMUNITY_LIVE)                                           [shelf]
+                         community.js (From the community in the Browser: previews, Try and its prompt; the
+                         community and community.try toggles)                                           [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
                          the Notes panel's Tab view)                                                    [jam]
@@ -517,13 +517,13 @@ the index only) and a Try whose dispatch failed after its allow.</li>
 <h3 id="the-community-shelf-uicommunityjs-devicescommunityjs"><a class="h-link" href="#the-community-shelf-uicommunityjs-devicescommunityjs">The community shelf (<code>ui/community.js</code>, <code>devices/community.js</code>)</a></h3>
 <p>Instruments and effects people asked their agents for, from the community repo (<code>overdub-devices</code>), in the Browser
 under <strong>From the community</strong>. Nothing is sold, priced or rated. The spec is COMMUNITY-SHELF.md;
-SECURITY.md says what runs when. Off on the live site (<code>COMMUNITY_LIVE</code>); Try is held (<code>TRY_ON</code>) until the switch (the
-worklet's realm is frozen now), and a developer on localhost turns it on with localStorage <code>overdub:community-try</code> = <code>1</code>.
-The switch is one commit that sets both flags and links the gallery; COMMUNITY-SHELF.md, &quot;Where it's on&quot;, lists what
-has to hold before it.</p>
+SECURITY.md says what runs when. Behind two toggles (Toggles, below), both off: <code>community</code> (the shelf, in the studio
+and the gallery) and <code>community.try</code> (Try; the worklet's realm is frozen now). A developer turns them on for a load
+with <code>?on=community,community.try</code> on a local studio. The switch is a config change, <code>&quot;toggles&quot;: { &quot;community&quot;: &quot;on&quot;, &quot;community.try&quot;: &quot;on&quot; }</code> in <code>deploy/site-config.json</code>, plus a commit that links the gallery; COMMUNITY-SHELF.md,
+&quot;Where it's on&quot;, lists what has to hold before it. Named <code>&quot;off&quot;</code>, <code>community</code> is the emergency off.</p>
 <ul>
 <li><p><strong>Where the shelf comes from.</strong> The live studio reads one index, its own <code>/app/community/community-index.json</code>,
-deployed with it (<code>indexUrlAllowed(..., { live })</code> refuses any other origin once <code>COMMUNITY_LIVE</code> is true). That copy
+deployed with it (<code>indexUrlAllowed</code> refuses any other origin on a page that isn't on localhost). That copy
 is pinned, not committed: <code>deploy/community-pin.json</code> (<code>{ repo, commit, index_sha256 }</code>, keys forever) names an
 overdub-devices commit, and <code>tools/community-pull.js</code> fills the gitignored <code>app/community/</code> from it with
 <code>git archive</code>, refusing on a wrong hash or a device file whose kernel isn't its entry's. Local development runs the
@@ -1651,8 +1651,10 @@ Browser, Find and <code>list_devices</code>, a <code>toggle</code> on a device d
 <code>{ error: &quot;&lt;name&gt; isn't on in this studio.&quot; }</code> (<code>offLine(id)</code>) and changes nothing. A <code>get_guide</code> topic a feature owns
 goes in <code>GUIDE_TOGGLES</code> (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
 through <code>guidePart(id, text)</code>, which is empty while off. The in-app system prompt doesn't vary with toggles.</li>
-<li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
-(<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
+<li><strong>No constants left.</strong> <code>community</code> and <code>community.try</code> moved onto <code>on()</code> with the shelf (<code>ui/community.js</code>, and the
+gallery, which imports the registry and applies the same config); the unit test's list of constant switches is empty
+and stays so. Only the shelf reads a toggle's raw value: <code>&quot;community&quot;: &quot;off&quot;</code> by name keeps the studio reading its own
+copy's deny list, and deploy.sh shipping that copy (the emergency off).</li>
 </ul>
 <p><strong>Add one:</strong> one entry in <code>TOGGLES</code>, off (the unit test checks the shape and the count), and <code>on('&lt;id&gt;')</code> at each way in
 (a menu item, a Browser row, a door, <code>toggle:</code> on a tool); then its entry in <code>overdub-intents</code>'s <code>toggles/TOGGLES.md</code>

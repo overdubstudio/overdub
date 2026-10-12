@@ -43,7 +43,8 @@ export const TOGGLES = Object.freeze(/** @type {Toggle[]} */ ([
   { id: 'relay', name: 'Connect to Claude', about: 'The Connect tab: an agent anywhere drives this studio through the relay.', intent: null, deploy: 'on' },
   { id: 'accounts', name: 'Sign in with Overdub', about: 'Overdub accounts in Connect: one fixed URL for every Claude client.', intent: '0010' },
   { id: 'cloud.agent', name: 'Claude on Overdub credits', about: 'The hosted agent, paid with Overdub credits (also needs cloud.api).', intent: '0010' },
-  // Nothing reads these two yet: COMMUNITY_LIVE and TRY_ON stay until shelf-live's follow-up moves them here.
+  // the shelf (ui/community.js and the gallery, site/community/) and Try on it. Named "off", community is the emergency
+  // off: the studio still reads its own copy's deny list, and deploy.sh still ships that copy.
   { id: 'community', name: 'The community shelf', about: 'From the community, in the Browser, and the gallery on the site.', intent: '0004' },
   { id: 'community.try', name: 'Trying community devices', about: "Try on a community device: it plays for this page load before it's kept.", intent: '0004' },
   // Planned: their branches adopt these after the registry merges.

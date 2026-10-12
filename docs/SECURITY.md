@@ -61,7 +61,8 @@ runs; and text in a song written to steer an agent.
   `demos-test`, `agent-test`, `library-test` and `provenance-test` check it, with every kernel that reaches the audio
   thread written down.
 - **The community shelf** (`ui/community.js`, `devices/community.js`; docs/COMMUNITY-SHELF.md). Off on the live site:
-  `COMMUNITY_LIVE` is false, and until it's true the shelf does nothing unless the page is on localhost or 127.0.0.1.
+  the `community` toggle is off, and until the deploy's site config turns it on the shelf does nothing (a local studio
+  turns it on for one load with `?on=community`; `?on=` does nothing on any other host).
   Its index is JSON, read by one reader that copies only the fields it knows, checks each and caps text; it never
   carries code, and clip and device URLs stay inside the index's own folder on its own origin. ▶ plays a recording
   from a `blob:` URL; no device code is fetched to hear one. **Try** fetches the device file (300 KB at most), refuses
@@ -69,7 +70,7 @@ runs; and text in a song written to steer an agent.
   an agent's card, focus on Not now, Play it held 600 ms), runs the device check, and only then trusts the hash (for
   this page load, or from now on if the person ticks the box) and puts it on as one step. The song gets the entry's
   name, blurb and request, never the file's. Only the studio's own copy of the index can take a hash back (its deny
-  list). Try itself is held (`TRY_ON`) until the switch. What stays open once it's on, plainly: an allowed shelf
+  list). Try itself is held (the `community.try` toggle) until the switch. What stays open once it's on, plainly: an allowed shelf
   kernel still shares the audio thread's realm with every other device in the song (frozen, global bindings and all,
   so it can't patch what they use or report as one of them, but it can read the realm: an indirect `eval` reaches its
   globals; and a kernel data file two devices both name is decoded once per audio context, so a kernel that names a

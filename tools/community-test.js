@@ -5,7 +5,9 @@
 //   - node: the reader keeps what it knows and skips the rest (unknown fields, kinds, tiers, cats; reserved ids and
 //     handles; House from another origin; URLs outside policy; hostile params and looks; clip types; a newer major;
 //     caps); the URL policy; search by category words, never by the agent; revoked only from the bundled copy
-//   - off-host: served under another name, ?community= draws nothing, More has no shelf words, the tool says it's off
+//   - off-host: served under another name with the community toggle left out of the site config (and ?on= ignored
+//     there), ?community= draws nothing, More has no shelf words, the tool says it's off, no index is read; on
+//     localhost with no ?on= it's off too (the shelf sections below open the studio with ?on=community,community.try)
 //   - the section: community entries only, bylines in warm and cool ink, kind words, search, ▶ plays a blob: clip with
 //     no device file fetched and nothing registered; a clip of the wrong type isn't played
 //   - Try: the prompt (focus on Not now, Play it held 600 ms, no "read it" line for another origin), Not now changes
@@ -18,14 +20,17 @@
 //     that changes nothing, one card per song, three No thanks and it stops, the card's Try lands signed by the agent
 //     and kept by you; define_device refuses a shelf kernel (and one with a space changed); the demo agent's ask
 //   - the catalog lists it with annotations under 2,048 characters; the Simple view's More finds the shelf
-//   - forced live (tools/community-live.js: COMMUNITY_LIVE and TRY_ON read true, served as overdub.test): the shelf
+//   - forced live (tools/community-live.js: a routed site config with community and community.try "on", served as
+//     overdub.test): the shelf
 //     reads the bundled index only, and ?community=http://localhost:… is refused, never fetched; a load with the Browser
 //     never opened forgets a revoked hash; code allowed from now on and then revoked is held, and Try refuses it with
 //     the reason; the prompt word for word (focus, the 600 ms hold, Esc, the box unticked, no "API key"); the emergency
-//     off (a routed site-config.json, "community": "off"): no section, no shelf words, the tool off, the deny list kept
+//     off (a routed site-config.json, "toggles": { "community": "off" }): no section, no shelf words, the tool off, the
+//     deny list kept
 //   - the deploy, dry (a stub aws, a fixture overdub-devices repo: tools/fixtures/community-repo.js): the pinned shelf is
 //     staged with the index and device files no-cache and the MP3s audio/mpeg no-cache, no WAV; a pin that doesn't
-//     match deploys nothing; held back while COMMUNITY_LIVE is false at REF, and with no checkout then it goes on
+//     match deploys nothing; held back while the site config leaves the community toggle out (and with no checkout
+//     then it goes on); shipped when it names it, "on" or "off"
 //   - the frame headers: the local server sends frame-ancestors 'none', X-Frame-Options DENY and nosniff on /app/, the
 //     gallery at both its paths and the rest; deploy/headers.sh's policy, dry (live and --next), and against a fake aws
 //     (tools/fixtures/fake-aws.js): made, set on the distribution, a second run changes nothing, a hand edit is undone
@@ -104,13 +109,15 @@ await section('brand', async () => {
 
 /* ======================================================================== the browser */
 const errorsOf = (P) => P.errors.filter((e) => !ignorable(e));
+// a local studio with the shelf on for the load, the developer's way (?on=, app/src/toggles.js): Try too unless tryOn
+// is false
 async function studio(query, { tryOn = true, width = 1440, height = 900, init = null, routes = null } = {}) {
-  const P = await open('/app/', { width, height, query });
+  const P = await open('/app/', { width, height, query: `on=${tryOn ? 'community,community.try' : 'community'}${query ? `&${query}` : ''}` });
   try {
     if (routes) await routes(P.page);
-    if (tryOn || init || routes) {
+    if (init || routes) {
       await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
-      await P.page.evaluate(({ tryOn, init }) => { localStorage.clear(); if (tryOn) localStorage.setItem('overdub:community-try', '1'); if (init) for (const [k, v] of Object.entries(init)) localStorage.setItem(k, v); }, { tryOn, init });
+      await P.page.evaluate(({ init }) => { localStorage.clear(); if (init) for (const [k, v] of Object.entries(init)) localStorage.setItem(k, v); }, { init });
       await P.page.goto(P.url, { waitUntil: 'load' });
     }
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
@@ -120,11 +127,10 @@ async function studio(query, { tryOn = true, width = 1440, height = 900, init = 
 const E = (P, fn, arg) => P.page.evaluate(fn, arg);
 const FIXQ = `community=${FIXURL}community-index.json`;
 
-// off anywhere but a local host while COMMUNITY_LIVE is false. The flags are read false through community-live.js
-// whatever the tree says, so this holds on the switch commit too (where the forced-live sections below are the tree's
-// own behaviour).
+// off while the deploy's site config leaves the community toggle out (the live site before the switch): the config is
+// routed without it whatever the server says, and ?on= does nothing off a local host. Then on localhost with no ?on=.
 await section('off-host', async () => {
-  const P = await openLive('/app/', { query: `${FIXQ}&community-device=tester.soft-echo`, flags: { COMMUNITY_LIVE: false, TRY_ON: false } });
+  const P = await openLive('/app/', { query: `${FIXQ}&community-device=tester.soft-echo&on=community,community.try`, toggles: null, siteConfig: {} });
   try {
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
     await P.page.waitForTimeout(400);
@@ -137,8 +143,17 @@ await section('off-host', async () => {
     });
     T.ok(!r.on && !r.section && !r.words.length, `off-host: no section, no shelf words in More (${r.words.join(', ') || 'none'})`);
     T.ok(/isn't on in this studio/.test(r.tool.error || '') && !r.tool.results.length, `off-host: the tool says the shelf isn't on: "${r.tool.error}"`);
-    T.ok(!/community/.test(r.url), `off-host: the shelf's parameters leave the address (${r.url || 'none'})`);
+    T.ok(!/community=|community-device/.test(r.url), `off-host: the shelf's parameters leave the address (${r.url || 'none'})`);
+    const idx = P.requests.filter((u) => /community-index\.json$/.test(new URL(u).pathname));
+    T.ok(!idx.length && P.configs.length >= 1 && !('community' in P.configs[0].toggles), `off-host: with the toggle left out no index is read at all, and ?on= counts for nothing here (${idx.length} index requests${idx.length ? ': ' + idx.join(', ') : ''})`);
+    T.ok(!errorsOf(P).length, `off-host: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
   } finally { await P.close(); }
+  const L = await open('/app/', { query: FIXQ });
+  try {
+    await L.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community, null, { timeout: 45000 });
+    const r = await E(L, async () => { await window.overdub.community.ready(); return { on: window.overdub.community.on(), section: !!document.querySelector('.cs-group'), toggles: window.overdub.toggles.list().filter((t) => /^community/.test(t.id)).map((t) => `${t.id}:${t.by}`) }; });
+    T.ok(!r.on && !r.section, `localhost with no ?on=: the shelf is off too (${r.toggles.join(', ')})`);
+  } finally { await L.close(); }
 });
 
 // (the fixture's Soft Echo file says other words than its entry, and its requester is a note; Tiny Keys' is a name:
@@ -333,10 +348,10 @@ await section('link', async () => {
   } finally { await P.close(); }
 });
 
-// held back (TRY_ON off, no developer flag): no Try or Keep to press, a plain line instead; hearing and reading stay.
-// TRY_ON is read false through community-live.js whatever the tree says, so this holds on the switch commit too.
+// held back (community.try off, the shelf on): no Try or Keep to press, a plain line instead; hearing and reading
+// stay. The site config is routed with community.try "off" whatever the server says, and ?on= names only community.
 await section('held-back', async () => {
-  const P = await studio(FIXQ, { tryOn: false, init: { 'overdub:community-try': '0' }, routes: (page) => liveRoutes(page, { origin: new URL(page.url()).origin, local: new URL(page.url()).origin, flags: { TRY_ON: false } }) });
+  const P = await studio(FIXQ, { tryOn: false, routes: (page) => liveRoutes(page, { origin: new URL(page.url()).origin, local: new URL(page.url()).origin, toggles: { 'community.try': 'off' } }) });
   try {
     await E(P, () => window.overdub.community.reach('tester.soft-echo', 'you'));
     await P.page.waitForSelector('.cs-detail[data-community="tester.soft-echo"]');
@@ -347,7 +362,7 @@ await section('held-back', async () => {
 
 // the studio's own copy: deny list, held lines, vouched
 await section('bundled', async () => {
-  const P = await open('/app/');
+  const P = await open('/app/', { query: 'on=community,community.try' });
   try {
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
     await P.page.route('**/app/community/**', async (route) => {
@@ -362,7 +377,7 @@ await section('bundled', async () => {
       await route.fulfill({ status: 200, contentType: /\.wav$/.test(p) ? 'audio/wav' : 'application/json', body });
     });
     const revoked = read('revoked-kernel.txt');
-    await P.page.evaluate((k) => { localStorage.clear(); localStorage.setItem('overdub:community-try', '1'); const app = window.overdub; app.trust.allow([k]); }, revoked);
+    await P.page.evaluate((k) => { localStorage.clear(); const app = window.overdub; app.trust.allow([k]); }, revoked);
     const stored = await E(P, (k) => window.overdub.trust.trusts(k), revoked);
     await P.page.reload({ waitUntil: 'load' });
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
@@ -527,7 +542,7 @@ await section('forced-live', async () => {
     await E(P, () => window.overdub.community.ready());
     const r = await E(P, () => { const s = window.overdub.community.state(); return { on: window.overdub.community.on(), bundled: s.bundled, source: s.source, n: s.entries.length, host: location.host }; });
     const indexes = P.requests.filter((u) => new URL(u).pathname.endsWith('community-index.json'));
-    T.ok(P.rewritten.includes('/app/src/ui/community.js') && r.on && r.host === LIVE_HOST, `forced live: COMMUNITY_LIVE reads true on ${r.host} (rewritten: ${P.rewritten.join(', ')})`);
+    T.ok(P.configs.some((c) => c.toggles.community === 'on') && r.on && r.host === LIVE_HOST, `forced live: the routed site config turns the community toggle on, on ${r.host}`);
     T.ok(r.bundled && r.source === 'bundled' && r.n === 5, `forced live: ?community=http://localhost:… is refused and the shelf is the studio's own copy (${r.source}, ${r.n} entries)`);
     T.ok(indexes.length >= 1 && indexes.every((u) => u === `http://${LIVE_HOST}/app/community/community-index.json`), `forced live: the only index fetched is /app/community/ (${[...new Set(indexes)].join(', ')})`);
     T.ok(!errorsOf(P).length, `forced live: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
@@ -613,11 +628,11 @@ await section('live-revoke', async () => {
   } finally { await P.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// the emergency off (R14): app/site-config.json says "community": "off" on the live site: no section, no shelf words,
+// the emergency off (R14): app/site-config.json says "toggles": { "community": "off" } on the live site: no section, no shelf words,
 // ?community= and ?community-device= ignored, the tool off, and the bundled index's deny list still applied
 await section('live-off', async () => {
   const gone = read('revoked-kernel.txt');
-  const P = await openLive('/app/', { bundled: FIX, siteConfig: { community: 'off' }, query: (local) => `community=${encodeURIComponent(`http://localhost:${new URL(local).port}${FIXURL}community-index.json`)}&community-device=tester.soft-echo` });
+  const P = await openLive('/app/', { bundled: FIX, siteConfig: { toggles: { community: 'off' } }, query: (local) => `community=${encodeURIComponent(`http://localhost:${new URL(local).port}${FIXURL}community-index.json`)}&community-device=tester.soft-echo` });
   const loaded = () => P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
   try {
     await loaded();
@@ -637,7 +652,7 @@ await section('live-off', async () => {
       return { on: app.community.on(), status: app.community.state().status, n: app.community.state().entries.length, section: !!document.querySelector('.cs-group'), words: f ? f.aliases.filter((a) => /shelf|community/.test(a)) : [], tool, put, gone: app.trust.trusts(k), url: location.search, detail: !!document.querySelector('.cs-detail'), toast: [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | ') };
     }, gone);
     const asked = P.requests.filter((u) => /community-index\.json/.test(u));
-    T.ok(P.rewritten.includes('/app/src/ui/community.js') && !r.on && r.status === 'off' && !r.n && !r.section && !r.words.length, `R14: with "community": "off" there's no section and no shelf words in Find, though COMMUNITY_LIVE reads true (${r.status})`);
+    T.ok(P.configs.length && P.configs.every((c) => c.toggles.community === 'off') && !r.on && r.status === 'off' && !r.n && !r.section && !r.words.length, `R14: with "toggles": { "community": "off" } there's no section and no shelf words in Find (${r.status})`);
     T.ok(/isn't on in this studio/.test(r.tool.error || '') && !r.tool.results.length && /isn't on in this studio/.test(r.put.error || '') && !r.put.offered, `R14: the tool answers "${r.tool.error}", for a search and for put_on`);
     T.ok(was && !r.gone, 'R14: the bundled deny list still applies: a revoked hash is forgotten with the shelf off');
     T.ok(asked.length >= 1 && asked.every((u) => u === `http://${LIVE_HOST}/app/community/community-index.json`) && !/community/.test(r.url) && !r.detail && !/has no device/.test(r.toast), `R14: ?community= is ignored (only the bundled index is read: ${[...new Set(asked)].join(', ')}), and ?community-device= opens nothing and leaves the address (${r.url || 'none'})`);
@@ -670,18 +685,21 @@ await section('deploy', async () => {
     T.ok(bad.status !== 0 && /not deploying: tools\/community-pull\.js/.test(bad.out) && !/\+ aws s3/.test(bad.out), `deploy: a pin whose index doesn't match deploys nothing (exit ${bad.status})`);
     const badHeld = run({ COMMUNITY_PIN: pin('bad2', '0'.repeat(64)) });
     T.ok(badHeld.status !== 0 && !/\+ aws s3/.test(badHeld.out), `deploy: it refuses even while the shelf is held back (exit ${badHeld.status})`);
-    // held back while COMMUNITY_LIVE is false at REF (HEAD); the switch commit ships it
-    const live = /^export const COMMUNITY_LIVE = true;/m.test(spawnSync('git', ['show', 'HEAD:app/src/ui/community.js'], { cwd: ROOT, encoding: 'utf8' }).stdout);
+    // held back while the site config leaves the community toggle out; "on" ships it, and so does "off" by name (the
+    // emergency off keeps the studio's own copy up, for its deny list)
+    const cfg = (toggles) => { const f = path.join(tmp, `cfg-${Object.values(toggles).join('-') || 'none'}.json`); fs.writeFileSync(f, JSON.stringify({ toggles })); return f; };
     const held = run({ COMMUNITY_PIN: good });
-    if (!live) {
-      T.ok(held.status === 0 && /app\/community: held back \(COMMUNITY_LIVE is false at HEAD\); the pinned shelf checks out/.test(held.out) && !/^ {2}app\/community\//m.test(held.out), 'deploy: with COMMUNITY_LIVE false at HEAD the shelf is checked, then held back');
-      const none = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere') });
-      T.ok(none.status === 0 && /held back .* not checked: no checkout/.test(none.out), 'deploy: held back with no overdub-devices checkout, it goes on and says so');
-      const noneShip = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere'), COMMUNITY_SHIP: '1' });
-      T.ok(noneShip.status !== 0 && !/\+ aws s3/.test(noneShip.out), `deploy: shipping with no checkout deploys nothing (exit ${noneShip.status})`);
-    } else {
-      T.ok(held.status === 0 && /^ {2}app\/community\/community-index\.json/m.test(held.out), 'deploy: with COMMUNITY_LIVE true at HEAD the shelf ships');
+    T.ok(held.status === 0 && /app\/community: held back \(the site config doesn't name the community toggle\); the pinned shelf checks out/.test(held.out) && !/^ {2}app\/community\//m.test(held.out), 'deploy: with the community toggle left out of the site config the shelf is checked, then held back');
+    const none = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere') });
+    T.ok(none.status === 0 && /held back .* not checked: no checkout/.test(none.out), 'deploy: held back with no overdub-devices checkout, it goes on and says so');
+    const noneShip = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere'), COMMUNITY_SHIP: '1' });
+    T.ok(noneShip.status !== 0 && !/\+ aws s3/.test(noneShip.out), `deploy: shipping with no checkout deploys nothing (exit ${noneShip.status})`);
+    for (const v of ['on', 'off']) {
+      const r = run({ COMMUNITY_PIN: good, SITE_CONFIG: cfg({ community: v, 'community.try': v }) });
+      T.ok(r.status === 0 && /^ {2}app\/community\/community-index\.json/m.test(r.out) && new RegExp(`as pinned \\(the community toggle: ${v}\\)`).test(r.out), `deploy: with "toggles": { "community": "${v}" } in the site config the shelf ships${r.status ? ` (exit ${r.status}: ${r.out.slice(-300)})` : ''}`);
     }
+    const offNone = run({ COMMUNITY_PIN: good, SITE_CONFIG: cfg({ community: 'off' }), OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere') });
+    T.ok(offNone.status !== 0 && !/\+ aws s3/.test(offNone.out), `deploy: named off with no checkout deploys nothing, as on does (exit ${offNone.status})`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 

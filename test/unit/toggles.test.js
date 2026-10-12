@@ -1,5 +1,5 @@
 // The feature toggles' registry (app/src/toggles.js): its shape, what turns a toggle on, and the scans that keep the
-// rules (every on('…') names a registered toggle; the constant switches are only the ones still to move).
+// rules (every on('…') names a registered toggle; no constant switches are left).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -374,14 +374,9 @@ describe('the source scans', () => {
     assert.ok(where.length > 20);
     assert.deepEqual(where.filter((f) => /toggles\.js['"]/.test(fs.readFileSync(f, 'utf8'))).map(rel), []);
   });
-  test('the constant switches are only the ones still to move', () => {
-    // relay, accounts and cloud.agent read on() now. shelf-live's follow-up moves these to on('community') /
-    // on('community.try') and empties this list.
-    const ALLOWED = [
-      'app/src/ui/community.js: COMMUNITY_LIVE',
-      'app/src/ui/community.js: TRY_ON',
-      'site/community/community.js: COMMUNITY_LIVE',
-    ];
+  test('no constant switches are left: every feature reads on()', () => {
+    // relay, accounts, cloud.agent, community and community.try all read on() now; a new one goes in the registry
+    const ALLOWED = [];
     const found = [];
     for (const f of CODE)
       for (const m of fs.readFileSync(f, 'utf8').matchAll(/export const ([A-Z_]+_(?:LIVE|ON)) = (?:true|false)/g))

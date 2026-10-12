@@ -30,10 +30,11 @@ the clips as `audio/mpeg`, all `no-cache`, so a rebuild or a takedown is live at
 | At REF | What the deploy does with the shelf |
 |---|---|
 | no `deploy/community-pin.json` (any ref before the pin existed) | nothing: no shelf, as before |
-| a pin, `COMMUNITY_LIVE = false` in `app/src/ui/community.js` | pulls and checks it, then holds it back ("app/community: held back"); with no checkout to pull from it says so and goes on, so CI's preview deploy works without overdub-devices |
-| a pin, `COMMUNITY_LIVE = true` | ships it; a missing checkout or a refused pull stops the deploy |
+| a pin, and the site config going up leaves the `community` toggle out | pulls and checks it, then holds it back ("app/community: held back"); with no checkout to pull from it says so and goes on, so CI's preview deploy works without overdub-devices |
+| a pin, and the site config says `"toggles": { "community": "on" }` or `"off"` | ships it; a missing checkout or a refused pull stops the deploy |
 
-`COMMUNITY_SHIP=1` ships it whatever the flag says; `COMMUNITY_PIN=<file>` reads another pin, in a dry run only.
+The site config is the staged `app/site-config.json` (below), so the live site and `--next` decide for themselves.
+`COMMUNITY_SHIP=1` ships it whatever the config says; `COMMUNITY_PIN=<file>` reads another pin, in a dry run only.
 `tools/community-test.js` runs the deploy dry against a fixture overdub-devices repo and checks the plan.
 
 Moving the shelf forward is a pull request that changes only `deploy/community-pin.json`:
@@ -42,16 +43,17 @@ Moving the shelf forward is a pull request that changes only `deploy/community-p
 (`.github/PULL_REQUEST_TEMPLATE/community-pin.md`). Adding needs the second person to accept the PR; a takedown pin
 merges at once and is reviewed after (overdub-devices' `docs/TAKEDOWN.md`).
 
-The emergency off needs no code change: add `"community": "off"` to `deploy/site-config.json` and run `deploy.sh`
-(and `--next`, which keeps the key). The studio and the gallery then behave as if `COMMUNITY_LIVE` were false (no
-section, no Find words, `find_community_device` answers that the shelf isn't on, the gallery says so), on every host,
-except that the studio still reads `app/community/community-index.json` on every load and applies its `revoked` list,
-so turning the shelf off never un-revokes anything. Take the key out and deploy again to turn it back on.
+The emergency off needs no code change: set `"toggles": { "community": "off" }` in `deploy/site-config.json` and run
+`deploy.sh` (and `--next`, which keeps the key). The studio and the gallery are then off (no section, no Find words,
+`find_community_device` answers that the shelf isn't on, the gallery says so), on every host, except that the shelf
+still ships and the studio still reads `app/community/community-index.json` on every load and applies its `revoked`
+list, so turning the shelf off never un-revokes anything. Set it back to `"on"` and deploy again to turn it back on.
+(Taking the key out instead is off too, but holds the shelf back, deny list and all: use `"off"`.)
 
 Once the shelf is on, `node tools/prod-check.js` checks the live copy against the pin: the live index's SHA-256 is the
 pin's, its `built.from` is the pinned index's (read from `app/community/` when that's the pinned copy, else from the
 pin's commit in `OVERDUB_DEVICES_DIR` or `../overdub-devices`), no revoked fingerprint is listed, and a clip answers
-`audio/mpeg`. While the live `app/src/ui/community.js` says `COMMUNITY_LIVE = false` it prints that those checks are
+`audio/mpeg`. While the live `site-config.json` leaves the `community` toggle out it prints that those checks are
 skipped. Run it after every pin move.
 
 Switching it on, in order (COMMUNITY-SHELF.md, "Where it's on", has the why):
@@ -63,8 +65,10 @@ Switching it on, in order (COMMUNITY-SHELF.md, "Where it's on", has the why):
    `/community` a 301.
 4. The pin moved to overdub-devices master's merge commit (`node tools/community-pull.js --pin <sha>`), in its own
    pull request.
-5. The switch commit (both `COMMUNITY_LIVE`s and `TRY_ON` true, and the gallery linked), then `deploy/deploy.sh`,
-   which now ships `app/community/`, then `node tools/prod-check.js` again for the shelf checks.
+5. The switch: `"toggles": { "community": "on", "community.try": "on" }` in `deploy/site-config.json` (no code
+   change), and the commit that links the gallery (the **Community** word in the site's top nav, the `llms.txt` line,
+   GUIDE.md's line). Then `deploy/deploy.sh`, which now ships `app/community/`, then `node tools/prod-check.js` again
+   for the shelf checks and to see both in `toggles on live`.
 
 ## The response headers (`deploy/headers.sh`)
 

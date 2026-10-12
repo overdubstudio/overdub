@@ -105,9 +105,10 @@ for p in ${HELD_BACK[@]+"${HELD_BACK[@]}"}; do rm -rf "${STAGE:?}/$p"; done
 
 # The community shelf, app/community/ (gitignored): pulled from overdub-devices at the commit REF's
 # deploy/community-pin.json names, by tools/community-pull.js, which checks it by hash and refuses a wrong one (then
-# nothing is deployed). A REF with no pin ships no shelf. While COMMUNITY_LIVE is false in REF's app/src/ui/community.js
-# the shelf is checked and then held back, so the draft index stays off the site until the switch commit; the pull is
-# skipped with a line, not an error, when there's no checkout to pull from. COMMUNITY_SHIP=1 ships it anyway (a dry
+# nothing is deployed). A REF with no pin ships no shelf. It ships when the site config going up names the community
+# toggle: "on", or "off" (the emergency off: the studio still reads its own copy's deny list, so the copy stays). While
+# the config leaves it out, the shelf has never been on: it is checked and then held back, so the draft index stays off
+# the site until the switch; the pull is skipped with a line, not an error, when there's no checkout to pull from. COMMUNITY_SHIP=1 ships it anyway (a dry
 # run's check). The checkout: OVERDUB_DEVICES_DIR, else ../overdub-devices. A dry run may read another pin from
 # COMMUNITY_PIN (tools/community-test.js); a real deploy reads REF's only.
 if [ -n "${COMMUNITY_PIN:-}" ] && [ -z "$DRY" ]; then echo "COMMUNITY_PIN is for dry runs: a deploy reads the pin at $REF"; exit 2; fi
@@ -117,8 +118,11 @@ if [ -n "${COMMUNITY_PIN:-}" ]; then cp "$COMMUNITY_PIN" "$PIN"; else git show "
 if [ ! -s "$PIN" ]; then
   echo "app/community: none ($REF has no deploy/community-pin.json)"
 else
-  # (grep reads it all, not -q: under pipefail an early exit would SIGPIPE git show and read as "false")
-  if git show "$REF:app/src/ui/community.js" 2>/dev/null | grep '^export const COMMUNITY_LIVE = true;' >/dev/null; then SHIP=1; else SHIP=; fi
+  # the community toggle as the staged app/site-config.json names it: "on" or "off" ships, left out holds back
+  COMMUNITY_TOGGLE=$(node -e 'const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).toggles;
+    const v = t && typeof t === "object" && !Array.isArray(t) ? t.community : undefined;
+    process.stdout.write(v === "on" || v === "off" ? v : "unnamed")' "$STAGE/app/site-config.json")
+  if [ "$COMMUNITY_TOGGLE" = unnamed ]; then SHIP=; else SHIP=1; fi
   SHIP=${COMMUNITY_SHIP:-$SHIP}
   [ "$SHIP" = 0 ] && SHIP=
   DEVICES_DIR=${OVERDUB_DEVICES_DIR:-$ROOT/../overdub-devices}
@@ -127,14 +131,14 @@ else
   PULLED=$?
   set -e
   if [ "$PULLED" = 3 ] && [ -z "$SHIP" ]; then
-    echo "app/community: held back (COMMUNITY_LIVE is false at $REF), and not checked: no checkout with the pinned commit at $DEVICES_DIR"
+    echo "app/community: held back (the site config doesn't name the community toggle), and not checked: no checkout with the pinned commit at $DEVICES_DIR"
   elif [ "$PULLED" != 0 ]; then
     echo "not deploying: tools/community-pull.js didn't pull the pinned shelf (exit $PULLED)"; exit 1
   elif [ -z "$SHIP" ]; then
     rm -rf "${STAGE:?}/app/community"
-    echo "app/community: held back (COMMUNITY_LIVE is false at $REF); the pinned shelf checks out"
+    echo "app/community: held back (the site config doesn't name the community toggle); the pinned shelf checks out"
   else
-    echo "app/community: $(find "$STAGE/app/community" -type f | wc -l | tr -d ' ') files, as pinned"
+    echo "app/community: $(find "$STAGE/app/community" -type f | wc -l | tr -d ' ') files, as pinned (the community toggle: $COMMUNITY_TOGGLE)"
     # a dry run lists each with the type and caching its upload rule below gives it
     if [ -n "$DRY" ]; then
       (cd "$STAGE" && find app/community -type f | sort) | while read -r f; do

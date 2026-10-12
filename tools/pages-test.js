@@ -247,9 +247,10 @@ for (const width of [1440, 390]) {
 {
   console.log('\ncommunity shelf (site gallery)');
   const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
-  // the switch (COMMUNITY_LIVE, the gallery's and the studio's, which must agree): the checks that differ once it's on
-  // read it, so both the branch with the switch off and the switch commit are green
-  const LIVE = /export const COMMUNITY_LIVE = (true|false)/.exec(read('site/community/community.js'))?.[1] === 'true';
+  // the switch: the community toggle in the deploy's site config (not in the repo), plus the commit that links the
+  // gallery (the top nav, llms.txt, GUIDE.md). LIVE is that commit: any of its three lines makes it, and then the
+  // checks below want all three, so both the branch with the switch off and the switch commit are green
+  const LIVE = /<a\b[^>]*href="\/community\/"[^>]*>Community<\/a>/.test(read('site/index.html')) || /\(https:\/\/overdubstudio\.com\/community\/\)|\(\/community\/\)/.test(read('site/llms.txt')) || !/own computer only, for now/.test(read('docs/GUIDE.md'));
   const { addRoute } = await import('../server/serve.js');
   const wav = (seconds, hz, sr = 8000) => {
     const n = Math.round(seconds * sr), b = Buffer.alloc(44 + n * 2);
@@ -320,7 +321,8 @@ for (const width of [1440, 390]) {
   addRoute('/app/community/', serveFix('/app/community/'));             // the studio's own copy (bundled)
   addRoute('/fixture-shelf/', serveFix('/fixture-shelf/'));             // another index on this site
   const real = (errs) => errs;
-  const SHELF = '/site/community/';
+  // locally the gallery is on with ?on=community, the developer's way (app/src/toggles.js), as the studio's shelf is
+  const SHELF = '/site/community/', ON = '?on=community', ON_ = ON + '&';
   const look_ = async (page) => page.evaluate(() => {
     const W = window.__community || {};
     const ent = [...document.querySelectorAll('.cs-entry')];
@@ -352,7 +354,7 @@ for (const width of [1440, 390]) {
   // the studio's own copy, at 1440 and 390
   for (const width of [1440, 390]) {
     hits.length = 0;
-    const o = await open(SHELF, { width, height: width < 600 ? 844 : 900 });
+    const o = await open(SHELF + ON, { width, height: width < 600 ? 844 : 900 });
     const requests = [];
     o.page.on('request', (r) => requests.push(r.url()));
     await o.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
@@ -370,9 +372,9 @@ for (const width of [1440, 390]) {
         `the shelf line says where the index came from, its count read from the index, and what was skipped ("${s.line}")`);
       t.ok(s.house && /read by a person/.test(s.lede) && s.vouch >= 1 && !s.says, `the bundled index is taken at its word: a House section, the "checked and read" lede and the reviewed line (${s.vouch}), no "The shelf says"`);
       t.ok(s.warm.length >= 4 && s.warm.every((c) => c === 'rgb(255, 160, 67)') && s.cool.length >= 4 && s.cool.every((c) => c === 'rgb(76, 195, 255)'), `credits are bylines: the author warm, the agent cool (${s.warm.length} warm, ${s.cool.length} cool)`);
-      t.ok(s.links['test-person.slow-echo'] === '/app/?new&community-device=test-person.slow-echo' && s.links['claude.test-room'] === '/app/?new&device=claude.test-room'
+      t.ok(s.links['test-person.slow-echo'] === '/app/?new&community-device=test-person.slow-echo&on=community' && s.links['claude.test-room'] === '/app/?new&device=claude.test-room'
         && /Opens Night Shift with Slow Echo ready to try on the Hook\./.test(s.lands['test-person.slow-echo']) && /ready to try on the Keys\./.test(s.lands['test-person.glass-harp']),
-        `Open in the studio links to /app/?new&community-device=<id> (House: ?new&device=) and says where it lands ("${s.lands['test-person.slow-echo']}")`);
+        `Open in the studio links to /app/?new&community-device=<id> (with this local page's &on=; House: ?new&device=) and says where it lands ("${s.lands['test-person.slow-echo']}")`);
       t.ok(s.plays['test-person.slow-echo'] === 'On a strum' && s.plays['test-person.glass-harp'] === 'Hear it', `▶ names the input (${s.plays['test-person.slow-echo']}, ${s.plays['test-person.glass-harp']})`);
       t.ok(s.bad && !s.pwned.length && s.bad.numbers && s.bad.dials.length === 1 && /<img/.test(s.bad.name) && !/‮/.test(s.bad.name) && s.bad.inert && !s.bad.play && s.bad.src === 'text' && s.evil && !s.evil.link,
         `the hostile entry renders numbers or nothing in its face (dials ${JSON.stringify(s.bad?.dials)}), its markup as text, no clip outside policy, and no link that isn't https on an allowed host (${s.pwned.length} injected elements)`);
@@ -407,33 +409,33 @@ for (const width of [1440, 390]) {
     await o.close();
   }
 
-  // the live site, forced (tools/community-live.js: COMMUNITY_LIVE read true, served as overdub.test): the gallery
-  // lists the studio's own copy; with the deploy's emergency off (/app/site-config.json "community": "off") it says the
-  // shelf isn't on and reads no index (R14). The index reads are counted from the overdub.test page's own requests:
-  // openLive loads the page on localhost first, and that load's read (the gallery is on locally) isn't this page's.
+  // the live site, forced (tools/community-live.js: a routed site config with the community toggle on, served as
+  // overdub.test): the gallery lists the studio's own copy; with the deploy's emergency off (/app/site-config.json
+  // "toggles": { "community": "off" }) it says the shelf isn't on and reads no index (R14). The index reads are counted
+  // from the overdub.test page's own requests: openLive loads the page on localhost first, and that load isn't this page's.
   {
     const { openLive } = await import('./community-live.js');
     const looks = {};
-    for (const [key, siteConfig] of [['on', null], ['off', { community: 'off' }]]) {
+    for (const [key, siteConfig] of [['on', null], ['off', { toggles: { community: 'off' } }]]) {
       const o = await openLive(SHELF, { siteConfig, width: 1440 });
       await o.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
-      looks[key] = { ...(await look_(o.page)), emergency: await o.page.evaluate(() => !!window.__community?.emergency), rewritten: o.rewritten, index: o.requests.filter((u) => /community-index\.json$/.test(new URL(u).pathname)).length, errs: real(o.errors) };
+      looks[key] = { ...(await look_(o.page)), emergency: await o.page.evaluate(() => !!window.__community?.emergency), configs: o.configs, index: o.requests.filter((u) => /community-index\.json$/.test(new URL(u).pathname)).length, errs: real(o.errors) };
       await o.close();
     }
     const { on, off } = looks;
-    t.ok(on.rewritten.includes('/site/community/community.js') && !on.off && on.ids.includes('test-person.slow-echo') && on.house && on.index === 1 && !on.errs.length, `forced live, on overdub.test: the gallery lists the studio's own copy (${on.ids.length} entries)${on.errs.length || on.index !== 1 ? `; ${on.index} index reads${on.errs.length ? '\n       ' + on.errs.join('\n       ') : ''}` : ''}`);
-    t.ok(off.off && off.emergency && !off.ids.length && !off.index && /isn’t on here/.test(off.empty) && !off.errs.length, `forced live, with "community": "off" in the site config: the gallery says "${off.empty.replace(/Open the studio$/, '')}" and reads no index (${off.index} requests)`);
+    t.ok(on.configs.some((c) => c.toggles.community === 'on') && !on.off && on.ids.includes('test-person.slow-echo') && on.house && on.index === 1 && !on.errs.length, `forced live, on overdub.test: the gallery lists the studio's own copy (${on.ids.length} entries)${on.errs.length || on.index !== 1 ? `; ${on.index} index reads${on.errs.length ? '\n       ' + on.errs.join('\n       ') : ''}` : ''}`);
+    t.ok(off.off && off.emergency && !off.ids.length && !off.index && /isn’t on here/.test(off.empty) && !off.errs.length, `forced live, with "toggles": { "community": "off" } in the site config: the gallery says "${off.empty.replace(/Open the studio$/, '')}" and reads no index (${off.index} requests)`);
   }
 
   // another index (a path on this site): no House, no vouching, the source named, the link carries it
   {
-    const o = await open(SHELF + '?community=/fixture-shelf/community-index.json', { width: 1440 });
+    const o = await open(SHELF + ON_ + 'community=/fixture-shelf/community-index.json', { width: 1440 });
     await o.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
     const s = await look_(o.page);
     t.ok(s.ready && !s.house && !s.tiers.includes('house') && !/read by a person|checked by the studio/.test(s.lede) && /that shelf’s word/.test(s.lede) && s.says >= 4 && !s.vouch
       && /^From \/fixture-shelf\/community-index\.json: 5 devices/.test(s.line),
       `an index that isn't the studio's own: no House section, the lede names it and drops "checked and read", numbers under "The shelf says" ("${s.line}")`);
-    t.ok(s.links['test-person.slow-echo'] === `/app/?new&community-device=test-person.slow-echo&community=${encodeURIComponent(o.base + '/fixture-shelf/community-index.json')}`, `Open in the studio carries &community= for another index (${s.links['test-person.slow-echo']})`);
+    t.ok(s.links['test-person.slow-echo'] === `/app/?new&community-device=test-person.slow-echo&community=${encodeURIComponent(o.base + '/fixture-shelf/community-index.json')}&on=community`, `Open in the studio carries &community= for another index (${s.links['test-person.slow-echo']})`);
     t.ok(!real(o.errors).length, `?community=: no console or page errors${real(o.errors).length ? '\n       ' + real(o.errors).join('\n       ') : ''}`);
     await o.close();
   }
@@ -441,7 +443,7 @@ for (const width of [1440, 390]) {
   {
     const lic = {};
     for (const f of ['with-repo.json', 'http-repo.json']) {
-      const o = await open(SHELF + '?community=/fixture-shelf/' + f, { width: 1440 });
+      const o = await open(SHELF + ON_ + 'community=/fixture-shelf/' + f, { width: 1440 });
       await o.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
       lic[f] = { href: await o.page.evaluate(() => document.querySelector('#licence-note a')?.getAttribute('href') ?? null), n: await o.page.evaluate(() => document.querySelectorAll('.cs-entry').length), errs: real(o.errors) };
       await o.close();
@@ -452,21 +454,25 @@ for (const width of [1440, 390]) {
   }
   // a newer major, another site, and a page that isn't on localhost
   {
-    const o = await open(SHELF + '?community=/fixture-shelf/newer.json', { width: 1440 });
+    const o = await open(SHELF + ON_ + 'community=/fixture-shelf/newer.json', { width: 1440 });
     await o.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
     const s = await look_(o.page);
     await o.close();
-    const p = await open(SHELF + '?community=' + encodeURIComponent('https://example.com/community-index.json'), { width: 1440 });
+    const p = await open(SHELF + ON_ + 'community=' + encodeURIComponent('https://example.com/community-index.json'), { width: 1440 });
     const asked = [];
     p.page.on('request', (r) => { if (/example\.com/.test(r.url())) asked.push(r.url()); });
     await p.page.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
     const r = await look_(p.page);
-    // the same page as a visitor on another host would see it (proxied to this server): the shelf is off there
+    // the same page as a visitor on another host would see it (proxied to this server): with the server's own site
+    // config (no community toggle) the shelf is off there, ?on= or not; with one that turns it on, only this site's own
+    // paths are read, so a localhost index is refused before any fetch
     const port = new URL(p.base).port;
     const ctx = await p.browser.newContext({ viewport: { width: 1440, height: 900 } });
     const askedOff = [];
+    let cfgOn = false;
     await ctx.route('http://shelf.test/**', async (route) => {
       const u = new URL(route.request().url());
+      if (cfgOn && u.pathname === '/app/site-config.json') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ toggles: { community: 'on' } }) });
       if (/community|fixture-shelf/.test(u.pathname) && /\.json$/.test(u.pathname)) askedOff.push(u.pathname);
       const res = await fetch(`http://localhost:${port}${u.pathname}${u.search}`);
       route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: Buffer.from(await res.arrayBuffer()) });
@@ -474,16 +480,20 @@ for (const width of [1440, 390]) {
     const pg = await ctx.newPage();
     const askedLocal = [];
     pg.on('request', (q) => { if (/^http:\/\/localhost:/.test(q.url())) askedLocal.push(q.url()); });
-    // switched off: ?community= on another host reads nothing; switched on: only this site's own paths, so a
-    // localhost index is refused before any fetch
-    await pg.goto('http://shelf.test' + SHELF + '?community=' + (LIVE ? encodeURIComponent(`http://localhost:${port}/fixture-shelf/community-index.json`) : '/fixture-shelf/community-index.json'), { waitUntil: 'load' });
+    await pg.goto('http://shelf.test' + SHELF + ON_ + 'community=/fixture-shelf/community-index.json', { waitUntil: 'load' });
     await pg.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
     const off = await look_(pg);
+    const askedOffN = askedOff.length;
+    cfgOn = true;
+    askedOff.length = 0;
+    await pg.goto('http://shelf.test' + SHELF + '?community=' + encodeURIComponent(`http://localhost:${port}/fixture-shelf/community-index.json`), { waitUntil: 'load' });
+    await pg.waitForFunction(() => window.__community?.ready, null, { timeout: 15000 }).catch(() => {});
+    const onHost = await look_(pg);
     await p.close();
     t.ok(s.newer && /built for a newer studio/.test(s.empty) && !s.ids.length, `a major-2 index lists nothing and says it was built for a newer studio`);
     t.ok(r.refused && !asked.length && /from this site or from localhost only/.test(r.empty), `?community= on another site is refused before any fetch (${asked.length} requests)`);
-    if (!LIVE) t.ok(off.off && !off.ids.length && !askedOff.length && /isn’t on here/.test(off.empty), `on a host that isn't localhost the shelf is off: no index read, whatever ?community= says (${askedOff.length} index requests)`);
-    else t.ok(off.refused && !off.ids.length && !askedLocal.length && !askedOff.length, `switched on, on a host that isn't localhost: ?community=http://localhost:… is refused before any fetch (${askedLocal.length + askedOff.length} index requests)`);
+    t.ok(off.off && !off.ids.length && !askedOffN && /isn’t on here/.test(off.empty), `on a host that isn't localhost, with the toggle left out, the shelf is off: no index read, whatever ?on= and ?community= say (${askedOffN} index requests)`);
+    t.ok(onHost.refused && !onHost.ids.length && !askedLocal.length && !askedOff.length, `toggled on, on a host that isn't localhost: ?community=http://localhost:… is refused before any fetch (${askedLocal.length + askedOff.length} index requests)`);
   }
   served = false;
 
@@ -512,11 +522,11 @@ for (const width of [1440, 390]) {
   t.ok(pin && Object.keys(pin).join() === 'repo,commit,index_sha256' && /^[0-9a-f]{40}$/.test(pin.commit) && /^[0-9a-f]{64}$/.test(pin.index_sha256), `deploy/community-pin.json pins a commit and the index's SHA-256 (${pin ? pin.commit.slice(0, 7) : 'missing'})`);
   const sounds = (read('docs/SOUNDS.md').split(/^## Community shelf preview clips/m)[1] || '').split(/^## /m)[0];
   t.ok(['MIT-0', 'MIT', 'CC0-1.0'].every((l) => new RegExp(`\\[${l.replace(/[.-]/g, '\\$&')}\\]`).test(sounds)) && /community-pull\.js/.test(sounds), 'docs/SOUNDS.md has the community shelf\'s preview clips, under MIT-0, MIT or CC0-1.0, from the pull');
-  const ui = path.join(ROOT, 'app/src/ui/community.js');
-  const pageLive = /export const COMMUNITY_LIVE = (true|false)/.exec(read('site/community/community.js'))?.[1];
-  const studioLive = fs.existsSync(ui) ? /COMMUNITY_LIVE\s*=\s*(true|false)/.exec(fs.readFileSync(ui, 'utf8'))?.[1] : null;
-  const tryOn = fs.existsSync(ui) ? /export const TRY_ON = (true|false)/.exec(fs.readFileSync(ui, 'utf8'))?.[1] : null;
-  t.ok(/^(true|false)$/.test(pageLive) && studioLive === pageLive && tryOn === pageLive, `COMMUNITY_LIVE is ${pageLive} in the gallery and the studio, and TRY_ON with it (${studioLive}, ${tryOn}): one switch`);
+  // one switch: the gallery and the studio both read the community toggle from the registry, and neither keeps a
+  // constant of its own
+  const pageSrc = read('site/community/community.js'), studioSrc = read('app/src/ui/community.js');
+  const reads = (src) => /from '[^']*\/toggles\.js'/.test(src) && /\btoggleOn\('community'\)/.test(src) && !/export const [A-Z_]+_(LIVE|ON) = (true|false)/.test(src);
+  t.ok(reads(pageSrc) && reads(studioSrc) && /\btoggleOn\('community\.try'\)/.test(studioSrc), 'the gallery and the studio read one switch, the community toggle (and Try, community.try), with no constants of their own');
   // its words: nothing sold, nothing called safe
   const copy = (read('site/community/index.html') + [...read('site/community/community.js').matchAll(/(['`])((?:(?!\1).){12,})\1/g)].map((m) => m[2]).join('\n'));
   const banned = [...copy.matchAll(/\b(safe|secure|sandboxed|verified|marketplace|buy|price[sd]?|free trial|checkout|rating)\b/gi)].map((m) => m[0]);

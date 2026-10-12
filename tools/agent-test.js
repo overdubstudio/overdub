@@ -2830,7 +2830,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 }
 
 /* ------------------------------------------------------------------ 5. the community shelf on the live site */
-// COMMUNITY_LIVE and TRY_ON forced true and the studio served as overdub.test (tools/community-live.js), with the
+// the community toggles on in a routed site config and the studio served as overdub.test (tools/community-live.js), with the
 // fixture shelf as the studio's own copy: find_community_device as the live site will answer it (R20), and
 // define_device's side door with the Browser never opened (R21)
 {
@@ -2850,7 +2850,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     const b = await app.tools.run('define_device', { device: { id: 'copy-b', name: 'Copy', kind: 'effect', params, kernel: k.replace('return {', 'return  {').replace(/\n/g, '\n  ') } }, { by: 'mcp:probe' });
     return { a, b, defined: Object.keys(app.store.get().devices).filter((x) => /copy/.test(x)), detail: !!document.querySelector('.cs-detail') };
   });
-  t.ok(P.rewritten.includes('/app/src/ui/community.js') && sd.a.refused && /from the community shelf/.test(sd.a.error || '') && sd.b.refused && !sd.defined.length && !sd.detail,
+  t.ok(P.configs.some((c) => c.toggles.community === 'on') && sd.a.refused && /from the community shelf/.test(sd.a.error || '') && sd.b.refused && !sd.defined.length && !sd.detail,
     `live shelf (R21): define_device refuses a shelf kernel and one with its spacing changed, with the Browser never opened ("${(sd.a.error || '').slice(0, 70)}…")`);
   const r = await page.evaluate(async () => {
     const app = window.overdub;
@@ -2886,8 +2886,8 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(!fourth.offered && fourth.error === 'the person has said no to these for now', `live shelf (R20): after three No thanks: "${fourth.error}"`);
   t.ok(realErrors(errors).length === 0, 'live shelf: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await P.close();
-  // the emergency off (R14): the same flags, and the site config says "community": "off"
-  const Q = await openLive('/app/', { bundled: FIX, siteConfig: { community: 'off' }, query: 'agent=mock&fast' });
+  // the emergency off (R14): the same routes, and the site config says "toggles": { "community": "off" }
+  const Q = await openLive('/app/', { bundled: FIX, siteConfig: { toggles: { community: 'off' } }, query: 'agent=mock&fast' });
   await ready(Q.page);
   const off = await Q.page.evaluate(async () => ({ on: window.overdub.community.on(), find: await window.overdub.tools.run('find_community_device', { query: 'echo' }, { by: 'claude' }), put: await window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'mcp:probe' }) }));
   t.ok(!off.on && off.find.error === 'The community shelf isn\'t on in this studio.' && !off.find.results.length && off.put.error === off.find.error, `live shelf, emergency off (R20): "${off.find.error}"`);

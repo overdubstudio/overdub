@@ -5,7 +5,8 @@
 // - always: /, /app/, /site/community/ and /community/ carry Content-Security-Policy: frame-ancestors 'none' and
 //   X-Frame-Options: DENY; each page's <meta> CSP is the one in this checkout (the header adds to it, never replaces
 //   it); /community/ is 200 and /community a 301 to it.
-// - only while the live studio's app/src/ui/community.js says COMMUNITY_LIVE = true (else one line says it's skipped):
+// - only while the live /app/site-config.json names the community toggle, "on" or "off" (the emergency off still
+//   ships the studio's own copy, for its deny list; deploy/deploy.sh), else one line says they're skipped:
 //   the live index's SHA-256 is deploy/community-pin.json's, its built.from is the pinned index's, no revoked hash is
 //   listed in its devices, and a clip answers audio/mpeg. The pinned index is app/community/ when its hash is the pin's
 //   (node tools/community-pull.js), else the pin's commit in the overdub-devices checkout (OVERDUB_DEVICES_DIR, else
@@ -46,9 +47,10 @@ for (const [route, file] of [['/', 'site/index.html'], ['/app/', 'app/index.html
 
 // ---- the community shelf, once it's switched on
 {
-  const src = await (await fetch(BASE + '/app/src/ui/community.js')).text();
-  const live = /export const COMMUNITY_LIVE = (true|false)/.exec(src)?.[1];
-  if (live !== 'true') t.note(`the community shelf checks are skipped: the live app/src/ui/community.js says COMMUNITY_LIVE = ${live ?? '(not found)'}`);
+  let cfg = null;
+  try { cfg = await (await fetch(BASE + '/app/site-config.json', { cache: 'no-store' })).json(); } catch { cfg = null; }
+  const live = cfg?.toggles && typeof cfg.toggles === 'object' ? cfg.toggles.community : undefined;
+  if (live !== 'on' && live !== 'off') t.note(`the community shelf checks are skipped: the live site-config.json has the community toggle ${live === undefined ? 'left out' : JSON.stringify(live)}`);
   else {
     const pin = JSON.parse(fs.readFileSync(path.join(ROOT, 'deploy/community-pin.json'), 'utf8'));
     const r = await fetch(BASE + '/app/community/community-index.json', { cache: 'no-store' });

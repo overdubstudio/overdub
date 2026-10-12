@@ -104,7 +104,7 @@ overdub/
                          lexicon.js + lexicon-personal.js, panel.js (chat UI), history.js, presence.js, diff.js,
                          keep.js (a song from a link: what waits for Keep), bridge.js (page side of MCP),
                          remote.js (page side of the relay), cloud.js, cloud-kind.js, cloud-panel.js (Claude
-                         on Overdub credits; off unless app/site-config.json names it),
+                         on Overdub credits; off unless the cloud.agent toggle and cloud.api are set),
                          community-tool.js (find_community_device)                                     [agent layer]
   tools/                 pw.js (browser harness, fixed), <area>-test.js checks, run-all.js, render.js, bench/
   integrations/          the Claude Code plugin and skill, configs for other MCP clients, check.js
@@ -1589,10 +1589,11 @@ from the shell), adds it and the API version to the page's Messages API request,
 old in-browser key, is deleted on load and noted once (`overdub:agent:key-retired`). The public site has no `/local/`.
 
 **Claude on Overdub credits** (provider `'cloud'`; built, not switched on): Claude run by Overdub's own service and
-paid for with credits, for people without a Claude of their own. It's off unless the deploy names the service in
-`app/site-config.json` (gitignored; `app/src/site-config.js` reads it once per load, `server/serve.js` answers it from
-`OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships `deploy/site-config.json` or `{}`); `?cloud=`
-points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
+paid for with credits, for people without a Claude of their own. It's off unless the deploy both turns the
+`cloud.agent` toggle on and names the service in `app/site-config.json` (gitignored; `app/src/site-config.js` reads it
+once per load, `server/serve.js` answers both from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh`
+ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles); a `cloud.api` alone turns nothing on.
+`?cloud=` points a local studio at a local service only, and counts as the toggle there. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
 - `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (an email link, or its 6-digit code in a tab the
@@ -1627,8 +1628,8 @@ over `/s/<token>/{hello,events,result}`. The tab side takes the tab's secret in 
 one-way hash of it, so the connector URL alone can't pose as the tab), and `tools/list` is the relay's own catalog
 (`server/relay-catalog.json`), never the tab's. `agent/remote.js` (`app.remote`, the right-region "Connect" tab) is
 the page side; its calls run with `by: 'claude.ai'` (`kind: 'agent'`, added with `store.addAuthor`). It is live at
-overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`; `RELAY_LIVE` in `agent/remote.js` is on, so every
-studio shows the Connect tab (off, it shows only on a local studio with `?relay=` or after `?connect=1`).
+overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`; the `relay` toggle (`on('relay')`) is on, so every
+studio shows the Connect tab (off, there is no tab and no `app.remote`, except on a local studio with `?relay=`).
 
 ## Songs in and out
 
@@ -1681,13 +1682,67 @@ of this version trusts the kept songs' devices, once), decodes a share link if t
 (the link's song, `?new`, `?demo`, the saved song, or the demo), the engine (a silent stand-in if it fails), the
 shell, then starts each module in `MODULES` (each `export default function (app)`) in order; one failing never stops
 the rest. Audio starts on the first gesture. URL switches: `?new`, `?demo=<id>`, `?device=<id>`, `?agent=mock`,
-`?coach`, `?autostart`, `?view=simple|full`, `#s=…`. Straight after the shell,
+`?coach`, `?autostart`, `?view=simple|full`, `?on=<toggle>,…` (a local studio only; Toggles, below), `#s=…`. Straight after the shell,
 `installWorkspace(ui, app)` gives it `ui.workspace`, before any module mounts a panel.
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,
-analytics, plugin, jam, site }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
-`browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md).
+analytics, plugin, jam, site, toggles }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
+`browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.toggles` is
+`{ on(id), list() }` (Toggles, below).
+
+## Toggles
+
+Every feature a person would notice ships off and is turned on by the deploy, never by a code change.
+`app/src/toggles.js` is the one registry: each entry has an `id` (forever while it lives, never reused), a `name` (the
+off line uses it), a one-line `about`, its intent, and is off unless the config says `"on"`. Toggles are temporary: at
+most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has been on for a while.
+
+- **The config.** The deploy's `app/site-config.json` carries `"toggles": { "<id>": "on" | "off" }`. Only the exact
+  string `"on"` turns one on; no file (a 404 or 410), `{}`, no key or a non-object means all off. An id the
+  registry doesn't know is ignored with one console warning.
+- **Boot.** `main.js` starts the read at the top of boot, beside the device imports, and waits for it (at most 4 s,
+  `CONFIG_WAIT_MS`) before the first module starts, so `on()` is final and synchronous everywhere. A config this load
+  couldn't see (a network error, a 5xx or an HTML error page, JSON that doesn't parse, or past the cap) is not a file
+  that turns everything off: the `deploy: 'on'` defaults stand in for that load (`bootConfig`), so a blip never takes
+  Connect away from someone whose agent is driving their studio. A late answer changes nothing.
+- **`on(id)`.** Code asks `on(id)` and never reads a constant or the config itself. An id the registry doesn't have
+  throws (`no toggle "relays"`), so a typo fails loudly; the unit test scans `app/` and `site/` for every `on('…')`
+  literal. In Node, or before boot's read, it answers off. `app.toggles.on(id)` and `app.toggles.list()` (`[{ id, name,
+  on, by: 'site' | 'url' | 'off' }]`) are the same for the console and the tests.
+- **`?on=a,b` and `?on=all`.** On a local studio only (`localhost`, `127.0.0.1`, `[::1]`): those toggles are on for that
+  page load. Anywhere else `?on=` does nothing, so a link can never switch anyone's studio. The developer doors count
+  as their toggle there too: `?relay=<origin>` is `relay`, `?relay=` with `?cloud=` is `accounts`, `?cloud=<local
+  origin>` is `cloud.agent`.
+- **The deploy's defaults.** An entry marked `deploy: 'on'` was on live before the registry existed: deploy.sh writes
+  it `"on"` for both sites unless `deploy/site-config.json` names it (an explicit `"off"` is kept). Only `relay` has
+  it. `server/serve.js` with no `app/site-config.json` answers the same defaults (plus `cloud.agent` with
+  `OVERDUB_CLOUD_ORIGIN`), so a local studio shows what the live one does.
+- **What refuses.** deploy.sh checks the final config against REF's own registry (`auditToggles`): a `toggles` that
+  isn't an object, a value other than `"on"` or `"off"`, or an id REF doesn't register stops a live deploy; on `--next`
+  it is one warning line. It prints `toggles on: …`. `tools/prod-check.js` prints `toggles on live: …` and fails when
+  the live config names a toggle the live registry doesn't know, or when a `deploy: 'on'` toggle is off (relay: no
+  `app.remote` or no Connect tab fails too).
+- **A toggle never changes a song.** Nothing under `core/`, `audio/`, `kernel/` or `devices/registry.js` imports
+  `toggles.js` (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
+  data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
+  menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
+  Browser, Find and `list_devices`, a `toggle` on a device definition read only where adding is offered, is
+  `device.rooms`'s work, built on its branch.)
+- **Agent tools.** The catalog is static (`server/relay-catalog.json` doesn't move). A tool may carry `toggle: '<id>'`:
+  `runTool` checks it before the required fields, the recording block and `run`, and while it's off the call answers
+  `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
+  goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
+  through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
+- **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
+  (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
+
+**Add one:** one entry in `TOGGLES`, off (the unit test checks the shape and the count), and `on('<id>')` at each way in
+(a menu item, a Browser row, a door, `toggle:` on a tool); then its entry in `overdub-intents`'s `toggles/TOGGLES.md`
+and the backlog items that decide when it goes on. **Turn one on live:** `"<id>": "on"` in `deploy/site-config.json`,
+deploy, then `node tools/prod-check.js` to see it in `toggles on live`. **Retire one:** make the code unconditional,
+delete the entry and every `on('<id>')`, and take the id out of `deploy/site-config.json` before the next deploy
+(deploy.sh refuses the leftover id). The id is never used again.
 
 ## Testing
 

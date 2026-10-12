@@ -43,10 +43,11 @@ export async function liveRoutes(page, { origin, local, toggles = SHELF_ON, bund
     try {
       await handle(r);
     } catch (e) {
-      // A request still in flight when the page or browser closes (a font, say, as a check ends) rejects its fetch or
-      // fulfill; nobody is left to answer, so that one is dropped. Any other throw goes in the page's errors, where
-      // the check sees it, never as an unhandled rejection that kills the suite.
-      const gone = page.isClosed() || !page.context().browser()?.isConnected() || /has been closed|Target closed/i.test(String(e && e.message));
+      // A request still in flight when the page or browser closes (a font, say, as a check ends), or one the page
+      // cancelled while its answer was being fetched ("Route is already handled"), rejects its fetch or fulfill;
+      // nobody is left to answer, so that one is dropped. Any other throw goes in the page's errors, where the check
+      // sees it, never as an unhandled rejection that kills the suite.
+      const gone = page.isClosed() || !page.context().browser()?.isConnected() || /has been closed|Target closed|Route is already handled/i.test(String(e && e.message));
       if (!gone) errors.push(`community-live: ${r.request().url()}: ${(e && e.message) || e}`);
     }
   });

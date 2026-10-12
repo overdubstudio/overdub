@@ -27,9 +27,9 @@
 //
 // Signing in: the popup goes through Google and ends on the service's own page, /v1/auth/done, which sets the session
 // cookie, posts { type: 'overdub:signed-in' } to this window and closes itself. The message only says "ask again": it
-// is taken only from the service's exact origin, and all it does is GET /v1/me. The tab also asks /v1/me every 5 s
-// while it's visible, and when it comes back into focus, for up to 10 minutes, so a blocked or lost message still
-// signs it in.
+// is taken only from the service's exact origin and the popup this tab opened, and all it does is GET /v1/me. The
+// tab also asks /v1/me every 5 s while it's visible, and when it comes back into focus, for up to 10 minutes, so a
+// blocked or lost message still signs it in.
 
 export const HOSTED_NAME = 'Claude on Overdub credits';
 const POLL_MS = 5000;
@@ -122,7 +122,7 @@ export function createCloud({ api = null, fetch: f = (...a) => globalThis.fetch(
 
   // While the popup is out: the done page's message, focus coming back, and /v1/me every 5 s while the tab is visible,
   // for up to 10 minutes. Then it stops and goes back to signed out.
-  function onMessage(ev) { if (state === 'waiting' && ev.origin === api && ev.data && ev.data.type === 'overdub:signed-in') refresh().catch(() => {}); }
+  function onMessage(ev) { if (state === 'waiting' && ev.origin === api && popup && ev.source === popup && ev.data && ev.data.type === 'overdub:signed-in') refresh().catch(() => {}); }
   function onFocus() { if (state === 'waiting') refresh().catch(() => {}); }
   function startWaiting() { pollUntil = Date.now() + POLL_FOR_MS; schedule(); win.addEventListener?.('message', onMessage); win.addEventListener?.('focus', onFocus); }
   function stopWaiting() { clearTimeout(pollT); pollT = 0; win.removeEventListener?.('message', onMessage); win.removeEventListener?.('focus', onFocus); if (state === 'waiting') closePopup(); }

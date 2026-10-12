@@ -36,6 +36,7 @@ import { lexiconSummary } from './lexicon.js';
 import { catalog as transformCatalog } from '../core/transforms.js';
 import { installKeep, keepFirst, itemsText, whoseIds, takenBy, heldCodeFirst, HELD_CODE_FINE, kernelPrint } from './keep.js';
 import { keyChosen } from '../input/hum.js';
+import { on, offLine } from '../toggles.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -269,6 +270,11 @@ const TARGET_SCHEMA = {
     insert: { type: 'string' }, section: { type: 'string' },
   },
 };
+// A guide topic that belongs to a feature behind a toggle (topic -> toggle id): while it's off the topic answers the
+// toggle's off line. The enum and the descriptions stay as they are (no schema change). Guide text a feature adds to a
+// shared topic goes through guidePart(toggle, text), which is '' while that toggle is off. Both unused so far.
+export const GUIDE_TOGGLES = {};
+export const guidePart = (toggle, text) => (on(toggle) ? text : '');
 // get_guide's topics, said once for both its descriptions
 const GUIDE_TOPICS = '"etiquette" (how to work with the human here: scope, proposals vs direct edits, measuring), "devices" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), "ops" (every op and the notes / drum-grid text formats), "lexicon" (musical words → perceptual axes, for adjust; plus "personal": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), "transforms" (every transform with its params and defaults), "genres" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to).';
 // Descriptions the in-app agent (agent/claude.js) gets in place of the catalog's: its system prompt already carries the
@@ -321,6 +327,7 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
     description: `Read one of the studio's guides (outside agents don't get Overdub's system prompt, so read these first): ${GUIDE_TOPICS}`,
     input_schema: { type: 'object', properties: { topic: { type: 'string', enum: ['etiquette', 'devices', 'ops', 'lexicon', 'transforms', 'genres'] }, section: { type: 'string', description: 'genres: one genre (bass-music, metal)' } }, required: ['topic'], additionalProperties: false },
     async run(input) {
+      if (GUIDE_TOGGLES[input.topic] && !on(GUIDE_TOGGLES[input.topic])) return err(offLine(GUIDE_TOGGLES[input.topic]));
       switch (input.topic) {
         case 'genres': { const { genresGuide } = await import('./genres.js'); return { guide: genresGuide(input.section || null) }; }
         case 'etiquette': return { guide: ETIQUETTE };
@@ -753,10 +760,12 @@ export async function runTool(name, input, { by = 'claude', app = globalThis.win
   input = input && typeof input === 'object' ? input : parseMaybeJSON(input) || {};
   if (typeof input !== 'object') input = {};
   const missing = (tool.input_schema.required || []).filter((k) => input[k] == null || input[k] === '');
+  // a tool whose feature is off stays in every catalog and answers one line, changing nothing (app/src/toggles.js)
+  const off = !!tool.toggle && !on(tool.toggle);
   const t0 = Date.now();
   // a card held to hear it is a preview, not the song: let go of it before anything reads or changes the song for real
   const held = app._agentTools?.audition;
-  if (held && !KEEPS_AUDITION.has(name)) {
+  if (held && !off && !KEEPS_AUDITION.has(name)) {
     stopAudition(app, 'edit');
     app.ui?.toast?.(`${authorName(app, by)} is working on the song, so the take you held stopped. Hold it again to hear it.`, { kind: 'agent' });
   }
@@ -768,7 +777,8 @@ export async function runTool(name, input, { by = 'claude', app = globalThis.win
   // card (heldCall, below)
   const scope = by !== 'you' && app.store ? { id, by, t0, held: [], landed: [] } : null;
   const songAt = scope ? P(app)?.id : null;
-  if (missing.length) result = err(`missing ${missing.map((k) => `"${k}"`).join(', ')}`, `${name} needs: ${(tool.input_schema.required || []).join(', ')}`);
+  if (off) result = err(offLine(tool.toggle));
+  else if (missing.length) result = err(`missing ${missing.map((k) => `"${k}"`).join(', ')}`, `${name} needs: ${(tool.input_schema.required || []).join(', ')}`);
   else if ((blocked = recordingBlock(app, name, input, by))) result = blocked;
   else {
     const release = holdActor(app, by, name);

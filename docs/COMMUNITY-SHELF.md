@@ -55,7 +55,7 @@ a phone, that card is the shortest route: ask, ▶, Try, Play it.
 
 It ships **off on the live site** until AJ turns it on, and "off" means off, whatever the URL says:
 
-- `COMMUNITY_LIVE = false` in `app/src/ui/community.js`, like `RELAY_LIVE` in `agent/remote.js`. While it is false,
+- `COMMUNITY_LIVE = false` in `app/src/ui/community.js` (it moves to the `community` toggle next). While it is false,
   everything the shelf does depends on `location.hostname` being `localhost` or `127.0.0.1`. On any other host,
   `?community=`, `?community-device=` and a stored `overdub:community` are ignored. The Browser section isn't drawn,
   Find's shelf words aren't added, and the agent tool answers *"The community shelf isn't on in this studio."*

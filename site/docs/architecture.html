@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 128 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 129 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -1021,8 +1021,10 @@ named by <code>newPartFor</code>, one clip. The Timing words (<code>atLevel</cod
 and while it's open the studio's single keys are held under it. <code>app.start = { open({ kind: 'tap' | 'hum' }), close(), step ('play' | 'hum' | 'in' | 'readings' | null), kind, busy, tap(row, perfMs), done(), again(), setLevel(level), readings(), useReading(i), humNow(), humFree(), leave(), landed(), take(), on('step' | 'land' | 'close', fn), choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i), back() }), pickChoice(i) }</code>. <code>choose</code> is the
 readings step for another flow (step <code>'choose'</code>): its rows, picking one calls <code>pick</code> (it plays), Use this one <code>use</code>,
 and Back, Esc or any other way out <code>back</code>.</p>
-<p><strong>Flip a song</strong> (<code>ui/flip.js</code>, <code>app.flip</code>; the pure parts <code>core/flip.js</code>, <code>audio/analyze/</code>, <code>jobs/</code>; spec 0014): the
-door's fourth row opens the file picker (<code>importers.pickFlip</code>, one file or several, the formats Import audio takes;
+<p><strong>Flip a song</strong> (<code>ui/flip.js</code>, <code>app.flip</code>; the pure parts <code>core/flip.js</code>, <code>audio/analyze/</code>, <code>jobs/</code>; spec 0014),
+behind the <code>workflow.flip</code> toggle (off: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find's Help rows,
+<code>app.flip.pick()</code> and <code>flip()</code> answer the off line, and <code>get_guide &quot;workflows&quot;</code> too; the tempo map is core song
+format, so a song that has one loads, plays and renders the same either way): the door's fourth row opens the file picker (<code>importers.pickFlip</code>, one file or several, the formats Import audio takes;
 local files only, nothing is ever fetched from a link). <code>importers.importFlip</code> decodes and labels them
 (<code>core/flip.js</code> <code>labelFiles</code>: a lone file is the original; several are stems by their names, vocal / acapella /
 voice, drums / perc, bass, other / inst, and the one matching none the original). The import is one step by <code>'you'</code>,
@@ -1786,6 +1788,9 @@ Browser, Find and <code>list_devices</code>, a <code>toggle</code> on a device d
 <code>{ error: &quot;&lt;name&gt; isn't on in this studio.&quot; }</code> (<code>offLine(id)</code>) and changes nothing. A <code>get_guide</code> topic a feature owns
 goes in <code>GUIDE_TOGGLES</code> (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
 through <code>guidePart(id, text)</code>, which is empty while off. The in-app system prompt doesn't vary with toggles.</li>
+<li><strong>In use.</strong> <code>workflow.flip</code> (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
+Find, <code>app.flip</code>'s pick and flip, <code>get_guide &quot;workflows&quot;</code>) and <code>stems.local</code> (the local stems runner, read by
+<code>jobs/index.js</code> <code>pageJobs</code> beside the site config's stems entry: both are needed). The tempo map neither hides.</li>
 <li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
 (<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
 </ul>

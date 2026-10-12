@@ -14,7 +14,8 @@ const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 
 const real = (errs) => errs.filter((e) => !/status of 404 .*kits|Failed to load resource: the server responded with a status of 404/.test(e));
 
 async function blank({ width = 1440, height = 900 } = {}) {
-  const o = await open('/app/', { query: 'new', width, height });
+  // (the door's fourth way, Flip a song, is behind workflow.flip: on here; tools/flip-test.js checks it off)
+  const o = await open('/app/', { query: 'new&on=workflow.flip', width, height });
   await o.page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
   await o.page.waitForTimeout(500);
   return o;

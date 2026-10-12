@@ -272,8 +272,9 @@ const TARGET_SCHEMA = {
 };
 // A guide topic that belongs to a feature behind a toggle (topic -> toggle id): while it's off the topic answers the
 // toggle's off line. The enum and the descriptions stay as they are (no schema change). Guide text a feature adds to a
-// shared topic goes through guidePart(toggle, text), which is '' while that toggle is off. Both unused so far.
-export const GUIDE_TOGGLES = {};
+// shared topic goes through guidePart(toggle, text), which is '' while that toggle is off. "workflows" is Flip a song's (its
+// one section, flip); the tempo map it explains is core song format and stays in "ops" either way.
+export const GUIDE_TOGGLES = { workflows: 'workflow.flip' };
 export const guidePart = (toggle, text) => (on(toggle) ? text : '');
 // get_guide's topics, said once for both its descriptions
 const GUIDE_TOPICS = '"etiquette" (how to work with the human here: scope, proposals vs direct edits, measuring), "devices" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), "ops" (every op and the notes / drum-grid text formats), "lexicon" (musical words → perceptual axes, for adjust; plus "personal": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), "transforms" (every transform with its params and defaults), "genres" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to), "workflows" (flip: a song brought in).';

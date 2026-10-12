@@ -31,6 +31,7 @@ import { dawprojectFiles } from '../core/dawproject.js';
 import { hasTempoMap, mapSec, mapTempo } from '../core/music.js';
 import { installProvenance, openProvenanceReport } from './provenance.js';
 import { lufs, truePeak } from '../audio/measure.js';
+import { on as toggleOn } from '../toggles.js';
 
 /* ================================================================ WAV */
 export function encodeWav(buf, { bits = 24 } = {}) {
@@ -602,7 +603,8 @@ export default function (app) {
       ...recentRows,
       h('div.sm-sep', 'Export'),
       item('wave', 'Mix', 'WAV, 24-bit, 48 kHz', `${mod}⇧E`, exportMix),
-      item('wave', 'Release', 'the song from its first sound to its tail, muted tracks out, measured', null, exportRelease, '.sm-release'),
+      // (Flip a song's way out, spec 0014 R33: behind workflow.flip; app.exporter.exportRelease is there either way)
+      toggleOn('workflow.flip') ? item('wave', 'Release', 'the song from its first sound to its tail, muted tracks out, measured', null, exportRelease, '.sm-release') : null,
       item('panelBottom', 'Stems', 'one WAV per track, zipped', null, exportStems, '', 'files'),
       item('keys', 'MIDI', 'Standard MIDI File, one track per part', null, exportMidi, '', 'files'),
       item('copy', 'DAWproject', '.dawproject: tracks, notes and audio for another DAW', null, exportDawproject, '', 'files'),

@@ -43,6 +43,7 @@ import { takeOf, atLevel, moved } from '../input/rounds.js';
 import { LEVELS } from '../input/timing.js';
 import { planStart } from '../core/start.js';
 import { putGroove } from '../agent/grooves-tool.js';
+import { on as toggleOn } from '../toggles.js';
 
 const LEVEL_WORD = { tight: 'Tight', loose: 'Loose', played: 'As played' };
 const SPEEDS = [['Slow', 80], ['Easy', 100], ['Upbeat', 120]];
@@ -67,8 +68,9 @@ export function doorOf(app, ctx = {}) {
     row('Tap a beat', 'F J K L on your keys, or the pads on screen. Any speed.', tap, true),
     row('Hum a tune', 'Over a simple beat, or on its own. Nothing records until you press Hum.', hum),
     row('Play the keys', 'Your computer keys or a MIDI keyboard. Any speed.', keys),
-    row('Flip a song', 'Bring a song you own. It gets split, mapped and marked; the drop is yours.', flip));
-  // ↑ ↓ walk the four ways
+    // (behind workflow.flip: off, the door has its three ways)
+    toggleOn('workflow.flip') ? row('Flip a song', 'Bring a song you own. It gets split, mapped and marked; the drop is yours.', flip) : null);
+  // ↑ ↓ walk the ways
   ledger.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     const bs = [...ledger.querySelectorAll('.st-way-b')], i = bs.indexOf(document.activeElement);

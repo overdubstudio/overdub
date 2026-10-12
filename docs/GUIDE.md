@@ -87,6 +87,8 @@ wait until it's in.
 
 ## Flip a song
 
+*Not on in every studio yet: where it's off, the door has three ways in.*
+
 **Flip a song** on the door brings in a song you own and gets it ready for you to make the drop over it. Pick one file
 (the song) or several (its stems: files with *vocals*, *acapella* or *voice*, *drums*, *bass*, or *other* or *inst*
 in their names; the one that matches none is the song itself). The files stay on your computer; nothing is fetched

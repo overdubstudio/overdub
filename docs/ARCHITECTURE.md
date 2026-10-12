@@ -1089,8 +1089,10 @@ choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i), back() }
 readings step for another flow (step `'choose'`): its rows, picking one calls `pick` (it plays), Use this one `use`,
 and Back, Esc or any other way out `back`.
 
-**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014): the
-door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
+**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014),
+behind the `workflow.flip` toggle (off: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find's Help rows,
+`app.flip.pick()` and `flip()` answer the off line, and `get_guide "workflows"` too; the tempo map is core song
+format, so a song that has one loads, plays and renders the same either way): the door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
 local files only, nothing is ever fetched from a link). `importers.importFlip` decodes and labels them
 (`core/flip.js` `labelFiles`: a lone file is the original; several are stems by their names, vocal / acapella /
 voice, drums / perc, bass, other / inst, and the one matching none the original). The import is one step by `'you'`,
@@ -1910,6 +1912,9 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
   `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
   goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
+- **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
+  Find, `app.flip`'s pick and flip, `get_guide "workflows"`) and `stems.local` (the local stems runner, read by
+  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed). The tempo map neither hides.
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
   (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
 

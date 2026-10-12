@@ -504,7 +504,15 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 {
   const tools = await import('../app/src/agent/tools.js');
   const { FLIP_FENCED } = await import('../app/src/agent/workflows.js');
+  const T = await import('../app/src/toggles.js');
   const gg = tools.TOOLS.find((x) => x.name === 'get_guide');
+  // behind workflow.flip: off (the default), the topic answers the off line; the ops guide's tempo.map is core and stays
+  T.applyToggles({}, { search: '', host: 'localhost' });
+  const offFlip = await gg.run({ topic: 'workflows', section: 'flip' });
+  const offOps = await gg.run({ topic: 'ops' });
+  t.ok(offFlip.error === "Flip a song isn't on in this studio." && !offFlip.guide && /type: 'tempo\.map'/.test(offOps.guide) && tools.GUIDE_TOGGLES.workflows === 'workflow.flip',
+    `node: with workflow.flip off, get_guide "workflows" answers "${offFlip.error}"; the ops guide still has tempo.map (the map is core song format)`);
+  T.applyToggles({}, { search: '?on=workflow.flip', host: 'localhost' });
   const flip = await gg.run({ topic: 'workflows', section: 'flip' });
   const all = await gg.run({ topic: 'workflows' });
   const none = await gg.run({ topic: 'workflows', section: 'drop' });
@@ -526,6 +534,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     tracks: [{ id: 't_o', name: 'Original', kind: 'audio', mute: true, clips: [{ id: 'c_o', kind: 'audio', name: 'Original', start: 1.5, length: 30, asset: 'a_o', offset: 0 }] }],
     tempoMap: { anchors, clip: 'c_o', clipStart: 1.5 } });
   const text = summarize(p, { detail: 'summary' }).split('\n');
+  T.applyToggles(null, {});
   t.ok(/^Grid follows Original: 96 BPM nominal, [\d.]+–[\d.]+, 1 free span \(beats 12–24\); key D minor/.test(text[1]) && /Bridge \[12–28\] \(s_b\) key F major/.test(text.join('\n')) && !/off its grid/.test(text[1]), `node: get_project says the map in one line ("${text[1].slice(0, 90)}…") and each section's key`);
   p.tracks[0].clips[0].start = 2;
   t.ok(/Original is off its grid by 313 ms/.test(summarize(p, { detail: 'summary' })), 'node: a move that left the recording behind its grid is said, in ms');
@@ -619,9 +628,11 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const offG = await guides();
   local('?on=all');
   const allG = await guides();
-  const differ = topics.filter((x) => offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x]));
-  t.ok(!differ.length && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && Object.keys(tools.GUIDE_TOGGLES).length === 0,
-    `node: every real guide topic is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
+  const owned = Object.keys(tools.GUIDE_TOGGLES);
+  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x])));
+  const ownedOk = owned.every((x) => JSON.parse(offG[x]).error === T.offLine(tools.GUIDE_TOGGLES[x]) && JSON.parse(allG[x]).guide);
+  t.ok(!differ.length && ownedOk && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && owned.join() === 'workflows',
+    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
   // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
   tools.GUIDE_TOGGLES.ops = 'workflow.flip';
   local('');

@@ -1,6 +1,11 @@
 // The local stems runner (spec 0014 R21, R22): htdemucs v4 on this computer, in the open core and switched off unless
-// the site config names a model. The network runs in ONNX Runtime Web, loaded at run time by a dynamic import from the
-// config's `stems.runtime` (never a file in this repo); the model is fetched from `stems.model`, checked against the
+// the site config names a model (and the stems.local toggle is on: jobs/index.js pageJobs). The network runs in ONNX
+// Runtime Web, loaded at run time by a dynamic import from the config's `stems.runtime` (never a file in this repo),
+// which must be on the page's own origin: the studio's CSP (app/index.html) runs scripts from 'self' only, so a runtime
+// on a CDN would fail as "Failed to fetch dynamically imported module". deploy.sh stages it under app/vendor/ort/ from
+// the config's runtimeFrom; serve.js answers it from OVERDUB_STEMS_RUNTIME_DIR. The model must be on this origin too, or
+// http: on this machine (CSP connect-src). Either one elsewhere: the runner is off and offReason says why, before
+// anything is fetched. The model is fetched from `stems.model`, checked against the
 // pinned `stems.sha256` before anything uses it, and kept in the browser's Cache Storage ('overdub-models') so the
 // download happens once. WebGPU first, then the CPU (WebAssembly; one thread unless the page is cross-origin isolated,
 // which the studio is not). Everything around the network is dsp.js, in a pool of workers (pool.js).
@@ -24,7 +29,8 @@
 //
 // The model's contract (what the spike exported): inputs `mix` [1, 2, SEG] and `mag` [1, 4, FQ, T], float32; outputs
 // `zx` [1, 4, 4, FQ, T] and `xt` [1, 4, 2, SEG], the sources in SOURCES' order.
-// deps (tests): fetch, loadRuntime(url), gpu (navigator.gpu), deviceMemory, cores, isolated, now(), pool(), caches.
+// deps (tests): fetch, loadRuntime(url), gpu (navigator.gpu), deviceMemory, cores, isolated, now(), pool(), caches,
+// origin (the page's: location.origin; null skips the origin check, as in Node).
 import { SR, SEG, FQ, T, SOURCES, spec, separate, normalise, offsetsOf } from './dsp.js';
 import { makePool } from './pool.js';
 import { resample } from '../../audio/analyze/resample.js';
@@ -35,6 +41,20 @@ export const PRIOR = { gpu: 7.2, cpuThreads: 33, cpu: 126 };
 export const LOW_MEMORY_GB = 8;
 export const MODEL_CACHE = 'overdub-models';
 export const OFF = 'Splitting is off on this site. Bring the stems as files instead.';
+// what the studio's CSP lets the runner reach: script-src 'self' for the runtime; connect-src 'self' and http: on this
+// machine for the model
+const LOCAL_HTTP = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//;
+export function elsewhere(config, origin) {
+  if (!config || !origin) return null;
+  const at = (u) => { try { return new URL(u).origin; } catch { return null; } };
+  if (at(config.runtime) !== origin) {
+    return `Splitting is off on this site: its runtime (${config.runtime}) is on another site, and the studio only runs code from its own. Bring the stems as files instead.`;
+  }
+  if (at(config.model) !== origin && !LOCAL_HTTP.test(config.model)) {
+    return `Splitting is off on this site: its model (${config.model}) is on another site, and the studio only fetches from its own. Bring the stems as files instead.`;
+  }
+  return null;
+}
 
 const aborted = () => { const e = new Error('The split was cancelled'); e.name = 'AbortError'; return e; };
 const check = (signal) => { if (signal && signal.aborted) throw aborted(); };
@@ -80,11 +100,14 @@ export function createStemsRunner(config, deps = {}) {
     now = () => performance.now(),
     pool = () => makePool(),
     caches = globalThis.caches,
+    origin = globalThis.location?.origin ?? null,
   } = deps;
-  const off = () => Promise.reject(new Error(OFF));
-  if (!config) {
+  const why = config ? elsewhere(config, origin) : OFF;
+  if (why && why !== OFF) console.warn(`overdub: ${why} (the stems runtime and model are served from this site: deploy/site-config.json stems.runtimeFrom and modelFrom stage them at deploy; docs/ARCHITECTURE.md, "Jobs and the stems runner")`);
+  const off = () => Promise.reject(new Error(why));
+  if (why) {
     return {
-      available: false, model: null, offReason: OFF,
+      available: false, model: null, offReason: why,
       device: off, estimate: off, load: off, run: off, dispose() {},
     };
   }

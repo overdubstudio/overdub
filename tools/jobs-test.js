@@ -22,11 +22,14 @@ import { fakeMix } from './fake-song.js';
 import { startServer } from '../server/serve.js';
 import { SR, SEG, SOURCES, spec, ispec, separate, offsetsOf, normalise } from '../app/src/jobs/stems/dsp.js';
 import { inlinePool } from '../app/src/jobs/stems/pool.js';
-import { createStemsRunner, estimateFrom, PRIOR, OFF, sha256 } from '../app/src/jobs/stems/runner.js';
+import { createStemsRunner, estimateFrom, PRIOR, OFF, sha256, elsewhere } from '../app/src/jobs/stems/runner.js';
 import { createJobs } from '../app/src/jobs/index.js';
 import { createJobsCache, jobKey, inputHash } from '../app/src/jobs/cache.js';
 import { createFakeRunner } from '../app/src/jobs/fake.js';
-import { stemsConfig, loadSiteConfig } from '../app/src/site-config.js';
+import { stemsConfig, loadSiteConfig, STEMS_RUNTIME } from '../app/src/site-config.js';
+import { planStems, stageStems, checkRuntime, manifestOf, RUNTIME_FILES, RUNTIME_PATH } from '../deploy/stage-stems.js';
+import os from 'node:os';
+import crypto from 'node:crypto';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const T = tally('jobs');
@@ -129,6 +132,7 @@ function fakeOrt({ failGpu = false, clock = null, msPerRun = 700, net = timeNet(
     },
   };
 }
+const SITE = 'https://studio.example.com';
 function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = false, deviceMemory = 16, msPerRun = 700 } = {}) {
   const calls = { fetch: [], runtime: [] }, clock = { t: 0 };
   const ort = fakeOrt({ failGpu, clock, msPerRun });
@@ -136,9 +140,10 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
     fetch: async (url) => { calls.fetch.push(url); return new Response(MODEL, { headers: { 'content-length': String(MODEL.length) } }); },
     loadRuntime: async (url) => { calls.runtime.push(url); return ort; },
     gpu: gpu ? { requestAdapter: async () => ({}) } : undefined,
-    deviceMemory, cores: 10, isolated: false, now: () => clock.t, pool: () => inlinePool(), caches: undefined,
+    deviceMemory, cores: 10, isolated: false, now: () => clock.t, pool: () => inlinePool(), caches: undefined, origin: SITE,
   };
-  const config = stemsConfig({ model: 'https://models.example.com/htdemucs.onnx', runtime: 'https://cdn.example.com/ort/ort.webgpu.min.mjs', sha256: sha, bytes });
+  // (the studio's own origin: the runtime defaults to vendor/ort/ort.webgpu.min.mjs beside the config file)
+  const config = stemsConfig({ model: 'vendor/models/htdemucs.onnx', sha256: sha, bytes }, SITE + '/app/site-config.json');
   return { runner: createStemsRunner(config, deps), calls, ort, clock, config };
 }
 
@@ -154,7 +159,7 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
   let last = 0;
   const res = await H.runner.run(input, { onProgress: (p) => { stages.add(p.stage); if (p.stage === 'split') last = p.fraction; } });
   ok(H.calls.fetch.length === 1 && H.calls.fetch[0] === H.config.model && H.calls.runtime.length === 1 && H.calls.runtime[0] === H.config.runtime, 'the model and the runtime come from the URLs the site config names, once each');
-  ok(H.ort.env.wasm.wasmPaths === 'https://cdn.example.com/ort/' && H.ort.env.wasm.numThreads === 1, `the runtime's WebAssembly files sit beside it; one thread, as the studio isn't cross-origin isolated`);
+  ok(H.config.runtime === SITE + '/app/' + STEMS_RUNTIME && H.ort.env.wasm.wasmPaths === SITE + '/app/vendor/ort/' && H.ort.env.wasm.numThreads === 1, `the runtime's WebAssembly files sit beside it; one thread, as the studio isn't cross-origin isolated`);
   ok(H.ort.log.creates.join() === 'webgpu' && res.device === 'gpu', 'WebGPU first');
   ok([...stages].join() === 'download,prepare,split' && last === 1, `progress: ${[...stages].join(', ')}, the split to 100%`);
   const worst = Math.max(...SOURCES.map((name) => { const s = res.stems[name]; const got = new Float32Array(2 * L); got.set(s[0], 0); got.set(s[1], L); return errDb(got, mix, L); }));
@@ -213,23 +218,99 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
   const good = { model: 'https://m.example.com/x.onnx', runtime: 'https://c.example.com/ort.webgpu.min.mjs', sha256: sha.toUpperCase() };
   const g = stemsConfig(good);
   ok(g && g.sha256 === sha && g.id === 'htdemucs' && !('bytes' in g), 'stems config: two https URLs and a SHA-256 switch it on (the hash lower-cased, the id defaulted)');
+  const rel = stemsConfig({ model: '/models/x.onnx', sha256: sha }, 'https://overdubstudio.com/app/site-config.json');
+  ok(rel && rel.model === 'https://overdubstudio.com/models/x.onnx' && rel.runtime === 'https://overdubstudio.com/app/vendor/ort/ort.webgpu.min.mjs', `a path is on this site, and the runtime defaults to ${STEMS_RUNTIME} beside the config (${rel?.runtime})`);
   ok(stemsConfig({ ...good, model: 'http://localhost:8080/x.onnx', runtime: 'http://127.0.0.1:8080/ort.mjs' }), 'http: is allowed on this machine (loopback), like the cloud origin');
   const bad = [
     { ...good, model: 'http://models.example.com/x.onnx' }, { ...good, runtime: 'javascript:alert(1)' }, { ...good, model: 'https://u:p@m.example.com/x' },
-    { ...good, sha256: 'abc' }, { ...good, sha256: undefined }, { ...good, runtime: '' }, { ...good, model: '/models/x.onnx' }, [], 'on', null,
+    { ...good, sha256: 'abc' }, { ...good, sha256: undefined }, { ...good, runtime: '' }, { ...good, model: 'data:,x' }, [], 'on', null,
   ];
-  ok(bad.every((b) => stemsConfig(b) === null), `and ${bad.length} wrong ones (plain http elsewhere, other schemes, credentials, a short or missing hash, a relative URL, not an object) leave it off`);
+  ok(bad.every((b) => stemsConfig(b) === null), `and ${bad.length} wrong ones (plain http elsewhere, other schemes, credentials, a short or missing hash, an empty runtime, not an object) leave it off`);
   const srv = await startServer({ port: 0, quiet: true });
   try {
     const get = async () => (await fetch(srv.url + '/app/site-config.json')).json();
     const a = await get();
     process.env.OVERDUB_STEMS_MODEL = 'http://127.0.0.1:9/htdemucs.onnx';
-    process.env.OVERDUB_STEMS_RUNTIME = 'http://127.0.0.1:9/ort.webgpu.min.mjs';
     process.env.OVERDUB_STEMS_SHA256 = sha;
     const b = await get();
-    delete process.env.OVERDUB_STEMS_MODEL; delete process.env.OVERDUB_STEMS_RUNTIME; delete process.env.OVERDUB_STEMS_SHA256;
-    ok(!fs.existsSync(path.join(ROOT, 'app/site-config.json')) ? !a.stems && stemsConfig(b.stems)?.model === 'http://127.0.0.1:9/htdemucs.onnx' : true, 'the local server answers stems only from OVERDUB_STEMS_* (for trying a model you exported, locally)');
+    const ortDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overdub-ort-'));
+    fs.writeFileSync(path.join(ortDir, 'ort.webgpu.min.mjs'), 'export const stand = "in";\n');
+    process.env.OVERDUB_STEMS_RUNTIME_DIR = ortDir;
+    const js = await fetch(srv.url + '/app/vendor/ort/ort.webgpu.min.mjs');
+    const jsText = await js.text();
+    const up = await fetch(srv.url + '/app/vendor/ort/..%2F..%2Fpackage.json');
+    delete process.env.OVERDUB_STEMS_MODEL; delete process.env.OVERDUB_STEMS_SHA256; delete process.env.OVERDUB_STEMS_RUNTIME_DIR;
+    fs.rmSync(ortDir, { recursive: true, force: true });
+    const bc = stemsConfig(b.stems, srv.url + '/app/site-config.json');
+    ok(!fs.existsSync(path.join(ROOT, 'app/site-config.json')) ? !a.stems && a.toggles?.['stems.local'] !== 'on' && bc?.model === 'http://127.0.0.1:9/htdemucs.onnx' && bc.runtime === srv.url + '/app/vendor/ort/ort.webgpu.min.mjs' && b.toggles['stems.local'] === 'on' : true,
+      'the local server answers stems only from OVERDUB_STEMS_* (for trying a model you exported, locally), with stems.local on and the runtime on this server');
+    ok(js.status === 200 && /javascript/.test(js.headers.get('content-type')) && jsText.includes('stand') && up.status === 404, `and serves /app/vendor/ort/ from OVERDUB_STEMS_RUNTIME_DIR, as JavaScript, one plain file name only (a climb out: ${up.status})`);
   } finally { await srv.close(); }
+}
+
+/* ------------------------------------------------------------------ the runtime and the model on this site (the CSP) */
+// The studio's CSP runs scripts from 'self' only and fetches from 'self' (and http: on this machine): a runtime on a CDN
+// failed as "Failed to fetch dynamically imported module". The runner refuses one up front, says why, touches nothing.
+{
+  const calls = [];
+  const spy = (what) => async () => { calls.push(what); throw new Error('should not be called'); };
+  const base = SITE + '/app/site-config.json';
+  const sha = 'a'.repeat(64);
+  const cdn = stemsConfig({ model: 'vendor/models/m.onnx', runtime: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.webgpu.min.mjs', sha256: sha }, base);
+  const r = createStemsRunner(cdn, { origin: SITE, fetch: spy('fetch'), loadRuntime: spy('runtime'), gpu: { requestAdapter: spy('gpu') } });
+  const jobs = createJobs({ runners: { stems: r }, cache: null });
+  let err = null;
+  try { await jobs.run({ kind: 'stems', input: { sr: SR, channels: [new Float32Array(10)] } }); } catch (e) { err = e; }
+  ok(!r.available && /^Splitting is off on this site: its runtime \(https:\/\/cdn\.jsdelivr\.net\/npm\/onnxruntime-web@1\.30\.0\/dist\/ort\.webgpu\.min\.mjs\) is on another site, and the studio only runs code from its own\./.test(r.offReason) && err?.message === r.offReason && !calls.length,
+    `a runtime on another origin is refused before anything is fetched or imported: "${r.offReason}"`);
+  const m = stemsConfig({ model: 'https://models.example.com/m.onnx', sha256: sha }, base);
+  ok(/its model \(https:\/\/models\.example\.com\/m\.onnx\) is on another site/.test(elsewhere(m, SITE) || ''), `so is a model on another origin: "${elsewhere(m, SITE)}"`);
+  const local = stemsConfig({ model: 'http://127.0.0.1:9/m.onnx', sha256: sha }, 'http://localhost:3279/app/site-config.json');
+  ok(local.runtime === 'http://localhost:3279/app/vendor/ort/ort.webgpu.min.mjs' && elsewhere(local, 'http://localhost:3279') === null && elsewhere(stemsConfig({ model: 'vendor/m.onnx', sha256: sha }, base), SITE) === null,
+    'the default runtime path and a model on this site, or http: on this machine (the CSP allows both), pass');
+}
+
+/* ------------------------------------------------------------------ deploy/stage-stems.js: the runtime staged on the site */
+{
+  const dist = Object.fromEntries(RUNTIME_FILES.map((f, i) => [f, Buffer.from(`// ${f}: stand-in bytes ${i}\n`)]));
+  const hex = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const manifest = manifestOf(Object.fromEntries(RUNTIME_FILES.map((f) => [f, hex(dist[f])])));
+  const pin = hex(manifest);
+  const FROM = 'https://cdn.example.com/npm/onnxruntime-web@1.30.0/dist';
+  const fetched = [];
+  const fake = async (u) => { fetched.push(u); const f = u.slice(FROM.length + 1); return dist[f] ? new Response(dist[f]) : new Response('', { status: 404 }); };
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'overdub-stems-'));
+  try {
+    let runs = 0;
+    const run = async (stems) => {
+      const stage = path.join(tmp, 'stage-' + runs++), cfgFile = path.join(stage, 'app/site-config.json');
+      fs.mkdirSync(path.dirname(cfgFile), { recursive: true });
+      fs.writeFileSync(cfgFile, JSON.stringify({ toggles: { 'stems.local': 'on' }, stems }));
+      let e = null, lines = null;
+      try { lines = await stageStems({ configFile: cfgFile, stage, cacheDir: path.join(tmp, 'cache'), fetch: fake }); } catch (x) { e = x; }
+      return { e, lines, stage, cfg: JSON.parse(fs.readFileSync(cfgFile, 'utf8')) };
+    };
+    const good = await run({ model: 'vendor/models/m.onnx', sha256: 'b'.repeat(64), runtimeFrom: FROM, runtimeSha256: pin });
+    const staged = RUNTIME_FILES.every((f) => Buffer.compare(fs.readFileSync(path.join(good.stage, 'app/vendor/ort', f)), dist[f]) === 0);
+    ok(!good.e && staged && good.cfg.stems.runtime === RUNTIME_PATH && !('runtimeFrom' in good.cfg.stems) && !('runtimeSha256' in good.cfg.stems) && fetched.length === RUNTIME_FILES.length,
+      `deploy: runtimeFrom and the manifest's SHA-256 stage all ${RUNTIME_FILES.length} files at app/vendor/ort/ and point the shipped config there ("${good.lines?.[0]}")`);
+    const again = await run({ model: 'vendor/models/m.onnx', sha256: 'b'.repeat(64), runtimeFrom: FROM + '/', runtimeSha256: Object.fromEntries(RUNTIME_FILES.map((f) => [f, hex(dist[f])])) });
+    ok(!again.e && fetched.length === RUNTIME_FILES.length, 'per-file hashes pin it too, and a second deploy reads its cache (nothing fetched again)');
+    dist['ort-wasm-simd-threaded.jsep.wasm'] = Buffer.from('tampered');
+    fs.rmSync(path.join(tmp, 'cache'), { recursive: true, force: true });
+    const bad = await run({ model: 'vendor/models/m.onnx', sha256: 'b'.repeat(64), runtimeFrom: FROM, runtimeSha256: pin });
+    ok(bad.e && /manifest SHA-256 is [0-9a-f]{64}, not the pinned/.test(bad.e.message) && /ort-wasm-simd-threaded\.jsep\.wasm/.test(bad.e.message) && !fs.existsSync(path.join(bad.stage, 'app/vendor/ort')) && bad.cfg.stems.runtimeFrom,
+      'a file that changed upstream stops the deploy, stages nothing and prints the manifest to compare');
+    const refused = [
+      [{ runtimeFrom: 'http://cdn.example.com/dist/', runtimeSha256: pin }, /plain https: URL/],
+      [{ runtimeFrom: FROM }, /needs stems\.runtimeSha256/],
+      [{ runtimeFrom: FROM, runtimeSha256: { 'ort.webgpu.min.mjs': pin } }, /needs stems\.runtimeSha256/],
+      [{ modelFrom: 'https://m.example.com/x.onnx' }, /needs stems\.sha256/],
+    ];
+    ok(refused.every(([s, re]) => { try { planStems(s); return false; } catch (e) { return re.test(e.message); } }) && planStems({ model: 'x', sha256: pin }) === null,
+      `and ${refused.length} wrong ones are refused with a sentence (plain http, no pin, a partial pin, a model with no hash); a config that names its own paths stages nothing`);
+    ok(checkRuntime(Object.fromEntries(RUNTIME_FILES.map((f) => [f, Buffer.from(f)])), Object.fromEntries(RUNTIME_FILES.map((f) => [f, hex(Buffer.from(f))]))) === null, 'checkRuntime: matching per-file hashes pass');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 
 /* ------------------------------------------------------------------ the jobs: cache, model, cancel (R19, R20, R23) */
@@ -428,6 +509,39 @@ try {
   const foreign = reqs.filter((u) => !/^(data|blob):/.test(u) && (!u.startsWith(base) || /\.onnx|\/ort[.-]|onnxruntime|fake-models/i.test(u)));
   ok(offMsg === OFF && !foreign.length, `the studio with no stems config: the runner is off ("${offMsg}") and nothing was fetched for it (${reqs.length} requests, all this server's own studio files)`);
   await studio.close();
+
+  // the real studio's CSP (app/index.html: script-src 'self') and the runtime on this site: what broke when a runtime
+  // on a CDN was imported ("Failed to fetch dynamically imported module"). A stand-in module is served at the default
+  // path from OVERDUB_STEMS_RUNTIME_DIR (server/serve.js); the model comes from this origin too.
+  const ortDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overdub-ort-'));
+  fs.writeFileSync(path.join(ortDir, 'ort.webgpu.min.mjs'), FAKE_ORT);
+  process.env.OVERDUB_STEMS_RUNTIME_DIR = ortDir;
+  const csp = await context.newPage();
+  try {
+    await csp.goto(base + '/app/', { waitUntil: 'load' });
+    const other = base.replace('localhost', '127.0.0.1');   // the same server, another origin
+    const out = await csp.evaluate(async ({ sha, other }) => {
+      const policy = document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content || '';
+      const { createStemsRunner } = await import('/app/src/jobs/stems/runner.js');
+      const { stemsConfig } = await import('/app/src/site-config.js');
+      const o = { policy };
+      try { await import(other + '/app/vendor/ort/ort.webgpu.min.mjs'); o.cross = 'loaded'; } catch (e) { o.cross = e.message; }
+      const cfg = stemsConfig({ model: '/fake-models/model.onnx', sha256: sha });
+      o.runtime = cfg.runtime;
+      const r = createStemsRunner(cfg);
+      try { const res = await r.run({ sr: 44100, channels: [new Float32Array(44100)] }); o.split = Object.keys(res.stems).join(); } catch (e) { o.split = 'failed: ' + e.message; }
+      const far = createStemsRunner(stemsConfig({ model: '/fake-models/model.onnx', runtime: other + '/app/vendor/ort/ort.webgpu.min.mjs', sha256: sha }));
+      o.far = far.offReason;
+      return o;
+    }, { sha: MODEL_SHA, other });
+    ok(/script-src 'self'/.test(out.policy) && /Failed to fetch dynamically imported module|import/i.test(out.cross) && out.cross !== 'loaded', `the studio's CSP refuses a runtime on another origin, as it did live ("${out.cross.slice(0, 70)}")`);
+    ok(out.runtime === base + '/app/vendor/ort/ort.webgpu.min.mjs' && out.split === 'drums,bass,other,vocals', `and runs one on this site: the default ${out.runtime.replace(base, '')} (a stand-in) imports under the real CSP and splits (${out.split})`);
+    ok(/its runtime \(http:\/\/127\.0\.0\.1:\d+\/app\/vendor\/ort\/ort\.webgpu\.min\.mjs\) is on another site/.test(out.far || ''), `a config naming the other origin's runtime is off before it tries, and says so ("${out.far}")`);
+  } finally {
+    await csp.close();
+    delete process.env.OVERDUB_STEMS_RUNTIME_DIR;
+    fs.rmSync(ortDir, { recursive: true, force: true });
+  }
   ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
 } finally { await close(); }
 T.done();

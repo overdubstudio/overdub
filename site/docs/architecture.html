@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 129 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 130 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -881,14 +881,33 @@ renders read stored samples and never depend on which runner made them, or wheth
 SHA-256 (its rate and every channel as 32-bit floats), the model's id and its version; in memory where IndexedDB is
 refused. A second run of the same input never reaches the runner; a cancelled job (an <code>AbortSignal</code>) rejects with
 <code>AbortError</code> and leaves nothing behind.</li>
-<li><strong>The local runner</strong> (<code>stems/runner.js</code>) is htdemucs v4 run in the browser, <strong>off</strong> unless <code>app/site-config.json</code>
-has <code>stems: { model, runtime, sha256, id?, bytes? }</code> (<code>site-config.js</code> <code>stemsConfig</code>: both URLs https:, or http: on
-this machine, as for <code>cloud</code>; <code>server/serve.js</code> answers it from <code>OVERDUB_STEMS_MODEL</code>, <code>_RUNTIME</code> and <code>_SHA256</code> when
-there's no file). With no entry nothing is fetched or imported. With one, the model is fetched, checked against the
-pinned SHA-256 before anything uses it (a mismatch is refused and the runtime never loaded), and kept in Cache
-Storage (<code>overdub-models</code>); ONNX Runtime Web is loaded by a dynamic <code>import()</code> of <code>stems.runtime</code>. No weights and
-no runtime are in this repo (<code>.gitignore</code>, and <code>tools/jobs-test.js</code> fails on a tracked one). WebGPU first, then
-WebAssembly on one thread (the studio isn't cross-origin isolated).</li>
+<li><strong>The local runner</strong> (<code>stems/runner.js</code>) is htdemucs v4 run in the browser, <strong>off</strong> unless both the <code>stems.local</code>
+toggle is on and <code>app/site-config.json</code> has <code>stems: { model, sha256, runtime?, id?, bytes? }</code> (<code>site-config.js</code>
+<code>stemsConfig</code>: each URL resolved against the config file, so a path is on this site, then https:, or http: on this
+machine, as for <code>cloud</code>; <code>runtime</code> defaults to <code>vendor/ort/ort.webgpu.min.mjs</code>). With either missing nothing is
+fetched or imported. With both, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
+mismatch is refused and the runtime never loaded), and kept in Cache Storage (<code>overdub-models</code>); ONNX Runtime Web is
+loaded by a dynamic <code>import()</code> of <code>stems.runtime</code>. No weights and no runtime are in this repo (<code>.gitignore</code>, and
+<code>tools/jobs-test.js</code> fails on a tracked one). WebGPU first, then WebAssembly on one thread (the studio isn't
+cross-origin isolated).</li>
+<li><strong>The runtime and the model are on this site.</strong> The studio's CSP (<code>app/index.html</code>) is <code>script-src 'self'</code> and
+<code>connect-src 'self'</code> (plus http: on this machine), so a runtime on a CDN fails as &quot;Failed to fetch dynamically
+imported module&quot; and a model on one can't be fetched. The runner checks first (<code>elsewhere(config, location.origin)</code>):
+a runtime on another origin, or a model on another origin that isn't http: on this machine, leaves it off with an
+<code>offReason</code> that names the URL, and fetches nothing. Rather than widen the CSP for whichever CDN a deploy picks, the
+deploy brings them here: <code>deploy/site-config.json</code>'s stems entry may carry <code>runtimeFrom</code> (a pinned https:
+onnxruntime-web dist directory, e.g. <code>https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/</code>) with
+<code>runtimeSha256</code> (the SHA-256 of the files' <code>shasum -a 256</code> manifest, or one per file), and <code>modelFrom</code> (checked
+against <code>sha256</code>). <code>deploy/stage-stems.js</code> fetches <code>ort.webgpu.min.mjs</code> and <code>ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}</code>
+(the WebGPU build and the WebAssembly fallback both import them from beside it) into <code>deploy/.cache/</code>, checks them,
+stages them at <code>app/vendor/ort/</code> (the model at <code>app/vendor/models/&lt;sha256&gt;.onnx</code>) in the deploy's stage, never the
+checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
+shipped entry with <code>stemsConfig</code> and <code>elsewhere</code> against the site's origin (another origin stops a live deploy) and
+uploads <code>.mjs</code> as JavaScript and <code>.wasm</code> as <code>application/wasm</code>. <code>node deploy/stage-stems.js --manifest &lt;dist&gt;</code> prints
+the manifest and its hash to pin. Locally, <code>server/serve.js</code> answers <code>/app/vendor/ort/</code> from
+<code>OVERDUB_STEMS_RUNTIME_DIR</code> (a dist directory on this machine; else <code>app/vendor/ort/</code>, gitignored), and with no
+<code>app/site-config.json</code> answers the stems entry from <code>OVERDUB_STEMS_MODEL</code>, <code>_SHA256</code> and (optional) <code>_RUNTIME</code>, with
+<code>stems.local</code> on.</li>
 <li><strong>The DSP</strong> (<code>stems/dsp.js</code>) is demucs' own around the network: the normalised STFT (4,096 / hop 1,024, the
 periodic Hann window) as <code>_spec</code> and <code>_ispec</code> do it, two real channels through one complex FFT, segments of 7.8 s
 with 25% overlap and a triangular crossfade (<code>apply_model</code>, shifts 0), and <code>separate.py</code>'s whole-song normalising.

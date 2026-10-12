@@ -33,3 +33,9 @@ app/community/
 *.pt
 *.th
 onnxruntime-web/
+
+# The stems runner's runtime and model, staged on the site (deploy/stage-stems.js writes them into the deploy's stage,
+# never the checkout; a local copy here is served by server/serve.js) and the deploy's download cache: never committed
+app/vendor/ort/
+app/vendor/models/
+deploy/.cache/

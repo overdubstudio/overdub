@@ -4,7 +4,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { SR, SEG, offsetsOf, normalise, separate, tables } from '../../app/src/jobs/stems/dsp.js';
 import { inlinePool, poolSize } from '../../app/src/jobs/stems/pool.js';
-import { estimateFrom, createStemsRunner, OFF, PRIOR } from '../../app/src/jobs/stems/runner.js';
+import { estimateFrom, createStemsRunner, elsewhere, OFF, PRIOR } from '../../app/src/jobs/stems/runner.js';
 import { createJobs } from '../../app/src/jobs/index.js';
 import { createJobsCache, jobKey } from '../../app/src/jobs/cache.js';
 import { createFakeRunner } from '../../app/src/jobs/fake.js';
@@ -103,6 +103,20 @@ describe('the site config and the runner switched off', () => {
     );
     assert.equal(stemsConfig({ model: 'https://a.example/m.onnx', runtime: 'https://b.example/ort.mjs' }), null);
     assert.equal(stemsConfig(undefined), null);
+  });
+  test("the runtime defaults to vendor/ort/ beside the config, and must be on the page's origin (the CSP)", () => {
+    const sha = 'f'.repeat(64),
+      site = 'https://overdubstudio.com';
+    const c = stemsConfig({ model: 'vendor/models/m.onnx', sha256: sha }, `${site}/app/site-config.json`);
+    assert.equal(c.runtime, `${site}/app/vendor/ort/ort.webgpu.min.mjs`);
+    assert.equal(elsewhere(c, site), null);
+    const cdn = { ...c, runtime: 'https://cdn.example/ort.webgpu.min.mjs' };
+    assert.match(
+      elsewhere(cdn, site),
+      /its runtime \(https:\/\/cdn\.example\/ort\.webgpu\.min\.mjs\) is on another site/,
+    );
+    assert.match(createStemsRunner(cdn, { origin: site }).offReason, /is on another site/);
+    assert.equal(createStemsRunner(cdn, { origin: site }).available, false);
   });
   test('no config: off, and nothing is fetched', async () => {
     let calls = 0;

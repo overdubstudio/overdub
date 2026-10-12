@@ -97,6 +97,27 @@ if ! TOGGLES_SAID=$(node --input-type=module -e 'import fs from "node:fs"; impor
   "$STAGE/app/site-config.json" "$STAGE/app/src/toggles.js" "$TARGET" "$REF" "$BASE_NAME"); then
   echo "$TOGGLES_SAID"; exit 1
 fi
+# The stems runner's runtime (and its model, when the base names modelFrom), staged on this site: the studio's CSP runs
+# scripts and fetches only from its own origin (deploy/stage-stems.js says how they're pinned). Fetched once into
+# deploy/.cache/ (gitignored), checked against their SHA-256, never committed. Then the shipped stems entry is checked
+# the way the studio will (site-config.js stemsConfig, the runner's same-origin rule): one that would be off for being
+# on another site stops a live deploy, and is a warning on --next.
+if ! STEMS_SAID=$(node "$ROOT/deploy/stage-stems.js" "$STAGE/app/site-config.json" "$STAGE" "$ROOT/deploy/.cache"); then
+  echo "$STEMS_SAID"; exit 1
+fi
+if [ -f "$STAGE/app/src/jobs/stems/runner.js" ] && ! STEMS_CHECK=$(node --input-type=module -e 'import fs from "node:fs"; import { pathToFileURL } from "node:url";
+    const [file, app, host, target] = process.argv.slice(1);
+    const c = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!c.stems) process.exit(0);
+    const { stemsConfig } = await import(pathToFileURL(app + "/src/site-config.js").href);
+    const { elsewhere } = await import(pathToFileURL(app + "/src/jobs/stems/runner.js").href);
+    const cfg = stemsConfig(c.stems, `https://${host}/app/site-config.json`);
+    const why = cfg ? elsewhere(cfg, `https://${host}`) : "the stems entry is not one the studio accepts (a model, a SHA-256, https: URLs)";
+    if (!why) { console.log(`stems: runtime ${cfg.runtime}, model ${cfg.model}`); process.exit(0); }
+    console.log(target === "live" ? `not deploying: ${why}` : `warning: ${why} (a live deploy would stop)`);
+    process.exit(target === "live" ? 1 : 0);' "$STAGE/app/site-config.json" "$STAGE/app" "$HOST" "$TARGET"); then
+  echo "$STEMS_CHECK"; exit 1
+fi
 # Paths committed but held back from both sites until AJ decides (empty now: the community gallery, site/community/,
 # ships since 2026-10-06; docs/COMMUNITY-SHELF.md, "Where it's on"). The studio's built snapshot, app/community/, is
 # gitignored, so it never ships. The sync below runs with --delete, so taking a path off this list is what puts it live.
@@ -105,6 +126,8 @@ for p in ${HELD_BACK[@]+"${HELD_BACK[@]}"}; do rm -rf "${STAGE:?}/$p"; done
 echo "$TARGET: $SHORT ($REF): $(find "$STAGE" -type f | wc -l | tr -d ' ') files -> s3://$BUCKET, distribution $DIST"
 echo "app/site-config.json: $(tr -d '\n ' < "$STAGE/app/site-config.json")"
 echo "$TOGGLES_SAID"
+echo "$STEMS_SAID"
+if [ -n "${STEMS_CHECK:-}" ]; then echo "$STEMS_CHECK"; fi
 
 # the sampled kits the shipped devices name (data: { kit: 'sha256-<hex>' }): each must be here and be its own hash
 # (a dry run names a missing kit and plans without it, so the plan can be read on a checkout that hasn't built them)
@@ -157,6 +180,10 @@ up --include '*.gif' --content-type 'image/gif' --cache-control "$MEDIA"
 up --include '*.mp4' --content-type 'video/mp4' --cache-control "$MEDIA"
 up --include '*.woff2' --content-type 'font/woff2' --cache-control "$MEDIA"
 up --include '*.wav' --content-type 'audio/wav' --cache-control "$MEDIA"
+# the stems runtime and model, when staged (a module script must be served as JavaScript, WebAssembly as application/wasm)
+up --include 'app/vendor/ort/*.mjs' --content-type 'text/javascript; charset=utf-8' --cache-control "$MEDIA"
+up --include 'app/vendor/ort/*.wasm' --content-type 'application/wasm' --cache-control "$MEDIA"
+up --include 'app/vendor/models/*.onnx' --content-type 'application/octet-stream' --cache-control 'public, max-age=31536000, immutable'
 # anything else, and remove what's gone (never the kits: they aren't in git, so they aren't in the stage)
 x aws s3 sync "$STAGE" "s3://$BUCKET" --only-show-errors --delete --exclude 'app/kits/*'
 

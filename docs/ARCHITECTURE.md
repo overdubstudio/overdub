@@ -922,14 +922,33 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   SHA-256 (its rate and every channel as 32-bit floats), the model's id and its version; in memory where IndexedDB is
   refused. A second run of the same input never reaches the runner; a cancelled job (an `AbortSignal`) rejects with
   `AbortError` and leaves nothing behind.
-- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless `app/site-config.json`
-  has `stems: { model, runtime, sha256, id?, bytes? }` (`site-config.js` `stemsConfig`: both URLs https:, or http: on
-  this machine, as for `cloud`; `server/serve.js` answers it from `OVERDUB_STEMS_MODEL`, `_RUNTIME` and `_SHA256` when
-  there's no file). With no entry nothing is fetched or imported. With one, the model is fetched, checked against the
-  pinned SHA-256 before anything uses it (a mismatch is refused and the runtime never loaded), and kept in Cache
-  Storage (`overdub-models`); ONNX Runtime Web is loaded by a dynamic `import()` of `stems.runtime`. No weights and
-  no runtime are in this repo (`.gitignore`, and `tools/jobs-test.js` fails on a tracked one). WebGPU first, then
-  WebAssembly on one thread (the studio isn't cross-origin isolated).
+- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless both the `stems.local`
+  toggle is on and `app/site-config.json` has `stems: { model, sha256, runtime?, id?, bytes? }` (`site-config.js`
+  `stemsConfig`: each URL resolved against the config file, so a path is on this site, then https:, or http: on this
+  machine, as for `cloud`; `runtime` defaults to `vendor/ort/ort.webgpu.min.mjs`). With either missing nothing is
+  fetched or imported. With both, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
+  mismatch is refused and the runtime never loaded), and kept in Cache Storage (`overdub-models`); ONNX Runtime Web is
+  loaded by a dynamic `import()` of `stems.runtime`. No weights and no runtime are in this repo (`.gitignore`, and
+  `tools/jobs-test.js` fails on a tracked one). WebGPU first, then WebAssembly on one thread (the studio isn't
+  cross-origin isolated).
+- **The runtime and the model are on this site.** The studio's CSP (`app/index.html`) is `script-src 'self'` and
+  `connect-src 'self'` (plus http: on this machine), so a runtime on a CDN fails as "Failed to fetch dynamically
+  imported module" and a model on one can't be fetched. The runner checks first (`elsewhere(config, location.origin)`):
+  a runtime on another origin, or a model on another origin that isn't http: on this machine, leaves it off with an
+  `offReason` that names the URL, and fetches nothing. Rather than widen the CSP for whichever CDN a deploy picks, the
+  deploy brings them here: `deploy/site-config.json`'s stems entry may carry `runtimeFrom` (a pinned https:
+  onnxruntime-web dist directory, e.g. `https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/`) with
+  `runtimeSha256` (the SHA-256 of the files' `shasum -a 256` manifest, or one per file), and `modelFrom` (checked
+  against `sha256`). `deploy/stage-stems.js` fetches `ort.webgpu.min.mjs` and `ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}`
+  (the WebGPU build and the WebAssembly fallback both import them from beside it) into `deploy/.cache/`, checks them,
+  stages them at `app/vendor/ort/` (the model at `app/vendor/models/<sha256>.onnx`) in the deploy's stage, never the
+  checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
+  shipped entry with `stemsConfig` and `elsewhere` against the site's origin (another origin stops a live deploy) and
+  uploads `.mjs` as JavaScript and `.wasm` as `application/wasm`. `node deploy/stage-stems.js --manifest <dist>` prints
+  the manifest and its hash to pin. Locally, `server/serve.js` answers `/app/vendor/ort/` from
+  `OVERDUB_STEMS_RUNTIME_DIR` (a dist directory on this machine; else `app/vendor/ort/`, gitignored), and with no
+  `app/site-config.json` answers the stems entry from `OVERDUB_STEMS_MODEL`, `_SHA256` and (optional) `_RUNTIME`, with
+  `stems.local` on.
 - **The DSP** (`stems/dsp.js`) is demucs' own around the network: the normalised STFT (4,096 / hop 1,024, the
   periodic Hann window) as `_spec` and `_ispec` do it, two real channels through one complex FFT, segments of 7.8 s
   with 25% overlap and a triangular crossfade (`apply_model`, shifts 0), and `separate.py`'s whole-song normalising.

@@ -39,6 +39,17 @@ export function forceFlags(src, flags) {
 export async function liveRoutes(page, { origin, local, flags = { COMMUNITY_LIVE: true, TRY_ON: true }, bundled = null, siteConfig = null, errors = [], rewritten = [] }) {
   // (a predicate, not a glob: only this exact origin, never a server on another port of the same host, such as a relay)
   await page.route((u) => u.origin === origin, async (r) => {
+    try {
+      await handle(r);
+    } catch (e) {
+      // A request still in flight when the page or browser closes (a font, say, as a check ends) rejects its fetch or
+      // fulfill; nobody is left to answer, so that one is dropped. Any other throw goes in the page's errors, where
+      // the check sees it, never as an unhandled rejection that kills the suite.
+      const gone = page.isClosed() || !page.context().browser()?.isConnected() || /has been closed|Target closed/i.test(String(e && e.message));
+      if (!gone) errors.push(`community-live: ${r.request().url()}: ${(e && e.message) || e}`);
+    }
+  });
+  async function handle(r) {
     const u = new URL(r.request().url());
     if (siteConfig && u.pathname === '/app/site-config.json') {
       const cfg = typeof siteConfig === 'function' ? siteConfig() : siteConfig;
@@ -66,11 +77,14 @@ export async function liveRoutes(page, { origin, local, flags = { COMMUNITY_LIVE
       return r.fulfill({ status: res.status(), body: out, headers });
     }
     return r.fulfill({ response: res });
-  });
+  }
 }
 
 export async function openLive(route = '/app/', { query = '', flags = { COMMUNITY_LIVE: true, TRY_ON: true }, bundled = null, siteConfig = null, width, height, routes = null } = {}) {
   const P = await open(route, { width, height });
+  // routes still being answered when the check closes the page are let go first (Playwright's advice for routes in flight)
+  const close = P.close;
+  P.close = async () => { await P.page.unrouteAll({ behavior: 'ignoreErrors' }).catch(() => {}); await close(); };
   try {
     const local = new URL(P.url).origin;
     P.host = LIVE_HOST;

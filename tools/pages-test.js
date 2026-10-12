@@ -421,7 +421,7 @@ for (const width of [1440, 390]) {
       await o.close();
     }
     const { on, off } = looks;
-    t.ok(on.rewritten.includes('/site/community/community.js') && !on.off && on.ids.includes('test-person.slow-echo') && on.house && on.index === 1 && !on.errs.length, `forced live, on overdub.test: the gallery lists the studio's own copy (${on.ids.length} entries)`);
+    t.ok(on.rewritten.includes('/site/community/community.js') && !on.off && on.ids.includes('test-person.slow-echo') && on.house && on.index === 1 && !on.errs.length, `forced live, on overdub.test: the gallery lists the studio's own copy (${on.ids.length} entries)${on.errs.length || on.index !== 1 ? `; ${on.index} index reads${on.errs.length ? '\n       ' + on.errs.join('\n       ') : ''}` : ''}`);
     t.ok(off.off && off.emergency && !off.ids.length && !off.index && /isn’t on here/.test(off.empty) && !off.errs.length, `forced live, with "community": "off" in the site config: the gallery says "${off.empty.replace(/Open the studio$/, '')}" and reads no index (${off.index} requests)`);
   }
 

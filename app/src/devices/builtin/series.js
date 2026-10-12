@@ -30,12 +30,15 @@ export function dexp(x) {
   for (let n = 1; n < 18; n++) { term *= r / n; s += term; }
   // 2^k in two halves (each finite), a bit at a time: every factor is a power of two, so each product is exact (only
   // a result under 2^-1022 rounds, once, as exp's own does)
+  // (two loops, not one over [h, k - h]: that array would be garbage on every call)
   const h = Math.floor(k / 2);
-  for (const j of [h, k - h]) {
-    let m = j < 0 ? -j : j, b = j < 0 ? 0.5 : 2, p = 1;
-    while (m > 0) { if (m & 1) p *= b; b *= b; m = Math.floor(m / 2); }
-    s *= p;
-  }
+  let m = h < 0 ? -h : h, b = h < 0 ? 0.5 : 2, p = 1;
+  while (m > 0) { if (m & 1) p *= b; b *= b; m = Math.floor(m / 2); }
+  s *= p;
+  const j = k - h;
+  m = j < 0 ? -j : j; b = j < 0 ? 0.5 : 2; p = 1;
+  while (m > 0) { if (m & 1) p *= b; b *= b; m = Math.floor(m / 2); }
+  s *= p;
   return s;
 }
 

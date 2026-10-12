@@ -668,29 +668,48 @@ not `dsp` names.
 A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen
 University, AIR 1.4, MIT; docs/SOUNDS.md). The device is `app/src/devices/builtin/rooms.js`; its tail, filters and
 room table are `rooms-lib.js` (kernel text, shared with the build so that what the fit measures is what plays).
-- **The model.** Each room plays the first 80-200 ms of its measured impulse response through `dsp.convolver` (the
-  early reflections as recorded, binaural: the two ears are the left and right taps), then hands off to a tail fitted
-  to that room's measured decay: an 8-line Householder FDN in Stairwell's family, three absorption bands (shelves at
-  500 Hz and 4 kHz around a mid gain), an output EQ (250 Hz shelf, 1.5 kHz bell, 6 kHz shelf) and a gain. A church
-  rings for its seconds without seconds of convolution. The cut (`tx`) is per room: AULA and AULA FAR 150 ms, LECTURE
-  120, STAIRS 100, OFFICE and MEETING 80.
-- **The bank.** Kernel data, `data: { aachen }` (`ROOMS_HASH`; 137 KB on the wire for all six rooms). Each room's
-  early IR is 16-bit, its direct sound removed with a 1 ms ramp, and its header carries the fit and what the card
-  says (`ROOM_INFO`, held to the header by tools/rooms-test.js). Built by `node tools/fetch-kits.js --only air-rooms`
-  from `tools/kits/air-rooms.js`; frozen once it ships: a better fit is a new room in a new bank, never a changed one.
+- **The model.** Each room plays its measured impulse response (binaural: the two ears are the left and right taps)
+  until every octave from 125 Hz to 8 kHz has decayed 40 dB, then hands off to a tail fitted to the room's decay
+  there: an 8-line Householder FDN in Stairwell's family, three absorption bands (shelves at 500 Hz and 4 kHz around a
+  mid gain), an output EQ (250 Hz shelf, 1.5 kHz bell, 6 kHz shelf) and a gain. The cut (`tx`) is per room: AULA 6.74
+  s, AULA FAR 6.92 s, LECTURE 0.61 s, STAIRS 0.85 s, OFFICE 0.5 s, MEETING 0.31 s. Below -40 dB each octave of the
+  recording is extrapolated along its own decay (octave-band noise, seeded), because Aula's recording carries a
+  pedestal down there and the small rooms meet their noise. (The listening trial of 2026-10-11 heard the first
+  version's 80-200 ms cut, its synthetic tail: the full IR was picked 18 times in 19.)
+- **The convolution.** The first 8192 taps play through `dsp.convolver` (its 128-frame head, then 1024-frame blocks);
+  the rest through the device's own late part (`roomLate` in `rooms-lib.js`): 4096-frame partitions whose work is
+  spread across each block's 32 quanta (a block's spectrum, then a slice of the bins' products a quantum, then the two
+  inverse transforms), landing 128 frames late in step with the head. A room's partitions are planned one ear a
+  quantum, long before the input reaches them, so a room change never plans seconds of taps in one block. Nothing
+  allocates in `process()`.
+- **The bank.** Kernel data, `data: { aachen }` (`ROOMS_HASH`; 3.3 MB on the wire for all six rooms, 4.6 MB as
+  .odk). Each room's IR is 24-bit (DECAY can lift its last seconds 30 dB, and 16 bits' floor would come up with them),
+  its direct sound removed with a 1 ms ramp, and its header carries the fit and what the card says (`ROOM_INFO`, held
+  to the header by tools/rooms-test.js). Built by `node tools/fetch-kits.js --only air-rooms` from
+  `tools/kits/air-rooms.js`; frozen once it ships: a better fit is a new room in a new bank, never a changed one.
   Until the bank arrives, or on a server without it, the input passes through unchanged and the rack says so
   (`dataSays`).
 - **The params.** ROOM (a switch, no automation lane: AULA, AULA FAR, LECTURE, STAIRS, OFFICE, MEETING; an index is a
   room forever, the table is append-only), PRE (0-200 ms), DECAY (0.5-2x the room's own), DAMP (as measured to a
   darker, shorter top), LOW CUT (20-1000 Hz, 120 by default), WIDTH (mono to as measured) and MIX (equal power,
-  Stairwell's law, 0.22 by default). A room change crossfades to a second wet path over 50 ms at equal power; a change
-  during a crossfade waits for it to end. `trails: true`, `tail: 12`, no declared latency: the dry path is exact.
-- **The fit.** The build removes the direct sound, cuts each room at `tx`, fits the tail's three T60s, line scale,
-  onset delay, EQ and gain by least squares to the measured decay (the low band capped at 1.5x the 500 Hz T30; the
-  uncapped values are kept in the QA report), renders the hybrid through the kernel itself and scores it against the
-  measured room (T20, T30, EDT, C80, the decay curves and the envelope at the seam, `tools/kits/qa.js` `qaRoom`). Each
-  room's level is set so that its wet signal has the DI strum's RMS. The report is `tools/.out/library/rooms/qa.json`;
-  rooms that miss a bar are kept and marked as waiting on a waiver.
+  Stairwell's law, 0.22 by default). DECAY bends the measured room itself: its taps go through a short-time transform
+  and every frequency's decay is stretched by DECAY over its own measured T30 (at most 30 dB of lift), and the tail's
+  T60s follow the room's T30s times DECAY, so DECAY 0.5 halves each octave's T30 and 2 about doubles it (1.6-2.8x;
+  `rooms-test`). A new ROOM or DECAY is a new set of taps: the second wet path is prepared over a few quanta, the input
+  moves to it over 50 ms (a linear crossfade of the input, so the two add up to it), and the old path rings out what it
+  was given, in the room it was given it, then fades. A change while the other path still rings fades that one first;
+  one during a handoff waits for it. `trails: true`, `tail: 12`, no declared latency: the dry path is exact.
+- **The fit.** The build removes the direct sound, cuts each room at `tx` (the build refuses one the rule doesn't give),
+  extrapolates each octave past its own -40 dB, fits the tail's three T60s to the decay coming into the cut (weighted by
+  each octave's energy left, held gently to the room's T30s), its line scale, onset delay, EQ and gain by least squares
+  (the low band capped at 1.5x the 500 Hz T30; the uncapped values are kept in the QA report), renders the hybrid
+  through the kernel itself and scores it against the measured room (T20, T30, EDT, C80, the decay curves and the
+  envelope at the seam, `tools/kits/qa.js` `qaRoom`). Each room's level is set so that its wet signal has the DI strum's
+  RMS. The report is `tools/.out/library/rooms/qa.json`; rooms that miss a bar are kept and marked as waiting on a
+  waiver.
+- **The cost.** At most 4.5x Stairwell by the device check (3.0-3.3x in Chromium, 3.0-3.6x in Node, AULA, the
+  longest); in steady state, once AULA is full, about 5x. The heaviest block of a quantum's cycle is about 0.2-0.3 ms. `create()`
+  warms the code a change runs, so the change finds it compiled (about 50-100 ms, once; a change allocates some 10 KB).
 - **The same numbers everywhere.** Every coefficient comes from + - * /, `Math.sqrt` and the series (`series.js`:
   `dsin`, `dcos`, `dexp`), never `Math.exp`, `pow`, `sin`, `cos`, `tan` or `log`, so its golden scenes are bit-identical
   in Node and Chromium (`fx:core.rooms#<12 hex>` and one per other room).

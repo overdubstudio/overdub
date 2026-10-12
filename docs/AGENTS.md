@@ -571,9 +571,9 @@ to half a decibel, and `clean` leaves it exactly as the limiter did, with a hard
 ## Reverb: Stairwell (`core.verb`) or Echo Chamber (`core.rooms`)
 
 Two reverbs, for two jobs. **Stairwell** is long, lush and fully tweakable: a synthetic hall whose size, decay and
-tone are knobs, for pads, a wash under a lead, or a tail that blooms. **Echo Chamber** is a real space: the first
-reflections of a room as they were recorded, then a tail fitted to that room's measured decay, for a vocal, a piano
-or a drum room that should sound like it was played somewhere. Its `room` is a switch of six measured rooms: `AULA`
+tone are knobs, for pads, a wash under a lead, or a tail that blooms. **Echo Chamber** is a real space: a room's
+impulse response as it was recorded, its whole audible decay (every octave down 40 dB), then a tail fitted to it, for
+a vocal, a piano or a drum room that should sound like it was played somewhere. Its `room` is a switch of six measured rooms: `AULA`
 (Aula Carolina, a former church, 3 m from the source), `AULA FAR` (the same church, 10 m), `LECTURE`, `STAIRS`,
 `OFFICE` and `MEETING`. A switch takes its label:
 
@@ -581,9 +581,10 @@ or a drum room that should sound like it was played somewhere. Its `room` is a s
 [{ "type": "insert.add", "track": "Vox", "insert": { "device": "core.rooms", "params": { "room": "LECTURE", "mix": 0.18 } } }]
 ```
 
-`decay` scales the measured tail (1 is as measured, 0.5-2), `damp` darkens and shortens its top, `predelay` adds a gap
-(ms), `lowcut` keeps it out of the bass, `width` runs mono to as measured. `get_device { "id": "core.rooms",
-"library": "" }` lists the rooms, each with its place, distance, T30 at 500 Hz, 1 kHz and 2 kHz, EDT, early cut and
+`decay` stretches the measured room's decay, every frequency by its own measured time (1 is as measured, 0.5-2; a
+change replans the room, and what was ringing rings out as it was), `damp` darkens and shortens its top, `predelay`
+adds a gap (ms), `lowcut` keeps it out of the bass, `width` runs mono to as measured. `get_device { "id": "core.rooms",
+"library": "" }` lists the rooms, each with its place, distance, T30 at 500 Hz, 1 kHz and 2 kHz, EDT, measured length (`tx`) and
 credit, and the params that pick it. `get_project` writes it in one line: `Aula Carolina (a former church, 3 m), pre 0
 ms, decay ×1.0, mix 0.22`. The rooms are measured by RWTH Aachen University (the Aachen Impulse Response Database, AIR
 1.4, MIT); while they load, or on a server without them, the sound passes dry. `adjust`'s `space` move still adds

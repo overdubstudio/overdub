@@ -539,14 +539,15 @@ milliseconds off, then a limiter (Red Line, <code>core.limiter</code>, ceiling â
 to half a decibel, and <code>clean</code> leaves it exactly as the limiter did, with a hard ceiling at 0 dBFS.</p>
 <h2 id="reverb-stairwell-coreverb-or-echo-chamber-corerooms"><a class="h-link" href="#reverb-stairwell-coreverb-or-echo-chamber-corerooms">Reverb: Stairwell (<code>core.verb</code>) or Echo Chamber (<code>core.rooms</code>)</a></h2>
 <p>Two reverbs, for two jobs. <strong>Stairwell</strong> is long, lush and fully tweakable: a synthetic hall whose size, decay and
-tone are knobs, for pads, a wash under a lead, or a tail that blooms. <strong>Echo Chamber</strong> is a real space: the first
-reflections of a room as they were recorded, then a tail fitted to that room's measured decay, for a vocal, a piano
-or a drum room that should sound like it was played somewhere. Its <code>room</code> is a switch of six measured rooms: <code>AULA</code>
+tone are knobs, for pads, a wash under a lead, or a tail that blooms. <strong>Echo Chamber</strong> is a real space: a room's
+impulse response as it was recorded, its whole audible decay (every octave down 40 dB), then a tail fitted to it, for
+a vocal, a piano or a drum room that should sound like it was played somewhere. Its <code>room</code> is a switch of six measured rooms: <code>AULA</code>
 (Aula Carolina, a former church, 3 m from the source), <code>AULA FAR</code> (the same church, 10 m), <code>LECTURE</code>, <code>STAIRS</code>,
 <code>OFFICE</code> and <code>MEETING</code>. A switch takes its label:</p>
 <div class="code" data-lang="json"><pre><code>[{ &quot;type&quot;: &quot;insert.add&quot;, &quot;track&quot;: &quot;Vox&quot;, &quot;insert&quot;: { &quot;device&quot;: &quot;core.rooms&quot;, &quot;params&quot;: { &quot;room&quot;: &quot;LECTURE&quot;, &quot;mix&quot;: 0.18 } } }]</code></pre></div>
-<p><code>decay</code> scales the measured tail (1 is as measured, 0.5-2), <code>damp</code> darkens and shortens its top, <code>predelay</code> adds a gap
-(ms), <code>lowcut</code> keeps it out of the bass, <code>width</code> runs mono to as measured. <code>get_device { &quot;id&quot;: &quot;core.rooms&quot;, &quot;library&quot;: &quot;&quot; }</code> lists the rooms, each with its place, distance, T30 at 500 Hz, 1 kHz and 2 kHz, EDT, early cut and
+<p><code>decay</code> stretches the measured room's decay, every frequency by its own measured time (1 is as measured, 0.5-2; a
+change replans the room, and what was ringing rings out as it was), <code>damp</code> darkens and shortens its top, <code>predelay</code>
+adds a gap (ms), <code>lowcut</code> keeps it out of the bass, <code>width</code> runs mono to as measured. <code>get_device { &quot;id&quot;: &quot;core.rooms&quot;, &quot;library&quot;: &quot;&quot; }</code> lists the rooms, each with its place, distance, T30 at 500 Hz, 1 kHz and 2 kHz, EDT, measured length (<code>tx</code>) and
 credit, and the params that pick it. <code>get_project</code> writes it in one line: <code>Aula Carolina (a former church, 3 m), pre 0 ms, decay Ã—1.0, mix 0.22</code>. The rooms are measured by RWTH Aachen University (the Aachen Impulse Response Database, AIR
 1.4, MIT); while they load, or on a server without them, the sound passes dry. <code>adjust</code>'s <code>space</code> move still adds
 Stairwell when a track has no reverb; on a track that has Echo Chamber it moves Echo Chamber's mix and decay.</p>

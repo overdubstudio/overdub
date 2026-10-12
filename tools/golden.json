@@ -7,7 +7,7 @@
     "v8": "13.6.233.17-node.49",
     "arch": "arm64",
     "platform": "darwin",
-    "date": "2026-10-11"
+    "date": "2026-10-12"
   },
   "scenes": {
     "inst:core.poly": {
@@ -603,64 +603,64 @@
       "truePeak": -1.1,
       "peak": -1.1
     },
-    "fx:core.rooms#edab2a95720b": {
-      "sha256": "5bb2b701c2a0582a73c876d3d7808fbeaab4702cbdf77bec21fac6f518a5fdb6",
+    "fx:core.rooms#a2ac012d554f": {
+      "sha256": "04c1a09da8f99b5ea0c3b367c084d53e118ea56051d7505f914d90e68136fd50",
       "frames": 576000,
-      "lufs": -21.19,
-      "truePeak": -10.35,
-      "peak": -10.5,
+      "lufs": -21.17,
+      "truePeak": -10.34,
+      "peak": -10.66,
       "data": {
-        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
       }
     },
-    "fx:core.rooms:aula-far#edab2a95720b": {
-      "sha256": "f04c30ea96fcb6db4f96d3feb0d022ba68de94600acf4e40296c4caef0b3e098",
+    "fx:core.rooms:aula-far#a2ac012d554f": {
+      "sha256": "5c92ec9229769d347f9424de3efb3f0acb257667d1e74efcf87b868b0155fd97",
       "frames": 576000,
       "lufs": -21.17,
       "truePeak": -10.07,
-      "peak": -10.44,
+      "peak": -10.07,
       "data": {
-        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
       }
     },
-    "fx:core.rooms:lecture#edab2a95720b": {
-      "sha256": "d181fcc911ad4ea3b8cf673057ea890bd36cf96555defd587559f8f7eaa7d48c",
+    "fx:core.rooms:lecture#a2ac012d554f": {
+      "sha256": "fc710d4697713d721e173daf6c14caa26a8ad83dbcd68a38bdc4276267998644",
       "frames": 576000,
-      "lufs": -21.29,
-      "truePeak": -10.15,
-      "peak": -10.16,
+      "lufs": -21.28,
+      "truePeak": -10.01,
+      "peak": -10.13,
       "data": {
-        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
       }
     },
-    "fx:core.rooms:stairs#edab2a95720b": {
-      "sha256": "9f7a8ffb3d58843353943dd478842adab37f60d48ef81459e2de062541964bd2",
+    "fx:core.rooms:stairs#a2ac012d554f": {
+      "sha256": "dd3d13834b05befa611df1de5a0cce42191811b91ea1df4f19c82b83728a5aa1",
       "frames": 576000,
-      "lufs": -21.09,
-      "truePeak": -9.91,
-      "peak": -9.91,
+      "lufs": -21.12,
+      "truePeak": -9.71,
+      "peak": -9.97,
       "data": {
-        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
       }
     },
-    "fx:core.rooms:office#edab2a95720b": {
-      "sha256": "ce777e99cb9586e81775b2e1e5ae60702b2b72adb83e387ee45225de18fc33a9",
+    "fx:core.rooms:office#a2ac012d554f": {
+      "sha256": "574aeaafa1611783693c40aef3725c6cfdbaa28e2e330e9ded68c95af147b221",
       "frames": 576000,
-      "lufs": -21.17,
-      "truePeak": -9.44,
-      "peak": -9.44,
+      "lufs": -21.15,
+      "truePeak": -9.58,
+      "peak": -9.58,
       "data": {
-        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
       }
     },
-    "fx:core.rooms:meeting#edab2a95720b": {
-      "sha256": "30c2c351ed67ee174b7779a838417e1eafb853b4fd052a7edda4187685081378",
+    "fx:core.rooms:meeting#a2ac012d554f": {
+      "sha256": "179b1b7a8d7daacb2c68445782ed7800f11a24a7917435c4aa025e77cf08e522",
       "frames": 576000,
-      "lufs": -21.06,
-      "truePeak": -9.7,
-      "peak": -10.32,
+      "lufs": -21.07,
+      "truePeak": -9.8,
+      "peak": -10.21,
       "data": {
-        "aachen": "sha256-edab2a95720bc709342df321a1567506737071de23fdf7b4b99277e5e2caa382"
+        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
       }
     }
   }

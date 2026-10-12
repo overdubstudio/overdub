@@ -533,10 +533,10 @@ for (const w of [1280, 1366, 1440]) {
   } finally { await s.close(); }
 }
 
-/* ================================================================ R on a drum track folds the passes (Fold, the default) */
+/* ================================================================ R on a drum track set to Fold folds the passes */
 // Three times round a 1-bar loop on Drums with R: what's played in two of three rounds or more stays; a kick played in
-// one round only is left out (in Takes with its pass), and the toast says so with Show them. Fold is a drum track's
-// default with the start.slice2 toggle on (?on=, a local studio); off, it's Layer (tools/start-test.js checks that).
+// one round only is left out (in Takes with its pass), and the toast says so with Show them. A drum track's default is
+// Layer, with the start.slice2 toggle on as off (Q-F: AJ chose layer, 2026-10-11); Fold is picked for the track.
 {
   const s = await open('/app/', { query: 'on=start.slice2', width: 1440, height: 900 });
   const { page, errors } = s;
@@ -555,7 +555,8 @@ for (const w of [1280, 1366, 1440]) {
       o.input.setMode('tap');
       o.input.recorder.setCountIn(1);
       o.engine.seek(0);
-      return { id, mode: o.input.recorder.modeFor(id), opts: null };
+      const dflt = o.input.recorder.modeFor(id);
+      return { id, dflt, mode: o.input.recorder.setMode(id, 'fold'), opts: null };
     });
     await sleep(300);
     const until = async (b) => { for (let i = 0; i < 2000; i++) { const g = await E(() => window.overdub.engine.gridBeat ?? -1e9); if (g >= b - 0.015) return g; await sleep(Math.max(1, Math.min(200, (b - g) * 500 - 25))); } return null; };
@@ -568,7 +569,8 @@ for (const w of [1280, 1366, 1440]) {
     for (let i = 0; i < 60 && (await E(() => window.overdub.input.recorder.state)) !== 'idle'; i++) await sleep(50);
     await sleep(300);
     const r = await E((id) => { const o = window.overdub, t = o.store.track(id); return { clips: t.clips.map((c) => c.notes.map((n) => `${n.p}@${n.t}`).join(' ')), part: o.input.recorder.last?.parts?.[0] && { mode: o.input.recorder.last.parts[0].mode, kept: o.input.recorder.last.parts[0].kept, left: o.input.recorder.last.parts[0].left }, toast: [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).pop() || '', hist: o.store.history.length }; }, d.id);
-    T.ok(d.mode === 'fold' && r.part?.mode === 'fold' && r.clips.join(' | ') === '36@1 38@2' && r.part.kept === 2 && r.part.left === 1, `R on a drum track folds: three passes, the kick played once is left out (${r.clips.join(' | ')}; ${JSON.stringify(r.part)})`);
+    T.ok(d.dflt === 'layer', `a drum track's default is still Layer with start.slice2 on (${d.dflt})`);
+    T.ok(d.mode === 'fold' && r.part?.mode === 'fold' && r.clips.join(' | ') === '36@1 38@2' && r.part.kept === 2 && r.part.left === 1, `R on a drum track set to Fold folds: three passes, the kick played once is left out (${r.clips.join(' | ')}; ${JSON.stringify(r.part)})`);
     T.ok(/Kept 2; left out 1\..*Show them/.test(r.toast), `the take's toast: "${r.toast.slice(0, 120)}"`);
     // Layer is still there, under its id, and remembered for the track
     const lay = await E((id) => { const o = window.overdub; o.input.recorder.setMode(id, 'layer'); return o.input.recorder.modeFor(id); }, d.id);

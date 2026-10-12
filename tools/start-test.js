@@ -68,7 +68,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
 /* ================================================================ the start.slice2 toggle off: slice 1, as main has it */
 // Every other block here opens the studio with ?on=start.slice2 (a local studio only). This one leaves it off: the door
 // and the stage are slice 1's (ui/start-slice1.js), with no coach strip, no click view, no free hum on the stage, no
-// Song ▸ Start a song or Find entry, "~" never in the top bar, and a drum track records each pass as Layer.
+// Song ▸ Start a song or Find entry, and "~" never in the top bar. (A drum track records each pass as Layer, on or off.)
 {
   console.log('\nthe start.slice2 toggle off');
   const o = await open('/app/', { query: 'new' });

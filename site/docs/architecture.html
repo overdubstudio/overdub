@@ -1270,7 +1270,7 @@ move with it, previews too), <code>tap.startBeatbox</code> and <code>hum.start({
 the track's Input from the Inspector, else Sketch's picker; one asset per take, each pass a clip at its offset,
 the measured round trip taken off).</li>
 <li><strong>Commit</strong>: <code>planTake(project, take)</code> (pure) builds the ops; one <code>store.dispatch</code> by <code>'you'</code> (one undo step).
-Fold (drum tracks' default: <code>'fold'</code>) keeps what was played in most passes and leaves out the rest at the stop
+Fold (<code>'fold'</code>, picked per track; a drum track's default is Layer) keeps what was played in most passes and leaves out the rest at the stop
 (<code>input/rounds.js</code> <code>foldRounds</code>; the toast reads &quot;Kept {k}; left out {s}.&quot; with <strong>Show them</strong>). Layer
 (<code>recorder.setMode(track, 'fold' | 'layer' | 'take')</code> changes it, Sketch's <strong>Fold</strong>, <strong>Layer</strong>, <strong>New take</strong>) adds every
 pass's notes into the clip under them (<code>notes.add</code>; a hit on one already there is merged, and the summary says
@@ -1666,9 +1666,8 @@ through <code>guidePart(id, text)</code>, which is empty while off. The in-app s
 <li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
 (<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
 <li><strong><code>start.slice2</code></strong> (Start a song, the rest of it) is read in a few places. <code>ui/start.js</code> hands its door and stage to
-<code>ui/start-slice1.js</code> (slice 1, as main had it) while it's off. <code>ui/coach-strip.js</code> doesn't start. <code>input/recorder.js</code>
-<code>drumMode()</code> is a drum track's default for each pass: Fold on, Layer off (the arranger and Sketch read it too). The
-others are the top bar's &quot;~&quot; (<code>ui/transport.js</code>), Song ▸ Start a song (<code>ui/export.js</code>), Find's Start a song (a
+<code>ui/start-slice1.js</code> (slice 1, as main had it) while it's off. <code>ui/coach-strip.js</code> doesn't start. Sketch's Each pass
+offers Fold on a drum take only while it's on (a drum track's default is Layer either way). The others are the top bar's &quot;~&quot; (<code>ui/transport.js</code>), Song ▸ Start a song (<code>ui/export.js</code>), Find's Start a song (a
 <code>toggle</code> on the feature in <code>ui/workspace.js</code>), the agent pane holding a message mid-take (<code>agent/panel.js</code>),
 <code>get_selection.start</code> (null while off) and the demo agent's &quot;tidy the timing&quot; (<code>agent/mock.js</code>). The system prompt's
 two Start a song lines stay either way. A clip the stage or a fold made loads and plays the same with it off.</li>

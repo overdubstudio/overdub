@@ -70,7 +70,6 @@ import { DEVICE_CATS } from '../devices/registry.js';
 import * as rackKit from './rack.js';
 import { kitHashes, kitState, kitLine } from './kitload.js';
 import { newPartFor } from '../core/sounds.js';
-import { drumMode } from '../input/recorder.js';
 import {
   LANE_H, LANE_H_PHONE, laneState, trackLanes, shownLanes, laneParams, laneInfo, staticValue, fmtValue, drawLaneRow, laneHead,
   laneEditor, laneKeysOn, SHAPES, laneHeight, setLaneHeight, heightsSig, masterTrack, tipHide, laneSigners,
@@ -3041,7 +3040,7 @@ function mountArranger(el, app) {
         // what played here before is set back under the band, so what you play reads as it lands: a new take
         // replaces it (the room over it, nearly opaque); layered hits sit on top of it (half the room over it)
         const lay = (m) => m === 'layer' || m === 'fold';   // (Fold records as Layer does)
-        const layer = passes.length ? passes.every((ps) => lay(ps.mode)) : lay(recorder()?.modeFor?.(id) || (isDrumTrack(app, t) ? drumMode() : 'take'));
+        const layer = passes.length ? passes.every((ps) => lay(ps.mode)) : lay(recorder()?.modeFor?.(id) || (isDrumTrack(app, t) ? 'layer' : 'take'));
         g.fillStyle = rgba(pal.bg, layer ? 0.55 : 0.86); g.fillRect(x0, y, x1 - x0, hh);
         g.fillStyle = rgba(pal.rec, 0.1); g.fillRect(x0, y, x1 - x0, hh);
         g.fillStyle = pal.rec; g.fillRect(x0, y, x1 - x0, 1); g.fillRect(x0, y + hh - 1, x1 - x0, 1);

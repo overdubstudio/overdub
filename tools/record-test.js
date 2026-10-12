@@ -61,7 +61,7 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
   const lay2 = planTake(s2.get(), { id: 'tk_test02', parts: [{ track: tr, kind: 'notes', mode: 'layer', drums: true, span: { start: 0, end: 8 }, passes: [{ n: 0, notes: [{ p: 36, t: 0, d: 0.25, v: 0.8 }] }, { n: 1, notes: [{ p: 38, t: 5, d: 0.25, v: 0.8 }] }] }] });
   t.ok(lay2.ops.length === 1 && lay2.ops[0].type === 'clip.add' && lay2.ops[0].clip.start === 0 && lay2.ops[0].clip.length === 8 && lay2.ops[0].clip.notes.length === 2, `Layer on an empty track: one clip over the loop, bars 1–2, with both passes (${JSON.stringify(lay2.ops[0].clip && { start: lay2.ops[0].clip.start, length: lay2.ops[0].clip.length, notes: lay2.ops[0].clip.notes.length })})`);
 
-  // Fold (the drum tracks' default): three passes round a 1-bar loop, a kick played once in pass 2 is left out, a snare
+  // Fold (picked per track; Layer is a drum track's default): three passes round a 1-bar loop, a kick played once in pass 2 is left out, a snare
   // missed in pass 3 stays (two of three), and the toast counts it; one pass folds to itself (Layer's commit)
   const sF = createStore(createProject());
   const kF = sF.dispatch({ type: 'track.add', ref: 'd', track: { name: 'Kit', instrument: { device: 'core.drums' } } }).created.d;
@@ -605,9 +605,8 @@ try {
   await page.keyboard.press('Backquote');
   await reset();
 
-  /* ---- Fold: three passes, a kick played in one only is left out, and the toast counts it. Fold is a drum track's
-     default only with the start.slice2 toggle on (transport-rec-test checks that); this page has it off, so the track is
-     set to Fold, as a person picks it in Sketch's Each pass */
+  /* ---- Fold: three passes, a kick played in one only is left out, and the toast counts it. A drum track's default is
+     Layer (Q-F: AJ chose layer, 2026-10-11), so the track is set to Fold, as a person picks it in Sketch's Each pass */
   await page.evaluate(() => { const app = window.overdub; app.store.dispatch([{ type: 'project.set', patch: { loop: { on: true, start: 0, end: 4 } } }, { type: 'track.add', ref: 'd', track: { name: 'Kit', instrument: { device: 'core.drums' } } }], { by: 'you', label: 'setup' }); });
   const kit2 = await page.evaluate(() => window.overdub.store.get().tracks.find((x) => x.name === 'Kit').id);
   const fmode = await page.evaluate((d) => { const app = window.overdub; app.store.dispatch({ type: 'track.set', track: d, patch: { arm: true } }, { by: 'you' }); app.input.setMode('tap'); app.engine.seek(0); return app.input.recorder.setMode(d, 'fold'); }, kit2);

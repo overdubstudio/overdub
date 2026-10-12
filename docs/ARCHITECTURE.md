@@ -1366,7 +1366,7 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
     the track's Input from the Inspector, else Sketch's picker; one asset per take, each pass a clip at its offset,
     the measured round trip taken off).
   - **Commit**: `planTake(project, take)` (pure) builds the ops; one `store.dispatch` by `'you'` (one undo step).
-    Fold (drum tracks' default: `'fold'`) keeps what was played in most passes and leaves out the rest at the stop
+    Fold (`'fold'`, picked per track; a drum track's default is Layer) keeps what was played in most passes and leaves out the rest at the stop
     (`input/rounds.js` `foldRounds`; the toast reads "Kept {k}; left out {s}." with **Show them**). Layer
     (`recorder.setMode(track, 'fold' | 'layer' | 'take')` changes it, Sketch's **Fold**, **Layer**, **New take**) adds every
     pass's notes into the clip under them (`notes.add`; a hit on one already there is merged, and the summary says
@@ -1782,9 +1782,8 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
   (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
 - **`start.slice2`** (Start a song, the rest of it) is read in a few places. `ui/start.js` hands its door and stage to
-  `ui/start-slice1.js` (slice 1, as main had it) while it's off. `ui/coach-strip.js` doesn't start. `input/recorder.js`
-  `drumMode()` is a drum track's default for each pass: Fold on, Layer off (the arranger and Sketch read it too). The
-  others are the top bar's "~" (`ui/transport.js`), Song ▸ Start a song (`ui/export.js`), Find's Start a song (a
+  `ui/start-slice1.js` (slice 1, as main had it) while it's off. `ui/coach-strip.js` doesn't start. Sketch's Each pass
+  offers Fold on a drum take only while it's on (a drum track's default is Layer either way). The others are the top bar's "~" (`ui/transport.js`), Song ▸ Start a song (`ui/export.js`), Find's Start a song (a
   `toggle` on the feature in `ui/workspace.js`), the agent pane holding a message mid-take (`agent/panel.js`),
   `get_selection.start` (null while off) and the demo agent's "tidy the timing" (`agent/mock.js`). The system prompt's
   two Start a song lines stay either way. A clip the stage or a fold made loads and plays the same with it off.

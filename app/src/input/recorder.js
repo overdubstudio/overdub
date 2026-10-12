@@ -39,10 +39,10 @@
 //   recorder.ownTrack(stacked?) -> dispatch result   a take that muted what played under it, onto a track of its own
 //                                         with the same instrument, what it muted playing again: one undo step
 //   recorder.took(kind, track)            a take of that kind went onto track (capture's Keep says so too)
-//   recorder.modeFor(track) / setMode(track, 'fold' | 'layer' | 'take')   each loop pass is a round folded into one clip
-//                                         (drum tracks: what you played most often stays, input/rounds.js foldRounds),
-//                                         layers every pass into one clip, or stacks a new take (everything else, audio
-//                                         always); a choice sticks per track
+//   recorder.modeFor(track) / setMode(track, 'fold' | 'layer' | 'take')   each loop pass layers into one clip (drum
+//                                         tracks' default), is a round folded into one clip (Fold, picked in Sketch: what
+//                                         you played most often stays, input/rounds.js foldRounds), or stacks a new take
+//                                         (everything else, audio always); a choice sticks per track
 //   recorder.countIn / setCountIn(bars)   0, 1 (default) or 2 bars (localStorage overdub:record)
 //   recorder.record({ countIn?, audio?, quantize?, join? }) -> Promise<take | null>   stopped: the count-in from the playhead;
 //                                         playing: recording starts at a bar line with a whole bar to come in on (a loop
@@ -75,7 +75,7 @@
 // already going when R starts (H, then R) becomes the take's too, so whatever it draws lands on the stop.
 //
 // Pure (Node too): planTake(project, take) -> { ops, label, summary, parts }: the commit as ordinary ops (core/ops.js).
-// Fold (the drum tracks' default) records exactly as Layer does, every pass heard on the next; at the stop the passes
+// Fold (picked per track; a drum track's default is Layer) records exactly as Layer does, every pass heard on the next; at the stop the passes
 // are rounds of the loop (part.loop) and are folded (foldRounds, with what each pass really covered): per drum and
 // sixteenth, a hit is kept when it is in the only round that played that drum there, in both of two, or in at least
 // half of three or more, so a miss in one round is left out (in capture with its pass) and never added on top. One pass
@@ -108,12 +108,8 @@ import { createAutorec } from './autorec.js';
 import { snapGentle, tightness, blend, leanOf, placeTake } from './timing.js';
 import { newPartFor } from '../core/sounds.js';
 import { foldRounds } from './rounds.js';
-import { on as toggleOn } from '../toggles.js';
 
 const SAVE = 'overdub:record';
-// A drum track's default for each pass: Fold with the start.slice2 toggle on (app/src/toggles.js), Layer while it's off
-// (as main had it). Fold stays a mode either way: a take that asks for it folds.
-export const drumMode = () => (toggleOn('start.slice2') ? 'fold' : 'layer');
 const EPS = 1e-6, MIN_CLIP = 0.25, MIN_NOTE = 1 / 64;
 const EARLY = 0.5;          // a note in the count-in's last eighth counts as the downbeat (people anticipate it)
 const MISS = 0.35;          // two hits on one drum, in different passes, this close (beats) as played: one meant hit
@@ -617,7 +613,7 @@ export function createRecorder(app, input, opts = {}) {
     input.emit('keys:track', { track: id, name: np.name, device: np.device, text });
     return store.track(id);
   }
-  const modeFor = (tr) => { const t = typeof tr === 'string' ? store.track(tr) : tr; if (!t) return 'take'; if (t.kind === 'audio') return 'take'; return modes.get(t.id) || (isDrumTrack(t) ? drumMode() : 'take'); };
+  const modeFor = (tr) => { const t = typeof tr === 'string' ? store.track(tr) : tr; if (!t) return 'take'; if (t.kind === 'audio') return 'take'; return modes.get(t.id) || (isDrumTrack(t) ? 'layer' : 'take'); };
   const layered = (m) => m === 'layer' || m === 'fold';   // (Fold records as Layer does; only the stop folds)
 
   /* ---- time: every event on the transport's unwrapped grid (engine.gridBeat: what is heard now) */
@@ -651,7 +647,7 @@ export function createRecorder(app, input, opts = {}) {
     const key = track ? track.id : '+' + (extra.src === 'hum' ? 'hum' : kind);
     let pt = r.parts.get(key);
     if (!pt) {
-      const mode = kind === 'audio' ? 'take' : track ? modeFor(track) : kind === 'drums' ? drumMode() : 'take';
+      const mode = kind === 'audio' ? 'take' : track ? modeFor(track) : kind === 'drums' ? 'layer' : 'take';
       pt = { track: track ? track.id : null, kind: kind === 'audio' ? 'audio' : 'notes', drums: kind === 'drums', mode, passes: new Map(), name: extra.name || null, srcs: new Set(), previews: [] };
       // (no track to record onto: a new one, named and sounded as every new track is: core/sounds.js newPartFor)
       if (!track) pt.newTrack = newPartFor(kind === 'drums' ? 'pads' : extra.part || (extra.src === 'hum' ? 'hum' : 'keys'), P());

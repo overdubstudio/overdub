@@ -943,7 +943,8 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   (the WebGPU build and the WebAssembly fallback both import them from beside it) into `deploy/.cache/`, checks them,
   stages them at `app/vendor/ort/` (the model at `app/vendor/models/<sha256>.onnx`) in the deploy's stage, never the
   checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
-  shipped entry with `stemsConfig` and `elsewhere` against the site's origin (another origin stops a live deploy) and
+  shipped entry with `stemsConfig` and `elsewhere` against the site's origin (another origin, or a path on this site
+  the deploy doesn't ship, stops a live deploy; on `--next` it is a warning) and
   uploads `.mjs` as JavaScript and `.wasm` as `application/wasm`. `node deploy/stage-stems.js --manifest <dist>` prints
   the manifest and its hash to pin. Locally, `server/serve.js` answers `/app/vendor/ort/` from
   `OVERDUB_STEMS_RUNTIME_DIR` (a dist directory on this machine; else `app/vendor/ort/`, gitignored), and with no

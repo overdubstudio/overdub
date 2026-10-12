@@ -112,7 +112,12 @@ if [ -f "$STAGE/app/src/jobs/stems/runner.js" ] && ! STEMS_CHECK=$(node --input-
     const { stemsConfig } = await import(pathToFileURL(app + "/src/site-config.js").href);
     const { elsewhere } = await import(pathToFileURL(app + "/src/jobs/stems/runner.js").href);
     const cfg = stemsConfig(c.stems, `https://${host}/app/site-config.json`);
-    const why = cfg ? elsewhere(cfg, `https://${host}`) : "the stems entry is not one the studio accepts (a model, a SHA-256, https: URLs)";
+    // a same-origin path this deploy does not ship would 404 (the bucket sync deletes what is not staged)
+    const missing = (u) => { const p = new URL(u).pathname; return p.startsWith("/app/") && !fs.existsSync(app + p.slice(4)); };
+    const why = !cfg ? "the stems entry is not one the studio accepts (a model, a SHA-256, https: URLs)"
+      : elsewhere(cfg, `https://${host}`)
+      || (missing(cfg.runtime) ? `stems.runtime ${cfg.runtime} is not in this deploy (stems.runtimeFrom and runtimeSha256 stage it)` : null)
+      || (missing(cfg.model) ? `stems.model ${cfg.model} is not in this deploy (stems.modelFrom stages it)` : null);
     if (!why) { console.log(`stems: runtime ${cfg.runtime}, model ${cfg.model}`); process.exit(0); }
     console.log(target === "live" ? `not deploying: ${why}` : `warning: ${why} (a live deploy would stop)`);
     process.exit(target === "live" ? 1 : 0);' "$STAGE/app/site-config.json" "$STAGE/app" "$HOST" "$TARGET"); then

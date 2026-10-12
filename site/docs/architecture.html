@@ -902,7 +902,8 @@ against <code>sha256</code>). <code>deploy/stage-stems.js</code> fetches <code>o
 (the WebGPU build and the WebAssembly fallback both import them from beside it) into <code>deploy/.cache/</code>, checks them,
 stages them at <code>app/vendor/ort/</code> (the model at <code>app/vendor/models/&lt;sha256&gt;.onnx</code>) in the deploy's stage, never the
 checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
-shipped entry with <code>stemsConfig</code> and <code>elsewhere</code> against the site's origin (another origin stops a live deploy) and
+shipped entry with <code>stemsConfig</code> and <code>elsewhere</code> against the site's origin (another origin, or a path on this site
+the deploy doesn't ship, stops a live deploy; on <code>--next</code> it is a warning) and
 uploads <code>.mjs</code> as JavaScript and <code>.wasm</code> as <code>application/wasm</code>. <code>node deploy/stage-stems.js --manifest &lt;dist&gt;</code> prints
 the manifest and its hash to pin. Locally, <code>server/serve.js</code> answers <code>/app/vendor/ort/</code> from
 <code>OVERDUB_STEMS_RUNTIME_DIR</code> (a dist directory on this machine; else <code>app/vendor/ort/</code>, gitignored), and with no

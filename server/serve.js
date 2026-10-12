@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deployDefaults } from '../app/src/toggles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -56,19 +57,20 @@ export function byteRange(header, size) {
   return [start, end];
 }
 
-// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, the studio's hosted
-// agent is off ({}), unless OVERDUB_CLOUD_ORIGIN names a service to try it against (a local overdub-cloud, say):
-// `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js`. The stems runner is off too, unless
-// OVERDUB_STEMS_MODEL, OVERDUB_STEMS_RUNTIME and OVERDUB_STEMS_SHA256 name a model you exported and the runtime to run
-// it, for trying it locally (served from this machine; nothing in the repo holds either). Read on each request, so a
-// test can set them.
+// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
+// deploy/deploy.sh would ship with no base: the registry's deploy: 'on' toggles (app/src/toggles.js: relay), so a local
+// studio shows Connect as the live one does. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
+// try it against (a local overdub-cloud, say): `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js` adds
+// its cloud.api and turns cloud.agent on. Read on each request, so a test can set it.
+// The stems runner is off too, unless OVERDUB_STEMS_MODEL, OVERDUB_STEMS_RUNTIME and OVERDUB_STEMS_SHA256 name a model
+// you exported and the runtime to run it, for trying it locally.
 function siteConfig(res) {
   const env = (k) => String(process.env[k] || '').trim();
   const api = env('OVERDUB_CLOUD_ORIGIN');
-  const cfg = api ? { cloud: { api } } : {};
-  if (env('OVERDUB_STEMS_MODEL')) cfg.stems = { model: env('OVERDUB_STEMS_MODEL'), runtime: env('OVERDUB_STEMS_RUNTIME'), sha256: env('OVERDUB_STEMS_SHA256') };
+  const body = api ? { cloud: { api }, toggles: { ...deployDefaults(), 'cloud.agent': 'on' } } : { toggles: deployDefaults() };
+  if (env('OVERDUB_STEMS_MODEL')) body.stems = { model: env('OVERDUB_STEMS_MODEL'), runtime: env('OVERDUB_STEMS_RUNTIME'), sha256: env('OVERDUB_STEMS_SHA256') };
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(cfg));
+  res.end(JSON.stringify(body));
 }
 
 export function startServer({ port = Number(process.env.PORT) || 3279, host = '127.0.0.1', quiet = false } = {}) {

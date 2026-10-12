@@ -19,7 +19,8 @@
 // and only when the studio itself is on localhost (relayOverride): on the live site a link with ?relay= would show the
 // hidden Connect tab and, for someone who had Connect on, point this tab at whatever answers on that port.
 //
-// Accounts (off unless configured: ACCOUNT_LIVE below, or locally ?relay= and ?cloud=, both on localhost). The person
+// Accounts (off unless the deploy turns the 'accounts' toggle on, app/src/toggles.js, or locally ?relay= and ?cloud=,
+// both on localhost). The person
 // signs in to their Overdub account here and in Claude, and every Claude client uses one fixed URL, <relay>/mcp. This tab
 // trades its account session (a cookie on the account service, account.js) for a 5-minute tab ticket and talks to
 // <relay>/tab/hello|events|result with Authorization: Bearer <ticket>, renewed every 2 minutes. The relay sends each
@@ -41,16 +42,15 @@ import { h, css, icon } from '../ui/dom.js';
 import { installPresence } from './presence.js';
 import { installTools } from './tools.js';
 import { createAccount } from './account.js';
+import { on } from '../toggles.js';
 
 export const RELAY = 'https://overdub-relay.ajsmithhq.com';
-// The hosted relay is live (deploy/relay/setup.sh, docs/REMOTE-MCP.md; tools/relay-test.js), so every studio shows the
-// Connect tab. Setting this false hides it again everywhere but a local studio with ?relay=<a local relay> (node
-// server/relay.js) or a browser that opened /app/?connect=1 (relayPreview). The page's policy allows RELAY in
-// connect-src (app/index.html).
-export const RELAY_LIVE = true;
-// Sign in with Overdub: built and tested (tools/relay-test.js), not deployed. Until it is, account mode exists only on a
-// local studio with both ?relay=<a local relay> and ?cloud=<a local account service> (docs/REMOTE-MCP.md, "Accounts").
-export const ACCOUNT_LIVE = false;
+// The hosted relay is live (deploy/relay/setup.sh, docs/REMOTE-MCP.md; tools/relay-test.js): the 'relay' toggle
+// (app/src/toggles.js), which every deploy writes on (deploy: 'on'), shows the Connect tab. Off, there is no tab, no
+// app.remote and no request to either relay, except on a local studio with ?relay=<a local relay> (node
+// server/relay.js). The page's policy allows RELAY in connect-src (app/index.html) either way.
+// Sign in with Overdub: built and tested (tools/relay-test.js), not deployed. Account mode needs the 'accounts' toggle,
+// or a local studio with both ?relay=<a local relay> and ?cloud=<a local account service> (docs/REMOTE-MCP.md, "Accounts").
 export const ACCOUNT_RELAY = 'https://relay.overdubstudio.com';
 export const ACCOUNT_API = 'https://api.overdubstudio.com';
 export const BY = 'claude.ai';
@@ -93,22 +93,14 @@ export function cloudOverride(search = location.search, host = location.hostname
     return /^https?:$/.test(u.protocol) ? u.origin : null;
   } catch { return null; /* not a URL */ }
 }
-// The account service, when account mode is on here: locally both ?relay= and ?cloud=; live, ACCOUNT_LIVE. Else null.
+// The account service, when account mode is on here: locally both ?relay= and ?cloud=; else ACCOUNT_API when the
+// 'accounts' toggle is on; else null.
+// (The relay trial's ?connect=1 switch is retired, 0015: no link switches a studio on the live site. A browser may still
+// hold its key, 'overdub:remote-preview'; nothing reads or writes it now, and it's never reused.)
 export function accountApi(search = location.search, host = location.hostname) {
   const relay = relayOverride(search, host), cloud = cloudOverride(search, host);
   if (relay && cloud) return cloud;
-  return ACCOUNT_LIVE ? ACCOUNT_API : null;
-}
-// The preview switch from the relay's trial, which matters only if RELAY_LIVE is ever turned off again: then the live
-// site shows Connect only to a browser that asks: /app/?connect=1 turns the preview on here (remembered), ?connect=0
-// turns it off. It reveals the Connect tab for RELAY above and nothing else: it can't point the tab anywhere (that's
-// ?relay=, local only).
-const PREVIEW_KEY = 'overdub:remote-preview';
-export function relayPreview(search = location.search) {
-  const q = new URLSearchParams(search).get('connect');
-  if (q === '1') put(PREVIEW_KEY, '1');
-  else if (q === '0') put(PREVIEW_KEY, null);
-  return get(PREVIEW_KEY) === '1';
+  return on('accounts') ? ACCOUNT_API : null;
 }
 function b64url(bytes) { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 const newSecret = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -136,7 +128,7 @@ export default async function (app) {
   installPresence(app);
   installTools(app);
   if (app.remote) return;
-  if (!RELAY_LIVE && !ACCOUNT_LIVE && !relayOverride() && !relayPreview()) return; // (see RELAY_LIVE and relayPreview)
+  if (!on('relay') && !on('accounts') && !relayOverride()) return; // off: no tab, no app.remote, no request (toggles.js)
   if (!globalThis.crypto?.subtle) return;      // only in a secure context (the live site and localhost are)
   const { ui, store } = app;
   if (!store.authors[BY]) store.addAuthor(BY, { kind: 'agent', name: 'claude.ai' });

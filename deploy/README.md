@@ -9,7 +9,7 @@ function in `path-rewrite.js`, no-cache text and day-cached media), and both shi
 | Address | https://overdubstudio.com | https://next.overdubstudio.com |
 | One-time setup | `deploy/setup.sh` | `deploy/next/setup.sh` |
 | Ship | `deploy/deploy.sh` (HEAD, or `REF=…`) | `deploy/deploy.sh --next [REF]` (any committed ref; HEAD by default) |
-| `app/site-config.json` (never committed) | written by the deploy: `deploy/site-config.json`, else `{}` | the same, plus `preview` and the commit |
+| `app/site-config.json` (never committed) | written by the deploy: `deploy/site-config.json`, else `{}`, plus REF's `deploy: 'on'` toggles (relay, which `on('relay')` reads; accounts and the hosted agent are `on('accounts')` and `on('cloud.agent')`) | the same, plus `preview` and the commit |
 | Search engines | indexed | `X-Robots-Tag: noindex, nofollow` on every response |
 | Counts (`app/src/analytics.js`) | on | off (they count on `overdubstudio.com` only) |
 
@@ -34,6 +34,15 @@ gitignored `deploy/site-config.json` (`SITE_CONFIG=<file>` reads another), else 
 the tab's title with "Preview ·". The live site's copy has no `preview` key, so it never shows the slip. A ref from
 before the ribbon existed (no `app/src/ui/preview.js`) deploys without the slip or the title; the noindex header still
 applies, since it comes from the distribution.
+
+Both copies also carry the feature toggles (`"toggles": { "<id>": "on" | "off" }`, read by `app/src/toggles.js`).
+`deploy.sh` imports REF's own registry and adds `"<id>": "on"` for each `deploy: 'on'` entry the base doesn't name
+(only relay, which was on live before the registry existed; an explicit `"relay": "off"` is kept), then prints
+`toggles on: …` under the config line. A `toggles` that isn't an object, a value other than `"on"` or `"off"`, or an
+id REF doesn't register stops a live deploy; on `--next` it's one warning line. A REF with no registry gets no toggles,
+and the deploy says so. After a live deploy, `node tools/prod-check.js` prints `toggles on live: …` and fails when a
+`deploy: 'on'` toggle is off (saying whether the file said `"off"` or left it out), when the live file names a toggle
+the live registry doesn't have, or when the studio has no Connect tab or `app.remote`.
 
 ## The preview from GitHub Actions
 

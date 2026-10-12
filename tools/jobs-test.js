@@ -206,7 +206,7 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
   ok(err && err.message === OFF, 'a stems job with the runner off fails with the same reason');
   const seen = [];
   const cfg = await loadSiteConfig({ fresh: true, fetch: async (u) => { seen.push(u); return new Response('{}', { headers: { 'content-type': 'application/json' } }); }, search: '', host: 'overdubstudio.com' });
-  ok(cfg.stems === null && cfg.cloud === null && seen.join() === 'site-config.json', 'site-config.json with no stems entry: stems off');
+  ok(cfg.stems === null && cfg.cloud === null && seen.length === 1 && /\/app\/site-config\.json$/.test(seen[0]), 'site-config.json with no stems entry: stems off');
 }
 {
   const sha = 'a'.repeat(64);

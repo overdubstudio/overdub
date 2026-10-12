@@ -1,22 +1,23 @@
-// The deploy's own switches: app/site-config.json, which is not in the repo (it's gitignored). It holds two things: the
-// origin of the hosted agent's service ("Claude on Overdub credits"), off unless the file names one, and the community
-// shelf's emergency off (docs/COMMUNITY-SHELF.md; ui/community.js and the gallery read it):
+// The deploy's own switches: app/site-config.json, which is not in the repo (it's gitignored). It holds the origin of
+// the hosted agent's service ("Claude on Overdub credits"), the feature toggles (app/src/toggles.js reads them) and, on
+// the preview, which site this is (ui/preview.js reads env, preview and ref):
 //
-//   { "cloud": { "api": "https://api.example.com" }, "community": "off" }
+//   { "cloud": { "api": "https://api.example.com" }, "toggles": { "relay": "on" } }
 //
-// "community": "off" is the only value it takes; anything else (or no key) leaves the shelf as the code has it.
-//
-// No file (a fork, a self-hosted copy, the live site until it's switched on), an unreadable one or a bad origin means
-// cloud off: no row in the Agent panel and no request to any cloud origin. The local server answers the file from
-// OVERDUB_CLOUD_ORIGIN when there's no file (server/serve.js); deploy/deploy.sh ships deploy/site-config.json, or {}.
+// No file (a fork, a self-hosted copy), an unreadable one or a bad origin means cloud off: no row in the Agent panel
+// and no request to any cloud origin. The local server answers the deploy's defaults when there's no file (server/serve.js);
+// deploy/deploy.sh ships deploy/site-config.json, or {}, plus the registry's deploy: 'on' toggles.
 //
 // ?cloud=<origin> points a local studio at a local service, for development and tests: only when the studio itself is
 // on this machine and the origin is on this machine too, so a link can never send someone's song to another server.
 //
-//   loadSiteConfig({ fetch, search, host, url }) -> Promise<{ cloud: { api } | null, community: 'off' | null }>
-//       fetched once per page load; url is 'site-config.json' (beside the studio's page) unless a page elsewhere names
-//       /app/site-config.json. ?cloud= replaces the file's cloud origin, never its community key, so the file is read
-//       either way.
+//   loadSiteConfig({ fetch, search, host, url }) -> Promise<{ cloud: { api } | null, toggles, raw, read }>
+//       fetched once per page load (main.js starts it at the top of boot); url is app/site-config.json, resolved from
+//       this module, so a page outside /app/ reads the same file. ?cloud= replaces the file's cloud origin, and the
+//       file is read either way. toggles is the file's raw "toggles" value (toggles.js judges it); raw is the whole
+//       parsed file, or null. read is 'ok' (a JSON answer), 'absent' (a 404 or 410: there is no file, so the deploy
+//       turns nothing on) or 'failed' (the network, a 5xx, an HTML error page, JSON that doesn't parse: there may well
+//       be a file, this load just couldn't see it; toggles.js bootConfig gives the deploy's defaults then).
 //   cloudOrigin(value) -> origin | null       https:, or http: on a loopback name; anything else is refused
 //   cloudOverride(search, host) -> origin | null
 
@@ -39,17 +40,20 @@ export function cloudOverride(search = globalThis.location?.search || '', host =
   return o && LOOPBACK.test(new URL(o).hostname) ? o : null;
 }
 
+export const CONFIG_URL = new URL('../site-config.json', import.meta.url).href;
+
 let loaded = null;
-export function loadSiteConfig({ fetch: f = globalThis.fetch, search, host, url = 'site-config.json', fresh = false } = {}) {
+export function loadSiteConfig({ fetch: f = globalThis.fetch, search, host, url = CONFIG_URL, fresh = false } = {}) {
   if (loaded && !fresh) return loaded;
   loaded = (async () => {
-    let j = null;
+    let j = null, read = 'failed';
     try {
       const r = await f(url, { cache: 'no-store', credentials: 'same-origin' });
-      if (r.ok && (r.headers.get('content-type') || '').includes('json')) j = await r.json();
-    } catch { j = null; }
+      if (r.status === 404 || r.status === 410) read = 'absent';
+      else if (r.ok && (r.headers.get('content-type') || '').includes('json')) { j = await r.json(); read = 'ok'; }
+    } catch { j = null; read = 'failed'; }
     const api = cloudOverride(search, host) || cloudOrigin(j?.cloud?.api);
-    return { cloud: api ? { api } : null, community: j?.community === 'off' ? 'off' : null };
+    return { cloud: api ? { api } : null, toggles: j?.toggles ?? null, raw: j ?? null, read };
   })();
   return loaded;
 }

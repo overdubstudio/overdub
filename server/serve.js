@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deployDefaults } from '../app/src/toggles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -57,13 +58,16 @@ export function byteRange(header, size) {
   return [start, end];
 }
 
-// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, the studio's hosted
-// agent is off ({}), unless OVERDUB_CLOUD_ORIGIN names a service to try it against (a local overdub-cloud, say):
-// `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js`. Read on each request, so a test can set it.
+// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
+// deploy/deploy.sh would ship with no base: the registry's deploy: 'on' toggles (app/src/toggles.js: relay), so a local
+// studio shows Connect as the live one does. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
+// try it against (a local overdub-cloud, say): `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js` adds
+// its cloud.api and turns cloud.agent on. Read on each request, so a test can set it.
 function siteConfig(res) {
   const api = String(process.env.OVERDUB_CLOUD_ORIGIN || '').trim();
+  const body = api ? { cloud: { api }, toggles: { ...deployDefaults(), 'cloud.agent': 'on' } } : { toggles: deployDefaults() };
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(api ? { cloud: { api } } : {}));
+  res.end(JSON.stringify(body));
 }
 
 // Sent on every response, as CloudFront's policy sends them on the live site (deploy/headers.sh): no other page may

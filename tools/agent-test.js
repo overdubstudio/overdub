@@ -537,6 +537,77 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(tools.schemas().every((x) => x.annotations && x.annotations.title), 'node: app.tools.schemas() carries each static tool\'s annotations');
 }
 
+/* ------------------------------------------------------------------ 0b1t. an off feature's tool and guide topic (Node) */
+// Feature toggles (app/src/toggles.js; intent 0015 R20, R21): a tool carrying toggle: '<id>' stays in every catalog and,
+// while its toggle is off, answers the toggle's off line before anything else and changes nothing. A get_guide topic
+// mapped to an off toggle does the same. Nothing real is behind a toggle yet, so the real guides and the catalog don't move.
+{
+  const { createStore } = await import('../app/src/core/store.js');
+  const tools = await import('../app/src/agent/tools.js');
+  const T = await import('../app/src/toggles.js');
+  const { ETIQUETTE, OPS_CHEATSHEET, NOTES_FORMAT } = await import('../app/src/agent/prompt.js');
+  const getDevice = (id) => ({ id, name: id, kind: 'instrument', params: [] });
+  const store = createStore(null, { getDevice });
+  store.dispatch({ type: 'track.add', track: { name: 'Bass', instrument: { device: 'core.bass' } } }, { by: 'you' });
+  const app = { store, devices: { getDevice }, ui: { emit() {}, toast() {} } };
+  tools.installTools(app);
+  const catalog = async () => JSON.stringify(await tools.catalogSchemas());
+  const cat0 = await catalog();
+  const local = (search) => T.applyToggles({}, { search, host: 'localhost' });
+  local('');
+  let ran = 0;
+  app.tools.register({
+    name: 'flip_probe', toggle: 'workflow.flip', description: 'a throwaway tool behind workflow.flip',
+    annotations: { title: 'Flip probe', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    input_schema: { type: 'object', properties: { gain: { type: 'number' } }, required: ['gain'], additionalProperties: false },
+    run(input, { app: a }) { ran++; a.store.dispatch({ type: 'track.set', track: a.store.get().tracks[0].id, patch: { gain: input.gain } }, { by: 'claude' }); return { ok: true }; },
+  });
+  const listed = tools.schemas().find((x) => x.name === 'flip_probe');
+  const song0 = JSON.stringify(store.get()), h0 = store.history.length;
+  const offR = await app.tools.run('flip_probe', {}, { by: 'mcp:probe' });   // gain missing too: the toggle answers first
+  const offR2 = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
+  t.ok(offR.error === "Flip a song isn't on in this studio." && !offR.hint && JSON.stringify(offR2) === JSON.stringify(offR) && ran === 0 && JSON.stringify(store.get()) === song0 && store.history.length === h0
+    && listed && !('toggle' in listed),
+    `node: a tool behind an off toggle stays listed (its schema has no toggle field) and answers "${offR.error}" before the missing-field check, without running (${ran} runs, ${store.history.length - h0} history entries)`);
+  T.applyToggles({}, { search: '?on=workflow.flip', host: 'overdubstudio.com' });
+  const pub = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
+  t.ok(pub.error === offR.error && ran === 0, `node: ?on=workflow.flip does nothing on the live host: "${pub.error}"`);
+  local('?on=workflow.flip');
+  const onR = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
+  t.ok(onR.ok && ran === 1 && store.get().tracks[0].gain === -6 && store.history.length === h0 + 1,
+    `node: with ?on=workflow.flip on a local studio the same call runs (gain ${store.get().tracks[0].gain}, ${ran} run)`);
+  tools.TOOLS.splice(tools.TOOLS.findIndex((x) => x.name === 'flip_probe'), 1);
+
+  // get_guide: every real topic, byte for byte, with every toggle off and every toggle on, and the prompt's own text
+  const topics = tools.TOOLS.find((x) => x.name === 'get_guide').input_schema.properties.topic.enum;
+  const guides = async () => { const o = {}; for (const topic of topics) o[topic] = JSON.stringify(await app.tools.run('get_guide', { topic }, { by: 'mcp:probe' })); return o; };
+  local('');
+  const offG = await guides();
+  local('?on=all');
+  const allG = await guides();
+  const differ = topics.filter((x) => offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x]));
+  t.ok(!differ.length && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && Object.keys(tools.GUIDE_TOGGLES).length === 0,
+    `node: every real guide topic is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
+  // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
+  tools.GUIDE_TOGGLES.ops = 'workflow.flip';
+  local('');
+  const gOff = await app.tools.run('get_guide', { topic: 'ops' }, { by: 'mcp:probe' });
+  local('?on=workflow.flip');
+  const gOn = JSON.stringify(await app.tools.run('get_guide', { topic: 'ops' }, { by: 'mcp:probe' }));
+  delete tools.GUIDE_TOGGLES.ops;
+  local('');
+  const part = [tools.guidePart('workflow.flip', 'flip text')];
+  local('?on=workflow.flip');
+  part.push(tools.guidePart('workflow.flip', 'flip text'));
+  T.applyToggles(null, {});
+  t.ok(gOff.error === "Flip a song isn't on in this studio." && gOn === offG.ops && part[0] === '' && part[1] === 'flip text',
+    `node: a guide topic mapped to an off toggle answers "${gOff.error}", and on it's the guide again; guidePart is '' while off ("${part[0]}", "${part[1]}")`);
+  // the catalog the relay lists is the same bytes, and server/relay-catalog.json is still current
+  const { spawnSync } = await import('node:child_process');
+  const chk = spawnSync(process.execPath, [path.join(HERE, 'relay-catalog.js'), '--check'], { encoding: 'utf8' });
+  t.ok((await catalog()) === cat0 && chk.status === 0, `node: the catalog doesn't move (no schema change) and ${(chk.stdout + chk.stderr).trim().split('\n').pop()}`);
+}
+
 /* ------------------------------------------------------------------ 0b2. suggest_sounds (Node) */
 // docs/INSTRUMENTS-UX.md 2.6: an agent's sounds go onto the person's sound card (app.sounds, a stand-in here); nothing in
 // the song changes until they Keep one, and that Keep is theirs. Refused before anything shows: a device that isn't an

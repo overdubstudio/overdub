@@ -246,9 +246,86 @@ const fake = await fakeCloud();
   await sleep(600);
   const out = await page.evaluate(() => ({ cloud: window.overdub.agent.cloud, row: !!document.querySelector('.ag-kc-cloud'), chip: !document.querySelector('.ag-price')?.hidden }));
   out.config = await page.evaluate(() => fetch('site-config.json').then((r) => r.json()));
-  t.ok(out.cloud === null && !out.row && !out.chip && JSON.stringify(out.config) === '{}', `with no site config the hosted agent is off: no account, no row in settings, no price (site-config.json ${JSON.stringify(out.config)})`);
+  // the server answers what deploy.sh ships with no base: the registry's deploy: 'on' toggles (relay), no cloud key
+  const { deployDefaults } = await import('../app/src/toggles.js');
+  const want = JSON.stringify({ toggles: deployDefaults() });
+  out.toggles = await page.evaluate(() => window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id).join(','));
+  t.ok(out.cloud === null && !out.row && !out.chip && JSON.stringify(out.config) === want && want === '{"toggles":{"relay":"on"}}' && out.toggles === 'relay',
+    `with no site config the hosted agent is off: no account, no row in settings, no price (site-config.json ${JSON.stringify(out.config)}, toggles on: ${out.toggles || 'none'})`);
   t.ok(fake.log.length === before, `and the studio asks no cloud origin anything (${fake.log.length - before} requests)`);
   t.ok(realErrors(errors).length === 0, 'no page errors (off)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
+/* ------------------------------------------------------------------ 1b. the config: one read per load, and never a wait past 4 s */
+{
+  const { page, context, errors, close } = await studio(fake, { config: 'none' });
+  const asked = [];
+  page.on('request', (r) => { if (new URL(r.url()).pathname.endsWith('/site-config.json')) asked.push(r.url()); });
+  await page.reload({ waitUntil: 'load' });
+  await ready(page);
+  await page.evaluate(() => window.overdub.site.ready);
+  await sleep(300);
+  const on = await page.evaluate(() => window.overdub.toggles.on('relay'));
+  t.ok(asked.length === 1 && /\/app\/site-config\.json$/.test(asked[0]) && on, `one request for site-config.json per studio load, shared by the toggles, the preview ribbon and the hosted agent (${asked.length}: ${asked.join(', ')})`);
+  // a config slower than the cap: boot goes on at 4 s with only the deploy's defaults (relay) on, and its late answer
+  // (which also turns workflow.flip on) changes nothing
+  const warned = [];
+  page.on('console', (m) => { if (m.type() === 'warning' && /site-config\.json took over/.test(m.text())) warned.push(m.text()); });
+  await context.route('**/app/site-config.json', async (route) => { await sleep(6000); await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ toggles: { relay: 'on', 'workflow.flip': 'on' } }) }).catch(() => {}); });
+  const t0 = Date.now();
+  await page.reload({ waitUntil: 'commit' });
+  await ready(page);
+  const took = Date.now() - t0;
+  const early = await page.evaluate(() => window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id));
+  await sleep(6500 - (Date.now() - t0));
+  const later = await page.evaluate(() => window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id));
+  const relayTab = await page.evaluate(() => !!window.overdub.remote);
+  t.ok(early.join() === 'relay' && later.join() === 'relay' && relayTab && took < 6000 && warned.length === 1,
+    `a site-config.json delayed 6 s: the studio is ready in ${took} ms with only the deploy's defaults on (${JSON.stringify(early)}, app.remote ${relayTab}), and stays so when it lands (${JSON.stringify(later)}; ${warned.length} warning)`);
+  // a config this load can't read (CloudFront's 503 page): the same defaults, so Connect doesn't vanish on a blip; a 404
+  // (no file at all) is all off
+  await context.unroute('**/app/site-config.json');
+  const look = async (status, body, type) => {
+    await context.route('**/app/site-config.json', (route) => route.fulfill({ status, contentType: type, body }));
+    await page.reload({ waitUntil: 'load' });
+    await ready(page);
+    const o = await page.evaluate(() => ({ on: window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id), remote: !!window.overdub.remote }));
+    await context.unroute('**/app/site-config.json');
+    return o;
+  };
+  const down = await look(503, '<html><body>503 Service Unavailable</body></html>', 'text/html');
+  const gone = await look(404, '<html><body>Not Found</body></html>', 'text/html');
+  t.ok(down.on.join() === 'relay' && down.remote && gone.on.length === 0 && !gone.remote,
+    `a site-config.json answering a 503 HTML page: ${JSON.stringify(down.on)} on, app.remote ${down.remote}; a 404: ${JSON.stringify(gone.on)}, app.remote ${gone.remote}`);
+  t.ok(realErrors(errors).length === 0, 'no page errors (config read)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
+/* ------------------------------------------------------------------ 1c. it takes both: the cloud.agent toggle and cloud.api */
+{
+  const { page, context, errors, close } = await studio(fake, { config: 'none' });
+  const look = async (config) => {
+    await context.route('**/app/site-config.json', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(config) }));
+    const before = fake.log.length;
+    await page.reload({ waitUntil: 'load' });
+    await ready(page);
+    await page.evaluate(() => window.overdub.site.ready);
+    await page.evaluate(() => { const e = window.overdub; e.ui.setOpen('right', true); e.ui.show('agent'); document.querySelector('.ag-hbtns .ag-hbtn:last-child')?.click(); });
+    await sleep(600);
+    const out = await page.evaluate(() => ({ cloud: !!window.overdub.agent.cloud, row: !!document.querySelector('.ag-kc-cloud'), toggle: window.overdub.toggles.on('cloud.agent') }));
+    await context.unroute('**/app/site-config.json');
+    return { ...out, asked: fake.log.length - before };
+  };
+  const apiOnly = await look({ cloud: { api: fake.origin }, toggles: { relay: 'on' } });
+  t.ok(!apiOnly.cloud && !apiOnly.row && !apiOnly.toggle && apiOnly.asked === 0,
+    `a site config naming cloud.api without the cloud.agent toggle: off, no row in settings, ${apiOnly.asked} requests to the service`);
+  const toggleOnly = await look({ toggles: { relay: 'on', 'cloud.agent': 'on' } });
+  t.ok(!toggleOnly.cloud && !toggleOnly.row && toggleOnly.toggle && toggleOnly.asked === 0,
+    `the cloud.agent toggle without a cloud.api: off as well, no row, ${toggleOnly.asked} requests`);
+  const both = await look({ cloud: { api: fake.origin }, toggles: { relay: 'on', 'cloud.agent': 'on' } });
+  t.ok(both.cloud && both.row && both.asked > 0, `both: the hosted agent is offered (row ${both.row}, ${both.asked} requests to the service)`);
+  t.ok(realErrors(errors).length === 0, 'no page errors (toggle and api)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
 

@@ -760,15 +760,24 @@ try {
         o('?relay=http://127.0.0.1:8787', 'overdubstudio.com'), o('?relay=http://localhost:8787', 'overdub.example'), o('?relay=javascript:alert(1)', 'localhost'), o('', 'localhost')];
     });
     t.ok(JSON.stringify(pure) === JSON.stringify(['http://127.0.0.1:8787', 'http://localhost:8787', 'https://relay.example', null, null, null, null]), `?relay= counts only on a local studio (localhost, 127.0.0.1): ${JSON.stringify(pure)}`);
-    // the live site, played by a made-up origin served from the local server (nothing leaves this machine), for someone
-    // who had Connect on: a link with ?relay=<the relay above>
+    // the live site, played by a made-up origin served from the local server (nothing leaves this machine). Its
+    // app/site-config.json is the one given (the feature toggles, app/src/toggles.js), or the local server's when none is
     const PUB = 'https://overdub.example';
-    const ctx = await s.browser.newContext();
-    await ctx.route('**/*', async (rt) => {
-      const u = new URL(rt.request().url());
-      if (u.origin === PUB) return rt.fulfill({ response: await rt.fetch({ url: s.base + u.pathname + u.search }) });
-      return /^(localhost|127\.0\.0\.1)$/.test(u.hostname) ? rt.continue() : rt.abort();
-    });
+    const HOSTED = ['https://overdub-relay.ajsmithhq.com', 'https://relay.overdubstudio.com'], API = 'https://api.overdubstudio.com';
+    const pubContext = async (config) => {
+      const c = await s.browser.newContext();
+      await c.route('**/*', async (rt) => {
+        const u = new URL(rt.request().url());
+        if (u.origin === PUB && u.pathname === '/app/site-config.json' && config !== undefined)
+          return rt.fulfill({ status: 200, contentType: 'application/json', headers: { 'cache-control': 'no-store' }, body: JSON.stringify(config) });
+        if (u.origin === PUB) return rt.fulfill({ response: await rt.fetch({ url: s.base + u.pathname + u.search }) });
+        return /^(localhost|127\.0\.0\.1)$/.test(u.hostname) ? rt.continue() : rt.abort();
+      });
+      return c;
+    };
+    const RELAY_ON = { toggles: { relay: 'on' } };
+    // for someone who had Connect on: a link with ?relay=<the relay above>
+    const ctx = await pubContext(RELAY_ON);
     await ctx.addInitScript(() => { try { localStorage.setItem('overdub:remote-on', '1'); } catch { /* no storage */ } });
     const pub = await ctx.newPage();
     const sent = [];
@@ -779,27 +788,42 @@ try {
     const live = await pub.evaluate(() => ({ relay: window.overdub.remote?.relay || null }));
     t.ok(live.relay === 'https://overdub-relay.ajsmithhq.com' && !sent.length, `on the live site a link's ?relay= is ignored: Connect points at the hosted relay (${live.relay}), and with Connect on nothing goes to that port (${sent.length} requests)`);
     await ctx.close();
-    // the relay is live (RELAY_LIVE): the live site shows Connect to everyone, pointed at the hosted relay, and the trial's
-    // ?connect=0 no longer hides it; nothing connects until Turn on
-    const ctx2 = await s.browser.newContext();
-    await ctx2.route('**/*', async (rt) => {
-      const u = new URL(rt.request().url());
-      if (u.origin === PUB) return rt.fulfill({ response: await rt.fetch({ url: s.base + u.pathname + u.search }) });
-      return /^(localhost|127\.0\.0\.1)$/.test(u.hostname) ? rt.continue() : rt.abort();
-    });
-    const pv = await ctx2.newPage();
-    const out = [];
-    pv.on('request', (rq) => { if (rq.url().startsWith('https://overdub-relay.ajsmithhq.com')) out.push(rq.url()); });
-    const look = async (q) => {
+    // what the live site sees, by its site-config.json: each look is a fresh browser, counting requests to the hosted
+    // relays and the account service from the first one
+    const look = async (config, q = '') => {
+      const c = await pubContext(config);
+      const pv = await c.newPage();
+      const hosted = [], api = [];
+      pv.on('request', (rq) => { const u = rq.url(); if (HOSTED.some((o) => u.startsWith(o))) hosted.push(u); if (u.startsWith(API)) api.push(u); });
       await pv.goto(`${PUB}/app/?demo${q}`, { waitUntil: 'load' });
       await pv.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
       await sleep(800);
-      return pv.evaluate(() => ({ tab: !!document.querySelector('.ew-tab[title="Connect"]'), relay: window.overdub.remote?.relay || null, state: window.overdub.remote?.state || null }));
+      const r = await pv.evaluate(() => {
+        const R = window.overdub.remote;
+        return { tab: !!document.querySelector('.ew-tab[title="Connect"]'), remote: R !== undefined, relay: R?.relay || null, state: R?.state || null, mode: R?.mode || null,
+          account: !!R?.account, url: R?.url || '', on: window.overdub.toggles.list().filter((x) => x.on).map((x) => `${x.id}:${x.by}`).join(','),
+          preview: localStorage.getItem('overdub:remote-preview') };
+      });
+      await c.close();
+      return { ...r, hosted: hosted.length, api: api.length };
     };
-    const plain = await look(''), off = await look('&connect=0');
-    t.ok(plain.tab && plain.relay === 'https://overdub-relay.ajsmithhq.com' && plain.state === 'off' && off.tab && !out.length,
-      `on the live site Connect shows for everyone, for the hosted relay only (${plain.relay}), off until Turn on (shown ${plain.tab}, still shown with ?connect=0 ${off.tab}; ${out.length} requests to the relay before Turn on)`);
-    await ctx2.close();
+    // relay on (what every deploy writes): Connect for everyone, the hosted relay, off until Turn on, the private link
+    // only (accounts off), and nothing sent before Turn on
+    const plain = await look(RELAY_ON);
+    t.ok(plain.tab && plain.relay === 'https://overdub-relay.ajsmithhq.com' && plain.state === 'off' && plain.on === 'relay:site' && !plain.hosted,
+      `{"toggles":{"relay":"on"}} on the live site: Connect shows, for the hosted relay only (${plain.relay}), off until Turn on (state ${plain.state}; toggles ${plain.on}; ${plain.hosted} requests to a relay)`);
+    t.ok(plain.mode === 'link' && !plain.account && /^https:\/\/overdub-relay\.ajsmithhq\.com\/s\/[A-Za-z0-9_-]{22}\/mcp$/.test(plain.url) && !plain.api,
+      `with relay on and accounts off: the private link only (${plain.mode}), and ${plain.api} requests to api.overdubstudio.com`);
+    // relay off ({}): nothing at all, and the retired ?connect=1 doesn't bring it back (or write its old key)
+    const none = await look({});
+    t.ok(!none.tab && !none.remote && !none.hosted && !none.api && none.on === '',
+      `{} on the live site: no Connect tab (${none.tab}), no app.remote (${none.remote}), ${none.hosted} requests to either relay, ${none.api} to the account service`);
+    const asked = await look({}, '&connect=1');
+    t.ok(!asked.tab && !asked.remote && !asked.hosted && asked.preview === null, `{} with ?connect=1 (retired): still no Connect tab (${asked.tab}), nothing stored (${asked.preview}), ${asked.hosted} requests`);
+    // ?on= is for a studio on this machine: on the live site it turns nothing on
+    const acc = await look(RELAY_ON, '&on=accounts');
+    t.ok(acc.tab && acc.mode === 'link' && !acc.account && acc.on === 'relay:site' && !acc.api,
+      `?on=accounts on the live site does nothing: no account mode (${acc.mode}, toggles ${acc.on}), ${acc.api} requests to api.overdubstudio.com`);
     await s.close(); studio = null;
   }
 

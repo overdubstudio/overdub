@@ -115,4 +115,27 @@ for (const [route, file] of [['/', 'site/index.html'], ['/app/', 'app/index.html
   t.ok(!real.length, 'studio: no console errors (the local-only MCP bridge excepted) ' + real.slice(0, 3).join(' | '));
   await close();
 }
+// The feature toggles (app/src/toggles.js, 0015): what the live site-config.json turns on, judged by the live registry.
+// Relay must be on after every deploy (deploy.sh writes it), with its Connect tab and app.remote in the studio.
+{
+  const r = await fetch(BASE + '/app/site-config.json', { cache: 'no-store' });
+  let config = null, why = `${r.status} ${r.headers.get('content-type')}`;
+  if (r.ok) { try { config = JSON.parse(await r.text()); } catch { why = 'not JSON'; } }
+  t.ok(config !== null, `/app/site-config.json is served and parses (${config === null ? why : 'ok'})`);
+  const { page, close } = await openUrl(BASE + '/app/?demo');
+  await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+  await page.waitForTimeout(800);
+  const live = await page.evaluate(async (cfg) => {
+    const T = await import('./src/toggles.js');
+    const a = T.auditToggles(cfg, T.TOGGLES);
+    const app = window.overdub;
+    return { ...a, page: (app.toggles?.list() || []).filter((x) => x.on).map((x) => x.id), remote: !!app.remote, tab: !!document.querySelector('.ew-tab[title="Connect"]') };
+  }, config);
+  console.log(`toggles on live: ${live.on.length ? live.on.join(', ') : 'none'}`);
+  t.ok(!live.errors.length, `site-config.json names only registered toggles, each "on" or "off"${live.errors.length ? ': ' + live.errors.join('; ') : ''}`);
+  t.ok(!live.deployOff.length, `every deploy: 'on' toggle is on${live.deployOff.length ? ': ' + live.deployOff.map((d) => `${d.id} is off (${d.why})`).join('; ') : ` (${live.on.join(', ') || 'none'})`}`);
+  t.ok(live.page.slice().sort().join() === live.on.slice().sort().join(), `the studio turned on what the file says (studio: ${live.page.join(', ') || 'none'})`);
+  t.ok(live.remote && live.tab, `relay: the studio has app.remote (${live.remote}) and the Connect tab (${live.tab})`);
+  await close();
+}
 t.done();

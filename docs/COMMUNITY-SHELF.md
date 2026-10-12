@@ -69,7 +69,7 @@ the switch and checks whichever side of it the tree is on. Before that commit, a
 - On an iPhone with the ringer off, ▶ (an `<audio>` clip) and Try (Web Audio) are both heard, or the toast says why
   not (section 3, "Phones"). A person checks it on the phone and writes the result in the pull request.
 
-- `COMMUNITY_LIVE = false` in `app/src/ui/community.js`, like `RELAY_LIVE` in `agent/remote.js`. While it is false,
+- `COMMUNITY_LIVE = false` in `app/src/ui/community.js` (it moves to the `community` toggle next). While it is false,
   everything the shelf does depends on `location.hostname` being `localhost` or `127.0.0.1`. On any other host,
   `?community=`, `?community-device=` and a stored `overdub:community` are ignored. The Browser section isn't drawn,
   Find's shelf words aren't added, and the agent tool answers *"The community shelf isn't on in this studio."*

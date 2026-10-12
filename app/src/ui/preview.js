@@ -11,22 +11,18 @@
 //                                          the read never holds up the studio's boot)
 
 import { h, css } from './dom.js';
+import { loadSiteConfig } from '../site-config.js';
 
-export const CONFIG_URL = new URL('../../site-config.json', import.meta.url).href;
-
-export async function readConfig(url = CONFIG_URL) {
-  try {
-    const r = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
-    if (!r.ok || !(r.headers.get('content-type') || '').includes('json')) return { env: 'production', preview: false };
-    const c = await r.json();
-    if (!c || typeof c !== 'object') return { env: 'production', preview: false };
-    return { env: String(c.env || 'production'), preview: c.preview === true, ref: typeof c.ref === 'string' ? c.ref.slice(0, 12) : '' };
-  } catch { return { env: 'production', preview: false }; }
+// The three keys this module owns, from the parsed file (or anything else: no object is the live site).
+export function siteOf(c) {
+  if (!c || typeof c !== 'object') return { env: 'production', preview: false, ref: '' };
+  return { env: String(c.env || 'production'), preview: c.preview === true, ref: typeof c.ref === 'string' ? c.ref.slice(0, 12) : '' };
 }
 
 export default function preview(app) {
   app.site = { env: 'production', preview: false, ref: '' };
-  app.site.ready = readConfig().then((c) => { Object.assign(app.site, c); if (c.preview) wear(app.site); return app.site; });
+  // the one read of site-config.json (site-config.js; main.js started it at boot): no second fetch
+  app.site.ready = loadSiteConfig().then((c) => siteOf(c.raw), () => siteOf(null)).then((c) => { Object.assign(app.site, c); if (c.preview) wear(app.site); return app.site; });
 }
 
 function wear(site) {

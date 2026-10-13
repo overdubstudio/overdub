@@ -45,8 +45,8 @@ Firefox and phones to it.
 
 ## Static checks
 
-`npm run check` runs what CI's static job runs: Biome's lint and format check, `tsc`, ShellCheck, actionlint and
-zizmor. The checkers are pinned in `mise.toml`, not `package.json`, so the studio still has no dependencies. With
+`npm run check` runs what CI's static job runs: Biome's lint and format check, `tsc`, ShellCheck, actionlint,
+zizmor, and on `infra/` `terraform fmt` and `validate`, tflint and trivy. The checkers are pinned in `mise.toml`, not `package.json`, so the studio still has no dependencies. With
 [mise](https://mise.jdx.dev/), fetch them once:
 
 ```sh
@@ -61,7 +61,7 @@ npx @biomejs/biome@2.5.15 ci .                  # lint and the format check
 ```
 
 A change to tests or app code needs only those; ShellCheck, actionlint and zizmor matter when you touch shell
-scripts or workflows.
+scripts or workflows, and Terraform, tflint and trivy when you touch `infra/` (`infra/README.md`).
 
 Lint covers the whole repo. Formatting and types are ratchets, turned on a piece at a time so nobody's open branch
 is rewritten under them. Each step is a pull request of its own:

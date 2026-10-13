@@ -12,7 +12,7 @@
 // The normalisers keep them (canonical: sorted, clamped where the range is known, empty lanes dropped), so a load, an
 // undo of a removal and cleanProject never drop a lane.
 
-import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace } from './music.js';
+import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace, checkAnchors, mapNominal, mapStats, MAP_ANCHORS } from './music.js';
 import { normAuto, lanesOf, formatPoints, specFor } from './automation.js';
 
 export const FORMAT = 'overdub/0';
@@ -107,6 +107,9 @@ const textName = (v, fallback) => (typeof v === 'string' && v ? v : typeof v ===
 // it. Every other character stays as it was written.
 const UNSEEN = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 export const plainText = (s) => String(s).replace(UNSEEN, '');
+// A section's own key (optional, forever): a key's name as people write it, "F# minor", "Bb major" (the analysis of an
+// imported song sets it where a section leaves the song's key). Anything else is no key.
+export const isSectionKey = (k) => typeof k === 'string' && /^[A-G][#b]? [a-z]+$/.test(plainText(k)) && k.length <= 24;
 // The longest name a track, clip, section, marker, device or preset can have (the longest the studio ships is a
 // guitar rig's 24 characters; the importers and the rename fields stop at 32 to 80), and a title (project.set's limit).
 export const NAME_MAX = 100;
@@ -275,7 +278,8 @@ export function songEnd(p) {
 // (core/store.js) are held to these: room for any real arrangement, small enough that the song still autosaves and
 // the tab keeps up. A song that already holds more (an old file) still opens and can be edited; it just can't grow.
 // Automation: lanePoints in one lane, songPoints in all of them (a point is ~20 bytes; recordings are thinned).
-export const LIMITS = { clipNotes: 20000, songNotes: 50000, clips: 4096, beats: 8192, lanePoints: 10000, songPoints: 50000 };
+// anchors: the most a tempo map holds (one per bar of a 3-minute song is about 100; music.js MAP_ANCHORS).
+export const LIMITS = { clipNotes: 20000, songNotes: 50000, clips: 4096, beats: 8192, lanePoints: 10000, songPoints: 50000, anchors: MAP_ANCHORS };
 const count = (n) => Number(n).toLocaleString('en-US');
 // What a song holds: { clips, notes, clipNotes (the most in one clip), end (the last beat a clip or section reaches),
 // points (automation points in all lanes), lanePoints (the most in one lane) }. Lanes don't extend the end.
@@ -328,9 +332,23 @@ export function isValidReference(r) {
   return !!(r && typeof r === 'object' && typeof r.name === 'string' && r.profile && typeof r.profile === 'object' && Number.isFinite(r.profile.lufs));
 }
 
+// A tempo map as the song keeps it ({ anchors: [{ beat, sec }], clip?, clipStart? }: music.js "The tempo map"), or
+// null with the reason when it isn't one. Strict: a map is kept as it is or not at all, never repaired into a different grid.
+export function normTempoMap(m) {
+  if (!isObj(m)) return { map: null, why: 'the tempo map is not an object' };
+  const why = checkAnchors(m.anchors);
+  if (why) return { map: null, why };
+  const map = { anchors: m.anchors.map((a) => ({ beat: a.beat, sec: a.sec })) };
+  if (typeof m.clip === 'string' && m.clip) map.clip = m.clip;
+  // (where the conformed clip starts on this grid: get_project measures a move that left it behind, R8)
+  if (map.clip && typeof m.clipStart === 'number' && Number.isFinite(m.clipStart) && m.clipStart >= 0) map.clipStart = m.clipStart;
+  return { map, why: null };
+}
+
 // Bring a loaded document up to shape (older or hand-written JSON). A song saved under the old name (format
 // '<old>/0', house parts signed by the old house id) comes back as this format, signed by HOUSE.
-export function cleanProject(p) {
+// warn({ kind, message }): what was dropped on the way (a bad tempo map); without it, console.warn.
+export function cleanProject(p, { warn = null } = {}) {
   if (!isObj(p)) p = {};
   const base = createProject();
   const out = { ...base, ...p, format: FORMAT };
@@ -339,11 +357,19 @@ export function cleanProject(p) {
   out.meter = validMeter(p.meter) ? p.meter.slice() : base.meter;
   const tempo = Number(p.tempo);
   out.tempo = Number.isFinite(tempo) && p.tempo !== null && p.tempo !== '' ? Math.min(400, Math.max(20, tempo)) : base.tempo;
+  // the tempo map: kept whole or dropped whole (with a warning); while it is set, tempo is its nominal tempo
+  if ('tempoMap' in out) {
+    const { map, why } = normTempoMap(p.tempoMap);
+    if (map) { out.tempoMap = map; out.tempo = mapNominal(map.anchors); } else {
+      delete out.tempoMap;
+      if (p.tempoMap != null) (warn || ((w) => console.warn('overdub:', w.message)))({ kind: 'tempoMap', message: `the song's tempo map was dropped (${why}): the grid plays at ${out.tempo} BPM` });
+    }
+  }
   if (p.key !== null) out.key = isObj(p.key) && typeof p.key.root === 'string' && typeof p.key.scale === 'string' ? p.key : base.key;
   out.loop = { ...base.loop, ...(isObj(p.loop) ? p.loop : {}) };
   // (a loaded note the studio can't place is left out; the ops read theirs through music.js normNote)
   out.tracks = objs(p.tracks).map((t, i) => { const nt = normTrack(t, i); for (const c of nt.clips) if (c.kind === 'notes') { c.notes = c.notes.filter(playable); idNotes(c); } return nt; });
-  out.sections = objs(p.sections).map((s) => ({ id: s.id || newId('s'), name: cleanName(s.name, 'Section'), start: finite(s.start), length: finite(s.length) || 16, ...(isColor(s.color) ? { color: s.color } : {}) }));
+  out.sections = objs(p.sections).map((s) => ({ id: s.id || newId('s'), name: cleanName(s.name, 'Section'), start: finite(s.start), length: finite(s.length) || 16, ...(isColor(s.color) ? { color: s.color } : {}), ...(isSectionKey(s.key) ? { key: plainText(s.key) } : {}) }));
   // (in the order the ops keep: by start, then id, so the first edit and its undo don't reshuffle ties)
   const byStart = (x, y) => x.start - y.start || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
   for (const t of out.tracks) t.clips.sort(byStart);
@@ -446,12 +472,29 @@ function laneLine(p, { track, insert, param, lane, device }, devices, bpb) {
 
 // The compact, readable view of a song an agent gets from get_project. detail: 'summary' (no notes) | 'full'.
 // held(id): a song device this browser holds (devices/trust.js: its code hasn't been allowed to run here), or null
+// A tempo map in one line (spec 0014 R31): "Grid follows Original: 68.4 BPM nominal, 66.9–70.2, 2 free spans; key D
+// minor", and the conformed clip's drift when a move left it off its grid (R8). null without a map.
+export function mapLine(p) {
+  const st = mapStats(p);
+  if (!st) return null;
+  let clip = null;
+  for (const t of p.tracks || []) for (const c of t.clips || []) if (c.id === st.clip) clip = c.name || t.name;
+  const range = st.hi - st.lo >= 0.1 ? `, ${st.lo.toFixed(1)}–${st.hi.toFixed(1)}` : '';
+  const free = st.free.length ? `, ${st.free.length} free span${st.free.length === 1 ? '' : 's'} (beats ${st.free.map(([a, b]) => `${a}–${b}`).join(', ')})` : '';
+  let line = `Grid follows ${clip || 'a recording'}: ${st.nominal} BPM nominal${range}${free}; ${p.key ? `key ${keyLabel(p.key)}` : 'no key'}`;
+  line += ' (a tempo map: beats land where the recording put them; tempo.map changes it, project.set tempo is refused)';
+  if (st.drift != null && Math.abs(st.drift) >= 1) line += `. ${clip || 'The recording'} is off its grid by ${st.drift} ms (moved without the map: a move by whole bars in the arranger carries it)`;
+  return line;
+}
+
 export function summarize(p, { detail = 'full', track = null, devices = null, held = null } = {}) {
   const bpb = beatsPerBar(p.meter);
   const lines = [];
   lines.push(`"${p.title}" — ${p.tempo} bpm, ${p.meter.join('/')}, ${keyLabel(p.key)}, ${Math.ceil(songEnd(p) / bpb)} bars (${bpb} beats per bar; all times are in beats)`);
+  const grid = mapLine(p);
+  if (grid) lines.push(grid);
   if (p.loop?.on) lines.push(`loop: beats ${p.loop.start}–${p.loop.end}`);
-  if (p.sections?.length) lines.push('sections: ' + p.sections.map((s) => `${s.name} [${s.start}–${s.start + s.length}] (${s.id})`).join(', '));
+  if (p.sections?.length) lines.push('sections: ' + p.sections.map((s) => `${s.name} [${s.start}–${s.start + s.length}] (${s.id})${s.key ? ` key ${s.key}` : ''}`).join(', '));
   const isHeld = (id) => !!(held && held(id));
   const dname = (id) => {
     if (isHeld(id)) return `${held(id).name} (${id}, held: kept off, ${held(id).kind === 'instrument' ? 'silent' : 'bypassed'})`;

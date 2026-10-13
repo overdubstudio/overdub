@@ -61,6 +61,8 @@ const tr = s2.get().tracks[1], cl = tr.clips[0], fx = s2.get().tracks[2].inserts
 const trials = [
   { type: 'project.set', patch: { tempo: 101, title: 'X', key: { root: 'D', scale: 'dorian' }, loop: { on: false } } },
   { type: 'track.add', track: { name: 'New', kind: 'audio' }, index: 1 },
+  // (the tempo map: core/music.js; tools/tempomap-test.js holds the rest)
+  { type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat: 4, sec: 2.5 }, { beat: 8, sec: 5.1 }], clip: 'c_x' } },
   { type: 'track.remove', track: tr.id },
   { type: 'track.move', track: tr.id, index: 3 },
   { type: 'track.set', track: tr.id, patch: { name: 'B', gain: -9, pan: 0.5, mute: true } },
@@ -545,6 +547,22 @@ t.ok(/Night Shift/.test(text) && /track t_\w+ "Bass"/.test(text) && /A1@0:0.75/.
   const house = JAM.jamTrack({ style: 'blues' }).summary, agent = JAM.jamTrack({ style: 'blues', by: 'mcp:claude-code' });
   t.ok(/Drums, Bass, Organ by the house band, and a Guitar track for you/.test(house) && !/house band/.test(agent.summary) && /Drums, Bass, Organ, and a Guitar track for you/.test(agent.summary) && agent.project.tracks.every((x) => x.by === 'mcp:claude-code'),
     `an agent's jam track doesn't credit the house band ("…${agent.summary.slice(agent.summary.lastIndexOf('.', agent.summary.length - 2) + 2)}"); the house's still does`);
+}
+
+// section.key (spec 0014 R17): a section's own key, kept on load and by the section ops; a song without one unchanged
+{
+  const p = cleanProject({ ...createProject(), sections: [{ id: 's_a', name: 'Verse', start: 0, length: 16, key: 'F# minor' }, { id: 's_b', name: 'Chorus', start: 16, length: 16 }] });
+  const back = cleanProject(JSON.parse(JSON.stringify(p)));
+  t.ok(back.sections[0].key === 'F# minor' && !('key' in back.sections[1]), 'a section key survives save and load; a section without one gets none');
+  const plain = { ...createProject(), sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16 }] };
+  t.ok(JSON.stringify(cleanProject(plain).sections) === JSON.stringify(plain.sections), 'a song with no section keys loads unchanged');
+  const s = createStore(createProject());
+  const r = s.dispatch({ type: 'section.add', ref: 'k', section: { name: 'Bridge', start: 0, length: 8, key: 'Bb major' } });
+  const id = r.created.k;
+  s.dispatch({ type: 'section.set', section: id, patch: { key: 'G minor' } });
+  const set = s.get().sections[0].key;
+  s.undo();
+  t.ok(set === 'G minor' && s.get().sections[0].key === 'Bb major' && !s.dispatch({ type: 'section.set', section: id, patch: { key: 'jazz' } }).ok, 'section.add and section.set keep a key and undo it exactly; a key that is not a key\'s name is refused');
 }
 
 t.done();

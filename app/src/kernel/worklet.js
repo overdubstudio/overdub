@@ -4,7 +4,7 @@
 // its top level uses nothing of the page's (no window, no document).
 //
 // processorOptions: { source, kind: 'effect' | 'instrument', params: [ParamSpec], values: { key: value }, poly, seed,
-//                     transport?: { bpm, playing, beat, time }, idle?: bool, tail?: seconds, data?, device? }
+//                     transport?: { bpm, playing, beat, time, map? }, idle?: bool, tail?: seconds, data?, device? }
 //   device: the def's id, which the processor stamps on every message out (a kernel can't speak as another device)
 //   data (kernel data, docs/DEVICES.md "Kernel data"): { [name]: { hash, bytes? } | null }, what the def's `data`
 //   names. The processor decodes each file once per audio context (kernel/odk.js; bytes come with the first node that
@@ -30,6 +30,8 @@
 //                                              is released; a released voice still going `ring` s after its
 //                                              release is faded out. Each is reported: { type: 'stuck', why, p, n }
 //   { type: 'transport', bpm, playing, beat, time }   the song position at AudioContext time `time`
+//        map?: [{ time, beat, bpm }]                 an offline render of a song with a tempo map: where each of its
+//                                                    segments starts (the transport follows them; core/music.js)
 //   { type: 'expr', bend?, mod?, sustain?, time }      the channel's expression from `time` (instruments; kernel/expr.js):
 //                                              bend in semitones, mod 0..1, sustain (note-offs wait for it to lift)
 //   an 'on' may carry x: { bend?, mod? }       the note's own expression (seconds from its start; kernel/expr.js)
@@ -184,6 +186,17 @@ export function kernelCore(SR, dsp, kernelCompiler) {
   const QUIET = Math.round(0.25 * SR);      // a released voice that stays under -100 dBFS this long is freed
   const MAXOUT = 1000;                      // +60 dBFS: past this the kernel has exploded
   const SILENT = { run() {}, allOff() {} };
+  // a transport's tempo map segments ([{ time, beat, bpm }], time rising), or null when it has none worth reading
+  function mapOf(m) {
+    if (!Array.isArray(m) || !m.length) return null;
+    const out = [];
+    for (const g of m) {
+      if (!g || !Number.isFinite(+g.time) || !Number.isFinite(+g.beat) || !(+g.bpm > 0)) return null;
+      if (out.length && +g.time <= out[out.length - 1].time) return null;
+      out.push({ time: +g.time, beat: +g.beat, bpm: +g.bpm });
+    }
+    return out;
+  }
   // a note's bend or mod at `sec` seconds into it: a number, or a flat [sec, v, sec, v, ...] curve (linear between)
   function curveAt(c, sec) {
     if (c == null) return 0;
@@ -386,7 +399,8 @@ export function kernelCore(SR, dsp, kernelCompiler) {
       this.keyed = !!o.key && this.kind === 'effect';
       if (this.keyed) this.t.key = { l: new Float32Array(128), r: new Float32Array(128), on: !!o.keyOn };
       this.f0 = 0;       // the absolute frame of the block being rendered
-      this.anchor = { bpm: this.t.bpm, playing: this.t.playing, beat: this.t.beat, time: tr.time || 0 };
+      this.anchor = { bpm: this.t.bpm, playing: this.t.playing, beat: this.t.beat, time: tr.time || 0, map: mapOf(tr.map) };
+      this.mapI = 0;
       // event queue (frames)
       this.ev = { q: [], i: 0 };
       this.steals = 0; this.maxVoices = 0; this.notes = 0; this.stuck = 0;
@@ -510,7 +524,8 @@ export function kernelCore(SR, dsp, kernelCompiler) {
         }
         case 'auto.stop': for (const k of [...this.au.keys()]) this.autoRelease(k); break;
         case 'transport':
-          this.anchor = { bpm: +d.bpm || 120, playing: !!d.playing, beat: +d.beat || 0, time: +d.time || 0 };
+          this.anchor = { bpm: +d.bpm || 120, playing: !!d.playing, beat: +d.beat || 0, time: +d.time || 0, map: mapOf(d.map) };
+          this.mapI = 0;
           break;
         case 'code': this.load(d.source, d.id); break;
         case 'data': this.data = d.data || null; if (this.source != null) this.load(this.source, null); break;
@@ -603,8 +618,20 @@ export function kernelCore(SR, dsp, kernelCompiler) {
       }
       // transport at the start of this block
       const an = this.anchor, t = this.t, now = f0 / SR;
-      t.bpm = an.bpm; t.playing = an.playing;
-      t.beat = an.playing ? an.beat + (now - an.time) * an.bpm / 60 : an.beat;
+      if (an.map) {
+        // (a tempo map: the segment this block starts in, found from the last one, since blocks only move forward)
+        const M = an.map;
+        let i = this.mapI < M.length ? this.mapI : 0;
+        if (M[i].time > now) i = 0;
+        while (i + 1 < M.length && M[i + 1].time <= now) i++;
+        this.mapI = i;
+        const g = M[i];
+        t.bpm = g.bpm; t.playing = an.playing;
+        t.beat = an.playing ? g.beat + (now - g.time) * g.bpm / 60 : an.beat;
+      } else {
+        t.bpm = an.bpm; t.playing = an.playing;
+        t.beat = an.playing ? an.beat + (now - an.time) * an.bpm / 60 : an.beat;
+      }
       this.nextF = f0 + n; this.f0 = f0;
       if (this.au.size) this.autoRun(f0);
       // event frames relative to this block

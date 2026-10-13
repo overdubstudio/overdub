@@ -150,7 +150,7 @@ function fakeAccounts() {
     rq.on('end', () => {
       const send = (code, obj) => { rs.writeHead(code, { 'content-type': 'application/json' }); rs.end(JSON.stringify(obj)); };
       if (rq.url === '/oauth/jwks') { S.jwks++; return send(200, { keys: S.keys }); }
-      if (rq.url.startsWith('/v1/')) return S.cloudApi(rq, rs, body);
+      if (rq.url.startsWith('/v1/')) return S.cloudApi(rq, rs);
       if (rq.url !== '/oauth/introspect' || rq.method !== 'POST') return send(404, {});
       if (S.down) return send(503, {});
       if (S.throttle) { S.throttled = (S.throttled || 0) + 1; return send(429, { error: 'slow_down' }); }
@@ -164,21 +164,26 @@ function fakeAccounts() {
       return send(200, { active: true, sub: c.sub, gid: c.gid, client_id: c.client_id, scope: c.scope, aud: c.aud, exp: c.exp });
     });
   });
-  // The account API the studio's Connect tab talks to (the same service, in production): sign in by code, tab
-  // tickets, connected apps. One person, no cookies: enough to drive the sheet.
-  S.cloud = { signedIn: false, email: '', code: '246810', grants: [], tickets: 0, ticket429: false, everywhere: 0 };
-  S.cloudApi = (rq, rs, body) => {
+  // The account API the studio's Connect tab talks to (the same service, in production): sign in with Google, tab
+  // tickets, connected apps. One person, no cookies: enough to drive the sheet. Its Google is one page, the whole round
+  // trip: it signs the person in and posts overdub:signed-in to the studio origins that asked it something.
+  S.cloud = { signedIn: false, email: 'jess@example.com', grants: [], tickets: 0, ticket429: false, everywhere: 0, origins: new Set(), starts: [] };
+  S.cloudApi = (rq, rs) => {
     const o = rq.headers.origin;
+    if (o) S.cloud.origins.add(o);
     const h = { 'content-type': 'application/json', ...(o ? { 'access-control-allow-origin': o, 'access-control-allow-credentials': 'true', vary: 'Origin' } : {}) };
     const send = (code, obj) => { rs.writeHead(code, h); rs.end(obj === undefined ? '' : JSON.stringify(obj)); };
     if (rq.method === 'OPTIONS') { rs.writeHead(204, { ...h, 'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'content-type' }); return rs.end(); }
-    let b = {}; try { b = body ? JSON.parse(body) : {}; } catch { /* */ }
     const C = S.cloud, signedOut = () => send(401, { error: { code: 'not_signed_in', message: 'Sign in first.' } });
     const path = rq.url.split('?')[0];
-    if (path === '/v1/config') return send(200, { botCheck: { kind: 'stub' } });
+    if (path === '/v1/config') return send(200, { signIn: { provider: 'google', start: '/v1/auth/google' } });
     if (path === '/v1/me') return C.signedIn ? send(200, { user: { id: 'usr_web', email: C.email } }) : signedOut();
-    if (path === '/v1/auth/email') { C.email = String(b.email || ''); return send(202, { sent: true }); }
-    if (path === '/v1/auth/code') { if (b.code !== C.code) return send(400, { error: { code: 'bad_code', message: 'That code didn’t match. Check the email and try again.' } }); C.signedIn = true; return send(200, { signedIn: true }); }
+    if (path === '/v1/auth/google') {
+      C.starts.push(rq.url);
+      C.signedIn = true;
+      rs.writeHead(200, { 'content-type': 'text/html' });
+      return rs.end(`<!doctype html><p>You’re signed in.</p><script>if (window.opener) for (const o of ${JSON.stringify([...C.origins])}) window.opener.postMessage({ type: 'overdub:signed-in' }, o); window.close();</script>`);
+    }
     if (path === '/v1/auth/logout') { C.signedIn = false; return send(204); }
     if (path === '/v1/auth/logout-all') { C.signedIn = false; C.everywhere++; return send(204); }
     if (!C.signedIn) return signedOut();
@@ -1395,8 +1400,9 @@ try {
       t.ok(other === 404 && mine === 401 && link === 200, `RELAY_OAUTH_HOSTS: another host gets 404 on /mcp (${other}), the named host the 401 (${mine}), and private links work on any host (${link})`);
     }
 
-    // the studio: "Connect with your Overdub account" in the Connect sheet, signed in by code, one URL, calls signed by
-    // the agent the person allowed, Connected apps with Disconnect, the live tab, and the private link one press away
+    // the studio: "Connect with your Overdub account" in the Connect sheet, signed in with Google (a popup), one URL,
+    // calls signed by the agent the person allowed, Connected apps with Disconnect, the live tab, and the private link
+    // one press away
     {
       const W = await accountRelay(AS, { rate: { ...relayMod.DEFAULTS.rate, mcp: 100000, perAddress: 100000 } });
       relays.push(W);
@@ -1409,23 +1415,15 @@ try {
         await page.click('.ew-tab[title="Connect"]');
         await page.waitForSelector('.rc-card', { timeout: 5000 });
         const signedOutText = await page.textContent('.rc-card');
-        t.ok(/Sign in to connect/.test(signedOutText) && /No card, no credits/.test(signedOutText) && /Use a private link instead/.test(signedOutText) && !/Anyone with this link/.test(signedOutText),
+        t.ok(/Sign in to connect/.test(signedOutText) && /Continue with Google/.test(signedOutText) && !/6-digit|you@example/.test(signedOutText) && /No card, no credits/.test(signedOutText) && /Use a private link instead/.test(signedOutText) && !/Anyone with this link/.test(signedOutText),
           'with ?relay= and ?cloud=, the Connect sheet offers the Overdub account first, with the private link one press away');
-        await page.fill('.rc-email', 'jess@example.com');
-        await page.click('.rc-send');
-        await page.waitForSelector('.rc-code', { timeout: 5000 });
-        await page.fill('.rc-code', '000000');
-        await page.click('.rc-enter');
-        await page.waitForSelector('.rc-err', { timeout: 5000 });
-        const wrong = await page.textContent('.rc-err');
-        await page.fill('.rc-code', AS.cloud.code);
-        await page.click('.rc-enter');
-        await page.waitForSelector('.rc-toggle', { timeout: 5000 });
+        const [popup] = await Promise.all([page.context().waitForEvent('page'), page.click('.rc-google')]);
+        await page.waitForSelector('.rc-toggle', { timeout: 8000 });
         const signedIn = await page.textContent('.rc-card');
         const url = await page.evaluate(() => document.querySelector('.rc-url').value);
-        t.ok(/didn’t match/.test(wrong) && url === `${W.url}/mcp` && signedIn.includes(`claude mcp add --transport http overdub ${W.url}/mcp`) && /Customize → Connectors/.test(signedIn)
+        t.ok(!!popup && AS.cloud.starts.length === 1 && AS.cloud.starts[0] === '/v1/auth/google?return=studio' && url === `${W.url}/mcp` && signedIn.includes(`claude mcp add --transport http overdub ${W.url}/mcp`) && /Customize → Connectors/.test(signedIn)
           && /jess@example\.com/.test(signedIn) && /Claude Code/.test(signedIn) && /this computer/.test(signedIn),
-        `signed in by code (a wrong one says so): one connector URL for every app (${url.replace(W.url, '<relay>')}), the Claude Code line, and Connected apps`);
+        `Continue with Google: a popup to <service>/v1/auth/google?return=studio signs in, then one connector URL for every app (${url.replace(W.url, '<relay>')}), the Claude Code line, and Connected apps`);
         await page.click('.rc-toggle');
         await page.waitForFunction(() => window.overdub.remote.state === 'on', null, { timeout: 10000 });
         const ticketHdr = await page.evaluate(() => Object.keys(localStorage).filter((k) => /ticket/i.test(k) || /eyJ/.test(localStorage.getItem(k) || '')));
@@ -1527,16 +1525,12 @@ try {
         t.ok(/Claude keeps moving to another tab/.test(note) && /Every browser signed in as you is signed out, this one too/.test(confirmEv) && outAll && AS.cloud.everywhere === 1,
           'the live tab moving away three times in two minutes: the sheet says so, and Sign out everywhere (asked once) signs every browser out');
         thief.close();
-        await page.fill('.rc-email', 'jess@example.com');
-        await page.click('.rc-send');
-        await page.waitForSelector('.rc-code', { timeout: 5000 });
-        await page.fill('.rc-code', AS.cloud.code);
-        await page.click('.rc-enter');
+        await Promise.all([page.context().waitForEvent('page'), page.click('.rc-google')]);
         await page.waitForFunction(() => window.overdub.remote.state === 'on', null, { timeout: 10000 }).catch(() => {});
         await page.click('.rc-signout');
         await page.waitForFunction(() => window.overdub.remote.state === 'off', null, { timeout: 5000 }).catch(() => {});
         const gone = await until(() => !W.tokens.get('u:usr_web') || ![...W.tokens.get('u:usr_web').tabs.values()].some((x) => x.connected), 5000);
-        t.ok(gone && /Sign in to connect/.test(await page.textContent('.rc-card')), 'Sign out stops the stream and goes back to the sign-in card');
+        t.ok(gone && /Sign in to connect[\s\S]*Continue with Google/.test(await page.textContent('.rc-card')), 'Sign out stops the stream and goes back to the sign-in card (Continue with Google)');
         t.ok(!realErrors(errors).length, `no page errors in account mode${realErrors(errors).length ? ': ' + realErrors(errors)[0].slice(0, 160) : ''}`);
       } finally { await pg.close(); }
     }

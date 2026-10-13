@@ -10,6 +10,8 @@
 //       pcs, bass, roman, tones, conf }] }   the song's harmony from its notes: the pitch classes sounding in each
 //       window (a half bar in 4/4: the strong beats; grain 'beat' or 'bar'), matched to chords (root, quality, the bass
 //       for a slash chord), then smoothed (Viterbi: a change costs, more in mid-bar), so a passing note isn't a chord
+//   chordViterbi(windows, { keyPcs, qualities }) -> { path, cands, NC, emit }   the recogniser itself (each window's
+//       candidate scores and the smoothing), shared with the audio analysis (audio/analyze/chords.js)
 //   chordAt(timeline, beat) -> { chord, next, i } ; whereAt(project, timeline, beat) -> where the playhead is
 //   nextChange(project, timeline, beat) -> { chord, from, at, bar, wrap: '' | 'loop' | 'top', lead } | null   the next
 //       chord that isn't this one, round the loop (or round to the top past the song's last change)
@@ -277,6 +279,59 @@ function windowsOf(meter, end, grain) {
   return out;
 }
 
+// The recogniser chordTimeline and the audio analysis (audio/analyze/chords.js) share: each window says how well each
+// candidate chord (12 roots x the detected qualities, then "no chord") fits it, and a Viterbi pass smooths the path (a
+// change costs, more in mid-bar; staying is free).
+//   chordViterbi(windows [{ chroma[12], bass (pc | -1), total, first (on a bar line) }], { keyPcs: Set, qualities? })
+//     -> { path: [state per window], cands: [{ root, q, pcs, iv, prior }], NC (the "no chord" state), emit(w) }
+//   qualities: the names to listen for (default: every QUALITIES entry marked detect)
+export function chordViterbi(win, { keyPcs = new Set(), qualities = null } = {}) {
+  const det = qualities ? DETECT.filter((d) => qualities.includes(d.q)) : DETECT;
+  const cands = [];
+  for (let r = 0; r < 12; r++) for (const d of det) cands.push({ root: r, q: d.q, pcs: d.iv.map((i) => (r + i) % 12), iv: d.iv, prior: d.Q.prior });
+  const NC = cands.length;   // the last state: no chord (nothing pitched sounds)
+  const emit = (w) => {
+    const out = new Float64Array(NC + 1);
+    if (w.total < 1e-6) { out.fill(-0.6); out[NC] = 0; return out; }
+    for (let c = 0; c < NC; c++) {
+      const C = cands[c];
+      let inW = 0;
+      for (const pc of C.pcs) inW += w.chroma[pc];
+      let s = (inW - 0.7 * (w.total - inW)) / w.total;
+      // a chord tone that isn't there: the third most of all (a power chord has none), the root next, the fifth least
+      C.iv.forEach((iv) => { if (w.chroma[(C.root + iv) % 12] < 0.06 * w.total) s -= iv === 3 || iv === 4 ? 0.22 : iv === 0 ? 0.15 : iv === 7 ? 0.05 : 0.12; });
+      if (w.bass >= 0) s += w.bass === C.root ? 0.2 : C.pcs.includes(w.bass) ? 0.03 : -0.12;
+      s += C.prior;
+      if (keyPcs.size && C.pcs.every((pc) => keyPcs.has(pc))) s += 0.05;
+      out[c] = s;
+    }
+    out[NC] = -1;
+    return out;
+  };
+  if (!win.length) return { path: [], cands, NC, emit };
+  // Viterbi with a cost for a change (more inside the bar); staying is free
+  const CHANGE = 0.18, MID = 0.12;
+  let cost = emit(win[0]).map((x) => -x);
+  const back = [];
+  for (let i = 1; i < win.length; i++) {
+    const e = emit(win[i]);
+    let bi = 0;
+    for (let c = 1; c <= NC; c++) if (cost[c] < cost[bi]) bi = c;
+    const pen = CHANGE + (win[i].first ? 0 : MID);
+    const nc = new Float64Array(NC + 1), bk = new Int32Array(NC + 1);
+    for (let c = 0; c <= NC; c++) {
+      const stay = cost[c], move = cost[bi] + pen;
+      if (stay <= move) { nc[c] = stay - e[c]; bk[c] = c; } else { nc[c] = move - e[c]; bk[c] = bi; }
+    }
+    cost = nc; back.push(bk);
+  }
+  let s = 0;
+  for (let c = 1; c <= NC; c++) if (cost[c] < cost[s]) s = c;
+  const path = new Array(win.length);
+  for (let i = win.length - 1; i >= 0; i--) { path[i] = s; if (i > 0) s = back[i - 1][s]; }
+  return { path, cands, NC, emit };
+}
+
 export const MAX_TIMELINE_BARS = 512;
 export function chordTimeline(p, { grain = 'half', maxBars = MAX_TIMELINE_BARS } = {}) {
   const meter = p.meter || [4, 4], bpb = beatsPerBar(meter);
@@ -316,48 +371,7 @@ export function chordTimeline(p, { grain = 'half', maxBars = MAX_TIMELINE_BARS }
     for (let pc = 0; pc < 12; pc++) if (bassW[pc] > bw + 1e-9) { bw = bassW[pc]; bass = pc; }
     return { ...w, chroma, bassW, bass, total };
   });
-  // the candidates and what each window says about each
-  const cands = [];
-  for (let r = 0; r < 12; r++) for (const d of DETECT) cands.push({ root: r, q: d.q, pcs: d.iv.map((i) => (r + i) % 12), iv: d.iv, prior: d.Q.prior });
-  const NC = cands.length;   // the last state: no chord (nothing pitched sounds)
-  const emit = (w) => {
-    const out = new Float64Array(NC + 1);
-    if (w.total < 1e-6) { out.fill(-0.6); out[NC] = 0; return out; }
-    for (let c = 0; c < NC; c++) {
-      const C = cands[c];
-      let inW = 0;
-      for (const pc of C.pcs) inW += w.chroma[pc];
-      let s = (inW - 0.7 * (w.total - inW)) / w.total;
-      // a chord tone that isn't there: the third most of all (a power chord has none), the root next, the fifth least
-      C.iv.forEach((iv) => { if (w.chroma[(C.root + iv) % 12] < 0.06 * w.total) s -= iv === 3 || iv === 4 ? 0.22 : iv === 0 ? 0.15 : iv === 7 ? 0.05 : 0.12; });
-      if (w.bass >= 0) s += w.bass === C.root ? 0.2 : C.pcs.includes(w.bass) ? 0.03 : -0.12;
-      s += C.prior;
-      if (keyPcs.size && C.pcs.every((pc) => keyPcs.has(pc))) s += 0.05;
-      out[c] = s;
-    }
-    out[NC] = -1;
-    return out;
-  };
-  // Viterbi with a cost for a change (more inside the bar); staying is free
-  const CHANGE = 0.18, MID = 0.12;
-  let cost = emit(win[0]).map((x) => -x);
-  const back = [];
-  for (let i = 1; i < win.length; i++) {
-    const e = emit(win[i]);
-    let bi = 0;
-    for (let c = 1; c <= NC; c++) if (cost[c] < cost[bi]) bi = c;
-    const pen = CHANGE + (win[i].first ? 0 : MID);
-    const nc = new Float64Array(NC + 1), bk = new Int32Array(NC + 1);
-    for (let c = 0; c <= NC; c++) {
-      const stay = cost[c], move = cost[bi] + pen;
-      if (stay <= move) { nc[c] = stay - e[c]; bk[c] = c; } else { nc[c] = move - e[c]; bk[c] = bi; }
-    }
-    cost = nc; back.push(bk);
-  }
-  let s = 0;
-  for (let c = 1; c <= NC; c++) if (cost[c] < cost[s]) s = c;
-  const path = new Array(win.length);
-  for (let i = win.length - 1; i >= 0; i--) { path[i] = s; if (i > 0) s = back[i - 1][s]; }
+  const { path, cands, NC, emit } = chordViterbi(win, { keyPcs });
   // spans of one chord; the bass that held most of each (a slash chord when it isn't the root)
   const chords = [];
   for (let i = 0; i < win.length; i++) {

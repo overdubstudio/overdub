@@ -3,7 +3,8 @@
 //
 //   parseSmf(bytes) -> { format, ppq, smpte, tempo, tempos, meter, key, markers, parts, end, warnings }
 //       SMF types 0, 1 (and 2, read as 1). Running status, note-on at velocity 0 as a note-off, FIFO note pairing,
-//       the tempo map (the first tempo is kept: Overdub has one tempo), time and key signatures, track names,
+//       the tempo map (the first tempo is kept as the song's; every change is listed in tempos, { beat, bpm, us }),
+//       time and key signatures, track names,
 //       markers, program changes. Parts are one per (track, channel): type 0 files split by channel.
 //       Times are in beats (quarter notes): ticks / ppq, so tempo changes never move a note off its beat.
 //   deviceFor(part) -> a built-in instrument id: channel 10 -> core.drums, else the GM program's family, else the name.
@@ -11,12 +12,19 @@
 //   midiSummary(plan, fileName) -> the toast text
 //
 // In the page (export default): app.importers = { parseSmf, planMidiImport, importMidi(bytes | File, { name, at }),
-//   importAudio([File | { name, buffer }], { track, beat }), decodeAudio(arrayBuffer), pickMidi(), pickAudio({ track, beat }) }.
+//   importAudio([File | { name, buffer }], { track, beat }), decodeAudio(arrayBuffer), pickMidi(), pickAudio({ track, beat }),
+//   importFlip(files) and pickFlip(run) (Flip a song, ui/flip.js: one or more files of a song the person owns, each
+//   labelled by its name, labelStem(name): vocals, drums, bass, other, or the original), labelStem }.
+// Local files only: nothing here ever fetches audio from a link.
 // A file dropped on the arranger lands where it was dropped (app.arranger.locate); MIDI dropped elsewhere starts at
 // bar 1, audio dropped elsewhere goes on a new audio track at the playhead's bar. ui/reference.js takes its own drops.
+// An audio clip's length in beats is its seconds at the song's tempo, or on the song's tempo map from where it lands
+// (core/music.js): a recording is never stretched; the grid can bend to it instead.
 
 import { newId, songEnd, LIMITS } from '../core/project.js';
-import { beatsPerBar, validMeter } from '../core/music.js';
+import { beatsPerBar, validMeter, hasTempoMap, beatToSec, secToBeat } from '../core/music.js';
+import { labelStem, labelFiles, songNameOf } from '../core/flip.js';
+export { labelStem };
 import { css } from '../ui/dom.js';
 
 /* ================================================================ SMF */
@@ -170,7 +178,8 @@ export function parseSmf(input) {
   return {
     format, ppq, smpte, tracks: raw.length,
     tempo: tempo ? Math.round(tempo * 100) / 100 : null,
-    tempos: tempos.map((x) => ({ beat: r4(toBeats(x.tick)), bpm: Math.round(x.bpm * 100) / 100 })),
+    // (us: the file's own microseconds per quarter note, unrounded: a tempo map read back exactly)
+    tempos: tempos.map((x) => ({ beat: r4(toBeats(x.tick)), bpm: Math.round(x.bpm * 100) / 100, us: Math.round(60e6 / x.bpm) })),
     tempoChanges: Math.max(0, distinctTempos.size - 1),
     meter: timesigs.length ? timesigs[0].meter : null,
     key: keysigs.find((k) => k.key)?.key || null,
@@ -372,7 +381,9 @@ export default function (app) {
       let tref;
       if (i === 0 && target && target.kind === 'audio') tref = target.id;
       else { ops.push({ type: 'track.add', ref: 'au' + i, index: index++, track: { name: base, kind: 'audio', instrument: null } }); tref = '$au' + i; }
-      const length = Math.max(1 / 16, Math.round(d.buf.duration * (p.tempo / 60) * 10000) / 10000);
+      // (in beats: the seconds it lasts at the song's tempo, or on its tempo map from where it lands; never stretched)
+      const beats = hasTempoMap(p) ? secToBeat(p, beatToSec(p, at) + d.buf.duration) - at : d.buf.duration * (p.tempo / 60);
+      const length = Math.max(1 / 16, Math.round(beats * 10000) / 10000);
       ops.push({ type: 'clip.add', track: tref, ref: 'ac' + i, clip: { kind: 'audio', start: at, length, asset: id, offset: 0, gain: 0, name: base } });
     });
     // the samples first (IndexedDB), then the document: a clip never names an asset that isn't there
@@ -396,6 +407,24 @@ export default function (app) {
     return { ok: true, txn: r.txn, clips, tracks: trackIds, assets: assets.map((a) => a.id), text };
   }
 
+  // importFlip(files) -> { name, files: [{ role, name, buf }], failed: [names] }: Flip a song's files decoded and
+  // labelled (core/flip.js labelFiles: a lone file is the original; several are stems by their names, the one matching
+  // none the original). Nothing lands here: ui/flip.js plans the step.
+  async function importFlip(items) {
+    items = (Array.isArray(items) ? items : [items]).filter(Boolean);
+    const roles = labelFiles(items.map((it) => it.name || 'audio'));
+    const files = [], failed = [];
+    for (const [i, it] of items.entries()) {
+      const nm = it.name || 'audio';
+      try {
+        const buf = toBufferLike(it.buffer) || toBufferLike(it) || await decodeAudio(await it.arrayBuffer());
+        if (!buf || !buf.length) throw new Error('no audio in it');
+        files.push({ role: roles[i], name: nm, buf });
+      } catch { failed.push(nm); }
+    }
+    return { name: songNameOf(items.map((it) => it.name || 'audio')), files, failed };
+  }
+
   function pick(accept, run) {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = accept; inp.multiple = true; inp.style.display = 'none';
@@ -404,7 +433,10 @@ export default function (app) {
     inp.click();
   }
   const pickMidi = () => pick('.mid,.midi,.kar,.rmi,audio/midi,audio/x-midi', async (fs) => { for (const f of fs) await importMidi(f); });
-  const pickAudio = ({ track = null, beat = null } = {}) => pick('audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aif,.aiff', (fs) => importAudio(fs, { track, beat }));
+  const AUDIO_ACCEPT = 'audio/*,.wav,.mp3,.m4a,.ogg,.flac,.aif,.aiff';
+  const pickAudio = ({ track = null, beat = null } = {}) => pick(AUDIO_ACCEPT, (fs) => importAudio(fs, { track, beat }));
+  // one or more files for Flip a song (the same formats; several are bring-your-own stems): run(files)
+  const pickFlip = (run) => pick(AUDIO_ACCEPT, run);
 
   /* ---------------------------------------------------------------- drops */
   // where a drop lands: the arranger's lanes give a track and a beat (snapped to the grid); its headers a track
@@ -464,6 +496,6 @@ export default function (app) {
   });
   window.addEventListener('dragend', hideHint);
 
-  app.importers = { parseSmf, planMidiImport, midiSummary, deviceFor, importMidi, importAudio, decodeAudio, pickMidi, pickAudio, isMidiFile, isAudioFile, songEnd: () => songEnd(P()) };
+  app.importers = { parseSmf, planMidiImport, midiSummary, deviceFor, importMidi, importAudio, importFlip, labelStem, decodeAudio, pickMidi, pickAudio, pickFlip, isMidiFile, isAudioFile, songEnd: () => songEnd(P()) };
   return app.importers;
 }

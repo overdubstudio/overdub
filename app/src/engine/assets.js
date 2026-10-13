@@ -1,4 +1,6 @@
-// Audio assets: the samples behind audio clips (recordings, imports, renders). The project document only names them
+// Audio assets: the samples behind audio clips (recordings, imports, renders, and a flip's original and stems: the
+// split's stems are stored here once, so playback and renders never depend on the runner that made them, ui/flip.js).
+// The project document only names them
 // (project.assets[id] = { kind: 'audio', name, sr, channels, duration }); the samples live here, in IndexedDB
 // ('overdub-assets'), so a song's JSON stays small. When IndexedDB is refused (private windows, file://, tests) they
 // live in memory for the session.

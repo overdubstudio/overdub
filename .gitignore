@@ -24,3 +24,18 @@ app/kits/
 
 # The community shelf's bundled snapshot: node tools/community-pull.js fills it from overdub-devices at deploy/community-pin.json
 app/community/
+
+# Model weights and ONNX Runtime builds for the stems runner (spec 0014 R29): fetched at run time from the URLs in
+# app/site-config.json, never committed
+*.onnx
+*.ort
+*.safetensors
+*.pt
+*.th
+onnxruntime-web/
+
+# The stems runner's runtime and model, staged on the site (deploy/stage-stems.js writes them into the deploy's stage,
+# never the checkout; a local copy here is served by server/serve.js) and the deploy's download cache: never committed
+app/vendor/ort/
+app/vendor/models/
+deploy/.cache/

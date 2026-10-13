@@ -7,7 +7,7 @@
     "v8": "13.6.233.17-node.49",
     "arch": "arm64",
     "platform": "darwin",
-    "date": "2026-10-12"
+    "date": "2026-10-13"
   },
   "scenes": {
     "inst:core.poly": {
@@ -603,64 +603,64 @@
       "truePeak": -1.1,
       "peak": -1.1
     },
-    "fx:core.rooms#a2ac012d554f": {
+    "fx:core.rooms#70220003b4cf": {
       "sha256": "04c1a09da8f99b5ea0c3b367c084d53e118ea56051d7505f914d90e68136fd50",
       "frames": 576000,
       "lufs": -21.17,
       "truePeak": -10.34,
       "peak": -10.66,
       "data": {
-        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
+        "aachen": "sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33"
       }
     },
-    "fx:core.rooms:aula-far#a2ac012d554f": {
+    "fx:core.rooms:aula-far#70220003b4cf": {
       "sha256": "5c92ec9229769d347f9424de3efb3f0acb257667d1e74efcf87b868b0155fd97",
       "frames": 576000,
       "lufs": -21.17,
       "truePeak": -10.07,
       "peak": -10.07,
       "data": {
-        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
+        "aachen": "sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33"
       }
     },
-    "fx:core.rooms:lecture#a2ac012d554f": {
+    "fx:core.rooms:lecture#70220003b4cf": {
       "sha256": "fc710d4697713d721e173daf6c14caa26a8ad83dbcd68a38bdc4276267998644",
       "frames": 576000,
       "lufs": -21.28,
       "truePeak": -10.01,
       "peak": -10.13,
       "data": {
-        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
+        "aachen": "sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33"
       }
     },
-    "fx:core.rooms:stairs#a2ac012d554f": {
+    "fx:core.rooms:stairs#70220003b4cf": {
       "sha256": "dd3d13834b05befa611df1de5a0cce42191811b91ea1df4f19c82b83728a5aa1",
       "frames": 576000,
       "lufs": -21.12,
       "truePeak": -9.71,
       "peak": -9.97,
       "data": {
-        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
+        "aachen": "sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33"
       }
     },
-    "fx:core.rooms:office#a2ac012d554f": {
+    "fx:core.rooms:office#70220003b4cf": {
       "sha256": "574aeaafa1611783693c40aef3725c6cfdbaa28e2e330e9ded68c95af147b221",
       "frames": 576000,
       "lufs": -21.15,
       "truePeak": -9.58,
       "peak": -9.58,
       "data": {
-        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
+        "aachen": "sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33"
       }
     },
-    "fx:core.rooms:meeting#a2ac012d554f": {
-      "sha256": "179b1b7a8d7daacb2c68445782ed7800f11a24a7917435c4aa025e77cf08e522",
+    "fx:core.rooms:meeting#70220003b4cf": {
+      "sha256": "a4f73b37f01c725a621766b00e5cb302eee1741522150403caa779b18a5d0419",
       "frames": 576000,
-      "lufs": -21.07,
-      "truePeak": -9.8,
-      "peak": -10.21,
+      "lufs": -21.06,
+      "truePeak": -9.69,
+      "peak": -10.32,
       "data": {
-        "aachen": "sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1"
+        "aachen": "sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33"
       }
     }
   }

@@ -65,6 +65,9 @@ export const RECIPE = {
   // (CLEAN_DB), up to the next 10 ms (txOf; the build refuses a tx the rule doesn't give). The listening trial of
   // 2026-10-11 picked the full IR over the hybrid at R7's 80-200 ms cuts 18 times in 19 (T2), so the cut was moved to
   // where the room has every octave but its last 20 dB as measured (or, past an octave's own -40 dB, extrapolated).
+  // A room whose cut AJ chose by ear carries `heard` (why) and a tx the rule doesn't give; the build records the rule's
+  // beside it. MEETING: in round 2 of the trial (2026-10-12) its hybrid at 80 ms, at 200 ms, at the rule's 310 ms and
+  // the full IR sounded almost the same, so it ships the cheapest, 80 ms.
   rooms: [
     { index: 0, label: 'AULA', id: 'aachen.aula-3m', name: 'Aula Carolina', place: 'Aachen', what: 'a former church', distance: 3, tx: 6.74,
       left: ['AIR_1_4/air_binaural_aula_carolina_1_1_3_90_3.mat', 'df810543a76643e034641f03ed05c2c8140e78f75485d8bcb80d35199cb9f35f'],
@@ -86,7 +89,8 @@ export const RECIPE = {
       left: ['AIR_1_4/air_binaural_office_1_1_2.mat', 'aee538f908e1221c517b440cc38ca59167accf15e8d998cf64a7b5849b898534'],
       right: ['AIR_1_4/air_binaural_office_0_1_2.mat', 'd0cddb679f2d65dfc6785258342c8de6c0dc901a5ee326009092537f4f93f379'],
       spec: { t30: [0.65, 0.47, 0.41], edt: 0.31, mix: 24, corr: 0.27 } },
-    { index: 5, label: 'MEETING', id: 'aachen.meeting-2m', name: 'Meeting room', place: 'Aachen', what: 'a meeting room', distance: 1.9, tx: 0.31,
+    { index: 5, label: 'MEETING', id: 'aachen.meeting-2m', name: 'Meeting room', place: 'Aachen', what: 'a meeting room', distance: 1.9, tx: 0.08,
+      heard: 'AJ, trial round 2: 80 ms, 200 ms, the rule\'s 310 ms and the full IR almost the same; the cheapest ships',
       left: ['AIR_1_4/air_binaural_meeting_1_1_3.mat', '7639cf1a6eca4952d34d7178deb042fdcb2865be54bb7f9b76023eda1ee36cad'],
       right: ['AIR_1_4/air_binaural_meeting_0_1_3.mat', '88741ce72a76656b91ca49835556c76df8ee367cebcb83078b1d5222d49315ed'],
       spec: { t30: [0.37, 0.33, 0.29], edt: 0.08, mix: 26, corr: 0.09 } },
@@ -611,7 +615,7 @@ export async function buildRooms(recipe, getRoom, { render, def, notice }) {
     const raw = getRoom(room);
     if (raw.sr !== sr) throw new Error(`${room.id}: ${raw.sr} Hz, the bank is ${sr} Hz`);
     const p = prepRoom(raw, room);
-    if (txOf(p.ref, sr) !== room.tx) throw new Error(`${room.id}: tx ${room.tx} s, but the rule (txOf) gives ${txOf(p.ref, sr)} s`);
+    if (!room.heard && txOf(p.ref, sr) !== room.tx) throw new Error(`${room.id}: tx ${room.tx} s, but the rule (txOf) gives ${txOf(p.ref, sr)} s`);
     const { fit, raw: t60raw, built, early, iters } = fitRoom(p);
     const s16 = toBits(early.eL, early.eR);
     preps.push({ p, early, built, t60raw, fit, iters });
@@ -647,7 +651,7 @@ export async function buildRooms(recipe, getRoom, { render, def, notice }) {
     // not the recording's pedestal or noise)
     const qc = p.cref ? qaRoom(p.cref, hyb, { sr, tx: p.tx }) : null;
     const room = recipe.rooms[i];
-    rows.push({ id: e.id, label: e.label, tries: preps[i].iters, tx: e.tx, txRule: txRule(p.full.mix), mix: p.full.mix, built, fit: e.fit, t60raw, gain: e.gain, level: e.level,
+    rows.push({ id: e.id, label: e.label, tries: preps[i].iters, tx: e.tx, txRule: txRule(p.full.mix), txOf: txOf(p.ref, sr), heard: room.heard || null, mix: p.full.mix, built, fit: e.fit, t60raw, gain: e.gain, level: e.level,
       frames: p.tx, window: early.frames, pass: q.pass, waiver: q.pass ? null : 'waiver pending AJ (spec R13: a room that misses ships only with a written waiver after the listening room\'s verdict)',
       checks: q.checks.map(([name, ok, worst, detail]) => ({ name, pass: ok, worst: worst === Infinity ? null : round(worst, 4), detail })),
       bands: q.bands.map((b) => ({ f: b.f, t20: b.t20.map((x) => (x == null ? null : round(x, 3))), t30: b.t30.map((x) => (x == null ? null : round(x, 3))),

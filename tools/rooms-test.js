@@ -264,7 +264,8 @@ console.log('the ranged zip');
 /* ------------------------------------------------------------------ the bank */
 // (what follows needs the `aachen` bank: node tools/fetch-kits.js --only air-rooms builds it into app/kits/)
 const bank = dataFor(rooms.data).aachen;
-// (the recipe's cuts: the build refuses one that isn't txOf's, the first moment every octave 125 Hz-8 kHz is 40 dB down)
+// (the recipe's cuts: the build refuses one that isn't txOf's, the first moment every octave 125 Hz-8 kHz is 40 dB down,
+// unless AJ chose it by ear: `heard`)
 const wantTx = Object.fromEntries(RECIPE.rooms.map((r) => [r.id, Math.round(r.tx * 1000)]));
 const QA = path.join(path.dirname(fileURLToPath(import.meta.url)), '.out', 'library', 'rooms', 'qa.json');
 console.log('the bank');
@@ -284,7 +285,7 @@ if (!bank) {
     `every room, in the switch's order, carries ${FIELDS.join(', ')} (the fit tail/1 with D, scale, t60 [lo, mid, hi] and the uncapped t60raw, eq, g, mod; the measured T30, EDT and C80 per octave, the mixing time, the noise floor)`);
   ok(JSON.stringify(roomInfo(bank)) === JSON.stringify(ROOM_INFO), `ROOM_INFO (rooms-lib.js, what the card and the agents read) is the header's, field by field (${ROOM_INFO.map((r) => `${r.label} ${r.t30[1]} s at 1 kHz`).join(', ')})`);
   ok(bank.samples.every((s) => Math.round(s.tx * 1000) === wantTx[s.id] && s.frames === Math.round(s.tx * 48000)),
-    `the early cuts are the recipe's (every octave 125 Hz-8 kHz 40 dB down): ${bank.samples.map((s) => `${s.label} ${Math.round(s.tx * 1000)} ms`).join(', ')}`);
+    `the early cuts are the recipe's (every octave 125 Hz-8 kHz 40 dB down, or AJ's by ear): ${bank.samples.map((s) => `${s.label} ${Math.round(s.tx * 1000)} ms`).join(', ')}`);
   // R6: the direct sound is out: the stored IR's first 2.5 ms under -40 dB re its peak
   const heads = bank.samples.map((s) => {
     let pk = 0, h = 0; const n = Math.round(0.0025 * 48000);
@@ -315,8 +316,15 @@ if (!bank) {
     const unsaid = edc.filter(([, c]) => !line.includes(c.worst.toFixed(2)));
     ok(line && !unsaid.length, `docs/SOUNDS.md's QA line names each room's decay-curve miss (${edc.map(([l, c]) => `${l} ${c.worst.toFixed(2)} dB`).join(', ')})${unsaid.length ? `: it leaves out ${unsaid.map(([l]) => l).join(', ')}` : ''}`);
     T.note(`R7's first rule (twice the mixing time, to the next 10 ms, 80-200 ms) gave ${qa.rows.map((r) => `${r.label} ${r.txRule}`).join(', ')} ms; the trial (T2) heard that tail, so the cut is now each room's last octave 40 dB down`);
-    ok(qa.rows.every((r) => r.checks.find((c) => c.name === 'decay curves 250 Hz-4 kHz').pass && r.checks.find((c) => c.name === 'decay curves at 125 Hz and 8 kHz').pass),
-      `every room's decay curves are within the bar against the room as measured (1 dB at 250 Hz-4 kHz, 2 dB at 125 Hz and 8 kHz: ${qa.rows.map((r) => `${r.label} ${r.checks.find((c) => c.name === 'decay curves 250 Hz-4 kHz').worst} / ${r.checks.find((c) => c.name === 'decay curves at 125 Hz and 8 kHz').worst} dB`).join(', ')})`);
+    // (a room whose cut AJ chose by ear, shorter than the rule's, carries `heard` in the recipe and qa.json: its decay
+    // curves are the hybrid's at that cut and are reported, not held to the bar. MEETING since the trial's round 2.)
+    const edcOf = (r) => `${r.label} ${r.checks.find((c) => c.name === 'decay curves 250 Hz-4 kHz').worst} / ${r.checks.find((c) => c.name === 'decay curves at 125 Hz and 8 kHz').worst} dB`;
+    const byRule = qa.rows.filter((r) => !r.heard), byEar = qa.rows.filter((r) => r.heard);
+    ok(byRule.every((r) => r.checks.find((c) => c.name === 'decay curves 250 Hz-4 kHz').pass && r.checks.find((c) => c.name === 'decay curves at 125 Hz and 8 kHz').pass),
+      `every room cut by the rule has its decay curves within the bar against the room as measured (1 dB at 250 Hz-4 kHz, 2 dB at 125 Hz and 8 kHz: ${byRule.map(edcOf).join(', ')})`);
+    ok(byEar.every((r) => RECIPE.rooms.find((x) => x.id === r.id).heard === r.heard && r.tx < r.txOf),
+      `a room cut by ear says why and is shorter than the rule's cut (${byEar.map((r) => `${r.label} ${Math.round(r.tx * 1000)} ms, the rule ${Math.round(r.txOf * 1000)} ms: ${r.heard}`).join('; ') || 'none'})`);
+    for (const r of byEar) T.note(`${r.label} (cut by ear): decay curves ${edcOf(r)}, reported, not held to the bar`);
   }
 }
 

@@ -672,10 +672,12 @@ room table are `rooms-lib.js` (kernel text, shared with the build so that what t
   until every octave from 125 Hz to 8 kHz has decayed 40 dB, then hands off to a tail fitted to the room's decay
   there: an 8-line Householder FDN in Stairwell's family, three absorption bands (shelves at 500 Hz and 4 kHz around a
   mid gain), an output EQ (250 Hz shelf, 1.5 kHz bell, 6 kHz shelf) and a gain. The cut (`tx`) is per room: AULA 6.74
-  s, AULA FAR 6.92 s, LECTURE 0.61 s, STAIRS 0.85 s, OFFICE 0.5 s, MEETING 0.31 s. Below -40 dB each octave of the
+  s, AULA FAR 6.92 s, LECTURE 0.61 s, STAIRS 0.85 s, OFFICE 0.5 s, MEETING 80 ms. Below -40 dB each octave of the
   recording is extrapolated along its own decay (octave-band noise, seeded), because Aula's recording carries a
   pedestal down there and the small rooms meet their noise. (The listening trial of 2026-10-11 heard the first
-  version's 80-200 ms cut, its synthetic tail: the full IR was picked 18 times in 19.)
+  version's 80-200 ms cut, its synthetic tail: the full IR was picked 18 times in 19. MEETING is the exception, cut
+  by ear: in the trial's second round its 80 ms, 200 ms, 310 ms (the rule's cut) and full IR sounded almost the
+  same, so it keeps the cheapest.)
 - **The convolution.** The first 8192 taps play through `dsp.convolver` (its 128-frame head, then 1024-frame blocks);
   the rest through the device's own late part (`roomLate` in `rooms-lib.js`): 4096-frame partitions whose work is
   spread across each block's 32 quanta (a block's spectrum, then a slice of the bins' products a quantum, then the two

@@ -392,7 +392,7 @@ export const ROOMS = [
 export const ROOM_LABELS = ROOMS.map((r) => r[0]);
 // the `aachen` bank (node tools/fetch-kits.js air-rooms builds it: tools/kits/air-rooms.js). Frozen once it ships: a
 // better fit is a new room in a new bank, never a changed one
-export const ROOMS_HASH = 'sha256-a2ac012d554fc16d36e2d87207fe859249bb7b6957295a374040c5866729bdb1';
+export const ROOMS_HASH = 'sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33';
 // what the rack and the pickers say while the bank is on its way, or isn't on this server (ui/rack.js dataLine): the
 // effect passes its input through meanwhile
 export const ROOMS_SAYS = {
@@ -411,5 +411,5 @@ export const ROOM_INFO = [
   { label: 'LECTURE', id: 'aachen.lecture-5m', name: 'Lecture room', place: 'Aachen', what: 'a lecture room', distance: 5.56, t30: [0.855, 0.882, 0.918], edt: 0.77, tx: 0.61 },
   { label: 'STAIRS', id: 'aachen.stairway-2m', name: 'Stairway', place: 'Aachen', what: 'a stairwell', distance: 2, t30: [1.336, 1.174, 1.044], edt: 0.707, tx: 0.85 },
   { label: 'OFFICE', id: 'aachen.office-2m', name: 'Office', place: 'Aachen', what: 'an office', distance: 2, t30: [0.633, 0.492, 0.419], edt: 0.461, tx: 0.5 },
-  { label: 'MEETING', id: 'aachen.meeting-2m', name: 'Meeting room', place: 'Aachen', what: 'a meeting room', distance: 1.9, t30: [0.383, 0.343, 0.309], edt: 0.223, tx: 0.31 },
+  { label: 'MEETING', id: 'aachen.meeting-2m', name: 'Meeting room', place: 'Aachen', what: 'a meeting room', distance: 1.9, t30: [0.383, 0.343, 0.309], edt: 0.223, tx: 0.08 },
 ];

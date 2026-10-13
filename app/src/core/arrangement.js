@@ -35,7 +35,7 @@
 // for millions of notes.
 
 import { newId, LIMITS, songSize, isTakeId } from './project.js';
-import { beatsPerBar } from './music.js';
+import { beatsPerBar, beatSecs, beatsBefore, hasTempoMap, mapInsert, mapRemove } from './music.js';
 import { lanesOf, specFor, cutLane, spliceLane, insertTime, removeTime, laneKey, mkPoint, rt, valueBefore, pointBy } from './automation.js';
 
 const EPS = 1e-6;
@@ -283,7 +283,7 @@ function halves(p, t, c, at) {
   tabOf(c, right);
   const left = { length: r4(rel) };
   if (c.kind === 'audio') {
-    Object.assign(right, { asset: c.asset, offset: r4((+c.offset || 0) + rel * (60 / p.tempo)), gain: +c.gain || 0 });
+    Object.assign(right, { asset: c.asset, offset: r4((+c.offset || 0) + beatSecs(p, rel, c.start)), gain: +c.gain || 0 });
   } else {
     const drums = isDrums(t);
     left.notes = sliceNotes(c.notes, 0, rel, { trim: true });
@@ -390,6 +390,16 @@ export function planClipRepeat(p, op = {}, ctx = null) {
 
 /* ------------------------------------------------------------------------------------------------ insert */
 
+// The tempo.map op that keeps a mapped song's grid on its recording after time is inserted or removed (core/music.js
+// mapInsert / mapRemove), or none: no map, or nothing on it moved.
+function mapOps(p, fn, at, L) {
+  if (!hasTempoMap(p)) return [];
+  const m = fn(p.tempoMap, at, L);
+  if (JSON.stringify(m.anchors) === JSON.stringify(p.tempoMap.anchors)) return [];
+  if (m.anchors.length > LIMITS.anchors) throw new Error(`the tempo map would hold ${m.anchors.length} anchors; a map holds up to ${LIMITS.anchors}`);
+  return [{ type: 'tempo.map', map: m }];
+}
+
 export function planTimeInsert(p, op = {}, ctx = null) {
   const at = beatArg(op.at, 'at (the beat to insert at)');
   const L = beatArg(op.length, 'length (how many beats to insert)');
@@ -428,12 +438,15 @@ export function planTimeInsert(p, op = {}, ctx = null) {
   }
   const laneOps = lanesPlan(p, ctx, (pts, spec) => insertTime(pts, at, L, spec));
   ops.push(...laneOps);
+  const grid = mapOps(p, mapInsert, at, L);
+  ops.push(...grid);
   const bits = [];
   if (moved) bits.push(`${plural(moved, 'clip')} moved right`);
   if (split) bits.push(`${plural(split, 'clip')} split there`);
   if (shifted || grown) bits.push([shifted && `${plural(shifted, 'section')} moved`, grown && `${plural(grown, 'section')} grew`].filter(Boolean).join(', '));
   if (loop) bits.push('the loop moved with them');
   if (laneOps.length) bits.push(`${plural(laneOps.length, 'automation lane')} moved too`);
+  if (grid.length) bits.push('the grid moved with the recording');
   return {
     ops, at, length: L, moved, split, sections: { moved: shifted, grown }, loop, lanes: laneOps.length,
     summary: `Inserted ${spanLabel(p, L)} at ${whereLabel(p, at)}${bits.length ? `: ${bits.join('; ')}` : ''}.`,
@@ -450,7 +463,6 @@ export function planTimeRemove(p, op = {}, ctx = null) {
   const B = A + L;
   const cs = (x) => (x < A + EPS ? x : x < B - EPS ? A : x - L);   // a start after the cut closes up
   const ce = (x) => (x <= A + EPS ? x : x <= B + EPS ? A : x - L); // an end
-  const spb = 60 / p.tempo;
   const mint = idMinter(p);
   const ops = [];
   let removed = 0, trimmed = 0, moved = 0, cutNotes = 0;
@@ -466,7 +478,7 @@ export function planTimeRemove(p, op = {}, ctx = null) {
       if (c.kind === 'audio') {
         const pieces = [left, right].filter((x) => x && len(x) >= MIN_CLIP - EPS);
         if (!pieces.length) { ops.push({ type: 'clip.remove', track: t.id, clip: c.id }); removed++; continue; }
-        const at0 = (x) => ({ start: r4(cs(x[0])), length: r4(len(x)), offset: r4((+c.offset || 0) + (x[0] - s) * spb) });
+        const at0 = (x) => ({ start: r4(cs(x[0])), length: r4(len(x)), offset: r4((+c.offset || 0) + beatSecs(p, x[0] - s, s)) });
         const first = at0(pieces[0]);
         const patch = {};
         for (const k of ['start', 'length', 'offset']) if (Math.abs((k === 'offset' ? +c.offset || 0 : c[k]) - first[k]) > EPS) patch[k] = first[k];
@@ -524,6 +536,8 @@ export function planTimeRemove(p, op = {}, ctx = null) {
   }
   const laneOps = lanesPlan(p, ctx, (pts, spec) => removeTime(pts, A, L, spec));
   ops.push(...laneOps);
+  const grid = mapOps(p, mapRemove, A, L);
+  ops.push(...grid);
   const bits = [];
   if (removed) bits.push(`${plural(removed, 'clip')} gone`);
   if (trimmed) bits.push(`${plural(trimmed, 'clip')} trimmed`);
@@ -532,6 +546,7 @@ export function planTimeRemove(p, op = {}, ctx = null) {
   if (secCut) bits.push(`${plural(secCut, 'section')} shortened`);
   if (loop) bits.push(loop === 'off' ? 'the loop was inside them, so it is off' : 'the loop moved with them');
   if (laneOps.length) bits.push(`${plural(laneOps.length, 'automation lane')} closed up too`);
+  if (grid.length) bits.push('the grid closed up with the recording');
   return {
     ops, at: A, length: L, removed, trimmed, moved, notesCut: cutNotes, sections: { removed: secGone, shortened: secCut, moved: secMoved }, loop, lanes: laneOps.length,
     summary: `Deleted ${spanLabel(p, L)} from ${whereLabel(p, A)}${bits.length ? `: ${bits.join(', ')}` : ''}.`,
@@ -543,6 +558,8 @@ export function planTimeRemove(p, op = {}, ctx = null) {
 export function planSectionDuplicate(p, op = {}, ctx = null) {
   const sec = findSection(p, op.section, ctx);
   const a = sec.start, b = sec.start + sec.length, L = sec.length;
+  // (in this slice a part whose grid follows a recording isn't copied: the copy's audio and its grid wouldn't agree)
+  if (hasTempoMap(p) && a < p.tempoMap.anchors[p.tempoMap.anchors.length - 1].beat - EPS) throw new Error('This part follows a recording; copying it would break the grid');
   const to = op.to == null ? b : beatArg(op.to, 'to (the beat the copy starts at)');
   if (to < 0) throw new Error('to must be a beat >= 0');
   const push = !!op.push;
@@ -568,7 +585,7 @@ export function planSectionDuplicate(p, op = {}, ctx = null) {
         x.notes = from > s ? sliceNotes(c.notes, from - s, end - s, { trim: e > b + EPS, tails: true, drums: isDrums(t) })
           : e > b + EPS ? sliceNotes(c.notes, 0, end - s, { trim: true }) : clone(c.notes);
         notes += x.notes.length;
-      } else if (from > s) x.offset = r4((+c.offset || 0) + (from - s) * (60 / p.tempo));
+      } else if (from > s) x.offset = r4((+c.offset || 0) + beatSecs(p, from - s, s));
       clips.push({ track: t.id, clip: x.id, from: c.id });
       ops.push({ type: 'clip.add', track: t.id, clip: x });
     }
@@ -686,11 +703,11 @@ const covers = (c, a, b) => c.start <= a + EPS && clipEnd(c) >= b - EPS;
 // Can piece b of a lane, right after piece a, be one clip with it? Notes can (each note keeps its sounding part). Audio
 // only when b carries on in the same file where a stops, as a cut leaves it: two recordings side by side (what played
 // over a range was two takes) stay two clips, each playing its own file.
-function joins(a, b, spb) {
+function joins(a, b, p) {
   if (a === b) return true;
   if (a.kind !== b.kind) return false;
   if (a.kind !== 'audio') return true;
-  return a.asset === b.asset && (+a.gain || 0) === (+b.gain || 0) && Math.abs((+b.offset || 0) - ((+a.offset || 0) + (b.start - a.start) * spb)) < 1e-3;
+  return a.asset === b.asset && (+a.gain || 0) === (+b.gain || 0) && Math.abs((+b.offset || 0) - ((+a.offset || 0) + beatSecs(p, b.start - a.start, a.start))) < 1e-3;
 }
 function cutsOf(clips) {
   const xs = [];
@@ -723,12 +740,12 @@ const laneName = (t, l) => (l && l.name) || t.name;
 // The ops that make a folder's lanes play `plays` (one lane index or -1 per stretch between `cuts`), cut only where
 // the take changes (or a lane starts or stops), without the lanes in `drop`.
 function rebuildFolder(p, t, f, cuts, plays, drop = new Set()) {
-  const mint = idMinter(p), drums = isDrums(t), spb = 60 / p.tempo;
+  const mint = idMinter(p), drums = isDrums(t);
   const m = cuts.length - 1;
   const cov = f.lanes.map((l) => [...Array(m).keys()].map((k) => l.clips.find((c) => covers(c, cuts[k], cuts[k + 1])) || null));
   const keep = (k) => plays[k - 1] !== plays[k] || f.lanes.some((l, i) => !drop.has(i) && !!cov[i][k - 1] !== !!cov[i][k]);
   // (a lane also keeps a cut between two of its pieces that aren't one recording: two takes side by side stay two)
-  const seam = (i, k) => !!cov[i][k - 1] && !!cov[i][k] && !joins(cov[i][k - 1], cov[i][k], spb);
+  const seam = (i, k) => !!cov[i][k - 1] && !!cov[i][k] && !joins(cov[i][k - 1], cov[i][k], p);
   const ops = [];
   f.lanes.forEach((l, i) => {
     if (drop.has(i)) { for (const c of l.clips) ops.push({ type: 'clip.remove', track: t.id, clip: c.id }); return; }
@@ -749,7 +766,7 @@ function rebuildFolder(p, t, f, cuts, plays, drop = new Set()) {
     const runs = [];
     for (const c of l.clips) {
       const r = runs[runs.length - 1];
-      if (r && near(r.end, c.start) && joins(r.clips[r.clips.length - 1], c, spb)) { r.clips.push(c); r.end = clipEnd(c); } else runs.push({ start: c.start, end: clipEnd(c), clips: [c] });
+      if (r && near(r.end, c.start) && joins(r.clips[r.clips.length - 1], c, p)) { r.clips.push(c); r.end = clipEnd(c); } else runs.push({ start: c.start, end: clipEnd(c), clips: [c] });
     }
     const used = new Set();
     for (const run of runs) {
@@ -791,7 +808,7 @@ function rebuildFolder(p, t, f, cuts, plays, drop = new Set()) {
           if (src.name) x.name = src.name;
           if (src.color) x.color = src.color;
           if (w.mute) x.mute = true;
-          if (src.kind === 'audio') Object.assign(x, { asset: src.asset, offset: r4((+src.offset || 0) + (w.start - src.start) * spb), gain: +src.gain || 0 });
+          if (src.kind === 'audio') Object.assign(x, { asset: src.asset, offset: r4((+src.offset || 0) + beatSecs(p, w.start - src.start, src.start)), gain: +src.gain || 0 });
           else x.notes = ns;
           ops.push({ type: 'clip.add', track: t.id, clip: x });
         }
@@ -896,10 +913,10 @@ export function planTakesFlatten(p, op = {}, ctx = null) {
   // what plays merges into one clip, as Ableton's Flatten and Logic's Flatten and Merge do: pieces end to end are one
   // run (audio only while it carries on in one recording: two recordings side by side stay two clips); each run keeps
   // its first piece (its id), grown over the run, with every note where it played
-  const spb = 60 / p.tempo, drums = isDrums(t), runs = [];
+  const drums = isDrums(t), runs = [];
   for (const c of stay) {
     const r = runs[runs.length - 1], last = r && r[r.length - 1];
-    if (last && near(clipEnd(last), c.start) && last.kind === c.kind && (c.kind === 'notes' || joins(last, c, spb))) r.push(c); else runs.push([c]);
+    if (last && near(clipEnd(last), c.start) && last.kind === c.kind && (c.kind === 'notes' || joins(last, c, p))) r.push(c); else runs.push([c]);
   }
   for (const run of runs) {
     const head = run[0];
@@ -997,10 +1014,10 @@ const relNotes = (ns, from, to, lo = -Infinity, hi = Infinity) => ns.filter((n) 
 function reshape(p, t, c, pieces, mint) {
   const ops = [], ids = [];
   if (!pieces.length) return { ops: [{ type: 'clip.remove', track: t.id, clip: c.id }], ids };
-  const drums = isDrums(t), cs = c.start, ce = clipEnd(c), spb = 60 / p.tempo;
+  const drums = isDrums(t), cs = c.start, ce = clipEnd(c);
   pieces.forEach((pc, i) => {
     const notes = c.kind !== 'notes' ? null : pc.notes || (pc.start > cs + EPS ? sliceNotes(c.notes, pc.start - cs, pc.end - cs, { trim: pc.end < ce - EPS, tails: true, drums }) : sliceNotes(c.notes, 0, pc.end - cs, { trim: pc.end < ce - EPS }));
-    const offset = c.kind === 'audio' ? r4((+c.offset || 0) + (pc.start - cs) * spb) : null;
+    const offset = c.kind === 'audio' ? r4((+c.offset || 0) + beatSecs(p, pc.start - cs, cs)) : null;
     if (i === 0) {
       const patch = {};
       if (!near(pc.start, cs)) patch.start = r4(pc.start);
@@ -1140,7 +1157,7 @@ function windowOps(p, t, c, start, end) {
     for (const n of c.notes) (n.t - delta < -1e-6 ? gone : keep).push(n);
     if (gone.length) ops.push({ type: 'notes.remove', track: t.id, clip: c.id, ids: gone.map((n) => n.id) });
     if (keep.length) ops.push({ type: 'notes.set', track: t.id, clip: c.id, notes: keep.map((n) => ({ id: n.id, t: r4(Math.max(0, n.t - delta)) })) });
-  } else ops[0].patch.offset = Math.max(0, r4((c.offset || 0) + delta * (60 / p.tempo)));
+  } else ops[0].patch.offset = Math.max(0, r4((c.offset || 0) + beatSecs(p, delta, c.start)));
   return ops;
 }
 
@@ -1150,7 +1167,7 @@ export function planClipTrim(p, op = {}, ctx = null) {
   const end = beatArg(op.end ?? clipEnd(c), 'end');
   // an audio clip's window opens no earlier than its file starts: the start stops there, and the recording stays on
   // the beats it was played on (an offset can't go below 0, so a start past it would slide the whole file earlier)
-  if (c.kind === 'audio') start = Math.max(start, r4(c.start - (+c.offset || 0) / (60 / p.tempo)));
+  if (c.kind === 'audio') start = Math.max(start, r4(c.start - beatsBefore(p, c.start, +c.offset || 0)));
   if (!(start >= 0) || end - start < MIN_CLIP - EPS) throw new Error(`a clip must run at least ${MIN_CLIP} beats from a start >= 0${c.kind === 'audio' && start > 0 ? ` (an audio clip starts no earlier than its recording, beat ${r4(start)} here)` : ''}`);
   const ops = Math.abs(start - c.start) < 1e-9 && Math.abs(end - clipEnd(c)) < 1e-9 ? [] : windowOps(p, t, c, start, end);
   const uncovered = [], covered = [];

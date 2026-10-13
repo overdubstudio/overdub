@@ -294,6 +294,9 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   await page.addInitScript(() => performance.setResourceTimingBufferSize(5000));
   const off = [];
   page.on('request', (r) => { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol) && u.host !== new URL(base).host) off.push(u.host); });
+  // (the browser keeps 250 resource timings by default, and the studio loads more modules than that before its fonts:
+  // room for every entry, so the font files are counted however many modules boot)
+  await page.addInitScript(() => performance.setResourceTimingBufferSize(5000));
   for (const [what, route, want, ready] of PAGES) {
     await page.goto(base + route, { waitUntil: 'load' });
     if (ready) await page.waitForSelector(ready, { timeout: 30000 }).catch(() => {});

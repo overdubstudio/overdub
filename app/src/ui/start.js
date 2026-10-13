@@ -5,8 +5,9 @@
 // Loose, As played) or another reading ("Not quite?"). Then the next part: Hum over it.
 //
 // The door is the blank song's empty state (arranger.js syncEmpty draws doorOf here), on every blank song: Tap a beat
-// (the primary), Hum a tune (over a simple beat), Play the keys, and with no playing in time Draw a beat, Pick a
-// groove or Ask your agent. Nothing pops up over a song with tracks.
+// (the primary), Hum a tune (over a simple beat), Play the keys, Flip a song (ui/flip.js: a song you own, split,
+// mapped and marked), and with no playing in time Draw a beat, Pick a groove or Ask your agent. Nothing pops up over a
+// song with tracks.
 //
 // The stage covers the centre column (the arranger and the bottom pane, inert under it); the top bar and the agent
 // stay. On a phone it is the whole screen. Steps:
@@ -36,6 +37,9 @@
 //   'readings'  Which one nods along with you? The other place the 1 could be and the tempo halved or doubled (a hum:
 //               rounds.js humReadingsOf, a soft tick on every beat under it, and Hum it again over a beat); picking
 //               one plays it at once (joined to the landing); Use this one, or Esc puts back what was there.
+//   'choose'    the same readings step for another flow (app.start.choose: Flip a song's grids, ui/flip.js): its own
+//               title and rows; picking one plays it (opts.pick), Use this one keeps it (opts.use), Back or Esc puts
+//               back what was there (opts.back, also on any other way out).
 // Esc before any hit closes the stage; after hits it asks once ("Leave without keeping this take? It stays in Takes.").
 // "Skip to the studio" is always at the top right. While the stage is open the agent's song-changing tools wait
 // (app.start.busy, read by agent/tools.js's recording check) and the studio's keys stay under it.
@@ -56,7 +60,8 @@
 //   setView('free' | 'click'), setSpeed(bpm), tapTempo(perfMs), click() (the click view's take: { bpm, hits, rounds, kept, left,
 //   playAt, openAt } or null), window() (the beat window's last frame: ui/beatwindow.js state()),
 //   setLevel(level), readings(), useReading(i), landed(), take(), tempoShown() (the BPM shown while you play, or null:
-//   the top bar's "~"), on('step' | 'land' | 'close', fn) }
+//   the top bar's "~"), on('step' | 'land' | 'close', fn),
+//   choose({ run, title, sub, items: [{ main, what }], at, pick(i) -> ok, use(i), back() }), pickChoice(i) }
 // While the pulse is weak (the reading's fit under 0.5) the status line asks for one more time round; Done is never
 // blocked. A landed take goes to capture with its clip id, what was played as played and the rounds (capture.ofClip).
 // On 'in' the stage holds the sound card (app.sounds.setHost, then offer({ track, from: 'take', take })) and gives the
@@ -98,6 +103,7 @@ export function doorOf(app, ctx = {}) {
   // (the doors that don't use the stage: the coach strip docks when their first part lands, app.coach.expect)
   const expect = (door) => { try { app.coach?.expect?.(door); } catch { /* ok */ } };
   const keys = () => { expect('keys'); return app.onboard?.keysOver ? app.onboard.keysOver() : app.ui.show('sketch'); };
+  const flip = () => (app.flip ? app.flip.pick() : app.importers?.pickAudio?.());
   const row = (label, why, run, primary = false, key = null) => h('li.st-way', { onclick: (e) => { if (!e.target.closest('button')) run(); } },
     h(primary ? 'button.btn.btn-go.st-way-b' : 'button.btn.st-way-b', { type: 'button', onclick: go(run), dataset: { way: label }, 'aria-describedby': null }, label),
     h('span.st-way-why', why, key ? [' ', h('kbd', key)] : null),
@@ -105,8 +111,10 @@ export function doorOf(app, ctx = {}) {
   const ledger = h('ul.ledger.st-ways.ar-empty-actions', { 'aria-label': 'Ways into the song' },
     row('Tap a beat', 'F J K L on your keys, or the pads on screen. Any speed.', tap, true),
     row('Hum a tune', 'Over a simple beat, or on its own. Nothing records until you press Hum.', hum),
-    row('Play the keys', 'Your computer keys or a MIDI keyboard. Any speed.', keys));
-  // ↑ ↓ walk the three ways
+    row('Play the keys', 'Your computer keys or a MIDI keyboard. Any speed.', keys),
+    // (behind workflow.flip: off, the door has its three ways)
+    toggleOn('workflow.flip') ? row('Flip a song', 'Bring a song you own. It gets split, mapped and marked; the drop is yours.', flip) : null);
+  // ↑ ↓ walk the ways
   ledger.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     const bs = [...ledger.querySelectorAll('.st-way-b')], i = bs.indexOf(document.activeElement);
@@ -134,7 +142,7 @@ export default function (app) {
   const emit = (t, d) => { if (t === 'land' && d?.clip) S.everLanded = { track: d.track, clip: d.clip }; for (const fn of fns.get(t) || []) { try { fn(d); } catch (e) { console.error('start listener', e); } } };
 
   // the session's state (never the song's): what is open, what has been played, what landed
-  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false, hum: null, under: null, tune: true, tick: null, inLine: '', trying: null, over: null, everLanded: null };
+  const S = { step: null, kind: null, view: 'free', hits: [], read: null, pads: null, guide: null, ckTempo: null, ckFold: null, speed: 100, beat: BEATS[0][1], landed: null, level: 'tight', reading: 0, before: null, asking: false, gridAt: 0, flash: new Map(), ck: null, clickLent: false, hum: null, under: null, tune: true, tick: null, inLine: '', trying: null, over: null, everLanded: null, choice: null };
   let stage = null, body = null, statusEl = null, opener = null;
   const mainEl = () => document.querySelector('.ew-main');
   const under = () => { const m = mainEl(); return m ? [...m.children].filter((c) => c !== stage) : []; };
@@ -202,7 +210,9 @@ export default function (app) {
     S.step = step;
     S.asking = false;
     if (stage) {
-      stage.querySelector('.st-stepname').textContent = { play: 'Play it', hum: 'Play it', in: 'It’s in', readings: 'It’s in' }[step] || '';
+      stage.querySelector('.st-stepname').textContent = step === 'choose' ? S.choice?.stepName || 'Pick a reading' : { play: 'Play it', hum: 'Play it', in: 'It’s in', readings: 'It’s in' }[step] || '';
+      stage.querySelector('.st-run').textContent = step === 'choose' ? S.choice?.run || 'Start a song' : 'Start a song';
+      stage.setAttribute('aria-label', step === 'choose' ? S.choice?.run || 'Start a song' : 'Start a song');
       stage.dataset.step = step;
     }
     draw();
@@ -237,8 +247,10 @@ export default function (app) {
     // (a take played and not kept stays in Takes)
     if (S.step === 'play' && played()) keepInTakes();
     if (S.step === 'hum') hum.stop({ quiet });
+    // (another flow's readings left any way but Use this one: what was there goes back)
+    if (S.step === 'choose' && S.choice && !S.choice.settled) { S.choice.settled = true; try { S.choice.back?.(); } catch (e) { console.error('start: choose back', e); } }
     giveHost();
-    const playing = S.step === 'in' || S.step === 'readings';
+    const playing = S.step === 'in' || S.step === 'readings' || S.step === 'choose';
     if (!playing || to !== 'song') { try { if (engine.playing && (S.guide || S.step === 'play')) engine.stop(); } catch { /* ok */ } }
     release();
     giveClick();
@@ -249,7 +261,7 @@ export default function (app) {
     const info = { from: was, to, kind: S.kind, free: !!S.take?.free, over: S.over ? { track: S.over.track, clip: S.over.clip, drums: S.over.drums } : null,
       landed: S.everLanded && store.findClip(S.everLanded.clip) ? { track: S.everLanded.track, clip: S.everLanded.clip } : null,
       under: S.under?.clip && store.findClip(S.under.clip) ? { track: S.under.track, clip: S.under.clip } : null };
-    S.step = null; S.kind = null; S.asking = false; S.hum = null; S.over = null; S.everLanded = null;
+    S.step = null; S.kind = null; S.asking = false; S.hum = null; S.over = null; S.everLanded = null; S.choice = null;
     unmount();
     if (!quiet) emit('close', info);
   }
@@ -293,7 +305,36 @@ export default function (app) {
   }
   const span = () => (S.hits.length ? S.hits[S.hits.length - 1].t - S.hits[0].t : 0);
   const showBpm = () => !!S.read && S.hits.length >= 6 && span() >= 3;
+  // another flow's readings (Flip a song's grids): the stage's readings step with its own rows
+  function choose(opts) {
+    if (!opts || !Array.isArray(opts.items) || !opts.items.length) return false;
+    if (S.step) close({ quiet: true });
+    S.choice = { ...opts, i: Math.max(0, Math.min(opts.items.length - 1, opts.at || 0)), settled: false };
+    S.kind = 'choose';
+    mount();
+    setStep('choose');
+    return true;
+  }
+  function pickChoice(i) {
+    const c = S.choice;
+    if (S.step !== 'choose' || !c) return false;
+    i = Math.max(0, Math.min(c.items.length - 1, i));
+    let ok = true;
+    try { ok = c.pick ? c.pick(i) !== false : true; } catch (e) { console.error('start: choose pick', e); ok = false; }
+    if (ok) c.i = i;
+    draw();
+    return ok;
+  }
+  function useChoice() {
+    const c = S.choice;
+    if (S.step !== 'choose' || !c) return false;
+    c.settled = true;
+    try { c.use?.(c.i); } catch (e) { console.error('start: choose use', e); }
+    close({ to: 'song' });
+    return true;
+  }
   function done() {
+    if (S.step === 'choose') return useChoice();
     if (S.step === 'play') return S.view === 'click' ? landClick() : land();
     if (S.step === 'in') return next();
     if (S.step === 'readings') return useReading(S.reading, { back: true });
@@ -683,7 +724,7 @@ export default function (app) {
       return;
     }
     if (S.step === 'readings') { useReading(S.before ?? S.reading, { back: true }); return; }
-    close({ to: S.step === 'in' ? 'song' : 'studio' });
+    close({ to: S.step === 'in' || S.step === 'choose' ? 'song' : 'studio' });
   }
 
   /* ---------------------------------------------------------------- drawing */
@@ -790,6 +831,20 @@ export default function (app) {
       requestAnimationFrame(() => body?.querySelector('.st-reading.sel')?.focus());
       // (a hum's reading plays with a tick on every beat under it, on a preview track)
       if (isHum) hum.tickOn(r.readings[S.reading] || r.readings[0]);
+    } else if (S.step === 'choose') {
+      const c = S.choice;
+      const list = h('ul.ledger.st-readings.st-choose', { role: 'listbox', 'aria-label': 'Readings' }, c.items.map((it, i) => h('li.ledger-row.st-reading' + (i === c.i ? '.sel' : ''), { role: 'option', tabindex: i === c.i ? 0 : -1, 'aria-selected': String(i === c.i), onclick: () => pickChoice(i) },
+        h('span.num.st-rbpm', it.main), h('span.what', it.what), h('span.t3', i === c.i ? 'hearing' : ''))));
+      list.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); pickChoice((c.i + (e.key === 'ArrowDown' ? 1 : c.items.length - 1)) % c.items.length); body?.querySelector('.st-reading.sel')?.focus(); }
+      });
+      body.replaceChildren(
+        h('div.st-head', h('div', h('h2.st-title.disp', c.title || 'Which one nods along?'), c.sub ? h('p.st-sub', c.sub) : null)),
+        list,
+        h('footer.st-foot', statusEl,
+          h('button.btn.btn-txt', { type: 'button', onclick: () => leave() }, 'Back'),
+          h('button.btn.btn-go.st-use', { type: 'button', onclick: () => useChoice() }, 'Use this one')));
+      requestAnimationFrame(() => body?.querySelector('.st-reading.sel')?.focus());
     }
   }
   // the stage's one primary on 'in': the run's next part (Enter), or Back to the song when there's none
@@ -963,7 +1018,7 @@ export default function (app) {
   }
 
   for (const id of PAD_ROWS) { const r = ROWS.find((x) => x.id === id); K(r.key, on('play'), (e) => tap(id, e?.timeStamp || performance.now()), `Tap the ${(r.short || r.label).toLowerCase()} (Start a song)`, { hidden: true }); }
-  K('Space', () => S.step === 'play' || S.step === 'in' || S.step === 'readings', () => done(), 'Done (Start a song)', { hidden: true });
+  K('Space', () => S.step === 'play' || S.step === 'in' || S.step === 'readings' || S.step === 'choose', () => done(), 'Done (Start a song)', { hidden: true });
   K('Enter', () => S.step === 'play' && !document.activeElement?.closest?.('button'), () => done(), 'Done (Start a song)', { hidden: true });
   K('Backspace', on('play'), () => again(), 'Start again (Start a song)', { hidden: true });
   // over a click: T is Tap it, ← → step the Speed (each a fresh take)
@@ -1003,7 +1058,7 @@ export default function (app) {
   ui.on?.('sounds', (d) => { const tr = d?.trying; if (tr && S.landed && tr.track === S.landed.track && tr.name) S.trying = tr.name; });
   // while a take is played on the stage, the agent's song-changing tools wait (agent/tools.js reads app.start.busy)
   const api = app.start = {
-    open, close: (o) => close(o), tap, done, again, setLevel, useReading: (i) => useReading(i), humNow, humFree, leave, setView, setSpeed, tapTempo,
+    open, close: (o) => close(o), tap, done, again, setLevel, useReading: (i) => useReading(i), humNow, humFree, leave, choose, pickChoice, setView, setSpeed, tapTempo,
     hum: () => (S.step === 'hum' ? hum.state() : null), setTune, againOverBeat, tick: () => hum.tick(),
     click: () => (S.ck ? { bpm: S.ck.bpm, hits: S.ck.hits.length, rounds: S.ck.folded, kept: S.ck.fold ? S.ck.fold.notes.length : 0, left: S.ck.fold ? S.ck.fold.strays.length : 0, fold: S.ck.fold ? S.ck.fold.notes.map(({ p, t }) => ({ p, t })) : [], playAt: S.ck.playAt, openAt: S.ck.openAt } : null),
     window: () => (bw ? bw.state() : null),
@@ -1069,6 +1124,7 @@ const CSS = `
 .st-speed { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 22px; }
 .st-tapit { color: var(--text-3); }
 .st-readings .ledger-row { --ledger-cols: 132px 1fr auto; cursor: pointer; padding: 12px 8px; }
+.st-choose .ledger-row { --ledger-cols: 136px 1fr auto; }
 .st-hwin { display: block; width: 100%; height: clamp(140px, 26vh, 220px); }
 .st-tune { margin-left: auto; }
 .st-inrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 28px; align-items: start; }

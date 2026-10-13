@@ -17,9 +17,9 @@
 // with or without it. installWorkspace(ui, app, decision) is called by main.js straight after createShell.
 
 import { h, css, byline, authorOf } from './dom.js';
+import { on as toggleOn } from '../toggles.js';
 import { kitHashes, kitState, kitLine, prefetchKit } from './kitload.js';
 import { WORKSPACE_KEY, VIEWS, readSaved } from './workspace-view.js';
-import { on as toggleOn } from '../toggles.js';
 
 // The registry. Ids are forever. Copy is final (docs/BRAND.md voice): the purpose is what More says, in a musician's
 // words. the: the note says "the Mixer". panels: panel ids (their region in region). where: where it is on screen,
@@ -337,7 +337,9 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
     }
     app.browser?.search?.(it.def.name);
   }
-  // Help: the guide's headings, read once from the site's guide page (no page, no Help rows)
+  // Help: the guide's headings, read once from the site's guide page (no page, no Help rows); a feature's own heading
+  // (its id on the page) only while its toggle is on
+  const HELP_TOGGLES = { 'flip-a-song': 'workflow.flip' };
   let helpRows = null, helpAsked = false;
   function loadHelp() {
     if (helpAsked) return;
@@ -346,7 +348,8 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
     fetch(url, { credentials: 'same-origin' }).then((r) => (r.ok ? r.text() : '')).then((txt) => {
       if (!txt) { helpRows = []; return; }
       const doc = new DOMParser().parseFromString(txt, 'text/html');
-      helpRows = [...doc.querySelectorAll('h2[id], h3[id]')].map((el) => ({ kind: 'help', id: 'help:' + el.id, title: el.textContent.trim(), purpose: 'the guide', aliases: [], href: `${url.pathname}#${el.id}` }));
+      // (a heading for a feature that's off here isn't offered: HELP_TOGGLES)
+      helpRows = [...doc.querySelectorAll('h2[id], h3[id]')].filter((el) => !HELP_TOGGLES[el.id] || toggleOn(HELP_TOGGLES[el.id])).map((el) => ({ kind: 'help', id: 'help:' + el.id, title: el.textContent.trim(), purpose: 'the guide', aliases: [], href: `${url.pathname}#${el.id}` }));
       if (findOpen) renderFind();
     }).catch(() => { helpRows = []; });
   }

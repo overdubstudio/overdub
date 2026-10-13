@@ -174,7 +174,7 @@ the device's presets.
 | tool | what it does |
 |---|---|
 | `get_project` | the song: title, tempo, key, meter, sections, tracks with instrument, inserts (with params) and clips, the selection and the last few history entries. `detail: "full"` (optionally with `track`) includes every note. A device with over 40 params is shown as its preset and what differs from it (`preset "Bokeh" + {"flt_cutoff":900}`), or what differs from its defaults. Automation lanes are listed under their track (`auto: Keyhole cutoff (fx_k) 31:600 32:4500 48:600, by claude`, held ones marked). `held` lists the song's devices kept off on this computer (see below); `from_link`, first, says the song came from someone's link and isn't the person's yet; `key_note` says when the key is a new song's default nobody chose (C minor, as Sketch treats it). |
-| `get_guide` | the studio's guides: `etiquette`, `devices` (kernel writing), `ops`, `lexicon`, `transforms` (every transform's params and defaults). Outside agents: read first. `lexicon` also returns `personal`: what this human means by warm, fat and tight, learned from their A/B picks. Follow it. |
+| `get_guide` | the studio's guides: `etiquette`, `devices` (kernel writing), `ops`, `lexicon`, `transforms` (every transform's params and defaults), `genres` (with `section`: `bass-music`, `metal`), `workflows` (with `section`: `flip`). Outside agents: read first. `lexicon` also returns `personal`: what this human means by warm, fat and tight, learned from their A/B picks. Follow it. |
 | `get_selection` | what the human is looking at: track, clip (with notes, and a grid for drums), selected notes, range (beats and bars), insert (with params), playhead, and the key (marked when nobody chose it yet); `from_link` as `get_project` has it; `trying`: `{ track, device }` while the person is hearing a sound on a track before keeping it (the song still has the old one, and `track.instrument` says that one; your next call that reads or changes the song puts it back first), else `null`; `start`: `{ step, kind, tempo, sure, rounds, landed: { track, clip } | null }` while the person is starting a song on Start a song's stage, else `null` ([below](#start-a-song)). |
 | `get_history` | recent changes, newest first: who, label, reason, summary. Check it before redoing something. |
 | `apply_ops` | change the song: a list of ops, one undo step, signed by you, with `label` and `reason`. All or nothing. Everything it adds is signed by you: any `by` in the ops is dropped, and so are internal fields (names starting with `_`). Devices go through `define_device`, not `device.define`. Params are checked against each device first (see [Param values](#param-values)), and `preset: "<name>"` sets a named sound. Returns created ids (two creating ops of one kind with no ref come back as `section1`, `section2`, …), a compact diff (a device's line names a dozen param changes and how many more), the presets it set, or an error naming the failing op. Takes the automation ops (`auto.write`, `auto.clear`, `auto.set`) and says, in `lanes`, when a static set lands on a param whose lane plays (it only changes the value the lane holds at). Its description names each op and its fields; `get_guide "ops"` has the rest. |
@@ -339,7 +339,8 @@ Tracks may be named by id or exact name; `'master'` takes inserts. All times are
 { type: 'clip.add', track, ref?, clip: { start, length, name?, notes?: "text", grid? } }
 { type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo? } }   // mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; clip.remove / clip.move { toTrack?, start? }
 { type: 'notes.add' | 'notes.replace', track, clip, notes: "text" }     // notes.remove { ids } / notes.set { notes: [{ id, p?, t?, d?, v?, s?, f? }] }
-{ type: 'section.add', section: { name, start, length } }                // section.set / section.remove
+{ type: 'section.add', section: { name, start, length, key? } }          // section.set / section.remove; key: its own key ("F# minor")
+{ type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat, sec }, …], clip? } | null }   // the grid follows a recording (Flip a song, below); null: one tempo again
 // a name is plain text up to 100 characters (the .set ops refuse a longer one); a colour is var(--c-1)..var(--c-8) or hex
 { type: 'section.duplicate', section, to?, push? }   { type: 'time.insert' | 'time.remove', at, length }   // beats; across the whole song
 { type: 'clip.repeat', track, clip, times, mode?: 'copies' | 'loop' }   { type: 'clip.split', track, clip, at }   // (the arrange_song tool does these by bar)
@@ -562,6 +563,31 @@ the same for one device. `render_and_measure { targets: "bass-music" }` checks a
 (`window: "drop"`: short-term loudness, crest, the low end's mono-ness under 120 Hz, the bands; `"song"`: integrated
 loudness and true peak), the misses first, each in words: "integrated loudness -9.1 LUFS (want -8 to -6), 1.1 LUFS
 under". measure() reports the low end as `lowSideDb` and `lowCorrelation`.
+
+## Flip a song: the workflows guide
+
+A person can bring a song they own in through the door's **Flip a song**: the studio splits it (where the site has a
+stems runner), maps the grid to the recording, sets the key, marks the sections and puts the chords on a muted Chords
+track, all before an agent is asked anything. `get_project`'s summary says so in one line:
+
+```
+Grid follows Original: 68.4 BPM nominal, 66.9–70.2, 2 free spans (beats 8–20, 112–128); key D minor
+```
+
+(and, when a move left the recording off its grid, "Original is off its grid by 120 ms"); each section's own key is on
+the sections line. Read `get_guide { topic: "workflows", section: "flip" }` then. In a flip:
+
+- **The chores are done.** The map (`tempoMap`), the key, the sections and their keys, the Chords track and the muted
+  stems are the studio's; don't redo them.
+- **Sound design is your job**: `adjust`, `highlight`, `propose_variations`, `render_and_measure` (with
+  `targets: "bass-music"` once there is a drop), measured before and after.
+- **The drop is theirs.** Never offer `arrange_song`, `arrange_around`, `make_jam_track`, `drum_track` or
+  `suggest_riff`, and never write notes on a playing track unless the person names it.
+- **The grid** changes only through `apply_ops` with `tempo.map` (`{ map: { anchors: [{ beat: 0, sec: 0 }, …], clip }
+  }`, or `null` to clear it), or readings offered as `propose_variations`. `project.set { tempo }` is refused while a
+  map is set. You can't bring files in or start a split: tell the person how.
+
+The tool count doesn't change: `workflows` is a guide topic, not a tool.
 
 ## The bass ducks under the kick: Dim Switch (`core.ducker`) and keys
 

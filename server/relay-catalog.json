@@ -29,7 +29,7 @@
  },
  {
   "name": "get_guide",
-  "description": "Read one of the studio's guides (outside agents don't get Overdub's system prompt, so read these first): \"etiquette\" (how to work with the human here: scope, proposals vs direct edits, measuring), \"devices\" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), \"ops\" (every op and the notes / drum-grid text formats), \"lexicon\" (musical words → perceptual axes, for adjust; plus \"personal\": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), \"transforms\" (every transform with its params and defaults), \"genres\" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to).",
+  "description": "Read one of the studio's guides (outside agents don't get Overdub's system prompt, so read these first): \"etiquette\" (how to work with the human here: scope, proposals vs direct edits, measuring), \"devices\" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), \"ops\" (every op and the notes / drum-grid text formats), \"lexicon\" (musical words → perceptual axes, for adjust; plus \"personal\": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), \"transforms\" (every transform with its params and defaults), \"genres\" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to), \"workflows\" (flip: a song brought in).",
   "input_schema": {
    "type": "object",
    "properties": {
@@ -41,12 +41,13 @@
       "ops",
       "lexicon",
       "transforms",
-      "genres"
+      "genres",
+      "workflows"
      ]
     },
     "section": {
      "type": "string",
-     "description": "genres: one genre (bass-music, metal)"
+     "description": "genres: bass-music or metal; workflows: flip"
     }
    },
    "required": [

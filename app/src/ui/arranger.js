@@ -66,6 +66,7 @@ import {
   planTakeComp, planTakeLaneDelete, planTakesFlatten, retake, barBeatSpan, planDropTrim,
 } from '../core/arrangement.js';
 import { laneKey, laneAt, lanesOf, valueAt, toPos, laneView } from '../core/automation.js';
+import { hasTempoMap, beatToSec, beatsBefore, mapStats, shiftMap } from '../core/music.js';
 import { DEVICE_CATS } from '../devices/registry.js';
 import * as rackKit from './rack.js';
 import { kitHashes, kitState, kitLine } from './kitload.js';
@@ -201,7 +202,12 @@ function mountArranger(el, app) {
   // dashed frame at the foot of the tracks; not a track, nothing selects it
   const ghostLane = h('div.ar-ghostlane', { hidden: true, 'aria-hidden': 'true' });
   const empty = h('div.ar-empty', { hidden: true });
-  const laneWrap = h('div.ar-lanewrap', lanes.cv, scroller, playhead, ghostLane, dropHi, empty);
+  // the chores' progress line (Flip a song, ui/flip.js: app.flip.line()): one sentence, a hairline that fills, and
+  // its actions as underlined words; drawn in frame(), never modal
+  const jobText = h('span.ar-job-t'), jobFill = h('i.ar-job-fill', { 'aria-hidden': 'true' }), jobActs = h('span.ar-job-acts');
+  const jobLine = h('div.ar-job', { hidden: true, role: 'status', 'aria-live': 'polite' }, jobText, jobActs, h('span.ar-job-rule', { 'aria-hidden': 'true' }, jobFill));
+  let jobSig = '';
+  const laneWrap = h('div.ar-lanewrap', lanes.cv, scroller, playhead, ghostLane, dropHi, empty, jobLine);
   const main = h('div.ar-main', corner, rulerWrap, heads, laneWrap);
   const root = h('div.ar', bar, main, said);
   el.append(root);
@@ -1793,7 +1799,10 @@ function mountArranger(el, app) {
     if (d.mode === 'move') {
       const lead = d.c;
       let ns = lead.start + dx / ppb();
-      ns = g ? snapTo(ns, g) : ns;
+      // (the clip a tempo map follows starts where its recording's pickup puts it, off the bar lines: it moves by
+      // whole steps of the grid from there, so a bar's move is a bar and the map can go with it, R8)
+      const pmap = P().tempoMap;
+      ns = g ? (pmap && pmap.clip === lead.id ? lead.start + snapTo(dx / ppb(), g) : snapTo(ns, g)) : ns;
       const minStart = Math.min(...d.items.map((it) => it.start));
       d.dBeat = Math.max(ns - lead.start, -minStart);
       const n = tracks().length;
@@ -1812,7 +1821,7 @@ function mountArranger(el, app) {
       let s = d.c.start + dx / ppb();
       s = g ? snapTo(s, g) : s;
       // (an audio clip opens no earlier than its recording starts: past that the file would slide off the beat)
-      const lo = d.c.kind === 'audio' ? Math.max(0, d.c.start - (+d.c.offset || 0) * P().tempo / 60) : 0;
+      const lo = d.c.kind === 'audio' ? Math.max(0, d.c.start - beatsBefore(P(), d.c.start, +d.c.offset || 0)) : 0;
       s = clamp(s, Math.min(lo, end - (g || 0.25)), end - (g || 0.25));
       d.start = s; d.len = end - s;
     } else if (d.mode === 'comp') {
@@ -1908,6 +1917,12 @@ function mountArranger(el, app) {
         trim = planDropTrim(P(), d.items.map((it) => { const s = Math.max(0, it.start + d.dBeat); return { track: tracks()[it.row + d.dRow].id, start: s, end: s + it.c.length }; }), { keep: d.copy ? [] : d.items.map((it) => it.c.id) });
       } catch (err) { console.warn('drop trim', err); trim = null; }
       if (trim?.ops.length) ops = ops.concat(trim.ops);
+      // the clip a tempo map follows, moved by whole bars: the grid goes with it, in the same undo step (spec 0014 R8);
+      // by less than a bar the map stays, and get_project says how far the recording sits off it
+      const pm = P().tempoMap, bpbM = bpbOf();
+      if (!d.copy && pm && pm.clip && d.items.some((it) => it.c.id === pm.clip) && d.dBeat && Math.abs(d.dBeat / bpbM - Math.round(d.dBeat / bpbM)) < 1e-6) {
+        ops.push({ type: 'tempo.map', map: shiftMap(pm, Math.round(d.dBeat / bpbM) * bpbM) });
+      }
       const nc = d.items.length;
       const r = store.dispatch(ops, { by: 'you', label: d.copy ? (nc > 1 ? `copy ${nc} clips` : 'copy clip') : (nc > 1 ? `move ${nc} clips` : `move clip ${d.c.name || ''}`.trim()) });
       if (!r.ok) { ui.toast(r.error, { kind: 'bad' }); return; }
@@ -2671,6 +2686,21 @@ function mountArranger(el, app) {
       g.fillStyle = isBar ? rgba(pal.line2, (b / bpb) % 4 === 0 ? 1 : 0.7) : rgba(pal.line, 0.6);
       g.fillRect(x - 0.5, 0, 1, Math.max(0, rowsEnd));
     }
+    // a tempo map's free spans (no pulse heard: the grid runs straight there), hatched in pencil
+    const mst = mapStats(p);
+    if (mst && mst.free.length) {
+      g.save();
+      g.strokeStyle = rgba(pal.line2, 0.55); g.lineWidth = 1;
+      for (const [fa, fb] of mst.free) {
+        const x0 = fa * pb - sx, x1 = fb * pb - sx;
+        if (x1 < 0 || x0 > W) continue;
+        g.save(); g.beginPath(); g.rect(x0, 0, x1 - x0, Math.max(0, rowsEnd)); g.clip();
+        g.beginPath();
+        for (let k = Math.floor(x0 / 10) * 10 - Math.max(0, rowsEnd); k < x1; k += 10) { g.moveTo(k, Math.max(0, rowsEnd)); g.lineTo(k + Math.max(0, rowsEnd), 0); }
+        g.stroke(); g.restore();
+      }
+      g.restore();
+    }
     // a hairline under each track (and each of its open lanes)
     for (const r of L.rows) {
       const y = r.y + r.h - sy - 1;
@@ -2964,13 +2994,17 @@ function mountArranger(el, app) {
       if (w > 80) { g.font = `400 11px ${pal.ui}`; g.fillStyle = pal.text3; g.textBaseline = 'alphabetic'; g.fillText(wv.state === 'loading' ? 'loading the audio' : 'audio not found', x + 6, mid - 5); }
       return;
     }
-    const spb = 60 / P().tempo;
+    const p = P(), spb = 60 / p.tempo;
     const pb = ppb();
     const xs = Math.max(x, 0), xe = Math.min(x + w, lanes.w);
+    // (on a tempo map the recording is drawn in its own seconds, so its downbeats sit on the bar lines the map put
+    // there; without one, its seconds at the one tempo)
+    const mapped = hasTempoMap(p), s0 = mapped ? beatToSec(p, c.start) : 0;
+    const secAt = (px) => (mapped ? (c.offset || 0) + beatToSec(p, c.start + (px - x) / pb) - s0 : (c.offset || 0) + ((px - x) / pb) * spb);
     g.fillStyle = muted ? rgba(col, 0.55) : col;
     const amp = hh / 2;
     for (let px = Math.floor(xs); px < xe; px++) {
-      const sec0 = (c.offset || 0) + ((px - x) / pb) * spb, sec1 = (c.offset || 0) + ((px + 1 - x) / pb) * spb;
+      const sec0 = secAt(px), sec1 = secAt(px + 1);
       if (sec0 >= wv.dur) break;
       const i0 = Math.floor((sec0 / wv.dur) * wv.n), i1 = Math.max(i0 + 1, Math.floor((sec1 / wv.dur) * wv.n));
       let mn = 0, mx = 0;
@@ -3222,6 +3256,8 @@ function mountArranger(el, app) {
         g.fillRect(x, SEC_H - 2, w, 1);
       } else { g.fillStyle = pal.text3; g.fillRect(x, 4, 1, SEC_H - 7); }
       if (w > 18) { g.fillStyle = isSel ? pal.bg : fl ? pal.agent : pal.text; g.fillText(s.name, lx + 6, SEC_H - 6); }
+      // its own key (a flip's analysis marks one only where it differs from the song's), in pencil after the name
+      if (s.key && w > tw + 40) { g.font = `400 11px ${pal.ui}`; g.fillStyle = isSel ? pal.text3 : pal.text2; g.fillText(s.key, lx + 6 + tw + (isSel ? 12 : 8), SEC_H - 6); }
       g.restore();
     });
 
@@ -3266,6 +3302,13 @@ function mountArranger(el, app) {
         g.fillStyle = b === here ? pal.text : pal.text2; g.fillText(String(b + 1), x + 5, H - 4);
       } else { g.fillStyle = pal.line2; g.fillRect(x, H - 6, 1, 5); }
       if (barPx >= 40) for (let k = 1; k < bpb; k++) { const bx = Math.round(x + k * pb); g.fillStyle = pal.line; g.fillRect(bx, H - 4, 1, 3); }
+    }
+    // a tempo map's free spans: "free" in pencil over their bars
+    const mst = mapStats(p);
+    if (mst) for (const [fa, fb] of mst.free) {
+      const x0 = Math.round(fa * pb - sx), x1 = Math.round(fb * pb - sx);
+      if (x1 < 0 || x0 > W || x1 - x0 < 30) continue;
+      g.save(); g.font = `400 11px ${pal.ui}`; g.fillStyle = pal.text3; g.fillText('free', Math.max(x0, 0) + 5, BAR_Y + 9); g.restore();
     }
     // the selected bars
     const sel = ui.state.selection.range;
@@ -3442,8 +3485,21 @@ function mountArranger(el, app) {
     }
     if (changed) relayout();
   }
+  function syncJob() {
+    const ln = app.flip?.line?.() || null;
+    const sig = ln ? `${ln.text}|${ln.actions.map((a) => a.label).join()}` : '';
+    if (jobLine.hidden !== !ln) jobLine.hidden = !ln;
+    if (!ln) { jobSig = ''; return; }
+    jobFill.style.width = ln.fraction != null ? `${Math.round(Math.max(0, Math.min(1, ln.fraction)) * 1000) / 10}%` : '0';
+    jobLine.classList.toggle('ar-job-measured', ln.fraction != null);
+    if (sig === jobSig) return;
+    jobSig = sig;
+    jobText.textContent = ln.text;
+    jobActs.replaceChildren(...ln.actions.map((a) => h(a.go ? 'button.btn.ar-job-go' : 'button.btn.btn-txt', { type: 'button', onclick: () => { a.run(); jobSig = ''; } }, a.label)));
+  }
   function frame(now) {
     placeWelcome();
+    syncJob();
     if (lanes.fit()) { dirty = true; layoutSpacer(); }
     if (pendingZoom && scroller.clientWidth >= 80) zoomTo(...pendingZoom);
     if (ruler.fit()) rulerDirty = true;
@@ -3796,6 +3852,16 @@ const CSS = `
 .ar-addrow span { text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
 .ar-addrow:hover { color: var(--text); }
 .ar-lanewrap { position: relative; overflow: hidden; min-width: 0; min-height: 0; }
+/* the chores' progress line: a sentence at the foot of the lanes, a hairline under it that fills as the split runs */
+.ar-job { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; padding: 7px 16px 9px; background: var(--bg); border-top: var(--rule); font-size: 12.5px; color: var(--text-2); }
+.ar-job[hidden] { display: none; }
+.ar-job-t { flex: 1 1 260px; min-width: 0; }
+.ar-job-acts { display: inline-flex; gap: 10px; align-items: baseline; }
+.ar-job-acts .btn-txt { font-size: 12.5px; }
+.ar-job-go { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.ar-job-rule { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: transparent; }
+.ar-job-measured .ar-job-rule { background: var(--line); }
+.ar-job-fill { display: block; height: 1px; width: 0; background: var(--text-2); }
 .ar-lanes { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .ar-scroll { position: absolute; inset: 0; overflow: auto; outline: none; touch-action: none; }
 .ar-scroll:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }

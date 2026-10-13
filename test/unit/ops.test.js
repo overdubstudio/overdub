@@ -281,6 +281,19 @@ const CASES = [
     }),
   ],
   ['device.remove', () => ({ type: 'device.remove', id: 'you.fuzz' })],
+  [
+    'tempo.map set',
+    () => ({
+      type: 'tempo.map',
+      map: {
+        anchors: [
+          { beat: 0, sec: 0 },
+          { beat: 4, sec: 2.6 },
+          { beat: 8, sec: 5.15 },
+        ],
+      },
+    }),
+  ],
 ];
 
 test('the table covers every op in OP_TYPES', () => {

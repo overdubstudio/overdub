@@ -60,6 +60,13 @@ overdub/
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
                          kernel in a child process), fallback.js, assets.js (audio in IndexedDB), clock.js   [engine]
   app/src/audio/         measure.js (the ears: LUFS, true peak, spectrum...), testsignals.js            [dsp]
+                         analyze/ (Flip a song's chores: beats, the tempo map and its readings, tuning, key,
+                         chords, sections; a Worker, the overdub-analysis cache, resultToOps)       [analyze]
+  app/src/core/flip.js   Flip a song as ops: labelStem / labelFiles (a file's role by its name), songNameOf,
+                         planFlip (the import, one step), planStems (the split's stems, the house's step)  [core]
+  app/src/jobs/          the job layer: index.js (jobs.run, progress, cancel), cache.js (overdub-jobs), fake.js
+                         (the tests' runner), stems/ (the local stems runner, off without a site config:
+                         dsp.js, pool.js + dsp-worker.js, runner.js)                                 [jobs]
   app/src/devices/       registry.js (fixed), trust.js (which song devices run here), graph.js + kit.js (graph devices:
                          bypass, glide, the PFX kit), worklets/ (the kit's END and envelope follower modules),
                          guitar/ (ported pedals, amps, cabs, rigs)                                     [guitar]
@@ -93,6 +100,7 @@ overdub/
                          start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
                          (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
+                         flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
                          community.js (From the community in the Browser: previews, Try and its prompt; off
                          unless on localhost, COMMUNITY_LIVE)                                           [shelf]
@@ -126,15 +134,17 @@ module via `css(id, text)` from `ui/dom.js`, using the tokens below.
 
 ## The project document
 
-All musical time is in **beats** (quarter notes, floats). One tempo and one meter for v0.
+All musical time is in **beats** (quarter notes, floats). One meter; one tempo, unless the song carries a tempo map
+(below: the grid bent to a recording).
 
 ```js
 Project = {
   format: 'overdub/0', id: 'p_k3j9x2', title: 'Untitled', tempo: 120, meter: [4, 4],
   key: { root: 'C', scale: 'minor' } | null,           // scale names: music.js SCALES
+  tempoMap?: { anchors: [{ beat, sec }], clip?, clipStart? },   // the grid follows a recording (below); tempo is its nominal
   loop: { on: false, start: 0, end: 16 },               // beats
   tracks: [Track],
-  sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color? }],
+  sections: [{ id: 's_x', name: 'Verse', start: 0, length: 16, color?, key? }],   // key: the section's own key ("F# minor"), forever, optional
   devices: { [id]: DeviceSource },                       // devices written in this project (kernels), travel with it
   assets: { [id]: { kind: 'audio', name, sr, channels, duration } },   // the samples live in IndexedDB (engine/assets.js)
   master: { gain: 0, inserts: [Insert], auto?: { gain?: Lane } },   // gain in dB
@@ -165,6 +175,44 @@ Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   // a place on the neck: both or neither
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
 ```
+
+### The tempo map
+
+A song may carry `tempoMap: { anchors: [{ beat, sec }, …], clip?, clipStart? }` (optional, top level, forever): the grid follows a
+recording instead of the recording following the grid. The grid is piecewise linear between anchors and runs on past
+the last at the last segment's tempo (and before beat 0 at the first's). `anchors[0]` is `{ beat: 0, sec: 0 }`; beat
+and sec rise strictly; every segment is 20..400 BPM; at most `LIMITS.anchors` (4,096). Anchors are seconds, not tempo
+steps, so rounding never adds up. `clip` names the audio clip the grid follows (the conformed clip), which is never
+stretched; `clipStart` (kept only with `clip`) is the beat that clip starts at on this grid, so a move that left the
+recording behind its grid can be measured (`mapStats(p).drift`, in ms: get_project says it). `cleanProject` keeps a map exactly or drops it whole with a warning; it never repairs one into another grid.
+While a map is set `tempo` is its nominal tempo (the median segment tempo, to 0.01), `project.set { tempo }` is refused
+("The grid follows Original. Clear the map to set a tempo."), and the map changes only through `tempo.map`.
+
+Every beat↔second conversion goes through `core/music.js`: `beatToSec(p, beat)`, `secToBeat(p, sec)`, `tempoAt(p,
+beat)`, and `timeline(p, from)` for a render or a scheduler. Without a map each is the expression the code always used,
+so a song without one plays, renders and hashes exactly as before. With one: the live transport times every beat
+through the map (engine.js "Time"), the offline and Node renders place notes, clips and lanes by it, an audio clip's
+seconds into its file are the map's, and kernels' `bpm()` is the segment's tempo (offline, the worklet's transport is
+handed the map's segments: `kernel/worklet.js`). Readers that want a nominal tempo (labels, the jam room, devices'
+defaults) keep reading `p.tempo`. `time.insert` / `time.remove` carry the map with the recording (anchors after the
+point move by the inserted beats and the seconds the map gives them there); `section.duplicate` over the mapped span is
+refused in this slice ("This part follows a recording; copying it would break the grid"); `shiftMap(map, beats)` moves
+the grid with its recording for a whole-bar move of the conformed clip (the arranger's drag: `clip.move` and
+`tempo.map` in one dispatch; the conformed clip moves by whole snap steps from where it sits, so a bar's move is a bar;
+less than a bar, or a move that doesn't carry the map, leaves the map alone). `time.insert`, `time.remove` and
+`shiftMap` carry `clipStart` too. `mapStats(p)` gives the nominal tempo, the 5th-95th percentile bar tempos, the free
+spans (past the first downbeat, more than a bar with no anchor: where the analysis heard no pulse) and the drift.
+
+In the arranger the axis stays in beats, so the bar lines stay evenly spaced and every note, section and lane keeps its
+place; what follows the map is the recording itself: an audio clip's waveform is drawn in its own seconds through the
+map, so its downbeats sit on the bar lines. Free spans are hatched in pencil over the lanes and marked "free" on the
+bar strip; the transport's tempo readout shows the nominal tempo under "Tempo, follows Original" and says why it won't
+take a tempo. The MIDI export writes a tempo event per
+segment, the DAWproject export a held tempo point per anchor (and a warp per anchor inside an audio clip).
+
+Format note: an older build opening a mapped song keeps the field (the top-level spread on load) and plays a constant
+grid at `tempo`. Its audio still plays in seconds; its notes drift from the recording. That is accepted: the map is
+additive, and a later build reads it back.
 
 Ids: prefix + 6 base36 chars (`t_`, `c_`, `fx_`, `s_`, `a_`, `p_`); note ids are `n` + a counter per clip,
 never reused while the store has history (undo finds notes by id, so a freed id stays freed). Ids seed instruments'
@@ -306,10 +354,11 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `notes.set` | `track`, `clip`, `notes: [{ id, p?, t?, d?, v?, s?, f? }]` (`s` and `f` together, the note's place on the neck; `s: null` clears it) |
 | `notes.replace` | `track`, `clip`, `notes: [Note] \| "text"` (or `grid`) |
 | `notes.restore` | internal: the inverse of `notes.remove` (puts notes back with their ids); not in `OP_TYPES` |
-| `section.add` | `section: { name, start, length, color? }`, `ref?` |
-| `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color? }` |
+| `section.add` | `section: { name, start, length, color?, key? }`, `ref?` (`key`: the section's own key's name, `"F# minor"`) |
+| `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color?, key? }` |
 | `section.duplicate` | `section`, `to?` (beats; default right after it), `push?` (make room there first), `ref?` |
-| `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop) |
+| `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop, the tempo map) |
+| `tempo.map` | `map: { anchors: [{ beat, sec }], clip? } \| null`, `tempo?` (sets or clears the tempo map; set, `tempo` becomes its nominal; cleared, the grid plays at `tempo` if given, else the nominal it had. The inverse restores both exactly) |
 | `clip.repeat` | `track`, `clip`, `times` (2..64, in all), `mode?: 'copies' \| 'loop'`, `ref?` |
 | `clip.split` | `track`, `clip`, `at` (a song beat inside it), `ref?` (the right half) |
 | `master.set` | `patch: { gain?, clip? }` (gain dB, −96..24; clip `'soft'` or `'clean'`, below) |
@@ -652,7 +701,7 @@ engine.render({ from = 0, to = engine.songEnd(), tracks = null, sr = 48000, tail
 engine.probeLatency({ tracks, withMix }) → Promise<{ tracks, max }>   // stems render with latencyMax: max, so they line up
 engine.settled() → Promise            // every strip matches the document
 engine.songEnd()                      // beats
-engine.beatToSec(b) ; engine.secToBeat(s)   // at the song's tempo (the practice speed doesn't change them)
+engine.beatToSec(b) ; engine.secToBeat(s)   // at the song's tempo, or on its tempo map (the practice speed doesn't change them)
 engine.rate = 0.25..2                 // practice speed (the Jam room's 50-100%): the transport runs at tempo × rate, live
                                       // only, never in the song, History or a render; audio clips sit out below 1 (they
                                       // can't slow down in tune) and pick up again at 1. The transport event says rate.
@@ -806,6 +855,117 @@ first. `render_and_measure { targets }` puts them in words for an agent.
 
 Bands: sub < 60 Hz, low 60-250, low-mid 250-500, mid 500-2k, high-mid 2-4k, presence 4-8k, air > 8k. dB values never
 go below −120, so results survive JSON. Pure JS: it runs in Node (the bench, the canonical render) and the browser.
+
+### The analysis (`audio/analyze/`)
+
+What Flip a song (spec 0014) does to a recording once it is in: the chores. Pure JS, zero dependencies,
+deterministic (Float64, fixed order, no `Math.random`): the same input gives byte-identical JSON in Node and in a
+Worker, which is where the studio runs it (`client.js` → `worker.js`), so nothing waits on it.
+
+```js
+analyze({ sr, mix?, stems?: { vocals?, drums?, bass?, other? } }, { onProgress? }) → {
+  version: ANALYZER_VERSION, input: 'drums' | 'stems' | 'mix' | 'vocals', lowConfidence, sure, why: [...],
+  bpb, tempo, beats: [s], free: [[t0, t1]], tuning /* cents */, key: { root, scale, name },
+  readings: [{ id: 'found' | 'double' | 'half' | 'downbeat' | 'twothirds', why, tempo, bpb, start, off, anchors }],
+  chords: [{ start, end, t0, t1, root, quality, name }], sections: [{ name, start, length, t0, t1, key? }],
+}
+analyzeAudio(input, { onProgress, signal, cache }) → Promise<{ result, key, cached, ms }>   // client.js
+resultToOps(p, result, reading, { clips }) → ops      // toOps.js: what the song keeps (house-signed, one step)
+readingOps(p, result, reading, { clips }) → ops       // the grid alone: picking another reading
+```
+
+- **Inputs, in order.** The beat from the drum stem, else the non-vocal stems summed, else the mix; the vocal alone only
+  when nothing else exists, and then the result is low confidence. The harmony from the bass and other stems (else the
+  mix). Everything is downmixed and resampled to 22,050 Hz (`resample.js`); chroma reads 11,025 Hz and the bass
+  2,756.25 Hz.
+- **Beats** (`onset.js`, `tempo.js`, `beats.js`): log spectral flux in four bands (STFT 2,048 / hop 256); a tempogram
+  (8 s windows every 1 s, 50–220 BPM, a log-Gaussian prior at 120) whose period is a Viterbi path over the windows;
+  Ellis's dynamic-programming beats held to that period; each beat moved onto its attack; a median and a two-bar line
+  through the intervals. Where the tempogram's salience is low or the beats have nothing under them the time is
+  **free**: no beats, no anchors, the grid straight between its neighbours.
+- **Downbeats and the map** (`downbeats.js`, `map.js`): the kick, the snare and the harmony's change at each beat,
+  scored by the tap door's weights (`input/rounds.js` `accentScore`), a Viterbi over the bar phase, 3/4 when the
+  accents repeat in threes. One anchor a downbeat, placed by the spec's rule: the recording starts at beat
+  `bpb·k − d/s` (offset 0), its first downbeat `d` on a bar line, and the map's first segment runs at the first bar's
+  tempo. The **readings** are whole maps too: double, half, the other downbeat, and two thirds when the pulse is in
+  threes. `sure` is false (show them) when the 1 is unclear, the half or double tempo scores close, most of the
+  recording is free, or only a vocal was read.
+- **Key and chords** (`chroma.js`, `key.js`, `chords.js`): tuning first (a histogram of peaks' cents off A440), then
+  treble and bass chroma pooled to half bars on the map, read by `core/jam.js`'s own recogniser (`chordViterbi`,
+  limited to maj, min, 5 and 7); the key from `measure.js` `keyOf` with Temperley's profiles, checked against the
+  chords (mostly diatonic) and between relatives by the tonic the chords lean on. A section gets its own key only
+  when it beats the song's by a margin.
+- **Sections** (`sections.js`): per-bar chroma, a 12-band log-mel timbre and level; a self-similarity matrix; Foote
+  novelty with a ±8-bar checkerboard; boundaries on bar lines favouring 4 and 8 bars; repeats from the lag; named by
+  the spec's rules (Intro, Verse, Chorus, Bridge, Outro, Part A…, repeats numbered). Proposals: the person renames.
+- **What the song keeps** is only the conclusions (`toOps.js`): `tempo.map` (its `clip` the conformed one, and
+  `clipStart` where that clip sits on it), the clips placed (each audio clip's length its recording's seconds on the
+  new grid), the key, `section.add` with `key`, and the chords as block chords on a muted track named Chords. A
+  later analyser never changes an old song.
+- **The cache** (`cache.js`): IndexedDB `overdub-analysis` (a storage name, forever), keyed by the input's SHA-256 and
+  `ANALYZER_VERSION`; in memory where IndexedDB is refused.
+- **Measured** by `tools/beat-bench.js` on seeded synthetic songs (`tools/fake-song.js`), its gates asserted by
+  `tools/analyze-test.js`; `--dir` scores your own records locally and never commits them.
+
+### Jobs and the stems runner (`jobs/`)
+
+Long work on a person's audio that the studio does once and keeps (spec 0014 section C). Stems are the first kind.
+
+```js
+const jobs = createJobs({ runners: { stems }, cache })   // or await pageJobs(): the runner the site config allows
+await jobs.estimate({ kind: 'stems', input })            // → { device, wait, measured, download, firstTime, warn, text }
+await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress, signal })
+  → { kind, key, cached, model, result: { sr, stems: { drums, bass, other, vocals } /* channels each */ }, ms }
+```
+
+- **A job returns sound, never ops.** The caller lands stems in the song as assets (`asset.add`), so playback and
+  renders read stored samples and never depend on which runner made them, or whether one is still around.
+- **The cache** (`cache.js`): IndexedDB `overdub-jobs` (a storage name, forever), keyed by the kind, the input's
+  SHA-256 (its rate and every channel as 32-bit floats), the model's id and its version; in memory where IndexedDB is
+  refused. A second run of the same input never reaches the runner; a cancelled job (an `AbortSignal`) rejects with
+  `AbortError` and leaves nothing behind.
+- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless both the `stems.local`
+  toggle is on and `app/site-config.json` has `stems: { model, sha256, runtime?, id?, bytes? }` (`site-config.js`
+  `stemsConfig`: each URL resolved against the config file, so a path is on this site, then https:, or http: on this
+  machine, as for `cloud`; `runtime` defaults to `vendor/ort/ort.webgpu.min.mjs`). With either missing nothing is
+  fetched or imported. With both, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
+  mismatch is refused and the runtime never loaded), and kept in Cache Storage (`overdub-models`); ONNX Runtime Web is
+  loaded by a dynamic `import()` of `stems.runtime`. No weights and no runtime are in this repo (`.gitignore`, and
+  `tools/jobs-test.js` fails on a tracked one). WebGPU first, then WebAssembly on one thread (the studio isn't
+  cross-origin isolated).
+- **The runtime and the model are on this site.** The studio's CSP (`app/index.html`) is `script-src 'self'` and
+  `connect-src 'self'` (plus http: on this machine), so a runtime on a CDN fails as "Failed to fetch dynamically
+  imported module" and a model on one can't be fetched. The runner checks first (`elsewhere(config, location.origin)`):
+  a runtime on another origin, or a model on another origin that isn't http: on this machine, leaves it off with an
+  `offReason` that names the URL, and fetches nothing. Rather than widen the CSP for whichever CDN a deploy picks, the
+  deploy brings them here: `deploy/site-config.json`'s stems entry may carry `runtimeFrom` (a pinned https:
+  onnxruntime-web dist directory, e.g. `https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/`) with
+  `runtimeSha256` (the SHA-256 of the files' `shasum -a 256` manifest, or one per file), and `modelFrom` (checked
+  against `sha256`). `deploy/stage-stems.js` fetches `ort.webgpu.min.mjs` and `ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}`
+  (the WebGPU build and the WebAssembly fallback both import them from beside it) into `deploy/.cache/`, checks them,
+  stages them at `app/vendor/ort/` (the model at `app/vendor/models/<sha256>.onnx`) in the deploy's stage, never the
+  checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
+  shipped entry with `stemsConfig` and `elsewhere` against the site's origin (another origin, or a path on this site
+  the deploy doesn't ship, stops a live deploy; on `--next` it is a warning) and
+  uploads `.mjs` as JavaScript and `.wasm` as `application/wasm`. `node deploy/stage-stems.js --manifest <dist>` prints
+  the manifest and its hash to pin. Locally, `server/serve.js` answers `/app/vendor/ort/` from
+  `OVERDUB_STEMS_RUNTIME_DIR` (a dist directory on this machine; else `app/vendor/ort/`, gitignored), and with no
+  `app/site-config.json` answers the stems entry from `OVERDUB_STEMS_MODEL`, `_SHA256` and (optional) `_RUNTIME`, with
+  `stems.local` on.
+- **The DSP** (`stems/dsp.js`) is demucs' own around the network: the normalised STFT (4,096 / hop 1,024, the
+  periodic Hann window) as `_spec` and `_ispec` do it, two real channels through one complex FFT, segments of 7.8 s
+  with 25% overlap and a triangular crossfade (`apply_model`, shifts 0), and `separate.py`'s whole-song normalising.
+  The network sees `mix` [1, 2, 343980] and `mag` [1, 4, 2048, 336] and answers `zx` and `xt`. Its spectrograms are
+  made in a pool of module workers (`pool.js`, up to six) while the network runs, and the answers are added in
+  segment order, with the FFT's tables computed by series rather than `Math.sin`, so a split is the same samples in
+  Node and in Chromium. Input at another rate goes to 44.1 kHz and back through `audio/analyze/resample.js` with its
+  phases interpolated.
+- **The estimate** (R22): WebGPU or the CPU, the download the first time, and the wait: before the first run a guess
+  from the spike's figures on AJ's Mac (`PRIOR`, said as "Roughly"), after it the warm-up's own time a segment ("About
+  25 s on this computer's graphics card."). Under 8 GB of `navigator.deviceMemory` it warns first.
+- **Tests never download a model.** `fake.js` knows a few inputs and their stems and reports scripted progress;
+  `tools/jobs-test.js` drives the real runner on a fake runtime with an identity network (each segment's interior
+  reconstructs to −122 dB, the joined song through the time branch to −150 dB).
 
 ## The UI
 
@@ -973,8 +1133,12 @@ app.start = { open({ kind: 'tap' | 'hum' | 'keys', view: 'free' | 'click', free,
   step ('play' | 'hum' | 'in' | 'readings' | null), kind, view, busy, tap(row, perfMs), done(), again(), leave(),
   setView(view), setSpeed(bpm), tapTempo(perfMs), click(), window(), setLevel(level), readings(), useReading(i),
   humNow(), humFree(), hum(), setTune(on), againOverBeat(), tick(), landed(), take(), tempoShown(),
-  on('step' | 'land' | 'close', fn) -> off }
+  on('step' | 'land' | 'close', fn) -> off, choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i),
+  back() }), pickChoice(i) }
 ```
+
+`choose` is the readings step for another flow (step `'choose'`, Flip a song's grids): its rows, picking one calls `pick`
+(it plays), Use this one `use`, and Back, Esc or any other way out `back`.
 
 The top bar's tempo reads "~" (`aria-valuetext` "finding the tempo") while `tempoShown()` is null on `'play'`.
 
@@ -988,6 +1152,32 @@ bar, bars })`, whose Put reads **Use it**). **Build a band around it** lists the
 one measured dispatch signed `'overdub'` (the house: unsigned on the lanes). It points at the controls it names with
 `ui.point`. `app.coach = { expect(door), after(landing), dock(door, clips?), go(step), band(), preview(i), keep(),
 notThis(), end(), state(), beatUnder() }`.
+
+**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014),
+behind the `workflow.flip` toggle (off: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find's Help rows,
+`app.flip.pick()` and `flip()` answer the off line, and `get_guide "workflows"` too; the tempo map is core song
+format, so a song that has one loads, plays and renders the same either way): the door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
+local files only, nothing is ever fetched from a link). `importers.importFlip` decodes and labels them
+(`core/flip.js` `labelFiles`: a lone file is the original; several are stems by their names, vocal / acapella /
+voice, drums / perc, bass, other / inst, and the one matching none the original). The import is one step by `'you'`,
+"Flip: <name>" (`planFlip`): Original, then Vocals, Drums, Bass and Other, every clip at beat 0, offset 0; the vocal
+plays and the rest are muted (track mute); with no vocal stem, or with a split to come, the original plays. Then the
+chores, never modal: when the site's stems runner is on (`jobs/` `pageJobs`) and no stems were brought, its estimate
+(the graphics card's wait goes ahead; the processor's, or a machine under 8 GB, asks on the line: Split on the
+processor or Skip the split), the split, and its stems landing as their own step by the house, "Stems from <name>"
+(`planStems`: after the original, at its place, the vocal playing and the original muted). Then the analysis
+(`analyzeAudio`, in its Worker, on the stems and the mix), landing as one step by the house, "Grid, key and sections
+from <name>" (`resultToOps` on every clip of the flip, the original the conformed one), and the toast that says what
+landed ("Flip: Night Bus is in. Grid follows the recording, 95.9 BPM, drifting 94.4–97.0. Key B major. 4 sections."),
+with **Other readings**. When the analysis is unsure (`result.sure` false) the readings step opens by itself
+(`app.start.choose`): "Which one nods along with the vocal?", each reading played from the bar before its first
+downbeat with the click on; picks are `readingOps` by `'you'` joined into one step; Back undoes them (or puts the
+found grid back when something came between). The progress line is the arranger's (`syncJob` in its `frame`:
+`app.flip.line()`): one sentence ("Splitting… 40%. About 7 s on this computer's graphics card.", "Finding the
+beat…", "Marking sections…"), a hairline that fills while the split measures, and its actions (Cancel). An undo of
+the import ends the chores quietly. The analysis, its ops and the job layer load on the first flip, not with the
+studio. `app.flip = { pick(), flip(files, { split? }), line(), cancel(), readings(), busy, idle(), last(),
+useJobs(jobs) }` (`useJobs`: the tests' fake runner).
 
 **Take one** (`ui/onboard.js`, `app.onboard`): the first-run coach (hear it, take one, keep it, ask the agent, keep
 its take). Each step advances on the real event (transport, capture `add`, a kept clip by you, an agent's request or
@@ -1548,7 +1738,12 @@ AGENTS.md documents each tool in the catalog; by job:
   server's `instructions`), the voice, `NOTES_BRIEF` (notes text, drum grids, time) and one line each pointing at the
   rest. Every API call re-reads the system prompt, so what only some requests need stays a `get_guide` topic away:
   the kernel guide (`kernel/guide.js`, topic `devices`), `OPS_CHEATSHEET` + `NOTES_FORMAT` (`ops`), the lexicon
-  (`lexicon`) and the transforms' params (`transforms`); `tools/agent-test.js` caps the prompt's size and the
+  (`lexicon`), the transforms' params (`transforms`), the genres (`genres`, `agent/genres.js`) and the workflows
+  (`workflows`, `agent/workflows.js`: section `flip`, the agent's job in a flip: the chores are done, sound design is
+  its job, the drop is the person's, and `arrange_song`, `arrange_around`, `make_jam_track`, `drum_track` and
+  `suggest_riff` are never offered there); get_project's summary says a map in one line ("Grid follows Original: 68.4
+  BPM nominal, 66.9–70.2, 2 free spans; key D minor", `core/project.js` `mapLine`, with the conformed clip's drift)
+  and each section's key; `tools/agent-test.js` caps the prompt's size and the
   catalog's. The in-app agent gets `IN_APP_DESCRIPTIONS` (`agent/tools.js`) in place of a few catalog descriptions
   that would repeat its prompt. The system prompt is frozen per conversation (prompt caching); the live context
   travels in each user message.
@@ -1637,14 +1832,17 @@ old in-browser key, is deleted on load and noted once (`overdub:agent:key-retire
 paid for with credits, for people without a Claude of their own. It's off unless the deploy both turns the
 `cloud.agent` toggle on and names the service in `app/site-config.json` (gitignored; `app/src/site-config.js` reads it
 once per load, `server/serve.js` answers both from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh`
-ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles); a `cloud.api` alone turns nothing on.
+ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles; its other switch is the stems runner, "Jobs
+and the stems runner" above); a `cloud.api` alone turns nothing on.
 `?cloud=` points a local studio at a local service only, and counts as the toggle there. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
-- `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (an email link, or its 6-digit code in a tab the
-  link wasn't opened in; the tab polls `/v1/me` while it waits), the balance, top up, credits back, where the credits
-  went, deleting the account. Every request is `credentials: 'include'`; the session is an httpOnly cookie on the
-  service's origin. `canonicalBundle` and `bundleVersion` give the prompt bundle's version, the same on both sides.
+- `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (Continue with Google opens
+  `/v1/auth/google?return=studio` in a popup, in the click itself; the service's done page posts
+  `{ type: 'overdub:signed-in' }`, taken only from the service's exact origin, and the tab also polls `/v1/me` while it
+  waits), the balance, top up, credits back, where the credits went, deleting the account. Every request is
+  `credentials: 'include'`; the session is an httpOnly cookie on the service's origin. `canonicalBundle` and
+  `bundleVersion` give the prompt bundle's version, the same on both sides.
 - `agent/claude.js` decides the provider in this order: the demo agent if it's on, Claude Code if chosen, a server
   key, then credits only if the person chose them (`overdub:agent-provider`). An ask on credits is
   `POST /v1/agent/actions { kind, moreTime, promptVersion }` (one `Idempotency-Key` per Send), then one
@@ -1700,7 +1898,10 @@ studio shows the Connect tab (off, there is no tab and no `app.remote`, except o
   moved onto another song. `guardDevices` moves a song's devices off built-in and house-shelf ids to `guest.<slug>` (a
   link) or `you.<slug>` (an opened file), with the tracks that use them; kernels past 256 KB stay out. History and the
   provenance report name a fork's origin.
-- **Files out** (`ui/export.js`, the Song menu, `app.exporter`): the mix (24-bit, 48 kHz WAV), stems (one WAV per
+- **Files out** (`ui/export.js`, the Song menu, `app.exporter`): the mix (24-bit, 48 kHz WAV), the release
+  (`exportRelease`: the mix rendered with a 6 s tail and trimmed by `releaseTrim` from the first sample over −90 dBFS
+  to the last, plus 50 ms; muted tracks are out because a render plays nothing muted; `measure.js` `lufs` and
+  `truePeak` in the toast: "Release: 3:41, −9.2 LUFS, peak −0.4 dBTP"), stems (one WAV per
   track, zipped, lined up by `probeLatency`), MIDI, DAWproject, the provenance report, the attribution log (JSON:
   every transaction with its author, time, label and ops) and the project file (`.overdub.json`). The mix and the
   stems render held devices as silence and pass-throughs and say so ("Left out: Tin Whistle, kept off on this
@@ -1779,6 +1980,9 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
   `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
   goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
+- **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
+  Find, `app.flip`'s pick and flip, `get_guide "workflows"`) and `stems.local` (the local stems runner, read by
+  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed). The tempo map neither hides.
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
   (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
 - **`start.slice2`** (Start a song, the rest of it) is read in a few places. `ui/start.js` hands its door and stage to
@@ -1799,9 +2003,10 @@ delete the entry and every `on('<id>')`, and take the id out of `deploy/site-con
 
 `tools/pw.js` opens the studio in Chromium (WebKit and Firefox too, for `compat-test` and `phone-test`) on its own
 server on a free port (`open('/app/')`), with fake media and autoplay allowed, so suites run in parallel. The fake mic plays a file
-(`open(…, { fakeAudio })`): `tools/fake-wav.js` writes the ones the checks use (a hummed line, a beatbox). Each area
+(`open(…, { fakeAudio })`): `tools/fake-wav.js` writes the ones the checks use (a hummed line, a beatbox; `fakeSong`, a whole band with its beats, chords and sections known). Each area
 adds `tools/<area>-test.js` that prints `ok`/`FAIL` lines and exits 1 on failure; fail on page errors (`errors` from
 `open`). Screenshots go to `tools/.out/`. `node tools/run-all.js` runs every suite (`PAR=3` at a time by default) and
 leaves its totals in `tools/.out/run-all.json`, which `tools/pages-test.js` holds the public check count to.
 Benchmarks that aren't gates: `tools/perf-check.js`, `tools/hum-bench.js`, OverdubBench (`tools/bench/`, BENCH.md),
-and `tools/prod-check.js` against the live site.
+and `tools/prod-check.js` against the live site. `tools/beat-bench.js` is a gate on its synthetic songs (through
+`analyze-test`) and a local scorer on real records (`--dir`), whose audio is never committed.

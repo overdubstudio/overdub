@@ -47,6 +47,7 @@ const MODULES = [
   './ui/onboard.js', // "Take one": the first-run coach (never under navigator.webdriver unless forced)
   './ui/start.js', // Start a song: the blank song's door and its stage (app.start); after onboard.js, whose first minute and Hum over it it hands on to
   './ui/coach-strip.js', // Start a song's coach strip (app.coach): the next parts, docked under the arranger once the first idea is in; after start.js
+  './ui/flip.js', // Flip a song: the door's fourth way in (app.flip): the import, the split, the analysis and its readings
   './ui/preview.js', // the Preview ribbon, on next.overdubstudio.com only (app/site-config.json says which site this is)
   './analytics.js', // last: anonymous counts on the live site only (see the file); nothing anywhere else
 ];

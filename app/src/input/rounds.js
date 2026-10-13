@@ -21,6 +21,8 @@
 //       Where the 1 is, read from the kick and the snare (GM 35/36, 38/40): kicks on 1 and 3, snares on 2 and 4. With
 //       neither, the first hit is the 1 and the reading isn't sure. Rotations that sound the same round the loop count
 //       as one reading.
+//   accentScore('kick' | 'snare', b, bpb) -> what a hit at beat b of the bar says about where the 1 is (downbeatOf's
+//       weights, shared with the audio analysis)
 //   rotate(notes, shift, length) -> notes   the loop started `shift` beats later (raw moved with it)
 //   readingsOf({ notes, length, bpm }, { bpb = 4, lo = 60, hi = 180 }) -> [{ bpm, shift, notes, length, why }]
 //       1 to 3 readings, the first the current: the other place the 1 could be (when nearly as likely), and the tempo
@@ -144,6 +146,14 @@ export function rotate(notes, shift, length) {
   }).sort((a, b) => a.t - b.t || a.p - b.p);
 }
 
+// What a kick or a snare at beat b of the bar (0-based, in beats) says about the bar starting there: kicks on 1 and 3,
+// snares on 2 and 4 (a snare on the 1 says it isn't). downbeatOf scores a tapped loop with it; the audio analysis
+// (audio/analyze/downbeats.js) scores each beat's kick and snare strengths with it.
+export function accentScore(kind, b, bpb = 4) {
+  if (kind === 'kick') return b === 0 ? 3 : bpb === 4 && b === 2 ? 1 : b === 0.5 ? -0.25 : 0;
+  if (kind === 'snare') return bpb === 4 && (b === 1 || b === 3) ? 2 : b === 0 ? -2 : bpb === 4 && b === 2 ? 0.5 : 0;
+  return 0;
+}
 const printOf = (notes, L) => notes.map((n) => `${n.p}@${cellOf(wrap(n.t, L))}`).sort().join(',');
 export function downbeatOf(notes, { bpb = 4, length = null } = {}) {
   const L = length || Math.max(bpb, Math.ceil((lastT(notes) + CELL) / bpb) * bpb);
@@ -154,8 +164,8 @@ export function downbeatOf(notes, { bpb = 4, length = null } = {}) {
     for (const n of notes) {
       const t = wrap(n.t - s, L), b = r4(t % bpb);
       // (a kick just after the 1 is less usual than one leading into beat 3 or 4: a near tie goes the usual way)
-      if (KICKS.has(n.p)) { if (b === 0) x += 3 + (t === 0 ? 1 : 0); else if (bpb === 4 && b === 2) x += 1; else if (b === 0.5) x -= 0.25; }
-      else if (SNARES.has(n.p)) { if (bpb === 4 && (b === 1 || b === 3)) x += 2; else if (b === 0) x -= 2; else if (bpb === 4 && b === 2) x += 0.5; }
+      if (KICKS.has(n.p)) x += accentScore('kick', b, bpb) + (b === 0 && t === 0 ? 1 : 0);
+      else if (SNARES.has(n.p)) x += accentScore('snare', b, bpb);
     }
     return x;
   };

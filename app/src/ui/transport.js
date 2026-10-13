@@ -58,6 +58,7 @@ import { h, css, icon, clamp, byline, authorOf, tok } from './dom.js';
 import { palette, popover, menu, closePopover, fmtClock, MOD } from './arrange-kit.js';
 import { lanesOf } from '../core/automation.js';
 import { songEnd } from '../core/project.js';
+import { hasTempoMap } from '../core/music.js';
 import { newPartFor } from '../core/sounds.js';
 import { on as toggleOn } from '../toggles.js';
 
@@ -606,7 +607,8 @@ function mountTransport(el, app) {
 
   /* ------------------------------------------------ tempo */
   const tempoNum = h('span.tp-tempo-num.num', '120');
-  const tempo = h('div.tp-tempo.tp-spec', { tabindex: 0, role: 'spinbutton', 'aria-label': 'Tempo', 'aria-valuemin': 20, 'aria-valuemax': 400, title: 'Tempo in BPM: drag up or down (Shift: fine), click to type, scroll to nudge' }, h('small.tp-lab', { 'aria-hidden': 'true' }, 'Tempo'), tempoNum);
+  const tempoLab = h('small.tp-lab', { 'aria-hidden': 'true' }, 'Tempo');
+  const tempo = h('div.tp-tempo.tp-spec', { tabindex: 0, role: 'spinbutton', 'aria-label': 'Tempo', 'aria-valuemin': 20, 'aria-valuemax': 400, title: 'Tempo in BPM: drag up or down (Shift: fine), click to type, scroll to nudge' }, tempoLab, tempoNum);
   let tdrag = null;
   // While Start a song finds the tempo from your playing (its play step), the tempo reads "~" until the stage shows a
   // BPM, then that BPM; it can't be dragged, typed or scrolled (Done puts the tempo in), and the ball stays still
@@ -618,9 +620,13 @@ function mountTransport(el, app) {
     if (!findingSaid) { findingSaid = true; ui.toast('The tempo comes from your playing: Done puts it in the song.', { kind: 'info', ms: 2400 }); } else ui.announce?.('The tempo comes from your playing.');
     return true;
   };
+  // a song on a tempo map (a flip: the grid follows a recording) has no one tempo to set: the readout says what it
+  // follows, and a drag, a key or a type says why it doesn't move (the op's own refusal)
+  const mapClip = () => { const pr = p(); for (const t of pr.tracks) for (const c of t.clips) if (c.id === pr.tempoMap?.clip) return c.name || t.name; return 'a recording'; };
+  const mapSay = () => { if (!hasTempoMap(p())) return false; ui.toast(`The grid follows ${mapClip()}. Clear the map to set a tempo.`); return true; };
   tempo.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || tempo.querySelector('input')) return;
-    if (findingSay() || lockedSay(app, 'Tempo')) { e.preventDefault(); return; }
+    if (findingSay() || lockedSay(app, 'Tempo') || mapSay()) { e.preventDefault(); return; }
     tdrag = { y: e.clientY, v: p().tempo, moved: false };
     tempo.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -635,14 +641,14 @@ function mountTransport(el, app) {
   });
   tempo.addEventListener('pointerup', () => { if (tdrag && !tdrag.moved) editTempo(); tdrag = null; });
   tempo.addEventListener('dblclick', editTempo);
-  tempo.addEventListener('wheel', (e) => { e.preventDefault(); if (takeRunning(app) || finding()) return; const v = clamp(Math.round(p().tempo) + (e.deltaY < 0 ? 1 : -1), 20, 400); store.dispatch({ type: 'project.set', patch: { tempo: v } }, { by: 'you', label: 'tempo', coalesce: 'tempo' }); }, { passive: false });
+  tempo.addEventListener('wheel', (e) => { e.preventDefault(); if (takeRunning(app) || finding() || hasTempoMap(p())) return; const v = clamp(Math.round(p().tempo) + (e.deltaY < 0 ? 1 : -1), 20, 400); store.dispatch({ type: 'project.set', patch: { tempo: v } }, { by: 'you', label: 'tempo', coalesce: 'tempo' }); }, { passive: false });
   tempo.addEventListener('keydown', (e) => {
-    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') && (findingSay() || lockedSay(app, 'Tempo'))) { e.preventDefault(); e.stopPropagation(); return; }
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Enter') && (findingSay() || lockedSay(app, 'Tempo') || mapSay())) { e.preventDefault(); e.stopPropagation(); return; }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); const v = clamp(Math.round(p().tempo) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1), 20, 400); store.dispatch({ type: 'project.set', patch: { tempo: v } }, { by: 'you', label: 'tempo', coalesce: 'tempo' }); }
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); editTempo(); }
   });
   function editTempo() {
-    if (tempo.querySelector('input') || findingSay() || lockedSay(app, 'Tempo')) return;
+    if (tempo.querySelector('input') || findingSay() || lockedSay(app, 'Tempo') || mapSay()) return;
     const inp = h('input.tp-tempo-input', { type: 'text', inputmode: 'decimal', value: String(p().tempo), 'aria-label': 'Tempo in BPM' });
     tempoNum.replaceWith(inp);
     inp.focus(); inp.select();
@@ -663,7 +669,7 @@ function mountTransport(el, app) {
   }
   const taps = [];
   const tapB = h('button.tp-tap', { type: 'button', dataset: { feature: 'song-settings' }, title: 'Tap tempo: tap along to the beat in your head', onclick: () => {
-    if (lockedSay(app, 'Tempo')) return;
+    if (lockedSay(app, 'Tempo') || mapSay()) return;
     const now = performance.now();
     if (taps.length && now - taps[taps.length - 1] > 2000) taps.length = 0;
     taps.push(now);
@@ -878,11 +884,19 @@ function mountTransport(el, app) {
     syncCredits(pr);
     // (Start a song's play step: the stage's BPM once it shows one, "~" until then)
     const fb = finding() ? app.start.tempoShown?.() ?? null : undefined;
+    const mapped = fb === undefined && hasTempoMap(pr);
     const tv = fb === undefined ? pr.tempo : fb;
-    if (!tempo.querySelector('input')) tempoNum.textContent = tv == null ? '~' : Number.isInteger(tv) ? String(tv) : tv.toFixed(1);
+    const tWord = (v) => (Number.isInteger(v) && !mapped ? String(v) : v.toFixed(1));
+    if (!tempo.querySelector('input')) tempoNum.textContent = tv == null ? '~' : tWord(tv);
     if (tv == null) tempo.removeAttribute('aria-valuenow'); else tempo.setAttribute('aria-valuenow', String(tv));
-    tempo.setAttribute('aria-valuetext', tv == null ? 'finding the tempo' : `${Number.isInteger(tv) ? tv : tv.toFixed(1)} BPM`);
+    const follows = mapped ? `follows ${mapClip()}` : '';
+    tempo.setAttribute('aria-valuetext', tv == null ? 'finding the tempo' : `${tWord(tv)} BPM${mapped ? `, nominal: the grid ${follows}` : ''}`);
     if (fb === undefined) findingSaid = false;
+    tempoLab.textContent = mapped ? `Tempo, ${follows}` : 'Tempo';
+    tempo.classList.toggle('tp-tempo-map', mapped);
+    // (while a take locks it, the title says so and this waits in dataset.title for the lock to lift)
+    const tempoTitle = mapped ? `The nominal tempo: the grid ${follows} (a tempo map). Clear the map to set one tempo.` : 'Tempo in BPM: drag up or down (Shift: fine), click to type, scroll to nudge';
+    if (tempo.dataset.title) tempo.dataset.title = tempoTitle; else tempo.title = tempoTitle;
     meterV.textContent = pr.meter.join('/');
     meterB.setAttribute('aria-label', `Meter ${pr.meter.join('/')}`);
     keyV.replaceChildren(...(pr.key ? [h('span.tp-key-l', `${pr.key.root} ${keyName(pr.key.scale)}`), h('span.tp-key-s', `${pr.key.root} ${SHORT[pr.key.scale] || keyName(pr.key.scale)}`)] : [h('span.tp-dim', 'none')]));
@@ -1278,6 +1292,8 @@ const CSS = `
 .tp-val { font-weight: 600; font-size: 14px; line-height: 1; white-space: nowrap; }
 .tp-val.num, .tp-tempo-num { font-size: 18px; font-weight: 800; }
 .tp-tempo { cursor: ns-resize; user-select: none; touch-action: none; }
+.tp-tempo.tp-tempo-map { cursor: default; }
+.tp-tempo-map .tp-lab { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-tempo-num { min-width: 2.6ch; }   /* three digits fit: the tap key beside it doesn't move as the tempo changes */
 .tp-tempo-input { width: 56px; height: 20px; padding: 0 6px; border-radius: var(--r-press); border: 0; box-shadow: 0 0 0 1.5px var(--accent-2); background: var(--bg); color: var(--text); font: 600 14px var(--font-mono); outline: none; }
 .tp-g-tempo, .tp-g-song { padding: 0 4px; }

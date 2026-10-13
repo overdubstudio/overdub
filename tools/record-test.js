@@ -22,7 +22,8 @@ import { open, tally } from './pw.js';
 import { createStore } from '../app/src/core/store.js';
 import { createProject, cleanProject } from '../app/src/core/project.js';
 import { demoProject } from '../app/src/core/demo.js';
-import { planTake, passRange, joinSeams, pickActive, createRecorder } from '../app/src/input/recorder.js';
+import { planTake, passRange, joinSeams, pickActive, createRecorder, takeSeconds } from '../app/src/input/recorder.js';
+import { beatToSec } from '../app/src/core/music.js';
 import { newPartFor, kindOfTake, soundsFor, familyOf, SOUND_SETS } from '../app/src/core/sounds.js';
 import { tuneOf } from '../app/src/input/tap.js';
 import { takeFolders, takeNumber, planClipTrim } from '../app/src/core/arrangement.js';
@@ -216,6 +217,26 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
   sa.dispatch(pa2.ops, { by: 'you' });
   const fx = takeFolders(sa.track(ga)).find((f) => f.clips.some((c) => c.asset === 'a_x'));
   t.ok(fx && fx.clips.filter((c) => c.asset === 'a_x').length === 3 && fx.playing?.asset === 'a_x' && fx.playing.start === 0 && fx.playing.length === 16 && playsAt(2).join() === 'a_x', `three passes over the whole loop: three takes in one folder, the complete one playing bars 1–4 (${fx ? fx.clips.map((c) => c.name + (c.mute ? '' : '*')).join(', ') : 'no folder'})`);
+
+  // an audio take on a mapped song (a flip): the transport plays the map, so a loop pass lasts its bars' seconds on the
+  // map, not the nominal tempo's (R3/R4); a trimmed pass's offset is the map's seconds too
+  {
+    const anchors = [{ beat: 0, sec: 0 }];
+    for (let bar = 0; bar < 32; bar++) { const bpm = 66.9 + (3.3 * bar) / 31, a = anchors[anchors.length - 1]; anchors.push({ beat: a.beat + 4, sec: Math.round((a.sec + (4 * 60) / bpm) * 1e6) / 1e6 }); }
+    const sm2 = createStore(createProject());
+    sm2.dispatch({ type: 'tempo.map', map: { anchors } }, { by: 'you' });
+    const mp = sm2.get(), span = { g0: 0, b0: 0, loop: { start: 0, end: 16 }, wrap: 16 };
+    const tOf = takeSeconds(mp, span), loopSecs = beatToSec(mp, 16) - beatToSec(mp, 0), nominal = (16 * 60) / mp.tempo;
+    const worst = Math.max(...[1, 2, 3, 4, 5].map((k) => Math.abs(tOf(16 * k) - k * loopSecs)));
+    const mid = tOf(16 * 3 + 6) - (3 * loopSecs + beatToSec(mp, 6));
+    t.ok(worst < 1e-9 && Math.abs(mid) < 1e-9 && Math.abs(loopSecs - nominal) > 0.1, `on a map a loop pass lasts its bars' seconds (${loopSecs.toFixed(3)} s for bars 1–4, not the nominal ${nominal.toFixed(3)} s): pass 5 starts ${(5 * (loopSecs - nominal)).toFixed(3)} s later than one tempo puts it`);
+    const g2 = sm2.dispatch({ type: 'track.add', ref: 'g', track: { name: 'Voice', kind: 'audio' } }).created.g;
+    const pm2 = planTake(sm2.get(), { id: 'tk_map001', parts: [{ track: g2, kind: 'audio', mode: 'take', active: 1, passes: [
+      { n: 0, audio: { asset: 'a_m', offset: 0, start: 0, length: 16 } }, { n: 1, audio: { asset: 'a_m', offset: 20, start: 4, length: 8 } }] }] });
+    sm2.dispatch(pm2.ops, { by: 'you' });
+    const trimmed = sm2.track(g2).clips.find((c) => c.asset === 'a_m' && c.mute);
+    t.ok(trimmed && Math.abs(trimmed.offset - (beatToSec(mp, 4) - beatToSec(mp, 0))) < 1e-4, `a pass trimmed to the take that plays starts at the map's seconds (offset ${trimmed?.offset} s, ${(beatToSec(mp, 4)).toFixed(4)} s on the map)`);
+  }
 
   // recording over a range that overlaps an earlier take folder: one name per entry, what played isn't a "Take N"
   const sn = createStore(cleanProject(demoProject()));
@@ -907,6 +928,20 @@ await close();
     const sk = await ev(({ g, caps0 }) => { const a = window.overdub, c = a.store.track(g).clips.find((x) => x.take && !x.mute); return { clip: c && { start: c.start, length: c.length }, caps: a.input.capture.list({ all: true }).filter((x) => x.kind === 'audio').length - caps0, last: a.input.recorder.last?.why }; }, { g: ids3.Guitar, caps0 });
     await ev(() => { try { window.__hold.stop(); } catch { /* ok */ } window.overdub.engine.stop(); });
     t.ok(sk.clip && near(sk.clip.start, 16, 0.1) && sk.clip.length > 7 && sk.clip.length < 9 && sk.caps === 1 && sk.last === 'seek', `a seek back to bar 2 during a mic take from bar 5 keeps the take where it was played (${JSON.stringify(sk)})`);
+    await resetAll();
+
+    /* ---- a looped mic take on a mapped song (a flip): each pass is cut where the map puts it. The loop's two bars
+       play at 180 BPM on a map whose nominal tempo is 120, so a pass lasts 2.667 s; one tempo would cut 4 s */
+    await ev(() => { const mic = window.__mic, ctx = mic.ctx; const o = ctx.createOscillator(); o.frequency.value = 220; const g = ctx.createGain(); g.gain.value = 0.5; o.connect(g); g.connect(mic.merge, 0, 0); o.start(); window.__hold = o; });
+    await ev((g) => { const a = window.overdub; a.store.dispatch([{ type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat: 16, sec: 8 }, { beat: 24, sec: 10.666667 }, { beat: 256, sec: 126.666667 }] } }, { type: 'project.set', patch: { loop: { on: true, start: 16, end: 24 } } }], { by: 'you', label: 'map' }); a.ui.select({ track: g }); a.engine.seek(16); }, ids3.Guitar);
+    await ev(() => window.overdub.input.recorder.record({ countIn: 0 }));
+    await untilG(36);
+    await ev(() => window.overdub.input.recorder.stop()); await idleR();
+    const mt = await ev((g) => { const a = window.overdub, p = a.store.get(), tr = a.store.track(g); const cs = tr.clips.filter((c) => c.kind === 'audio' && c.take).sort((x, y) => x.offset - y.offset); return { tempo: p.tempo, clips: cs.map((c) => ({ start: c.start, length: c.length, offset: Math.round(c.offset * 1000) / 1000, mute: !!c.mute })) }; }, ids3.Guitar);
+    await ev(() => { try { window.__hold.stop(); } catch { /* ok */ } window.overdub.engine.stop(); });
+    const mc = mt.clips, whole = mc.filter((c) => c.start === 16 && c.length > 6);
+    const step = mc.length >= 3 ? mc[2].offset - mc[1].offset : NaN;
+    t.ok(mt.tempo === 120 && whole.length >= 2 && whole.every((c) => near(c.length, 8, 0.05)) && near(step, 10.666667 - 8, 0.03), `a looped mic take on a mapped song: each pass is the loop's 8 beats and 2.667 s of the recording on the map, not 4 s at the nominal 120 (${JSON.stringify(mc)})`);
     await resetAll();
 
     /* ---- and a seek during a looped keys take: the passes and the held note are kept as played */

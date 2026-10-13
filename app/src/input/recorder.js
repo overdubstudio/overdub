@@ -99,7 +99,7 @@
 // says so ("Take 2 is in on Melody, bars 1–2; Take 1 is muted."). parts[].kinds: the aims ('hum' | 'keys' | 'pads') the
 // part's notes came from (part.kinds, passed through).
 
-import { beatsPerBar } from '../core/music.js';
+import { beatSecs, beatToSec, beatsPerBar, hasTempoMap, secToBeat } from '../core/music.js';
 import { newId } from '../core/project.js';
 import { planTakeFolder } from '../core/arrangement.js';
 import { passOf, passGrid } from './capture.js';
@@ -162,6 +162,17 @@ export function passRange(rec, ps, bpb) {
   end = Math.max(end, start + MIN_CLIP);
   const to = stopped ? r4(Math.min(end, Math.max(rec.stopBeat, on + MIN_NOTE, off))) : end;
   return { start, end, complete, from, to: Math.max(to, from) };
+}
+
+// The seconds of a take's unwrapped grid on a mapped song: tOf(g), seconds from the take's first grid beat to grid beat g,
+// with each time round the loop lasting its bars' seconds on the map (as the engine plays it: engine/engine.js uToTime)
+export function takeSeconds(p, span) {
+  const sec = (b) => beatToSec(p, b), lp = span.loop;
+  const first = lp ? sec(lp.end) - sec(span.b0) : 0, round = lp ? sec(lp.end) - sec(lp.start) : 0;
+  return (g) => {
+    const w = passOf(g, span);
+    return w.pass === 0 ? sec(w.beat) - sec(span.b0) : first + (w.pass - 1) * round + sec(w.beat) - sec(lp.start);
+  };
 }
 
 // A phrase played over the loop's seam stays in one take. R while the loop plays starts at the next bar, so a tune
@@ -301,14 +312,14 @@ export function planTake(p, take) {
         // audio can't be filled out with what played before, so the folder is the beats the take that plays covers:
         // the other passes keep their part of those beats, and what is past them (a pass begun before a take that
         // started inside the loop) stays in capture, never muting bars nothing plays over
-        const act = passes[ai].audio, A = act.start, B = act.start + act.length, spb = 60 / (+p.tempo || 120);
+        const act = passes[ai].audio, A = act.start, B = act.start + act.length, spb = 60 / (+p.tempo || 120), mapped = hasTempoMap(p);
         const ai0 = ai;
         ps2 = [];
         passes.forEach((ps, i) => {
           if (i === ai0) { ai = ps2.length; ps2.push(ps); return; }
           const s0 = Math.max(A, ps.audio.start), e0 = Math.min(B, ps.audio.start + ps.audio.length);
           if (e0 - s0 < MIN_CLIP - EPS) return;
-          ps2.push(Math.abs(s0 - ps.audio.start) < EPS && Math.abs(e0 - s0 - ps.audio.length) < EPS ? ps : { ...ps, audio: { ...ps.audio, start: r4(s0), length: r4(e0 - s0), offset: r4((+ps.audio.offset || 0) + (s0 - ps.audio.start) * spb) } });
+          ps2.push(Math.abs(s0 - ps.audio.start) < EPS && Math.abs(e0 - s0 - ps.audio.length) < EPS ? ps : { ...ps, audio: { ...ps.audio, start: r4(s0), length: r4(e0 - s0), offset: r4((+ps.audio.offset || 0) + (mapped ? beatSecs(p, s0 - ps.audio.start, ps.audio.start) : (s0 - ps.audio.start) * spb)) } });
         });
       }
       // a notes pass: the folder is the bars it recorded, the pass the beats it really did (from, to)
@@ -890,7 +901,12 @@ export function createRecorder(app, input, opts = {}) {
     const x = new Float32Array(a.len); let w = 0; for (const c of a.chunks) { x.set(c, w); w += c.length; }
     // the grid of input frame f: played to what was scheduled L earlier, heard `out` after that
     const snap = a.snap || { ctxT: a.f0 / sr, g: r.span.g0 };
-    const frameOf = (g) => Math.round((snap.ctxT + (g - snap.g) * spb + L - out) * sr) - a.f0;
+    // On a mapped song (a flip) the transport plays the map, so the seconds between two grid beats are the map's, pass
+    // by pass round the loop (R3/R4); a song with one tempo keeps the expression it always had
+    const p = P(), tOf = hasTempoMap(p) ? takeSeconds(p, r.span) : null;
+    const frameOf = tOf ? (g) => Math.round((snap.ctxT + tOf(g) - tOf(snap.g) + L - out) * sr) - a.f0 : (g) => Math.round((snap.ctxT + (g - snap.g) * spb + L - out) * sr) - a.f0;
+    // the song beats `secs` seconds take from song beat b
+    const beatsFor = (b, secs) => (tOf ? secToBeat(p, beatToSec(p, b) + secs) - b : secs / spb);
     const passes = [];
     let quiet = 0;
     for (let n = 0; n < 4096; n++) {
@@ -918,9 +934,10 @@ export function createRecorder(app, input, opts = {}) {
     return {
       asset, seconds: data.length / sr, latency: L,
       passes: passes.map((ps) => {
-        const startG = ps.g0 + Math.max(0, ps.i0 - frameOf(ps.g0)) / sr / spb;
+        const late = Math.max(0, ps.i0 - frameOf(ps.g0)) / sr;
+        const startG = ps.g0 + (tOf ? beatsFor(where(ps.g0, r).beat, late) : late / spb);
         const w0 = where(startG, r);
-        return { n: ps.n, audio: { asset, offset: (ps.i0 - first) / sr, start: r4(w0.beat), length: r4(Math.max(MIN_CLIP, (ps.i1 - ps.i0) / sr / spb)) } };
+        return { n: ps.n, audio: { asset, offset: (ps.i0 - first) / sr, start: r4(w0.beat), length: r4(Math.max(MIN_CLIP, beatsFor(w0.beat, (ps.i1 - ps.i0) / sr))) } };
       }),
     };
   }

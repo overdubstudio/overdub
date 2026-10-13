@@ -497,6 +497,49 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(u2.ok && u2.txn.label === 'lead' && names() === 'Bass,Pad', `node: and ⌘Z after that takes back the newest of them first (${u2.txn?.label})`);
 }
 
+/* ------------------------------------------------------------------ 0a. the workflows guide and a flip in get_project (Node) */
+// Flip a song (spec 0014 R30-R32): get_guide "workflows" (section "flip") says the chores are done, sound design is the
+// job and the drop is the person's, and names the five tools never offered in a flip; it is in every catalog; the
+// map changes only through tempo.map (in the ops guide); get_project says the map in one line, with section keys.
+{
+  const tools = await import('../app/src/agent/tools.js');
+  const { FLIP_FENCED } = await import('../app/src/agent/workflows.js');
+  const T = await import('../app/src/toggles.js');
+  const gg = tools.TOOLS.find((x) => x.name === 'get_guide');
+  // behind workflow.flip: off (the default), the topic answers the off line; the ops guide's tempo.map is core and stays
+  T.applyToggles({}, { search: '', host: 'localhost' });
+  const offFlip = await gg.run({ topic: 'workflows', section: 'flip' });
+  const offOps = await gg.run({ topic: 'ops' });
+  t.ok(offFlip.error === "Flip a song isn't on in this studio." && !offFlip.guide && /type: 'tempo\.map'/.test(offOps.guide) && tools.GUIDE_TOGGLES.workflows === 'workflow.flip',
+    `node: with workflow.flip off, get_guide "workflows" answers "${offFlip.error}"; the ops guide still has tempo.map (the map is core song format)`);
+  T.applyToggles({}, { search: '?on=workflow.flip', host: 'localhost' });
+  const flip = await gg.run({ topic: 'workflows', section: 'flip' });
+  const all = await gg.run({ topic: 'workflows' });
+  const none = await gg.run({ topic: 'workflows', section: 'drop' });
+  const fenced = ['arrange_song', 'arrange_around', 'make_jam_track', 'drum_track', 'suggest_riff'];
+  t.ok(fenced.every((n) => flip.guide.includes(n)) && FLIP_FENCED.join() === fenced.join() && /The chores are done/.test(flip.guide) && /sound design/i.test(flip.guide) && /The drop is theirs/.test(flip.guide) && /tempo\.map/.test(flip.guide) && /can't do here: bring files in or start a split/.test(flip.guide),
+    `node: get_guide "workflows" (flip): the chores done, sound design the job, the drop theirs, the five tools it never offers named, the grid only by tempo.map, no imports or splits (${flip.guide.length} chars)`);
+  t.ok(all.guide.includes(flip.guide) && /No workflow "drop"\. Workflows: flip\./.test(none.guide), 'node: no section lists every workflow; an unknown one says which there are');
+  const cat = await tools.catalogSchemas();
+  const enumOf = (c) => c.find((x) => x.name === 'get_guide')?.input_schema?.properties?.topic?.enum || [];
+  const fs_ = await import('node:fs');
+  const relay = JSON.parse(fs_.readFileSync(new URL('../server/relay-catalog.json', import.meta.url), 'utf8'));
+  const relayTools = Array.isArray(relay) ? relay : relay.tools || [];
+  t.ok(enumOf(cat).includes('workflows') && enumOf(tools.schemas()).includes('workflows') && enumOf(relayTools).includes('workflows') && cat.length === 40, `node: "workflows" is a get_guide topic in every catalog (catalogSchemas, schemas, relay-catalog.json); still ${cat.length} tools`);
+  const ops = await gg.run({ topic: 'ops' });
+  t.ok(/type: 'tempo\.map', map: \{ anchors/.test(ops.guide) && /project\.set tempo is refused/.test(ops.guide) && /key\?: 'F# minor'/.test(ops.guide), 'node: the ops guide has tempo.map (and project.set tempo refused while a map is set) and section.add key');
+  const { createProject, cleanProject, summarize } = await import('../app/src/core/project.js');
+  const anchors = [{ beat: 0, sec: 0 }, { beat: 4, sec: 2.5 }, { beat: 8, sec: 5 }, { beat: 12, sec: 7.5 }, { beat: 24, sec: 14.7 }, { beat: 28, sec: 17.1 }];
+  const p = cleanProject({ ...createProject(), key: { root: 'D', scale: 'minor' }, sections: [{ id: 's_v', name: 'Verse', start: 4, length: 8 }, { id: 's_b', name: 'Bridge', start: 12, length: 16, key: 'F major' }],
+    tracks: [{ id: 't_o', name: 'Original', kind: 'audio', mute: true, clips: [{ id: 'c_o', kind: 'audio', name: 'Original', start: 1.5, length: 30, asset: 'a_o', offset: 0 }] }],
+    tempoMap: { anchors, clip: 'c_o', clipStart: 1.5 } });
+  const text = summarize(p, { detail: 'summary' }).split('\n');
+  T.applyToggles(null, {});
+  t.ok(/^Grid follows Original: 96 BPM nominal, [\d.]+–[\d.]+, 1 free span \(beats 12–24\); key D minor/.test(text[1]) && /Bridge \[12–28\] \(s_b\) key F major/.test(text.join('\n')) && !/off its grid/.test(text[1]), `node: get_project says the map in one line ("${text[1].slice(0, 90)}…") and each section's key`);
+  p.tracks[0].clips[0].start = 2;
+  t.ok(/Original is off its grid by 313 ms/.test(summarize(p, { detail: 'summary' })), 'node: a move that left the recording behind its grid is said, in ms');
+}
+
 /* ------------------------------------------------------------------ 0b. every tool's MCP annotations (Node) */
 // MCP clients decide from these whether to ask before a call (Claude Code runs a read-only tool without asking), and
 // Claude's connector directory requires a title and the hint that applies. A tool added without them fails here,
@@ -585,9 +628,11 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const offG = await guides();
   local('?on=all');
   const allG = await guides();
-  const differ = topics.filter((x) => offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x]));
-  t.ok(!differ.length && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && Object.keys(tools.GUIDE_TOGGLES).length === 0,
-    `node: every real guide topic is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
+  const owned = Object.keys(tools.GUIDE_TOGGLES);
+  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x])));
+  const ownedOk = owned.every((x) => JSON.parse(offG[x]).error === T.offLine(tools.GUIDE_TOGGLES[x]) && JSON.parse(allG[x]).guide);
+  t.ok(!differ.length && ownedOk && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && owned.join() === 'workflows',
+    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
   // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
   tools.GUIDE_TOGGLES.ops = 'workflow.flip';
   local('');

@@ -25,7 +25,7 @@
 // mono, the price as a word beside Send. Nothing here signs anything: the hosted agent's work is signed Claude.
 
 import { css } from '../ui/dom.js';
-import { HOSTED_NAME, maskEmail } from './cloud.js';
+import { HOSTED_NAME } from './cloud.js';
 import { freeMove } from './cloud-kind.js';
 import { listDevices } from '../devices/registry.js';
 
@@ -59,7 +59,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
   const cloud = () => agent.cloud;
   let view = null;              // the sheet asked for: 'signin' | 'account' | 'out' | 'topup' | 'paused'
   let hint = null, hintOn = '', moreTime = false, menuOpen = false;   // hintOn: the words a kind was picked for
-  let email = '', code = '', busyWord = '', said = '';   // the fields' words survive a redraw; said: the sheet's last line
+  let busyWord = '', said = '';   // busyWord: the button that's working; said: the sheet's last line
   let checkoutRef = null, activity = null, del = null;
   let cached = { sig: '', node: null };
 
@@ -198,42 +198,25 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
   const sheetHead = (t) => h('header.sheet-head', h('h3', { tabindex: '-1' }, t));
   const closeBtn = (label = 'Close') => h('button.btn.btn-txt.ag-link', { type: 'button', onclick: () => { view = null; said = ''; del = null; cached.sig = ''; renderAll(); input.focus(); } }, label);
 
+  // Sign in with Google: one button, which opens the popup in this click (cloud.signIn), then a waiting line with Cancel
+  // until the popup says it's done or the tab's own poll finds the session
   function signInSheet(c) {
     const st = c.state;
     const status = h('p.ag-cl-status', { 'aria-live': 'polite', role: 'status' });
-    const frameHost = h('div.ag-cl-frame');
-    if (st === 'check-inbox') {
-      status.append(`Check your inbox. We sent a link to ${maskEmail(c.pendingEmail)}. It works once, for 15 minutes.`);
-      const codeIn = h('input.ag-cl-in.ag-cl-code', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '7', 'aria-label': 'The 6-digit code from the email', placeholder: '6-digit code', value: code, oninput: (e) => { code = e.target.value; } });
-      const use = async () => {
-        busyWord = 'code'; said = ''; cached.sig = ''; renderAll();
-        try { await c.enterCode(c.pendingEmail, code); code = ''; said = ''; } catch (e) { said = e.message + (e.details?.attemptsLeft != null ? ` ${plural(e.details.attemptsLeft, 'try')} left.` : ''); }
-        busyWord = ''; cached.sig = ''; renderAll();
-      };
-      codeIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); use(); } });
+    if (st === 'waiting') {
+      status.append('Waiting for Google. Finish signing in in the window that opened; this tab notices on its own.');
       return h('div.ag-cl.ag-cl-signin', { dataset: { state: st } }, sheetHead(HOSTED_NAME), status,
-        h('p.ag-kc-small', 'Opening it on another device? Type the 6-digit code here instead.'),
-        h('div.ag-cl-field', codeIn, h('button.btn', { type: 'button', disabled: busyWord === 'code', onclick: use }, busyWord === 'code' ? 'Checking…' : 'Use code')),
-        said ? h('p.ag-cl-err', said) : null,
-        h('div.ag-kc-acts', h('button.btn.btn-txt.ag-link', { type: 'button', onclick: () => { c.cancelSignIn(); said = ''; cached.sig = ''; renderAll(); } }, 'Use a different email')));
+        h('div.ag-kc-acts', h('button.btn.btn-txt.ag-link.ag-cl-cancel', { type: 'button', onclick: () => { c.cancelSignIn(); said = ''; cached.sig = ''; renderAll(); } }, 'Cancel')));
     }
-    const sending = st === 'sending';
-    status.append(sending ? 'Sending the link…' : 'Sign in with your email');
-    const emailIn = h('input.ag-cl-in.ag-cl-email', { type: 'email', autocomplete: 'email', 'aria-label': 'Your email', placeholder: 'you@example.com', value: email, oninput: (e) => { email = e.target.value; } });
-    const go = async () => {
-      if (!email.trim()) { emailIn.focus(); return; }
-      said = '';
-      try { await c.signIn(email, { frameHost }); } catch (e) { said = e.message; cached.sig = ''; renderAll(); }
-    };
-    emailIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+    status.append('Sign in with your Google account');
+    const go = () => { said = ''; c.signIn(); cached.sig = ''; renderAll(); };
     const err = said || (c.error ? c.error.message : '');
     return h('div.ag-cl.ag-cl-signin', { dataset: { state: st } }, sheetHead(HOSTED_NAME),
       h('p.ag-kc-p', 'Claude, run by Overdub: no set-up, and each ask shows its price in credits before you send it. Signing in is only for this; the studio needs no account.'),
       status,
-      h('div.ag-cl-field', emailIn, h('button.btn.btn-go', { type: 'button', disabled: sending, onclick: go }, sending ? 'Sending…' : 'Send link')),
-      frameHost,
+      h('div.ag-kc-acts', h('button.btn.btn-go.ag-cl-google', { type: 'button', onclick: go }, 'Continue with Google')),
       err ? h('p.ag-cl-err', err) : null,
-      h('p.ag-kc-small', 'No password: the email has a link that signs you in, and a code for another device.'),
+      h('p.ag-kc-small', 'A window opens for Google. Overdub gets your email address from it, never your password.'),
       h('div.ag-kc-acts',
         h('button.btn.btn-txt.ag-link', { type: 'button', onclick: () => ownClaude() }, 'Use your own Claude instead (free)'),
         agent.provider === 'cloud' ? h('button.btn.btn-txt.ag-link', { type: 'button', onclick: () => { agent.useCloud(false); view = null; renderAll(); } }, `Turn ${HOSTED_NAME} off`) : closeBtn()));
@@ -340,7 +323,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const words = del.step === 'plan' ? 'You have Overdub Plus on this account. Deleting it cancels the plan now, and no more payments are taken.'
       : del.step === 'credits' ? `You have ${plural(del.credits || 0, 'paid credit')} left. Deleting the account gives them up.`
         : del.step === 'error' ? del.message
-          : 'Deleting your account signs you out everywhere and removes your email from Overdub. Our records of payments and of what each ask cost stay, without your address; the payment provider keeps its own receipts, as tax law asks. Your songs aren’t on the account: they stay in this browser.';
+          : 'Deleting your account signs you out everywhere and removes your email address from Overdub. Our backups keep it for up to 35 days, then it’s gone from them too. Our records of payments and of what each ask cost stay, without your address; the payment provider keeps its own receipts, as tax law asks. Your songs aren’t on the account: they stay in this browser.';
     const next = del.step === 'plan' ? () => run({ ...opts, cancelPlan: true }) : del.step === 'credits' ? () => run({ ...opts, forfeitCredits: true }) : () => run(opts);
     return h('div.ag-cl-delete', h('p.ag-kc-small', words),
       h('div.ag-kc-acts',
@@ -421,7 +404,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     let paid = true;
     try { if (c.me && ref) paid = (await c.sync(ref)).paid; else await c.refresh(); } catch { paid = !ref; await c.refresh().catch(() => {}); }
     try { ui.setOpen?.('right', true); ui.show?.('agent'); } catch { /* no right pane on this layout */ }
-    if (!c.me) { said = 'Sign in with the email you paid with to see your credits.'; show('signin'); return; }
+    if (!c.me) { said = 'Sign in with the Google account you paid with to see your credits.'; show('signin'); return; }
     if (!paid) { checkoutRef = ref; said = NOT_YET; show('topup'); return; }
     said = 'Paid. Your credits are in.';
     show('account');
@@ -445,13 +428,6 @@ const CSS = `
 .ag-cl .sheet-head > h3:focus { outline: none; }
 .ag-cl-status { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text); }
 .ag-cl-err { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--bad); }
-.ag-cl-field { display: flex; align-items: flex-end; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--text-3); }
-.ag-cl-field:focus-within { border-bottom-color: var(--text); }
-.ag-cl-in { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: 13.5px/1.45 var(--font-ui); padding: 4px 0; }
-.ag-cl-code { font-family: var(--font-mono); letter-spacing: .12em; }
-.ag-cl-in::placeholder { color: var(--text-3); letter-spacing: 0; }
-.ag-cl-frame:empty { display: none; }
-.ag-cl-frame iframe { width: 100%; height: 72px; border: 0; }
 .ag-cl-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ag-cl-two .btn { justify-content: center; text-align: center; white-space: normal; height: auto; min-height: 32px; }
 .ag-cl-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; }

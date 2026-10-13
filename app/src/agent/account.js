@@ -1,11 +1,13 @@
-// The studio's Overdub account, for Connect: sign in by email (a code or a link), get a short tab ticket for the relay,
-// list and disconnect the apps the account has allowed. It is the sign-in part of the cloud-credits branch's cloud.js
-// (config, me, the bot check frame, signIn, enterCode, signOut) plus ticket(), grants() and disconnect(id); when that
-// branch lands, cloud.js imports this instead of keeping its own copy.
+// The studio's Overdub account, for Connect: sign in with Google, get a short tab ticket for the relay, list and
+// disconnect the apps the account has allowed. It is the sign-in part of the cloud-credits branch's cloud.js (config,
+// me, signIn in a popup, signOut) plus ticket(), grants() and disconnect(id); when that branch lands, cloud.js imports
+// this instead of keeping its own copy.
 //
 //   const acct = createAccount({ api })          api: the account service's origin (none: the account is off)
-//   acct.state  'signed-out' | 'sending' | 'check-inbox' | 'signed-in'      acct.me (GET /v1/me) / acct.email / acct.error
-//   acct.load() / acct.refresh() / acct.signIn(email, { frameHost }) / acct.enterCode(email, code) / acct.signOut()
+//   acct.state  'signed-out' | 'waiting' | 'signed-in' | 'error'      acct.me (GET /v1/me) / acct.email / acct.error
+//   acct.load() / acct.refresh() / acct.signIn() / acct.cancelSignIn() / acct.signOut()
+//                                                   signIn opens <api>/v1/auth/google?return=studio in a popup: call it
+//                                                   in the click handler itself, before any await
 //   acct.ticket() -> { ticket, expiresAt, relay }   POST /v1/relay/ticket: five minutes, kept in memory only
 //   acct.grants() -> [Grant] / acct.disconnect(id)  GET /v1/oauth/grants, DELETE /v1/oauth/grants/:id
 //   acct.disconnectAll()                            DELETE /v1/oauth/grants
@@ -15,9 +17,16 @@
 //
 // Every request carries the session cookie (credentials: 'include'), which is HttpOnly on the service's origin: this
 // page never holds it. The ticket never goes in a URL or in storage.
+//
+// Signing in: the popup goes through Google and ends on the service's own page, /v1/auth/done, which sets the session
+// cookie, posts { type: 'overdub:signed-in' } to this window and closes itself. The message only says "ask again": it
+// is taken only from the service's exact origin and the popup this tab opened, and all it does is GET /v1/me. The
+// tab also asks /v1/me every 5 s while it's visible, and when it comes back into focus, for up to 10 minutes, so a
+// blocked or lost message still signs it in.
 
 const POLL_MS = 5000;
-const POLL_FOR_MS = 15 * 60 * 1000;
+const POLL_FOR_MS = 10 * 60 * 1000;
+const SIGNIN_PATH = '/v1/auth/google?return=studio';
 
 export class AccountError extends Error {
   constructor(status, body = {}) {
@@ -29,22 +38,16 @@ export class AccountError extends Error {
   }
 }
 
-// An address shown back to its owner with the middle kept out of sight: jess@example.com -> j•••@example.com
-export function maskEmail(email) {
-  const [user, domain] = String(email || '').split('@');
-  return domain ? `${user.slice(0, 1)}•••@${domain}` : '';
-}
-
 export function createAccount({ api = null, fetch: f = (...a) => globalThis.fetch(...a), win = globalThis } = {}) {
   const fns = new Map();
   const emit = (type, d) => { for (const fn of fns.get(type) || []) { try { fn(d); } catch (e) { console.error('account listener', type, e); } } };
-  let state = 'signed-out', me = null, config = null, pendingEmail = '', error = null;
-  let pollT = 0, pollUntil = 0;
+  let state = 'signed-out', me = null, config = null, error = null;
+  let pollT = 0, pollUntil = 0, popup = null;
 
   function setState(s, err = null) { state = s; error = err; emit('state', s); }
   function setMe(m) {
     me = m || null;
-    if (me && state !== 'signed-in') { stopPoll(); pendingEmail = ''; setState('signed-in'); } else if (!me && state === 'signed-in') setState('signed-out');
+    if (me && state !== 'signed-in') { stopWaiting(); setState('signed-in'); } else if (!me && state === 'signed-in') setState('signed-out');
     emit('me', me);
   }
 
@@ -73,45 +76,19 @@ export function createAccount({ api = null, fetch: f = (...a) => globalThis.fetc
     try { setMe(await req('GET', '/v1/me')); } catch (e) { if (e.status === 401) { setMe(null); return null; } throw e; }
     return me;
   }
-  // The bot check: none on a local service (BOT_CHECK=stub); otherwise the service's own small page in a frame, which
-  // posts its token back to this exact origin. The studio never loads a third-party script itself.
-  function botToken(frameHost) {
-    const kind = config?.botCheck?.kind || 'stub';
-    if (kind === 'stub') return Promise.resolve('dev-ok');
-    const failed = () => new AccountError(400, { error: { code: 'bot_check_failed', message: 'We couldn’t check you’re a person. Try again.' } });
-    return new Promise((resolve, reject) => {
-      if (!frameHost) { reject(failed()); return; }
-      const frame = win.document.createElement('iframe');
-      frame.className = 'rc-bot';
-      frame.title = 'A quick check that you’re a person';
-      frame.src = api + '/v1/auth/botcheck-frame';
-      const done = (fn, v) => { win.removeEventListener('message', onMsg); clearTimeout(t); frame.remove(); fn(v); };
-      const onMsg = (ev) => { if (ev.origin === api && ev.data && ev.data.type === 'overdub:botcheck' && typeof ev.data.token === 'string') done(resolve, ev.data.token); };
-      const t = setTimeout(() => done(reject, failed()), 120000);
-      win.addEventListener('message', onMsg);
-      frame.addEventListener('load', () => { try { frame.contentWindow.postMessage({ type: 'overdub:botcheck-hello' }, api); } catch { /* the frame says hello again */ } });
-      frameHost.replaceChildren(frame);
-    });
+  // Google, in a popup: opened here, synchronously, so it counts as the click's own (an await before it and the browser
+  // blocks it). A blocked popup is an 'error' the sheet shows.
+  function signIn() {
+    if (!api) { setState('error', new AccountError(0, { error: { code: 'off', message: 'Overdub accounts aren’t on in this studio.' } })); return; }
+    stopWaiting();
+    let w = null;
+    try { w = win.open?.(api + SIGNIN_PATH, 'overdub-signin', 'popup,width=480,height=640') || null; } catch { w = null; }
+    if (!w) { setState('error', new AccountError(0, { error: { code: 'popup_blocked', message: 'The sign-in window didn’t open. Allow pop-ups for this page, then try again.' } })); return; }
+    popup = w;
+    setState('waiting');
+    startWaiting();
   }
-  async function signIn(email, { frameHost = null } = {}) {
-    email = String(email || '').trim();
-    setState('sending');
-    try {
-      const bot = await botToken(frameHost);
-      const at = win.location ? win.location.origin + win.location.pathname : undefined;
-      await req('POST', '/v1/auth/email', { email, botToken: bot, ...(at ? { returnTo: at } : {}) });
-      pendingEmail = email;
-      setState('check-inbox');
-      startPoll();
-    } catch (e) { setState('signed-out', e); throw e; }
-  }
-  async function enterCode(email, code) {
-    try {
-      await req('POST', '/v1/auth/code', { email: String(email || pendingEmail).trim(), code: String(code || '').replace(/\s+/g, '') });
-    } catch (e) { error = e; emit('state', state); throw e; }
-    return refresh();
-  }
-  function cancelSignIn() { stopPoll(); pendingEmail = ''; setState('signed-out'); }
+  function cancelSignIn() { stopWaiting(); closePopup(); setState('signed-out'); }
   async function signOut() {
     try { await req('POST', '/v1/auth/logout', {}); } catch (e) { if (e.status !== 401) throw e; }
     setMe(null); setState('signed-out');
@@ -120,17 +97,20 @@ export function createAccount({ api = null, fetch: f = (...a) => globalThis.fetc
     try { await req('POST', '/v1/auth/logout-all', {}); } catch (e) { if (e.status !== 401) throw e; }
     setMe(null); setState('signed-out');
   }
-  // "Check your inbox": the link opened in this browser signs this tab in too, so /v1/me is asked every 5 s while the
-  // tab is visible, for up to 15 minutes
-  function startPoll() { pollUntil = Date.now() + POLL_FOR_MS; schedule(); }
-  function stopPoll() { clearTimeout(pollT); pollT = 0; }
+  // While the popup is out: the done page's message, focus coming back, and /v1/me every 5 s while the tab is visible,
+  // for up to 10 minutes. Then it stops and goes back to signed out.
+  function onMessage(ev) { if (state === 'waiting' && ev.origin === api && popup && ev.source === popup && ev.data && ev.data.type === 'overdub:signed-in') refresh().catch(() => {}); }
+  function onFocus() { if (state === 'waiting') refresh().catch(() => {}); }
+  function startWaiting() { pollUntil = Date.now() + POLL_FOR_MS; schedule(); win.addEventListener?.('message', onMessage); win.addEventListener?.('focus', onFocus); }
+  function stopWaiting() { clearTimeout(pollT); pollT = 0; win.removeEventListener?.('message', onMessage); win.removeEventListener?.('focus', onFocus); if (state === 'waiting') closePopup(); }
+  function closePopup() { try { if (popup && !popup.closed) popup.close(); } catch { /* gone already */ } popup = null; }
   function schedule() {
     clearTimeout(pollT);
     pollT = setTimeout(async () => {
-      if (state !== 'check-inbox') return;
-      if (Date.now() > pollUntil) { stopPoll(); return; }
+      if (state !== 'waiting') return;
+      if (Date.now() > pollUntil) { cancelSignIn(); return; }
       if (win.document?.visibilityState !== 'hidden') await refresh().catch(() => {});
-      if (state === 'check-inbox') schedule();
+      if (state === 'waiting') schedule();
     }, POLL_MS);
   }
 
@@ -145,9 +125,8 @@ export function createAccount({ api = null, fetch: f = (...a) => globalThis.fetc
     get state() { return state; },
     get me() { return me; },
     get email() { return me?.user?.email || ''; },
-    get pendingEmail() { return pendingEmail; },
     get error() { return error; },
-    load, refresh, signIn, enterCode, cancelSignIn, signOut, signOutEverywhere, ticket, grants, disconnect, disconnectAll,
+    load, refresh, signIn, cancelSignIn, signOut, signOutEverywhere, ticket, grants, disconnect, disconnectAll,
     on(type, fn) { if (!fns.has(type)) fns.set(type, new Set()); fns.get(type).add(fn); return () => fns.get(type)?.delete(fn); },
   };
 }

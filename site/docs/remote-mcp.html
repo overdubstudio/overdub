@@ -434,8 +434,8 @@ them play&quot;, &quot;the human's edits are never touched&quot;). Those describ
 that speaks both it and the older ones falls back to <code>initialize</code> with a server like the relay).</p>
 <h2 id="accounts-one-url-signed-in-with-overdub"><a class="h-link" href="#accounts-one-url-signed-in-with-overdub">Accounts: one URL, signed in with Overdub</a></h2>
 <p>Built and tested, not deployed, and off unless configured. With it, every Claude app adds the same connector URL,
-<code>https://relay.overdubstudio.com/mcp</code>, and the person signs in with a free Overdub account (email, then a 6-digit
-code) instead of copying a private link per browser. The account service is the OAuth authorization server; the relay
+<code>https://relay.overdubstudio.com/mcp</code>, and the person signs in with a free Overdub account (Continue with Google, in a
+popup) instead of copying a private link per browser. The account service is the OAuth authorization server; the relay
 is the resource server and keeps no database.</p>
 <ul>
 <li><strong>Claude's side.</strong> A request to <code>/mcp</code> without a good access token gets <code>401</code> with

@@ -1596,10 +1596,12 @@ ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles); a `cl
 `?cloud=` points a local studio at a local service only, and counts as the toggle there. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
-- `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (an email link, or its 6-digit code in a tab the
-  link wasn't opened in; the tab polls `/v1/me` while it waits), the balance, top up, credits back, where the credits
-  went, deleting the account. Every request is `credentials: 'include'`; the session is an httpOnly cookie on the
-  service's origin. `canonicalBundle` and `bundleVersion` give the prompt bundle's version, the same on both sides.
+- `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (Continue with Google opens
+  `/v1/auth/google?return=studio` in a popup, in the click itself; the service's done page posts
+  `{ type: 'overdub:signed-in' }`, taken only from the service's exact origin, and the tab also polls `/v1/me` while it
+  waits), the balance, top up, credits back, where the credits went, deleting the account. Every request is
+  `credentials: 'include'`; the session is an httpOnly cookie on the service's origin. `canonicalBundle` and
+  `bundleVersion` give the prompt bundle's version, the same on both sides.
 - `agent/claude.js` decides the provider in this order: the demo agent if it's on, Claude Code if chosen, a server
   key, then credits only if the person chose them (`overdub:agent-provider`). An ask on credits is
   `POST /v1/agent/actions { kind, moreTime, promptVersion }` (one `Idempotency-Key` per Send), then one

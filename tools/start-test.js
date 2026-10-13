@@ -14,7 +14,8 @@ const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 
 const real = (errs) => errs.filter((e) => !/status of 404 .*kits|Failed to load resource: the server responded with a status of 404/.test(e));
 
 async function blank({ width = 1440, height = 900 } = {}) {
-  const o = await open('/app/', { query: 'new', width, height });
+  // (the door's fourth way, Flip a song, is behind workflow.flip: on here; tools/flip-test.js checks it off)
+  const o = await open('/app/', { query: 'new&on=workflow.flip', width, height });
   await o.page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
   await o.page.waitForTimeout(500);
   return o;
@@ -42,14 +43,20 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
         go, notime: [...door.querySelectorAll('.st-notime button')].map((b) => b.textContent.trim()), foot: door.querySelector('.ar-empty-foot')?.textContent.replace(/\s+/g, ' ').trim(),
         playing: o.engine.playing, stage: !!document.querySelector('.st-stage'), welcome: !!document.querySelector('.ar-welcome')?.getClientRects().length };
     });
-    t.ok(d.shown && d.title === 'Take 1 is yours.' && d.ways.join() === 'Tap a beat,Hum a tune,Play the keys', `a blank song's empty space is the door: "${d.title}", ${d.ways.join(' · ')}`);
+    t.ok(d.shown && d.title === 'Take 1 is yours.' && d.ways.join() === 'Tap a beat,Hum a tune,Play the keys,Flip a song', `a blank song's empty space is the door: "${d.title}", ${d.ways.join(' · ')}`);
     t.ok(d.go.join() === 'Tap a beat', `Tap a beat is the door's one primary (${d.go.join(', ')})`);
     t.ok(d.notime.join() === 'Draw a beat,Pick a groove,Ask your agent' && /hear a finished one: Night Shift\./.test(d.foot), `no playing in time: ${d.notime.join(' · ')}; "${d.foot}"`);
     t.ok(!d.playing && !d.stage && !d.welcome, `nothing sounds and nothing pops up until a key or a click (playing ${d.playing}, stage ${d.stage}, welcome ${d.welcome})`);
     await page.focus('.st-way-b[data-way="Tap a beat"]');
     await page.keyboard.press('ArrowDown');
     const f1 = await E(page, () => document.activeElement?.textContent.trim());
-    t.ok(f1 === 'Hum a tune', `↓ walks the ways (${f1})`);
+    const walk = [f1];
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowDown'); walk.push(await E(page, () => document.activeElement?.textContent.trim())); }
+    await page.keyboard.press('ArrowUp');
+    walk.push(await E(page, () => document.activeElement?.textContent.trim()));
+    t.ok(walk.join() === 'Hum a tune,Play the keys,Flip a song,Tap a beat,Flip a song', `↓ and ↑ walk all four ways, round (${walk.join(' → ')})`);
+    const why = await E(page, () => document.querySelector('.st-way-b[data-way="Flip a song"]')?.closest('li')?.querySelector('.st-way-why')?.textContent);
+    t.ok(why === 'Bring a song you own. It gets split, mapped and marked; the drop is yours.', `Flip a song says what it does ("${why}")`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-door.png') });
     // every blank song has it: a song with a track doesn't
     await E(page, () => window.overdub.store.dispatch({ type: 'track.add', track: { name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys' } } }, { by: 'you' }));

@@ -6,9 +6,13 @@
 //   beatboxWav(file, { beats?, bpm?, tail? }) -> file     noise bursts on the beat: a low thump on 1 and 3, a hiss on 2
 //                                                         and 4 (pitchless, so it reads as a beat, not a tune)
 //   writeWav(file, samples, sr?)                          Float32Array in -1..1 -> a WAV on disk
+//   fakeSong({ seed, bpm, bpb, drift, freeIntro, ... })   a whole band with its beats, chords and sections known
+//                                                         (tools/fake-song.js: pure, so a browser builds it too)
 // Deterministic: the noise is seeded, never Math.random.
 import fs from 'node:fs';
 import path from 'node:path';
+
+export { fakeSong, SONG_FORM } from './fake-song.js';
 
 export const SR = 48000;
 

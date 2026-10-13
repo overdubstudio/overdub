@@ -33,6 +33,13 @@ import {
   kitNotes,
   drumName,
   GM_DRUMS,
+  tempoAt,
+  timeline,
+  checkAnchors,
+  mapNominal,
+  mapInsert,
+  mapRemove,
+  shiftMap,
 } from '../../app/src/core/music.js';
 
 const C_MAJOR = { root: 'C', scale: 'major' };
@@ -183,6 +190,48 @@ describe('time', () => {
   test('beats and seconds', () => {
     assert.equal(beatToSec(4, 120), 2);
     assert.equal(secToBeat(2, 120), 4);
+    assert.equal(beatToSec({ tempo: 120 }, 4), 2);
+    assert.equal(secToBeat({ tempo: 120 }, 2), 4);
+  });
+  test('the tempo map: conversions, nominal tempo, the check', () => {
+    const anchors = [
+      { beat: 0, sec: 0 },
+      { beat: 4, sec: 2 },
+      { beat: 8, sec: 4.5 },
+    ];
+    const p = { tempo: 100, tempoMap: { anchors } };
+    assert.equal(beatToSec(p, 4), 2);
+    assert.equal(beatToSec(p, 6), 3.25);
+    assert.equal(beatToSec(p, 12), 7);
+    assert.equal(secToBeat(p, 3.25), 6);
+    assert.equal(tempoAt(p, 1), 120);
+    assert.equal(tempoAt(p, 5), 96);
+    assert.equal(mapNominal(anchors), 108);
+    assert.equal(checkAnchors(anchors), null);
+    assert.match(checkAnchors([{ beat: 0, sec: 0 }]), /two anchors/);
+    assert.equal(timeline(p, 4).sec(8), 2.5);
+    assert.equal(timeline({ tempo: 120 }, 2).sec(6), 2);
+  });
+  test('the tempo map: insert, remove and shift', () => {
+    const map = {
+      anchors: [
+        { beat: 0, sec: 0 },
+        { beat: 4, sec: 2 },
+        { beat: 8, sec: 4.5 },
+      ],
+    };
+    assert.deepEqual(mapInsert(map, 4, 4).anchors, [
+      { beat: 0, sec: 0 },
+      { beat: 4, sec: 2 },
+      { beat: 8, sec: 4.5 },
+      { beat: 12, sec: 7 },
+    ]);
+    assert.deepEqual(mapRemove(map, 2, 4).anchors, [
+      { beat: 0, sec: 0 },
+      { beat: 2, sec: 1 },
+      { beat: 4, sec: 2.25 },
+    ]);
+    assert.deepEqual(shiftMap(shiftMap(map, 4), -4).anchors, map.anchors);
   });
   test('posLabel is bar.beat.sixteenth, 1-based', () => {
     assert.equal(posLabel(0), '1.1.1');

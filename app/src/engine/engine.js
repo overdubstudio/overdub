@@ -31,6 +31,11 @@
 // time (a tempo change adds an anchor where the scheduler has reached, so nothing already scheduled moves); segments
 // map u to the song's beats (a loop wrap starts a new segment at loop.start). The scheduler walks u forward every
 // 25 ms to 120 ms past now, reading the document fresh each tick, so edits are heard on the next tick.
+// A song with a tempo map (core/music.js "The tempo map") times u through the map instead: each segment also holds
+// the audio time it starts at (t0) and the speed it plays at (rate), and a beat's time is t0 plus the map's seconds
+// from the segment's first beat, so every map segment is a tempo the transport follows, note-offs and clicks
+// included. A map set, changed or cleared while playing, or a practice-speed change on a mapped song, starts a
+// segment where the scheduler has reached (as a tempo change adds an anchor), so nothing already handed over moves.
 //
 // Edits inside the lookahead. What was handed to an instrument is remembered (T.scheduled). After every edit while
 // playing, revise() compares it with what the document now says for the scheduled window: a note deleted or moved
@@ -116,6 +121,7 @@
 // can stay stuck. The feed opens once the strips are rebuilt (or after 1.5 s, whatever is slow). play() waits for it.
 
 import { songEnd as projectSongEnd } from '../core/project.js';
+import { hasTempoMap, mapSec, mapBeat, mapTempo, beatToSec as songBeatToSec, secToBeat as songSecToBeat, beatSecs } from '../core/music.js';
 import { onDevices } from '../devices/registry.js';
 import { Strip, trackSpec, masterSpec, audibility, mixAt, keyPlan } from './strip.js';
 import { createClock } from './clock.js';
@@ -186,6 +192,8 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     startT: 0,
     count: null,        // the count-in of this play(): { from, until, beats, preroll, time, ended }, or null
     wraps: 0,           // loop wraps scheduled since play() (the pass a wrap starts is wraps + 1)
+    tm: null,           // a mapped song's anchors while it plays (see "Time" above), else null
+    tmSrc: null,        // the song's tempoMap object they came from (a new one is an edit to follow)
   };
   // Practice speed (engine.rate, the Jam room's): the transport plays the song at rate × its tempo, never changing the
   // song. Everything the transport times (notes, the click, the count-in, synced devices) follows it; the song's own
@@ -194,6 +202,9 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   const bpmNow = () => (+P().tempo || 120) * rate;
   const spbNow = () => 60 / bpmNow();
   const spbSong = () => 60 / (+P().tempo || 120);
+  // the tempo a synced device hears: the map's where the song is (a mapped song), else bpmNow
+  const mapOfSong = (p) => (hasTempoMap(p) ? p.tempoMap.anchors : null);
+  const bpmHere = () => { const A = mapOfSong(P()); return A ? mapTempo(A, T.playing && ctx ? beatNow() : T.cursor) * rate : bpmNow(); };
   const bpbNow = () => beatsPerBarOf(P().meter);
   // Practice (the Jam room's tab lane, ui/tabs.js): clips the live transport leaves out, so the part someone is learning
   // is theirs to play. Live only: renders build their own schedule and never see it. A change while playing takes back
@@ -221,9 +232,16 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
 
   function anchorFor(u) { for (let i = T.anchors.length - 1; i >= 0; i--) if (T.anchors[i].u <= u + 1e-9) return T.anchors[i]; return T.anchors[0]; }
   function anchorAtTime(t) { for (let i = T.anchors.length - 1; i >= 0; i--) if (T.anchors[i].t <= t + 1e-9) return T.anchors[i]; return T.anchors[0]; }
-  const uToTime = (u) => { const a = anchorFor(u); return a.t + (u - a.u) * a.spb; };
-  const timeToU = (t) => { const a = anchorAtTime(t); return a.u + (t - a.t) / a.spb; };
   function segFor(u) { for (let i = T.segs.length - 1; i >= 0; i--) if (T.segs[i].u0 <= u + 1e-9) return { seg: T.segs[i], i: T.segs[i].i }; return { seg: T.segs[0], i: T.segs[0].i }; }
+  function segAtTime(t) { for (let i = T.segs.length - 1; i >= 0; i--) if (T.segs[i].t0 <= t + 1e-9) return T.segs[i]; return T.segs[0]; }
+  const uToTime = (u) => {
+    if (T.tm) { const { seg } = segFor(u); return seg.t0 + (mapSec(T.tm, seg.s0 + (u - seg.u0)) - mapSec(T.tm, seg.s0)) / seg.rate; }
+    const a = anchorFor(u); return a.t + (u - a.u) * a.spb;
+  };
+  const timeToU = (t) => {
+    if (T.tm) { const seg = segAtTime(t); return seg.u0 + (mapBeat(T.tm, mapSec(T.tm, seg.s0) + (t - seg.t0) * seg.rate) - seg.s0); }
+    const a = anchorAtTime(t); return a.u + (t - a.t) / a.spb;
+  };
   const uToSong = (u) => { const { seg } = segFor(u); return seg.s0 + (u - seg.u0); };
   const outLatency = () => (ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0);
 
@@ -279,7 +297,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   const clock = createClock({
     now: () => (ctx ? ctx.currentTime : 0),
     playing: () => T.playing,
-    bpm: bpmNow,
+    bpm: bpmHere,
     beatsPerBar: bpbNow,
     gridAt: (t) => (T.playing ? T.s0 + timeToU(t) : t / spbNow()),
     timeAtGrid: (g) => (T.playing ? uToTime(g - T.s0) : g * spbNow()),
@@ -294,7 +312,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   const transportEvt = (why, extra = null) => ev.emit('transport', { why, playing: T.playing, beat: beatNow(), tempo: +P().tempo || 120, rate, loop: { ...(P().loop || {}) }, metronome: click.on, click: { ...click }, recording, counting: countingNow(), ...extra });
 
   // ------------------------------------------------------------------------------------------- the graph
-  const stripOpts = (id, extra = {}) => ({ id, clock, bpm: bpmNow, report, onGraph: (e) => ev.emit('graph', e), meters: true, ...extra });
+  const stripOpts = (id, extra = {}) => ({ id, clock, bpm: bpmHere, report, onGraph: (e) => ev.emit('graph', e), meters: true, ...extra });
 
   let reconcileQueued = false;
   function queueReconcile() {
@@ -308,9 +326,11 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   function reconcile() {
     if (!ctx || disposed) return;
     const p = P();
-    // tempo: re-anchor where the scheduler has reached
+    // tempo: re-anchor where the scheduler has reached (a mapped song, or a map set or cleared: retime)
     const bpm = bpmNow();
-    if (lastTempo !== null && bpm !== lastTempo && T.playing) {
+    const mapMoved = T.playing && T.tmSrc !== (p.tempoMap || null), rateMoved = lastTempo !== null && bpm !== lastTempo;
+    if (mapMoved || (T.playing && T.tm && rateMoved)) retime(p);
+    else if (rateMoved && T.playing) {
       const t = uToTime(T.schedU);
       T.anchors.push({ t, u: T.schedU, spb: 60 / bpm });
       if (T.anchors.length > 16) T.anchors.splice(0, T.anchors.length - 16);
@@ -352,6 +372,25 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       transportEvt('tempo');
     }
     assets.prefetch(p).catch(() => {});
+  }
+
+  // A mapped song's clock changed while playing (its map set, changed or cleared; the practice speed): from where the
+  // scheduler has reached, the new one. A segment starts there on the map (same pass, same song beat); leaving the map,
+  // an anchor at the song's tempo.
+  function retime(p) {
+    const t = uToTime(T.schedU), A = mapOfSong(p);
+    T.tmSrc = p.tempoMap || null;
+    if (A) {
+      const { seg } = segFor(T.schedU);
+      const s = seg.s0 + (T.schedU - seg.u0);
+      if (Math.abs(seg.u0 - T.schedU) < 1e-9) Object.assign(seg, { t0: t, rate });
+      else T.segs.push({ u0: T.schedU, s0: s, fresh: false, i: seg.i, quiet: seg.quiet, t0: t, rate });
+      if (T.segs.length > 64) T.segs.splice(0, T.segs.length - 64);
+    } else {
+      T.anchors.push({ t, u: T.schedU, spb: spbNow() });
+      if (T.anchors.length > 16) T.anchors.splice(0, T.anchors.length - 16);
+    }
+    T.tm = A;
   }
 
   // resume() stays pending until the page has had a user gesture; never let that hang the engine
@@ -496,7 +535,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   }
 
   function scheduleUntil(H, events) {
-    const uH = timeToU(H);
+    let uH = timeToU(H);
     let guard = 0;
     while (T.schedU < uH - 1e-9 && guard++ < 256) {
       const { seg, i: segIndex } = segFor(T.schedU);
@@ -516,7 +555,9 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       T.schedU = wrap ? seg.u0 + (lp.end - seg.s0) : T.schedU + len;
       if (wrap) {
         const i = Math.max(...T.segs.map((g) => g.i)) + 1;
-        T.segs.push({ u0: T.schedU, s0: lp.start, fresh: true, i });
+        const t0 = uToTime(T.schedU);   // (the pass's end, on the segment that ends there: where the next one starts)
+        T.segs.push({ u0: T.schedU, s0: lp.start, fresh: true, i, t0, rate });
+        if (T.tm) uH = timeToU(H);      // (on a map the new pass runs at its own tempo)
         if (T.segs.length > 64) T.segs.splice(0, T.segs.length - 64);
         T.wraps++;
         const at = uToTime(T.schedU), gen = T.gen, heard = at + outLatency() + pdc.total;
@@ -555,7 +596,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       const e = { note: true, t, c, inst, p: n.note.p, v, track: n.track, off, offSent: false, get end() { return this.off.t; } };
       off.entry = e;
       T.scheduled.set(k, e);
-      events.push({ t, inst, p: n.note.p, v, track: n.track, x: noteExpr(n.note, spbNow(), n.into) });
+      events.push({ t, inst, p: n.note.p, v, track: n.track, x: noteExpr(n.note, T.tm ? 60 / (mapTempo(T.tm, n.at) * rate) : spbNow(), n.into) });
       pendingOffs.push(off);
     }
     if (audio && rate === 1) {   // (at a practice speed audio clips sit out: they can't follow in tune)
@@ -563,7 +604,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
         const k = a.key + '@' + segIndex;
         if (T.scheduled.has(k)) continue;
         const c = compOf(a.track), t0 = time(a.at) + c, t1 = time(a.end) + c;
-        T.scheduled.set(k, startAudio(a, t0, t1, a.into * spbNow(), null, c));
+        T.scheduled.set(k, startAudio(a, t0, t1, a.intoSec ?? a.into * spbNow(), null, c));
       }
     }
   }
@@ -749,7 +790,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
 
   // Which edits can move what is already scheduled (a knob turn can't: no need to look)
   let needRevise = false;
-  const NOTE_OPS = /^(notes\.|clip\.|track\.(remove|move|add)|project\.|instrument\.|asset\.|time\.|section\.duplicate)/;   // (time.* and section.duplicate move clips: core/arrangement.js)
+  const NOTE_OPS = /^(notes\.|clip\.|track\.(remove|move|add)|project\.|instrument\.|asset\.|time\.|tempo\.|section\.duplicate)/;   // (time.* and section.duplicate move clips: core/arrangement.js; tempo.map moves every beat)
   const touchesNotes = (evt) => !evt || !Array.isArray(evt.ops) || !evt.ops.length || evt.ops.some((o) => !o || NOTE_OPS.test(String(o.type || '')));
 
   // An edit while playing: first take back what no longer matches the document (revise), then schedule notes (and
@@ -778,7 +819,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
           const k = a.key + '@' + i;
           if (!(a.into > 1e-6) || T.scheduled.has(k)) continue;
           const t1 = frame(ctx, uToTime(ua + (a.end - sA))) + c;
-          if (t1 - safe > 0.005) T.scheduled.set(k, startAudio(a, safe, t1, a.into * spbNow(), null, c));
+          if (t1 - safe > 0.005) T.scheduled.set(k, startAudio(a, safe, t1, a.intoSec ?? a.into * spbNow(), null, c));
         }
       }
     }, pdc.max);
@@ -814,7 +855,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
         if (w && e.t <= safe && rate === 1) {
           const at = w.sA + (timeToU(safe - e.c) - w.ua); // the song beat this track plays at `safe`
           const into = w.a.into + (at - w.a.at), t1 = w.t1 + e.c;
-          if (into >= 0 && t1 - safe > 0.005) T.scheduled.set(k, startAudio(w.a, safe, t1, into * spbNow(), null, e.c));
+          if (into >= 0 && t1 - safe > 0.005) T.scheduled.set(k, startAudio(w.a, safe, t1, T.tm ? beatSecs(p, into, w.a.at - w.a.into) : into * spbNow(), null, e.c));
         }
       }
     }
@@ -973,8 +1014,10 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     T.startT = frame(ctx, now + START_DELAY);
     T.anchors = [{ t: T.startT, u: 0, spb: spbNow() }];
     const s0 = count ? from - count.beats : from;
-    T.segs = [{ u0: 0, s0, fresh: true, i: 0, quiet: !!count && !count.preroll }];
-    if (count && !count.preroll) T.segs.push({ u0: count.beats, s0: from, fresh: true, i: 1 });
+    T.tmSrc = P().tempoMap || null;
+    T.tm = mapOfSong(P());
+    T.segs = [{ u0: 0, s0, fresh: true, i: 0, quiet: !!count && !count.preroll, t0: T.startT, rate }];
+    if (count && !count.preroll) T.segs.push({ u0: count.beats, s0: from, fresh: true, i: 1, t0: uToTime(count.beats), rate });
     T.s0 = s0;
     T.from = from;
     T.schedU = 0;
@@ -1370,8 +1413,8 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     get masterTap() { return master ? master.out : null; },
     clock,
     render, songEnd, probeLatency: latencyOf,
-    beatToSec: (b) => b * spbSong(),
-    secToBeat: (s) => s / spbSong(),
+    beatToSec: (b) => (hasTempoMap(P()) ? songBeatToSec(P(), b) : b * spbSong()),
+    secToBeat: (s) => (hasTempoMap(P()) ? songSecToBeat(P(), s) : s / spbSong()),
     assets,
     settled,
     // { base, output } (the context's), and the plugins': tracks (each track's devices), comp (samples each track is

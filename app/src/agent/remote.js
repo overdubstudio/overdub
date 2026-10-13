@@ -19,7 +19,8 @@
 // and only when the studio itself is on localhost (relayOverride): on the live site a link with ?relay= would show the
 // hidden Connect tab and, for someone who had Connect on, point this tab at whatever answers on that port.
 //
-// Accounts (off unless configured: ACCOUNT_LIVE below, or locally ?relay= and ?cloud=, both on localhost). The person
+// Accounts (off unless the deploy turns the 'accounts' toggle on, app/src/toggles.js, or locally ?relay= and ?cloud=,
+// both on localhost). The person
 // signs in to their Overdub account here and in Claude, and every Claude client uses one fixed URL, <relay>/mcp. This tab
 // trades its account session (a cookie on the account service, account.js) for a 5-minute tab ticket and talks to
 // <relay>/tab/hello|events|result with Authorization: Bearer <ticket>, renewed every 2 minutes. The relay sends each
@@ -41,16 +42,15 @@ import { h, css, icon } from '../ui/dom.js';
 import { installPresence } from './presence.js';
 import { installTools } from './tools.js';
 import { createAccount } from './account.js';
+import { on } from '../toggles.js';
 
 export const RELAY = 'https://overdub-relay.ajsmithhq.com';
-// The hosted relay is live (deploy/relay/setup.sh, docs/REMOTE-MCP.md; tools/relay-test.js), so every studio shows the
-// Connect tab. Setting this false hides it again everywhere but a local studio with ?relay=<a local relay> (node
-// server/relay.js) or a browser that opened /app/?connect=1 (relayPreview). The page's policy allows RELAY in
-// connect-src (app/index.html).
-export const RELAY_LIVE = true;
-// Sign in with Overdub: built and tested (tools/relay-test.js), not deployed. Until it is, account mode exists only on a
-// local studio with both ?relay=<a local relay> and ?cloud=<a local account service> (docs/REMOTE-MCP.md, "Accounts").
-export const ACCOUNT_LIVE = false;
+// The hosted relay is live (deploy/relay/setup.sh, docs/REMOTE-MCP.md; tools/relay-test.js): the 'relay' toggle
+// (app/src/toggles.js), which every deploy writes on (deploy: 'on'), shows the Connect tab. Off, there is no tab, no
+// app.remote and no request to either relay, except on a local studio with ?relay=<a local relay> (node
+// server/relay.js). The page's policy allows RELAY in connect-src (app/index.html) either way.
+// Sign in with Overdub: built and tested (tools/relay-test.js), not deployed. Account mode needs the 'accounts' toggle,
+// or a local studio with both ?relay=<a local relay> and ?cloud=<a local account service> (docs/REMOTE-MCP.md, "Accounts").
 export const ACCOUNT_RELAY = 'https://relay.overdubstudio.com';
 export const ACCOUNT_API = 'https://api.overdubstudio.com';
 export const BY = 'claude.ai';
@@ -93,22 +93,14 @@ export function cloudOverride(search = location.search, host = location.hostname
     return /^https?:$/.test(u.protocol) ? u.origin : null;
   } catch { return null; /* not a URL */ }
 }
-// The account service, when account mode is on here: locally both ?relay= and ?cloud=; live, ACCOUNT_LIVE. Else null.
+// The account service, when account mode is on here: locally both ?relay= and ?cloud=; else ACCOUNT_API when the
+// 'accounts' toggle is on; else null.
+// (The relay trial's ?connect=1 switch is retired, 0015: no link switches a studio on the live site. A browser may still
+// hold its key, 'overdub:remote-preview'; nothing reads or writes it now, and it's never reused.)
 export function accountApi(search = location.search, host = location.hostname) {
   const relay = relayOverride(search, host), cloud = cloudOverride(search, host);
   if (relay && cloud) return cloud;
-  return ACCOUNT_LIVE ? ACCOUNT_API : null;
-}
-// The preview switch from the relay's trial, which matters only if RELAY_LIVE is ever turned off again: then the live
-// site shows Connect only to a browser that asks: /app/?connect=1 turns the preview on here (remembered), ?connect=0
-// turns it off. It reveals the Connect tab for RELAY above and nothing else: it can't point the tab anywhere (that's
-// ?relay=, local only).
-const PREVIEW_KEY = 'overdub:remote-preview';
-export function relayPreview(search = location.search) {
-  const q = new URLSearchParams(search).get('connect');
-  if (q === '1') put(PREVIEW_KEY, '1');
-  else if (q === '0') put(PREVIEW_KEY, null);
-  return get(PREVIEW_KEY) === '1';
+  return on('accounts') ? ACCOUNT_API : null;
 }
 function b64url(bytes) { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
 const newSecret = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -136,7 +128,7 @@ export default async function (app) {
   installPresence(app);
   installTools(app);
   if (app.remote) return;
-  if (!RELAY_LIVE && !ACCOUNT_LIVE && !relayOverride() && !relayPreview()) return; // (see RELAY_LIVE and relayPreview)
+  if (!on('relay') && !on('accounts') && !relayOverride()) return; // off: no tab, no app.remote, no request (toggles.js)
   if (!globalThis.crypto?.subtle) return;      // only in a secure context (the live site and localhost are)
   const { ui, store } = app;
   if (!store.authors[BY]) store.addAuthor(BY, { kind: 'agent', name: 'claude.ai' });
@@ -463,7 +455,7 @@ export default async function (app) {
   if (acct) {
     window.addEventListener('focus', () => { if (account() && R.state === 'on') hello(); if (account()) loadGrants({ soon: true }); });
     ui.on?.('show', (e) => { if (e?.id === 'connect' && account()) loadGrants({ soon: true }); });
-    // signing in (here, or by the link in another tab of this browser) connects; signing out stops at once
+    // signing in connects; signing out stops at once
     acct.on('state', (st) => {
       if (st === 'signed-in') { if (account() && R.enabled && (R.state === 'off')) { stop(); set('connecting'); connect(); } loadGrants(); }
       else if (st === 'signed-out' && account()) { stop(); ticket = null; R.grants = null; set('off'); }
@@ -487,7 +479,7 @@ function mountCard(el, app, R) {
     reconnecting: ['busy', 'Reconnecting…'],
     on: ['ready', 'On: waiting for Claude'],
   };
-  const A = { email: '', code: '', busy: false, error: '', confirm: null, copied: 0, copiedCmd: 0, older: false };   // the account card's own state
+  const A = { error: '', confirm: null, copied: 0, copiedCmd: 0, older: false };   // the account card's own state
   function render() {
     if (R.mode === 'account') return renderAccount();
     if (R.notice && ui.visible?.('connect')) R.seen();   // shown on screen once: gone on the next visit
@@ -518,7 +510,7 @@ function mountCard(el, app, R) {
     )));
   }
 
-  // Account mode: sign in (email, then the code), then one URL for every Claude app.
+  // Account mode: sign in with Google (a popup), then one URL for every Claude app.
   function renderAccount() {
     const acct = R.account;
     const head = (sub) => h('div.rc-title', h('span.rc-orb', icon('bolt', { size: 18 })), h('div', h('b', 'Connect to Claude'), h('span', sub)));
@@ -526,29 +518,15 @@ function mountCard(el, app, R) {
     const err = why ? h('p.rc-err', { role: 'alert' }, why) : null;
     const linkInstead = h('button.rc-rotate.rc-to-link', { onclick: () => R.setMode('link') }, 'Use a private link instead (no account)');
     if (acct.state !== 'signed-in') {
-      const inbox = acct.state === 'check-inbox';
-      const email = h('input.ew-input.rc-email', { type: 'email', placeholder: 'you@example.com', autocomplete: 'email', 'aria-label': 'Email', value: A.email, disabled: inbox || A.busy, oninput: (e) => { A.email = e.target.value; } });
-      const code = h('input.ew-input.rc-code', { inputmode: 'numeric', autocomplete: 'one-time-code', placeholder: '6-digit code', 'aria-label': 'Code from the email', value: A.code, maxlength: 12, oninput: (e) => { A.code = e.target.value; } });
-      const send = async () => {
-        A.error = ''; A.busy = true; render();
-        try { await acct.signIn(A.email, { frameHost: el.querySelector('.rc-bot-host') }); } catch (e) { A.error = e.message; }
-        A.busy = false; render();
-        el.querySelector('.rc-code')?.focus();
-      };
-      const enter = async () => {
-        A.error = ''; A.busy = true; render();
-        try { await acct.enterCode(A.email, A.code); A.code = ''; } catch (e) { A.error = e.message; }
-        A.busy = false; render();
-      };
+      const waiting = acct.state === 'waiting';
+      // the popup opens in this click (acct.signIn), before anything is awaited, or the browser blocks it
+      const go = () => { A.error = ''; acct.signIn(); render(); };
       el.replaceChildren(h('div.rc-wrap', h('div.rc-card',
         head('claude.ai, the Claude apps and Claude Code'),
         h('p.rc-p', 'Sign in to connect. A free Overdub account lets Claude find this studio from any Claude app. No card, no credits.'),
-        h('form.rc-row', { onsubmit: (e) => { e.preventDefault(); if (!inbox) send(); } }, email,
-          inbox ? null : h('button.ew-btn.ew-btn-agent.rc-send', { type: 'submit', disabled: A.busy }, A.busy ? 'Sending…' : 'Send code')),
-        h('div.rc-bot-host'),
-        inbox ? h('p.rc-p.rc-inbox', { role: 'status' }, `Check your inbox: a code is on its way to ${A.email || acct.pendingEmail}. Type it here, or open the link in this browser.`) : null,
-        inbox ? h('form.rc-row', { onsubmit: (e) => { e.preventDefault(); enter(); } }, code, h('button.ew-btn.ew-btn-agent.rc-enter', { type: 'submit', disabled: A.busy }, 'Sign in')) : null,
-        inbox ? h('button.rc-rotate', { onclick: () => { acct.cancelSignIn(); A.code = ''; render(); } }, 'Use a different email') : null,
+        waiting ? h('p.rc-p.rc-waiting', { role: 'status' }, 'Waiting for Google. Finish signing in in the window that opened; this tab notices on its own.')
+          : h('div.rc-row', h('button.ew-btn.ew-btn-agent.rc-google', { type: 'button', onclick: go }, 'Continue with Google')),
+        waiting ? h('button.rc-rotate.rc-cancel', { type: 'button', onclick: () => { acct.cancelSignIn(); render(); } }, 'Cancel') : null,
         err,
         h('div.rc-row.rc-foot', linkInstead),
       )));
@@ -670,11 +648,8 @@ const CSS = `
 .rc-rotate { background: none; border: 0; padding: 0; color: var(--text-2); text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px; }
 .rc-rotate:hover { color: var(--text); }
 .rc-small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-email, .rc-code { flex: 1; min-width: 0; }
 .rc-cmd { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-2); padding: 6px 8px; border-radius: var(--r-2); background: var(--bg-3); overflow-x: auto; white-space: nowrap; }
 .rc-err { margin: 0; font-size: 12px; color: var(--bad, var(--warn)); }
-.rc-bot-host:empty { display: none; }
-.rc-bot-host iframe { width: 100%; height: 72px; border: 0; }
 .rc-apps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .rc-app { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--text-2); }
 .rc-app-name { min-width: 0; } .rc-app-name b { color: var(--text); font-weight: 600; } .rc-app-name .rc-small { display: block; white-space: normal; }

@@ -53,6 +53,7 @@
 <li><a href="#eq-slide-rule-coreeq8">EQ: Slide Rule (core.eq8)</a></li>
 <li><a href="#three-band-compression-gaffer-tape-coremultiband">Three-band compression: Gaffer Tape (core.multiband)</a></li>
 <li><a href="#bass-music-the-genre-guide-tags-and-targets">Bass music: the genre guide, tags and targets</a></li>
+<li><a href="#flip-a-song-the-workflows-guide">Flip a song: the workflows guide</a></li>
 <li><a href="#the-bass-ducks-under-the-kick-dim-switch-coreducker-and-keys">The bass ducks under the kick: Dim Switch (core.ducker) and keys</a></li>
 <li><a href="#reverb-stairwell-coreverb-or-echo-chamber-corerooms">Reverb: Stairwell (core.verb) or Echo Chamber (core.rooms)</a></li>
 <li><a href="#writing-devices">Writing devices</a></li>
@@ -219,7 +220,7 @@ the device's presets.</p>
 <thead><tr><th>tool</th><th>what it does</th></tr></thead>
 <tbody>
 <tr><td><code>get_project</code></td><td>the song: title, tempo, key, meter, sections, tracks with instrument, inserts (with params) and clips, the selection and the last few history entries. <code>detail: &quot;full&quot;</code> (optionally with <code>track</code>) includes every note. A device with over 40 params is shown as its preset and what differs from it (<code>preset &quot;Bokeh&quot; + {&quot;flt_cutoff&quot;:900}</code>), or what differs from its defaults. Automation lanes are listed under their track (<code>auto: Keyhole cutoff (fx_k) 31:600 32:4500 48:600, by claude</code>, held ones marked). <code>held</code> lists the song's devices kept off on this computer (see below); <code>from_link</code>, first, says the song came from someone's link and isn't the person's yet; <code>key_note</code> says when the key is a new song's default nobody chose (C minor, as Sketch treats it).</td></tr>
-<tr><td><code>get_guide</code></td><td>the studio's guides: <code>etiquette</code>, <code>devices</code> (kernel writing), <code>ops</code>, <code>lexicon</code>, <code>transforms</code> (every transform's params and defaults). Outside agents: read first. <code>lexicon</code> also returns <code>personal</code>: what this human means by warm, fat and tight, learned from their A/B picks. Follow it.</td></tr>
+<tr><td><code>get_guide</code></td><td>the studio's guides: <code>etiquette</code>, <code>devices</code> (kernel writing), <code>ops</code>, <code>lexicon</code>, <code>transforms</code> (every transform's params and defaults), <code>genres</code> (with <code>section</code>: <code>bass-music</code>, <code>metal</code>), <code>workflows</code> (with <code>section</code>: <code>flip</code>). Outside agents: read first. <code>lexicon</code> also returns <code>personal</code>: what this human means by warm, fat and tight, learned from their A/B picks. Follow it.</td></tr>
 <tr><td><code>get_selection</code></td><td>what the human is looking at: track, clip (with notes, and a grid for drums), selected notes, range (beats and bars), insert (with params), playhead, and the key (marked when nobody chose it yet); <code>from_link</code> as <code>get_project</code> has it; <code>trying</code>: <code>{ track, device }</code> while the person is hearing a sound on a track before keeping it (the song still has the old one, and <code>track.instrument</code> says that one; your next call that reads or changes the song puts it back first), else <code>null</code>.</td></tr>
 <tr><td><code>get_history</code></td><td>recent changes, newest first: who, label, reason, summary. Check it before redoing something.</td></tr>
 <tr><td><code>apply_ops</code></td><td>change the song: a list of ops, one undo step, signed by you, with <code>label</code> and <code>reason</code>. All or nothing. Everything it adds is signed by you: any <code>by</code> in the ops is dropped, and so are internal fields (names starting with <code>_</code>). Devices go through <code>define_device</code>, not <code>device.define</code>. Params are checked against each device first (see <a href="#param-values">Param values</a>), and <code>preset: &quot;&lt;name&gt;&quot;</code> sets a named sound. Returns created ids (two creating ops of one kind with no ref come back as <code>section1</code>, <code>section2</code>, …), a compact diff (a device's line names a dozen param changes and how many more), the presets it set, or an error naming the failing op. Takes the automation ops (<code>auto.write</code>, <code>auto.clear</code>, <code>auto.set</code>) and says, in <code>lanes</code>, when a static set lands on a param whose lane plays (it only changes the value the lane holds at). Its description names each op and its fields; <code>get_guide &quot;ops&quot;</code> has the rest.</td></tr>
@@ -342,7 +343,8 @@ or changes the song puts the old sound back first (the card says why). <code>sug
 { type: 'clip.add', track, ref?, clip: { start, length, name?, notes?: &quot;text&quot;, grid? } }
 { type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo? } }   <span class="c">// mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; clip.remove / clip.move { toTrack?, start? }</span>
 { type: 'notes.add' | 'notes.replace', track, clip, notes: &quot;text&quot; }     <span class="c">// notes.remove { ids } / notes.set { notes: [{ id, p?, t?, d?, v?, s?, f? }] }</span>
-{ type: 'section.add', section: { name, start, length } }                <span class="c">// section.set / section.remove</span>
+{ type: 'section.add', section: { name, start, length, key? } }          <span class="c">// section.set / section.remove; key: its own key (&quot;F# minor&quot;)</span>
+{ type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat, sec }, …], clip? } | null }   <span class="c">// the grid follows a recording (Flip a song, below); null: one tempo again</span>
 <span class="c">// a name is plain text up to 100 characters (the .set ops refuse a longer one); a colour is var(--c-1)..var(--c-8) or hex</span>
 { type: 'section.duplicate', section, to?, push? }   { type: 'time.insert' | 'time.remove', at, length }   <span class="c">// beats; across the whole song</span>
 { type: 'clip.repeat', track, clip, times, mode?: 'copies' | 'loop' }   { type: 'clip.split', track, clip, at }   <span class="c">// (the arrange_song tool does these by bar)</span>
@@ -518,6 +520,24 @@ the same for one device. <code>render_and_measure { targets: &quot;bass-music&qu
 (<code>window: &quot;drop&quot;</code>: short-term loudness, crest, the low end's mono-ness under 120 Hz, the bands; <code>&quot;song&quot;</code>: integrated
 loudness and true peak), the misses first, each in words: &quot;integrated loudness -9.1 LUFS (want -8 to -6), 1.1 LUFS
 under&quot;. measure() reports the low end as <code>lowSideDb</code> and <code>lowCorrelation</code>.</p>
+<h2 id="flip-a-song-the-workflows-guide"><a class="h-link" href="#flip-a-song-the-workflows-guide">Flip a song: the workflows guide</a></h2>
+<p>A person can bring a song they own in through the door's <strong>Flip a song</strong>: the studio splits it (where the site has a
+stems runner), maps the grid to the recording, sets the key, marks the sections and puts the chords on a muted Chords
+track, all before an agent is asked anything. <code>get_project</code>'s summary says so in one line:</p>
+<div class="code"><pre><code>Grid follows Original: 68.4 BPM nominal, 66.9–70.2, 2 free spans (beats 8–20, 112–128); key D minor</code></pre></div>
+<p>(and, when a move left the recording off its grid, &quot;Original is off its grid by 120 ms&quot;); each section's own key is on
+the sections line. Read <code>get_guide { topic: &quot;workflows&quot;, section: &quot;flip&quot; }</code> then. In a flip:</p>
+<ul>
+<li><strong>The chores are done.</strong> The map (<code>tempoMap</code>), the key, the sections and their keys, the Chords track and the muted
+stems are the studio's; don't redo them.</li>
+<li><strong>Sound design is your job</strong>: <code>adjust</code>, <code>highlight</code>, <code>propose_variations</code>, <code>render_and_measure</code> (with
+<code>targets: &quot;bass-music&quot;</code> once there is a drop), measured before and after.</li>
+<li><strong>The drop is theirs.</strong> Never offer <code>arrange_song</code>, <code>arrange_around</code>, <code>make_jam_track</code>, <code>drum_track</code> or
+<code>suggest_riff</code>, and never write notes on a playing track unless the person names it.</li>
+<li><strong>The grid</strong> changes only through <code>apply_ops</code> with <code>tempo.map</code> (<code>{ map: { anchors: [{ beat: 0, sec: 0 }, …], clip } }</code>, or <code>null</code> to clear it), or readings offered as <code>propose_variations</code>. <code>project.set { tempo }</code> is refused while a
+map is set. You can't bring files in or start a split: tell the person how.</li>
+</ul>
+<p>The tool count doesn't change: <code>workflows</code> is a guide topic, not a tool.</p>
 <h2 id="the-bass-ducks-under-the-kick-dim-switch-coreducker-and-keys"><a class="h-link" href="#the-bass-ducks-under-the-kick-dim-switch-coreducker-and-keys">The bass ducks under the kick: Dim Switch (<code>core.ducker</code>) and keys</a></h2>
 <p>A keyed effect hears a second track, its <strong>key</strong>: Dim Switch on the bass, keyed by the drums, dips the bass on each
 kick. Put it on and key it in one call:</p>

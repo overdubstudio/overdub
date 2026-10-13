@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deployDefaults } from '../app/src/toggles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -56,13 +57,38 @@ export function byteRange(header, size) {
   return [start, end];
 }
 
-// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, the studio's hosted
-// agent is off ({}), unless OVERDUB_CLOUD_ORIGIN names a service to try it against (a local overdub-cloud, say):
-// `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js`. Read on each request, so a test can set it.
+// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
+// deploy/deploy.sh would ship with no base: the registry's deploy: 'on' toggles (app/src/toggles.js: relay), so a local
+// studio shows Connect as the live one does. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
+// try it against (a local overdub-cloud, say): `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js` adds
+// its cloud.api and turns cloud.agent on. The stems runner stays off unless OVERDUB_STEMS_MODEL and OVERDUB_STEMS_SHA256
+// name a model you exported (a URL on this machine, or a path on this site), for trying it locally: that adds the
+// stems entry and turns stems.local on. Its runtime is OVERDUB_STEMS_RUNTIME when set, else the default
+// vendor/ort/ort.webgpu.min.mjs, which this server answers from OVERDUB_STEMS_RUNTIME_DIR (an onnxruntime-web dist
+// directory on this machine) or app/vendor/ort/ (gitignored). Nothing in the repo holds either. Read on each request,
+// so a test can set them.
+const env = (k) => String(process.env[k] || '').trim();
 function siteConfig(res) {
-  const api = String(process.env.OVERDUB_CLOUD_ORIGIN || '').trim();
+  const api = env('OVERDUB_CLOUD_ORIGIN');
+  const toggles = { ...deployDefaults(), ...(api ? { 'cloud.agent': 'on' } : {}) };
+  const body = api ? { cloud: { api }, toggles } : { toggles };
+  if (env('OVERDUB_STEMS_MODEL')) {
+    body.stems = { model: env('OVERDUB_STEMS_MODEL'), sha256: env('OVERDUB_STEMS_SHA256'), ...(env('OVERDUB_STEMS_RUNTIME') ? { runtime: env('OVERDUB_STEMS_RUNTIME') } : {}) };
+    toggles['stems.local'] = 'on';
+  }
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-  res.end(JSON.stringify(api ? { cloud: { api } } : {}));
+  res.end(JSON.stringify(body));
+}
+
+// /app/vendor/ort/<file> from OVERDUB_STEMS_RUNTIME_DIR when it's set: the stems runtime, same-origin as the studio's
+// CSP requires, without copying it into the checkout. One plain file name, nothing below it; null when it isn't set.
+export function stemsRuntimeFile(urlPath) {
+  const dir = env('OVERDUB_STEMS_RUNTIME_DIR');
+  if (!dir || !urlPath.startsWith('/app/vendor/ort/')) return null;
+  let name = '';
+  try { name = decodeURIComponent(urlPath.slice('/app/vendor/ort/'.length)); } catch { return false; }
+  if (!/^[\w.-]+$/.test(name) || name.startsWith('.')) return false;
+  return path.join(path.resolve(dir), name);
 }
 
 export function startServer({ port = Number(process.env.PORT) || 3279, host = '127.0.0.1', quiet = false } = {}) {
@@ -75,7 +101,8 @@ export function startServer({ port = Number(process.env.PORT) || 3279, host = '1
       const url = new URL(req.url, 'http://localhost');
       for (const r of routes) if (url.pathname.startsWith(r.prefix) && (await r.handler(req, res, url))) return;
       if (url.pathname === '/app/site-config.json' && !fs.existsSync(path.join(ROOT, 'app/site-config.json'))) return siteConfig(res);
-      const abs = resolvePath(url.pathname);
+      const ort = stemsRuntimeFile(url.pathname);
+      const abs = ort === null ? resolvePath(url.pathname) : ort || null;
       // the community shelf's bundled copy (gitignored; overdub-devices' tools/index.js writes it): when there isn't one,
       // "no shelf here" is an empty answer, not a 404 every local page load would log (ui/community.js reads it)
       if (url.pathname === '/app/community/community-index.json' && (!abs || !fs.existsSync(abs))) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }

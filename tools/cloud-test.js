@@ -1,6 +1,6 @@
 // Claude on Overdub credits, the studio's side (agent/cloud.js, cloud-kind.js, cloud-panel.js, the 'cloud' provider in
 // claude.js), against a fake of the service in this file (node:http): the public repo never depends on the private one.
-// Off without a site config; the three sign-in states and the code; the balance in the head; the price on screen before
+// Off without a site config; signing in with Google (the popup, the done page's message, the poll); the balance in the head; the price on screen before
 // any ask opens (typed, a suggestion, the tour, a direct send); a Claude of your own first; an ask streaming tool calls
 // that run here, signed Claude; Stop, retries, out of credits, credits back on undo; free moves; nothing secret kept in
 // the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Browsers run muted (tools/pw.js
@@ -49,14 +49,16 @@ const toolCall = (text, id, name, input) => [
 function fakeCloud() {
   const users = new Map();        // email -> { email, balance, trial }
   const sessions = new Map();     // token -> email
-  const pending = new Map();      // od_pending value -> { email, code }
+  const seen = new Set();         // the studio origins that asked it something: where the done page posts
+  let next = 'jess@example.com';  // who the next Google sign-in is
+  let popup = { message: true, close: true };   // what the sign-in page does: post overdub:signed-in, close itself
   const actions = new Map();
   const log = [];                 // every request: { method, path, body, headers }
   const script = [];              // what the next calls answer: SSE events, { status, error }, or { hang: true }
   const studio = /^http:\/\/localhost:\d+$/;   // the studio origins it answers (a local studio on any port)
   let paused = false;
   const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(/;\s*/).filter(Boolean).map((c) => [c.slice(0, c.indexOf('=')), c.slice(c.indexOf('=') + 1)]));
-  const userOf = (req) => { const e = sessions.get(cookies(req).od_session); return e ? users.get(e) : null; };
+  const userOf = (req) => { const e = sessions.get(cookies(req)['od.session_token']); return e ? users.get(e) : null; };
   const balance = (u) => ({ total: u.balance, monthly: 0, trial: 0, packs: u.balance, other: 0, held: 0, debt: 0, nextExpiry: null });
   const me = (u) => ({ user: { id: 'usr_' + u.email.length, email: u.email, createdAt: 1 }, balance: balance(u), asksHint: Math.round(u.balance / 3.5), plan: null, trial: { eligible: !!u.trialEligible, claimed: false },
     creditBack: { budget: 9, left: 9, periodEnd: 1 }, limits: { dailyCreditsLeft: 99 }, notice: u.notice || null });
@@ -69,10 +71,11 @@ function fakeCloud() {
     for await (const c of req) raw += c;
     let body = null;
     try { body = raw ? JSON.parse(raw) : null; } catch { body = raw; }
-    log.push({ method: req.method, path: url.pathname, body, headers: req.headers });
+    log.push({ method: req.method, path: url.pathname, query: url.search, body, headers: req.headers });
     const origin = req.headers.origin;
     const allowed = !!origin && studio.test(origin);
     if (allowed) {
+      seen.add(origin);
       res.setHeader('access-control-allow-origin', origin);
       res.setHeader('access-control-allow-credentials', 'true');
       res.setHeader('access-control-expose-headers', 'retry-after');
@@ -81,34 +84,25 @@ function fakeCloud() {
     if (req.method === 'OPTIONS') { res.writeHead(204, allowed ? { 'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'content-type, idempotency-key' } : {}); return res.end(); }
     if (req.method !== 'GET' && !allowed && !url.pathname.startsWith('/dev/')) return err(res, 403, 'forbidden_origin', 'That came from a page Overdub doesn’t know.');
     const p = url.pathname;
-    if (p === '/v1/config') return send(res, 200, { rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, botCheck: { kind: 'stub' }, promptVersions: [], hosted: { enabled: true } });
-    if (p === '/v1/auth/email') {
-      if (body?.botToken !== 'dev-ok') return err(res, 400, 'bot_check_failed', 'We couldn’t check you’re a person. Try again.');
-      const pend = cookies(req).od_pending || randomUUID();
-      pending.set(pend, { email: String(body.email).toLowerCase(), code: '042917' });
-      return send(res, 202, { sent: true }, { 'set-cookie': `od_pending=${pend}; HttpOnly; SameSite=Lax; Path=/` });
+    if (p === '/v1/config') return send(res, 200, { rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: true } });
+    const signIn = (email) => { const tok = randomUUID(); if (!users.has(email)) users.set(email, { email, balance: 30 }); sessions.set(tok, email); return `od.session_token=${tok}; HttpOnly; SameSite=Lax; Path=/`; };
+    // Google, the whole round trip in one page: the real service goes to Google, back to its callback, and ends on
+    // /v1/auth/done, which sets the cookie, posts overdub:signed-in to the opener at each studio origin and closes
+    if (p === '/v1/auth/google') {
+      if (url.searchParams.getAll('return').join() !== 'studio') { res.writeHead(400); return res.end('bad return'); }
+      const script = [popup.message ? `if (window.opener) for (const o of ${JSON.stringify([...seen])}) window.opener.postMessage({ type: 'overdub:signed-in' }, o);` : '', popup.close ? 'window.close();' : ''].join('\n');
+      res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': signIn(next) });
+      return res.end(`<!doctype html><title>You’re signed in</title><p>You’re signed in. You can close this window.</p><script>${script}</script>`);
     }
-    const signIn = (email) => { const tok = randomUUID(); if (!users.has(email)) users.set(email, { email, balance: 30 }); sessions.set(tok, email); return `od_session=${tok}; HttpOnly; SameSite=Strict; Path=/`; };
-    if (p === '/v1/auth/code') {
-      const pd = pending.get(cookies(req).od_pending);
-      if (!pd || pd.email !== String(body?.email).toLowerCase() || pd.code !== body?.code) return err(res, 400, 'bad_code', 'That code didn’t match. Check the email and try again.', { attemptsLeft: 4 });
-      pending.delete(cookies(req).od_pending);
-      return send(res, 200, { signedIn: true }, { 'set-cookie': signIn(pd.email) });
-    }
-    // the link, opened in the same browser (the real one has a confirm page and a form post)
-    if (p === '/dev/verify') {
-      const pd = pending.get(cookies(req).od_pending);
-      if (!pd) { res.writeHead(400); return res.end('expired'); }
-      res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': signIn(pd.email) });
-      return res.end('<p>You’re signed in. Go back to your Overdub tab.</p>');
-    }
+    // a page on another origin that tells whoever opened it "signed in": the studio must not believe it
+    if (p === '/dev/post') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(`<!doctype html><script>window.opener && window.opener.postMessage({ type: 'overdub:signed-in' }, '*');</script>`); }
     if (p === '/dev/checkout') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<p>Fake checkout</p>'); }
     const u = userOf(req);
     if (!u) return err(res, 401, 'not_signed_in', 'Sign in to use Claude on Overdub credits.');
     if (p === '/v1/me' && req.method === 'GET') return send(res, 200, me(u));
-    if (p === '/v1/me' && req.method === 'DELETE') { sessions.delete(cookies(req).od_session); users.delete(u.email); return send(res, 204); }
+    if (p === '/v1/me' && req.method === 'DELETE') { sessions.delete(cookies(req)['od.session_token']); users.delete(u.email); return send(res, 204); }
     if (p === '/v1/me/activity') return send(res, 200, { items: [...actions.values()].filter((a) => a.email === u.email && a.charged).map((a) => ({ at: a.at, kind: 'spend', credits: -a.credits, label: RATE.find((r) => r.kind === a.kind).label, actionId: a.id })) });
-    if (p === '/v1/auth/logout') { sessions.delete(cookies(req).od_session); return send(res, 204, undefined, { 'set-cookie': 'od_session=; Max-Age=0; Path=/' }); }
+    if (p === '/v1/auth/logout') { sessions.delete(cookies(req)['od.session_token']); return send(res, 204, undefined, { 'set-cookie': 'od.session_token=; Max-Age=0; Path=/' }); }
     if (p === '/v1/trial/claim') { u.balance += 6; u.trialEligible = false; return send(res, 200, me(u)); }
     if (p === '/v1/billing/checkout') return send(res, 200, { url: `http://localhost:${server.address().port}/dev/checkout`, checkoutRef: 'chk_1' });
     // chk_late: a checkout the provider hasn't marked paid yet (nothing granted, and the answer says so)
@@ -165,6 +159,8 @@ function fakeCloud() {
     resolve({
       origin, log, script, users, actions,
       pause(on) { paused = on; },
+      next(email) { next = email; },
+      popup(o) { popup = { message: true, close: true, ...o }; },
       user(email) { return users.get(email); },
       grant(email, n) { if (!users.has(email)) users.set(email, { email, balance: 0 }); users.get(email).balance = n; },
       reqs(path) { return log.filter((r) => r.path === path || (path instanceof RegExp && path.test(r.path))); },
@@ -191,14 +187,14 @@ async function chooseCloud(page) {
   await page.evaluate(() => { const e = window.overdub; e.ui.setOpen('right', true); e.ui.show('agent'); e.agent.useCloud(true); });
   await page.waitForFunction(() => window.overdub.agent.provider === 'cloud', null, { timeout: 5000 });
 }
-async function signInByCode(page, fake, email = 'jess@example.com') {
-  await page.waitForSelector('.ag-cl-signin .ag-cl-email', { timeout: 5000 });
-  await page.fill('.ag-cl-signin .ag-cl-email', email);
-  await page.click('.ag-cl-signin .btn-go');
-  await page.waitForSelector('.ag-cl-signin[data-state="check-inbox"] .ag-cl-code', { timeout: 5000 });
-  await page.fill('.ag-cl-code', '042917');
-  await page.click('.ag-cl-signin .ag-cl-field .btn');
-  await page.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-in', null, { timeout: 5000 });
+// Continue with Google on the sign-in sheet: the popup is the fake's whole round trip, which posts overdub:signed-in
+// and closes
+async function signInWithGoogle(page, fake, email = 'jess@example.com') {
+  await page.waitForSelector('.ag-cl-signin .ag-cl-google', { timeout: 5000 });
+  fake.next(email);
+  fake.popup({});
+  await Promise.all([page.context().waitForEvent('page'), page.click('.ag-cl-signin .ag-cl-google')]);
+  await page.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-in', null, { timeout: 8000 });
 }
 const typeAsk = async (page, text) => { await page.fill('.ag-input', text); };
 const actionsOpened = (fake) => fake.reqs('/v1/agent/actions').filter((r) => r.method === 'POST');
@@ -222,13 +218,13 @@ const actionsOpened = (fake) => fake.reqs('/v1/agent/actions').filter((r) => r.m
   t.ok(fm('use reverb')?.device === 'core.verb' && fm('add a pad', false)?.device === 'core.pad' && !fm('use reverb', false), 'node: "use / add <device>" by its exact name is a free move (an effect needs a track)');
   t.ok(!fm('warmer', false) && !fm('make it warmer and add a bassline') && !fm('use the cathedral reverb') && !fm('warm the bass up a bit') && !fm(''), 'node: anything looser is an ask, not a free move');
 
-  const { canonicalJson, canonicalBundle, bundleVersion, maskEmail, safeUrl } = await import('../app/src/agent/cloud.js');
+  const { canonicalJson, canonicalBundle, bundleVersion, safeUrl } = await import('../app/src/agent/cloud.js');
   const vec = canonicalBundle('You are a test agent.', [{ name: 'b_tool', description: 'B.', input_schema: { type: 'object', properties: {} } }, { name: 'a_tool', description: 'A.', input_schema: { type: 'object' } }]);
   const want = '{"system":"You are a test agent.","tools":[{"description":"A.","input_schema":{"type":"object"},"name":"a_tool"},{"description":"B.","input_schema":{"properties":{},"type":"object"},"name":"b_tool"}]}';
   const v = await bundleVersion(vec);
   t.ok(canonicalJson(vec) === want && v === 'sha256:4e39ca426d1be9ae', `node: the prompt bundle's canonical form and version match the service's test vector (${v})`);
   t.ok(canonicalBundle('s', [{ name: 'x', description: 'd', input_schema: {}, annotations: { title: 'X' }, eager_input_streaming: true }]).tools[0].annotations === undefined, 'node: a bundle tool is only name, description and input schema');
-  t.ok(maskEmail('jess@example.com') === 'j•••@example.com' && safeUrl('javascript:alert(1)') === null && safeUrl('http://evil.example/x') === null && !!safeUrl('https://pay.example/x'), 'node: an address is shown masked; only an https (or local) checkout URL is opened');
+  t.ok(safeUrl('javascript:alert(1)') === null && safeUrl('http://evil.example/x') === null && !!safeUrl('https://pay.example/x'), 'node: only an https (or local) checkout URL is opened');
 
   const { cloudOrigin, cloudOverride } = await import('../app/src/site-config.js');
   t.ok(cloudOrigin('https://api.example.com/x') === 'https://api.example.com' && cloudOrigin('http://localhost:8787') === 'http://localhost:8787' && !cloudOrigin('http://api.example.com') && !cloudOrigin('javascript:x') && !cloudOrigin('https://u:p@api.example.com'), 'node: a cloud origin is https, or http on this machine');
@@ -246,13 +242,90 @@ const fake = await fakeCloud();
   await sleep(600);
   const out = await page.evaluate(() => ({ cloud: window.overdub.agent.cloud, row: !!document.querySelector('.ag-kc-cloud'), chip: !document.querySelector('.ag-price')?.hidden }));
   out.config = await page.evaluate(() => fetch('site-config.json').then((r) => r.json()));
-  t.ok(out.cloud === null && !out.row && !out.chip && JSON.stringify(out.config) === '{}', `with no site config the hosted agent is off: no account, no row in settings, no price (site-config.json ${JSON.stringify(out.config)})`);
+  // the server answers what deploy.sh ships with no base: the registry's deploy: 'on' toggles (relay), no cloud key
+  const { deployDefaults } = await import('../app/src/toggles.js');
+  const want = JSON.stringify({ toggles: deployDefaults() });
+  out.toggles = await page.evaluate(() => window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id).join(','));
+  t.ok(out.cloud === null && !out.row && !out.chip && JSON.stringify(out.config) === want && want === '{"toggles":{"relay":"on"}}' && out.toggles === 'relay',
+    `with no site config the hosted agent is off: no account, no row in settings, no price (site-config.json ${JSON.stringify(out.config)}, toggles on: ${out.toggles || 'none'})`);
   t.ok(fake.log.length === before, `and the studio asks no cloud origin anything (${fake.log.length - before} requests)`);
   t.ok(realErrors(errors).length === 0, 'no page errors (off)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
 
-/* ------------------------------------------------------------------ 2. sign in: three states, the link, the code */
+/* ------------------------------------------------------------------ 1b. the config: one read per load, and never a wait past 4 s */
+{
+  const { page, context, errors, close } = await studio(fake, { config: 'none' });
+  const asked = [];
+  page.on('request', (r) => { if (new URL(r.url()).pathname.endsWith('/site-config.json')) asked.push(r.url()); });
+  await page.reload({ waitUntil: 'load' });
+  await ready(page);
+  await page.evaluate(() => window.overdub.site.ready);
+  await sleep(300);
+  const on = await page.evaluate(() => window.overdub.toggles.on('relay'));
+  t.ok(asked.length === 1 && /\/app\/site-config\.json$/.test(asked[0]) && on, `one request for site-config.json per studio load, shared by the toggles, the preview ribbon and the hosted agent (${asked.length}: ${asked.join(', ')})`);
+  // a config slower than the cap: boot goes on at 4 s with only the deploy's defaults (relay) on, and its late answer
+  // (which also turns workflow.flip on) changes nothing
+  const warned = [];
+  page.on('console', (m) => { if (m.type() === 'warning' && /site-config\.json took over/.test(m.text())) warned.push(m.text()); });
+  await context.route('**/app/site-config.json', async (route) => { await sleep(6000); await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ toggles: { relay: 'on', 'workflow.flip': 'on' } }) }).catch(() => {}); });
+  const t0 = Date.now();
+  await page.reload({ waitUntil: 'commit' });
+  await ready(page);
+  const took = Date.now() - t0;
+  const early = await page.evaluate(() => window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id));
+  await sleep(6500 - (Date.now() - t0));
+  const later = await page.evaluate(() => window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id));
+  const relayTab = await page.evaluate(() => !!window.overdub.remote);
+  t.ok(early.join() === 'relay' && later.join() === 'relay' && relayTab && took < 6000 && warned.length === 1,
+    `a site-config.json delayed 6 s: the studio is ready in ${took} ms with only the deploy's defaults on (${JSON.stringify(early)}, app.remote ${relayTab}), and stays so when it lands (${JSON.stringify(later)}; ${warned.length} warning)`);
+  // a config this load can't read (CloudFront's 503 page): the same defaults, so Connect doesn't vanish on a blip; a 404
+  // (no file at all) is all off
+  await context.unroute('**/app/site-config.json');
+  const look = async (status, body, type) => {
+    await context.route('**/app/site-config.json', (route) => route.fulfill({ status, contentType: type, body }));
+    await page.reload({ waitUntil: 'load' });
+    await ready(page);
+    const o = await page.evaluate(() => ({ on: window.overdub.toggles.list().filter((x) => x.on).map((x) => x.id), remote: !!window.overdub.remote }));
+    await context.unroute('**/app/site-config.json');
+    return o;
+  };
+  const down = await look(503, '<html><body>503 Service Unavailable</body></html>', 'text/html');
+  const gone = await look(404, '<html><body>Not Found</body></html>', 'text/html');
+  t.ok(down.on.join() === 'relay' && down.remote && gone.on.length === 0 && !gone.remote,
+    `a site-config.json answering a 503 HTML page: ${JSON.stringify(down.on)} on, app.remote ${down.remote}; a 404: ${JSON.stringify(gone.on)}, app.remote ${gone.remote}`);
+  t.ok(realErrors(errors).length === 0, 'no page errors (config read)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
+/* ------------------------------------------------------------------ 1c. it takes both: the cloud.agent toggle and cloud.api */
+{
+  const { page, context, errors, close } = await studio(fake, { config: 'none' });
+  const look = async (config) => {
+    await context.route('**/app/site-config.json', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(config) }));
+    const before = fake.log.length;
+    await page.reload({ waitUntil: 'load' });
+    await ready(page);
+    await page.evaluate(() => window.overdub.site.ready);
+    await page.evaluate(() => { const e = window.overdub; e.ui.setOpen('right', true); e.ui.show('agent'); document.querySelector('.ag-hbtns .ag-hbtn:last-child')?.click(); });
+    await sleep(600);
+    const out = await page.evaluate(() => ({ cloud: !!window.overdub.agent.cloud, row: !!document.querySelector('.ag-kc-cloud'), toggle: window.overdub.toggles.on('cloud.agent') }));
+    await context.unroute('**/app/site-config.json');
+    return { ...out, asked: fake.log.length - before };
+  };
+  const apiOnly = await look({ cloud: { api: fake.origin }, toggles: { relay: 'on' } });
+  t.ok(!apiOnly.cloud && !apiOnly.row && !apiOnly.toggle && apiOnly.asked === 0,
+    `a site config naming cloud.api without the cloud.agent toggle: off, no row in settings, ${apiOnly.asked} requests to the service`);
+  const toggleOnly = await look({ toggles: { relay: 'on', 'cloud.agent': 'on' } });
+  t.ok(!toggleOnly.cloud && !toggleOnly.row && toggleOnly.toggle && toggleOnly.asked === 0,
+    `the cloud.agent toggle without a cloud.api: off as well, no row, ${toggleOnly.asked} requests`);
+  const both = await look({ cloud: { api: fake.origin }, toggles: { relay: 'on', 'cloud.agent': 'on' } });
+  t.ok(both.cloud && both.row && both.asked > 0, `both: the hosted agent is offered (row ${both.row}, ${both.asked} requests to the service)`);
+  t.ok(realErrors(errors).length === 0, 'no page errors (toggle and api)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
+/* ------------------------------------------------------------------ 2. sign in with Google: the popup, the message, the poll */
 {
   const { page, context, errors, close, shot } = await studio(fake, { config: 'query' });
   await page.waitForFunction(() => !!window.overdub.agent.cloud?.config, null, { timeout: 10000 }).catch(() => {});
@@ -261,45 +334,91 @@ const fake = await fakeCloud();
   await page.click('.ag-kc-cloud .btn:not(.btn-txt)');
   await page.waitForSelector('.ag-cl-signin', { timeout: 5000 });
   await sleep(200);
-  const s1 = await page.evaluate(() => ({ text: document.querySelector('.ag-cl-signin').textContent, live: document.querySelector('.ag-cl-signin [aria-live="polite"]')?.textContent, provider: window.overdub.agent.provider, settings: !!document.querySelector('.ag-keycard'), focus: document.activeElement?.textContent }));
-  t.ok(s1.provider === 'cloud' && !s1.settings && /Sign in with your email/.test(s1.live) && /Send link/.test(s1.text) && /the studio needs no account/.test(s1.text) && s1.focus === 'Claude on Overdub credits',
-    'chosen in settings while signed out: settings close, the sign-in sheet comes up with its heading focused, one field ("Sign in with your email"), announced politely');
+  const s1 = await page.evaluate(() => ({ text: document.querySelector('.ag-cl-signin').textContent, live: document.querySelector('.ag-cl-signin [aria-live="polite"]')?.textContent, provider: window.overdub.agent.provider, settings: !!document.querySelector('.ag-keycard'), focus: document.activeElement?.textContent, fields: document.querySelectorAll('.ag-cl-signin input, .ag-cl-signin iframe').length }));
+  t.ok(s1.provider === 'cloud' && !s1.settings && /Sign in with your Google account/.test(s1.live) && /Continue with Google/.test(s1.text) && /the studio needs no account/.test(s1.text) && s1.focus === 'Claude on Overdub credits' && s1.fields === 0,
+    'chosen in settings while signed out: settings close, the sign-in sheet comes up with its heading focused, one button ("Continue with Google"), no field and no frame, announced politely');
   await shot('cloud-signin');
-  await page.fill('.ag-cl-email', 'Jess@Example.com');
-  await page.click('.ag-cl-signin .btn-go');
-  await page.waitForSelector('.ag-cl-signin[data-state="check-inbox"]', { timeout: 5000 });
-  const s2 = await page.evaluate(() => document.querySelector('.ag-cl-signin').textContent);
-  const asked = fake.reqs('/v1/auth/email').pop();
-  t.ok(/Check your inbox\. We sent a link to J•••@Example\.com\. It works once, for 15 minutes\./.test(s2) && /6-digit code/.test(s2) && /Use a different email/.test(s2), 'Send link: "Check your inbox", the address masked, the code field and "Use a different email"');
-  t.ok(asked && asked.body.botToken === 'dev-ok' && asked.body.email === 'Jess@Example.com' && /^http:\/\/localhost:\d+\/app\//.test(asked.body.returnTo || ''), `the request carries the bot check's token and where to come back to (${asked?.body?.returnTo})`);
-  await shot('cloud-inbox');
-  // the code field keeps its words while the tab polls (the sheet isn't redrawn under the keyboard)
-  await page.fill('.ag-cl-code', '04');
-  await page.focus('.ag-cl-code');
-  await sleep(5600);
-  const kept = await page.evaluate(() => ({ v: document.querySelector('.ag-cl-code')?.value, focus: document.activeElement?.classList.contains('ag-cl-code'), polls: 0 }));
-  const polls = fake.reqs('/v1/me').length;
-  t.ok(kept.v === '04' && kept.focus && polls >= 2, `while it waits it asks /v1/me every few seconds (${polls}), and the code field keeps its words and focus`);
-  // the link, opened in this browser: the waiting tab notices on its own
-  const tab = await context.newPage();
-  await tab.goto(fake.origin + '/dev/verify');
-  await tab.close();
-  const inByLink = await until(() => page.evaluate(() => window.overdub.agent.cloud?.state === 'signed-in'), 8000);
+
+  // the popup: opened in the click itself, to the service's Google start, as a named popup window. The done page's
+  // message is held back here and the tab's poll paused (as if hidden), so nothing but what the test does signs it in.
+  await page.evaluate(() => {
+    const open = window.open;
+    window.__opened = [];
+    window.open = function (...a) { window.__opened.push(a); return open.apply(this, a); };
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  });
+  fake.next('jess@example.com');
+  fake.popup({ message: false, close: false });
+  const me0 = fake.reqs('/v1/me').length;
+  const [pop] = await Promise.all([context.waitForEvent('page'), page.click('.ag-cl-signin .ag-cl-google')]);
+  await pop.waitForLoadState('load');
+  const opened = await page.evaluate(() => window.__opened);
+  const start = fake.reqs('/v1/auth/google').pop();
+  t.ok(opened.length === 1 && opened[0][0] === `${fake.origin}/v1/auth/google?return=studio` && opened[0][1] === 'overdub-signin' && /^popup,width=480,height=640$/.test(opened[0][2]) && pop.url() === `${fake.origin}/v1/auth/google?return=studio` && start?.query === '?return=studio',
+    `Continue with Google opens a popup to <service>/v1/auth/google?return=studio (${JSON.stringify(opened[0]?.slice(1))})`);
+  await page.waitForSelector('.ag-cl-signin[data-state="waiting"]', { timeout: 5000 });
+  const w = await page.evaluate(() => ({ text: document.querySelector('.ag-cl-signin').textContent, live: document.querySelector('.ag-cl-signin [aria-live="polite"]')?.textContent || '', cancel: !!document.querySelector('.ag-cl-signin .ag-cl-cancel') }));
+  t.ok(/Waiting for Google/.test(w.live) && w.cancel && !/Continue with Google/.test(w.text), `while the popup is out the sheet says so, with Cancel ("${w.live}")`);
+  await shot('cloud-waiting');
+  // the session cookie is set now (the popup's page did it), so anything that asks /v1/me would sign the tab in. A
+  // message from another origin (the studio itself, and a page on 127.0.0.1) asks nothing.
+  const other = fake.origin.replace('localhost', '127.0.0.1');
+  await page.evaluate((o) => { window.postMessage({ type: 'overdub:signed-in' }, '*'); window.open(o + '/dev/post', 'other'); }, other);
+  await sleep(1500);
+  const ignored = await page.evaluate(() => window.overdub.agent.cloud.state);
+  t.ok(ignored === 'waiting' && fake.reqs('/v1/me').length === me0, `a "signed in" message from any origin but the service's is ignored: still ${ignored}, no /v1/me asked`);
+  // the service's own page says it: by the message alone (no poll, no focus), the tab asks /v1/me and is signed in,
+  // and closes the popup it opened
+  await pop.evaluate((o) => window.opener.postMessage({ type: 'overdub:signed-in' }, o), new URL(page.url()).origin);
+  const byMessage = await until(() => page.evaluate(() => window.overdub.agent.cloud?.state === 'signed-in'), 3000);
+  const popClosed = await until(() => pop.isClosed(), 3000);
   const s3 = await page.evaluate(() => ({ sheet: !!document.querySelector('.ag-cl-signin'), head: document.querySelector('.ag-who')?.textContent || '' }));
-  t.ok(inByLink && !s3.sheet && /on credits, 30 left/.test(s3.head), `the link opened in the same browser signs the waiting tab in; the head says "Claude · on credits, 30 left" (${s3.head.trim()})`);
+  t.ok(byMessage && fake.reqs('/v1/me').length === me0 + 1 && popClosed && !s3.sheet && /on credits, 30 left/.test(s3.head),
+    `by the message alone (the poll paused): one /v1/me, signed in, the popup closed, and the head says "on credits, 30 left" (${s3.head.trim()})`);
+  for (const p of context.pages()) if (p !== page) await p.close().catch(() => {});
+  await page.evaluate(() => { delete document.visibilityState; });
+
   // the account sheet: signed in as, the balance, sign out
   await page.click('.ag-pill-cloud');
   await page.waitForSelector('.ag-cl-account', { timeout: 5000 });
   const acc = await page.evaluate(() => document.querySelector('.ag-cl-account').textContent);
   t.ok(/Signed in as jess@example\.com/.test(acc) && /Sign out/.test(acc) && /30, about 9 asks/.test(acc) && /Where your credits went/.test(acc), 'the head opens the account sheet: "Signed in as", the credits in asks, where they went, sign out');
   await shot('cloud-account');
+  await page.click('.ag-cl-account .ag-cl-del');
+  const delWords = await page.evaluate(() => document.querySelector('.ag-cl-delete')?.textContent || '');
+  t.ok(/removes your email address from Overdub\. Our backups keep it for up to 35 days, then it’s gone from them too\./.test(delWords), `Delete my account says the address stays in backups for up to 35 days ("${delWords.slice(0, 120)}…")`);
+  await page.click('.ag-cl-delete .ag-link');
   await page.click('.ag-cl-account .ag-cl-who .ag-link');
   await page.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-out', null, { timeout: 5000 });
-  // and by the code, in a second browser (the link opened on a phone)
-  await signInByCode(page, fake, 'jess@example.com');
-  t.ok(true, 'the 6-digit code signs in a tab whose link was opened elsewhere');
-  const wrong = await page.evaluate(async () => { try { await window.overdub.agent.cloud.enterCode('jess@example.com', '000000'); return null; } catch (e) { return { code: e.code, left: e.details.attemptsLeft }; } });
-  t.ok(wrong && wrong.code === 'bad_code' && wrong.left === 4, 'a wrong code is the service\'s bad_code, with the tries left');
+  const out = fake.reqs('/v1/auth/logout').filter((r) => r.method === 'POST');
+  t.ok(out.length === 1 && !(await page.evaluate(() => window.overdub.agent.cloud.me)), 'Sign out: POST /v1/auth/logout, and the tab is signed out');
+
+  // by the poll alone: the popup's page posts nothing and stays open; the tab asks /v1/me every 5 s while visible
+  await page.waitForSelector('.ag-cl-signin .ag-cl-google', { timeout: 5000 });
+  fake.popup({ message: false, close: false });
+  const t0 = Date.now(), me1 = fake.reqs('/v1/me').length;
+  const [pop2] = await Promise.all([context.waitForEvent('page'), page.click('.ag-cl-signin .ag-cl-google')]);
+  const byPoll = await until(() => page.evaluate(() => window.overdub.agent.cloud?.state === 'signed-in'), 9000);
+  const took = Date.now() - t0;
+  const pop2Closed = await until(() => pop2.isClosed(), 3000);
+  t.ok(byPoll && took >= 4000 && fake.reqs('/v1/me').length > me1 && pop2Closed, `with no message, the tab's own poll of /v1/me signs it in (${(took / 1000).toFixed(1)} s), and the popup is closed`);
+
+  // Cancel: back to the button, and the popup goes
+  await page.evaluate(() => window.overdub.agent.cloud.signOut());
+  await page.waitForSelector('.ag-cl-signin .ag-cl-google', { timeout: 5000 });
+  const [pop3] = await Promise.all([context.waitForEvent('page'), page.click('.ag-cl-signin .ag-cl-google')]);
+  await page.waitForSelector('.ag-cl-signin .ag-cl-cancel', { timeout: 5000 });
+  await page.click('.ag-cl-signin .ag-cl-cancel');
+  const cancelled = await page.evaluate(() => ({ state: window.overdub.agent.cloud.state, button: !!document.querySelector('.ag-cl-signin .ag-cl-google') }));
+  t.ok(cancelled.state === 'signed-out' && cancelled.button && (await until(() => pop3.isClosed(), 3000)), `Cancel goes back to the button and closes the popup (${cancelled.state})`);
+  fake.popup({});
+
+  // a blocked popup is said plainly, on the sheet
+  await page.evaluate(() => { window.open = () => null; });
+  await page.click('.ag-cl-signin .ag-cl-google');
+  await sleep(200);
+  const blocked = await page.evaluate(() => ({ state: window.overdub.agent.cloud.state, err: document.querySelector('.ag-cl-signin .ag-cl-err')?.textContent || '' }));
+  t.ok(blocked.state === 'error' && /didn’t open\. Allow pop-ups/.test(blocked.err), `a blocked popup: the sheet says so ("${blocked.err}")`);
   t.ok(realErrors(errors).length === 0, 'no page errors (sign in)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
@@ -309,7 +428,7 @@ const fake = await fakeCloud();
   fake.grant('jess@example.com', 30);
   const { page, errors, close, shot } = await studio(fake);
   await chooseCloud(page);
-  await signInByCode(page, fake);
+  await signInWithGoogle(page, fake);
   const opened0 = actionsOpened(fake).length;
   // a direct send with no price on screen opens nothing: the panel is asked to show it
   const direct = await page.evaluate(async () => { const e = window.overdub; let quoted = null; const off = e.agent.on('quote', (q) => { quoted = q; }); const r = await e.agent.send('Add a bassline'); off(); return { r, quoted, box: document.querySelector('.ag-input').value, chip: document.querySelector('.ag-price')?.textContent }; });
@@ -393,7 +512,7 @@ const fake = await fakeCloud();
   t.ok([...fake.actions.values()].pop().finish?.outcome === 'stopped', 'Stop mid-answer finishes the ask as stopped');
   // nothing secret stays in the browser: no address, no session, nothing from /v1/me
   const stored = await page.evaluate(() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); o[k] = localStorage.getItem(k); } for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); o['session:' + k] = sessionStorage.getItem(k); } return { all: JSON.stringify(o), keys: Object.keys(o).filter((k) => /cloud|provider/.test(k)), cookie: document.cookie }; });
-  t.ok(!/jess@|example\.com|od_session|od_pending|042917|usr_|balance/i.test(stored.all) && !stored.cookie, `nothing secret in the browser's storage after a session: no address, session, code or balance (cloud keys: ${stored.keys.join(', ')})`);
+  t.ok(!/jess@|example\.com|od\.session_token|session_token|usr_|balance/i.test(stored.all) && !stored.cookie, `nothing secret in the browser's storage after a session: no address, session or balance (cloud keys: ${stored.keys.join(', ')})`);
   t.ok(stored.keys.every((k) => k === 'overdub:agent-provider' || k === 'overdub:cloud:takes' || k.startsWith('overdub:cloud:notice-80:')), 'the only hosted-agent keys are the choice, the ask-to-takes map and the 80% notice');
   // the 80% notice: once, not on every look at the account
   fake.user('jess@example.com').notice = 'eighty_percent';
@@ -422,7 +541,7 @@ const fake = await fakeCloud();
   fake.grant('jess@example.com', 30);
   const { page, errors, close, shot } = await studio(fake);
   await chooseCloud(page);
-  await signInByCode(page, fake);
+  await signInWithGoogle(page, fake);
   const ask = async (text) => { await typeAsk(page, text); await page.press('.ag-input', 'Enter'); await page.waitForFunction(() => !window.overdub.agent.busy, null, { timeout: 15000 }); await sleep(200); };
   // busy, then busy, then an answer: two retries
   fake.script.push({ status: 503, retryAfter: 0, error: { code: 'upstream_busy', message: 'Claude is busy. Trying again shortly.', retryAfter: 0 } }, { status: 503, retryAfter: 0, error: { code: 'upstream_busy', message: 'Claude is busy. Trying again shortly.', retryAfter: 0 } }, reply('Brighter now.'));
@@ -497,7 +616,7 @@ const fake = await fakeCloud();
   fake.grant('jess@example.com', 30);
   const { page, errors, close } = await studio(fake, { query: 'demo' });
   await chooseCloud(page);
-  await signInByCode(page, fake);
+  await signInWithGoogle(page, fake);
   const n0 = actionsOpened(fake).length;
   // a free move: one word on the selected track, run here, signed you, never sent
   await page.evaluate(() => { const e = window.overdub; const tr = e.store.get().tracks.find((x) => x.instrument && x.kind !== 'audio'); e.ui.select({ track: tr.id }); });
@@ -537,7 +656,7 @@ const fake = await fakeCloud();
   t.ok(strip.rc?.cancelled === true && !('ref' in strip.rc) && strip.c === 'http://localhost/app/?demo#s=abc' && strip.rd === null && strip.d === 'http://localhost/app/?plus=other',
     `?plus=cancel is read once and leaves the address bar the same way; any other plus= is left alone (${strip.c} | ${strip.d})`);
   await chooseCloud(page);
-  await signInByCode(page, fake, 'pat@example.com');
+  await signInWithGoogle(page, fake, 'pat@example.com');
   fake.grant('pat@example.com', 30);
   // the checkout's success URL lands here, in a fresh load of the studio, with the Agent panel closed
   await page.evaluate(() => window.overdub.ui.setOpen('right', false));

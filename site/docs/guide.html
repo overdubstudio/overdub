@@ -46,6 +46,7 @@
       <nav aria-label="On this page"><ol>
 <li><a href="#your-first-overdub-in-five-minutes">Your first overdub in five minutes</a></li>
 <li><a href="#start-a-song">Start a song</a></li>
+<li><a href="#flip-a-song">Flip a song</a></li>
 <li><a href="#find-anything">Find anything</a></li>
 <li><a href="#record-into-the-song">Record into the song</a></li>
 <li><a href="#pick-a-sound">Pick a sound</a></li>
@@ -67,7 +68,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">The guide</a></h1>
-    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 55 min to read</p>
+    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 58 min to read</p>
     <article class="prose">
 <p>Overdub is a studio for you and your agents. You lay down a take, your agent plays over it, you play over that, and
 every take is signed: warm for you, cool for it. This page gets you from the door to a kept take in five minutes,
@@ -119,9 +120,9 @@ agent gave. <code>⌘Z</code> undoes the latest edit.
 <strong>Revert all Claude's changes (keep mine)</strong> takes back everything the agent did and leaves your edits alone, and
 <code>⇧⌘Z</code> puts it back, as it does after <strong>Undo</strong> on one of the agent's lines there.</p>
 <h2 id="start-a-song"><a class="h-link" href="#start-a-song">Start a song</a></h2>
-<p>Every blank song (<strong>New song</strong>, <strong>Make your own</strong>) opens on its door: <strong>Tap a beat</strong>, <strong>Hum a tune</strong> or <strong>Play the
-keys</strong>, and, with no playing in time, <strong>Draw a beat</strong>, <strong>Pick a groove</strong> or <strong>Ask</strong> your agent. <code>↑</code> <code>↓</code> walk the three
-ways. Nothing sounds until you press one, and the door never shows over a song with tracks in it.</p>
+<p>Every blank song (<strong>New song</strong>, <strong>Make your own</strong>) opens on its door: <strong>Tap a beat</strong>, <strong>Hum a tune</strong>, <strong>Play the
+keys</strong> or <strong>Flip a song</strong>, and, with no playing in time, <strong>Draw a beat</strong>, <strong>Pick a groove</strong> or <strong>Ask</strong> your agent.
+<code>↑</code> <code>↓</code> walk the four ways. Nothing sounds until you press one, and the door never shows over a song with tracks in it.</p>
 <p><strong>Tap a beat</strong> opens a stage over the song. There's no click: tap <code>F</code> <code>J</code> <code>K</code> <code>L</code> (or the four pads; on a phone they
 fire as your finger lands) at whatever speed feels right, and keep going round. Your first hit starts the clock and
 the pads sound straight away. After six hits or so the BPM shows; after two bars' worth the bar lines fade in under
@@ -148,6 +149,34 @@ the song and records your hum over it from the next bar line; <code>Space</code>
 <p><code>Esc</code> before you've played anything closes the stage; after, it asks once (<em>Leave without keeping this take? It stays
 in Takes.</em>). <strong>Skip to the studio</strong> is always top right. While you play on the stage, an agent's changes to the song
 wait until it's in.</p>
+<h2 id="flip-a-song"><a class="h-link" href="#flip-a-song">Flip a song</a></h2>
+<p><em>Not on in every studio yet: where it's off, the door has three ways in.</em></p>
+<p><strong>Flip a song</strong> on the door brings in a song you own and gets it ready for you to make the drop over it. Pick one file
+(the song) or several (its stems: files with <em>vocals</em>, <em>acapella</em> or <em>voice</em>, <em>drums</em>, <em>bass</em>, or <em>other</em> or <em>inst</em>
+in their names; the one that matches none is the song itself). The files stay on your computer; nothing is fetched
+from a link.</p>
+<p>It lands at once, one undo step: the song on a track named <strong>Original</strong>, the stems on <strong>Vocals</strong>, <strong>Drums</strong>, <strong>Bass</strong>
+and <strong>Other</strong>. The vocal plays; the rest are on hand, muted (<code>M</code> on a header brings one back). Then the studio does the
+chores while you play, scroll and work. One line at the foot of the arranger says where it is:</p>
+<ul>
+<li><strong>Splitting… 40%.</strong> Only where this site splits songs (it's off on overdubstudio.com for now: bring the stems as
+files). It says the wait first, timed on your computer; with no graphics card to do it, it asks before it starts
+(<strong>Split on the processor</strong> or <strong>Skip the split</strong>). The stems land as their own undo step.</li>
+<li><strong>Finding the beat…</strong>, <strong>Marking sections…</strong> The grid then follows the recording: its downbeats sit on the bar
+lines, and the recording is never stretched. The tempo readout says <strong>Tempo, follows Original</strong> over the song's
+middle tempo; it won't take a new tempo while the grid follows the recording. Spans with no beat to hear (a free
+intro, a breakdown) are hatched and marked <em>free</em>. The key is set, the sections are named (with their own key where
+it changes), and the chords sit muted on a <strong>Chords</strong> track. All of it is one undo step.</li>
+</ul>
+<p>The toast says what landed: <em>Flip: Night Bus is in. Grid follows the recording, 95.9 BPM, drifting 94.4–97.0. Key B
+major. 4 sections.</em> If the studio isn't sure of the beat it asks <strong>Which one nods along with the vocal?</strong>: the grid it
+found, twice as fast, half as fast, and the 1 in another place, each played with the click over the recording. Pick
+one and it plays; <strong>Use this one</strong> keeps it (one undo step); <strong>Back</strong> (<code>Esc</code>) puts back what was there. <strong>Other
+readings</strong> on the toast asks any time. <strong>Cancel</strong> on the line stops the chores; what landed stays.</p>
+<p>Dragging <strong>Original</strong> by whole bars takes the grid with it; by less, the grid stays where it was and your agent can
+tell you how far off the recording sits. From there the drop is yours, and your agent is a sound design partner (it
+reads <code>get_guide &quot;workflows&quot;</code>): ask it to make the growl dirtier in the chorus, and it measures before and after.
+<strong>Export release</strong> in the Song menu gives you the finished song.</p>
 <h2 id="find-anything"><a class="h-link" href="#find-anything">Find anything</a></h2>
 <p>Everything is on screen: the song, the transport, the detail tabs under the song (Sketch, Notes, Beat, Grooves,
 Devices, Mixer, Reference) and the Agent with History beside it. The Browser and the Inspector wait on the left: <code>B</code>
@@ -673,9 +702,10 @@ you use. It is its own variable, not <code>ANTHROPIC_API_KEY</code>, so a key th
 spent unasked. When Claude Code is on (or the demo agent), that answers instead. The server listens on <code>127.0.0.1</code>
 only: put it on a public address and anyone who reaches it spends your key.</p>
 <p>Hosting a copy of the site? The studio has a hosted agent built in, Claude on Overdub credits, but it's Overdub's own
-service and it's off in your copy: it only turns on when the site has an <code>app/site-config.json</code> naming a service, and
-the repo has none. Without one, the studio shows nothing of it and connects to no one. (Pointing it at a service of
-your own also means adding that service to the page's <code>connect-src</code> and <code>frame-src</code>, in <code>app/index.html</code>.)</p>
+service and it's off in your copy: it only turns on when the site has an <code>app/site-config.json</code> that names a service
+and turns its toggle on (<code>&quot;cloud&quot;: { &quot;api&quot;: … }</code> and <code>&quot;toggles&quot;: { &quot;cloud.agent&quot;: &quot;on&quot; }</code>), and the repo has none.
+Without one, the studio shows nothing of it and connects to no one. (Pointing it at a service of your own also means
+adding that service to the page's <code>connect-src</code>, in <code>app/index.html</code>.)</p>
 <h2 id="build-a-device"><a class="h-link" href="#build-a-device">Build a device</a></h2>
 <p>Ask for an instrument or an effect that doesn't exist yet: <em>&quot;Build me a pedal that makes my guitar sound like it's
 underwater in a cathedral.&quot;</em> The agent writes it as a small piece of audio code.</p>
@@ -755,6 +785,7 @@ wrote before anything plays; a new track comes with two bars to hear the device 
 <thead><tr><th></th><th>what you get</th></tr></thead>
 <tbody>
 <tr><td><strong>Mix</strong> (<code>⌘⇧E</code>)</td><td>the song as a WAV, 24-bit, 48 kHz</td></tr>
+<tr><td><strong>Release</strong></td><td>the song as a WAV from its first sound to the end of its tail, muted tracks left out, with its loudness and true peak in the toast (<em>Release: 3:41, −9.2 LUFS, peak −0.4 dBTP</em>)</td></tr>
 <tr><td><strong>Stems</strong></td><td>one WAV per track, in a zip</td></tr>
 <tr><td><strong>MIDI</strong></td><td>a Standard MIDI File, one track per part</td></tr>
 <tr><td><strong>DAWproject</strong></td><td>a <code>.dawproject</code> for Bitwig Studio, Studio One, Cubase and others: tempo, tracks with their mixer settings, notes, audio clips and sections. Overdub's own devices can't travel, so each becomes a named placeholder with its settings. Put your own instrument on each track; the notes are all there.</td></tr>

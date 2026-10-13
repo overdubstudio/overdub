@@ -56,6 +56,7 @@ import { notesIn, audioIn, autoIn, lanesOf, mixGrid, GRID } from '../schedule.js
 import { audibility, trackSpec, masterSpec, softClipCurve, SC_K, keyPlan } from '../strip.js';
 import { dbToGain, beatsPerBarOf } from '../util.js';
 import { dataFor } from './data.js';
+import { timeline } from '../../core/music.js';
 import { normData } from '../../kernel/odk.js';
 
 export const Q = 128;   // the render quantum: kernels see exactly the blocks the AudioWorklet sees
@@ -102,7 +103,7 @@ function resolver(p) {
 }
 
 // One kernel device, hosted the way kernel/host.js hosts it. Returns null (and warns) if it can't run here.
-function kernelDevice(def, kind, { uid, params, on = true, bpm, from, sr, warn, where, key = false }) {
+function kernelDevice(def, kind, { uid, params, on = true, bpm, from, map = null, sr, warn, where, key = false }) {
   const K = coreClass(sr);
   const values = paramValues(def, params || {});
   let failed = null;
@@ -116,14 +117,14 @@ function kernelDevice(def, kind, { uid, params, on = true, bpm, from, sr, warn, 
   const data = dataFor(def.data);
   if (data) for (const [k, v] of Object.entries(data)) if (!v) warn({ kind: 'data', ...where, device: def.id, message: `${def.id} plays nothing: its ${k} (${normData(def.data)[k].slice(0, 19)}...) isn't in app/kits/ (node tools/fetch-kits.js fetches it)` });
   const core = new K({ source: def.kernel, kind, params: kernelSpecs(def), values, poly: def.poly, seed: seedOf(uid) >>> 0,
-    transport: { bpm, playing: true, beat: from, time: 0 }, data, ...(key ? { key: true, keyOn: false } : {}) }, post);
+    transport: { bpm, playing: true, beat: from, time: 0, ...(map ? { map } : {}) }, data, ...(key ? { key: true, keyOn: false } : {}) }, post);
   if (failed || !core.cur) {
     warn({ kind: 'error', ...where, device: def.id, message: `${def.id} failed to build: ${failed || 'no kernel'} (${kind === 'instrument' ? 'track skipped' : 'bypassed'})` });
     return null;
   }
   // what makeInstance does next: the params again (snapped), then the tempo
   core.msg({ type: 'params', values, jump: true });
-  core.msg({ type: 'transport', bpm, playing: true, beat: from, time: 0 });
+  core.msg({ type: 'transport', bpm, playing: true, beat: from, time: 0, ...(map ? { map } : {}) });
   return core;
 }
 
@@ -237,8 +238,9 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
   const p = cleanProject(fixIds(project, warn));
   if (to == null) to = songEnd(p);
   if (!(to > from)) throw new Error(`render: empty range ${from}..${to}`);
-  const bpm = +p.tempo || 120, spb = 60 / bpm;
-  const len = Math.max(1, Math.ceil(((to - from) * spb + Math.max(0, tail)) * sr));
+  // (the song's clock from `from`: a tempo map's, or (b - from) * spb as it always was: core/music.js timeline)
+  const tl = timeline(p, from), bpm = tl.mapped ? tl.bpmAt(from) : tl.bpm, spb = tl.spb;
+  const len = Math.max(1, Math.ceil((tl.sec(to) + Math.max(0, tail)) * sr));
   const def = resolver(p);
   const skipped = { tracks: [], inserts: [] };
   const counts = { kernel: 0, graph: 0, missing: 0 };
@@ -256,7 +258,7 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
   // keys: every key source is rendered before the tracks it keys, and rendered even when it isn't heard (strip.js keyPlan)
   const plan = keyPlan(p, { def, heard });
   for (const id of plan.cut) warn({ kind: 'key', insert: id, message: `the key on ${id} would close a loop (a track keying itself through others): it hears silence` });
-  const ctx = { bpm, from, sr, warn };
+  const ctx = { bpm, from, map: tl.mapped ? tl.segments() : null, sr, warn };
 
   // Can this device run here? Returns its def, or null after a warning.
   const usable = (id, kind, where) => {
@@ -323,7 +325,7 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
   const renderOrder = plan.order.map((id) => byId.get(id)).filter(Boolean);
 
   // notes: engine/render.js's order (time, then note-offs before note-ons), posted to each kernel a block ahead
-  const T = (beat) => Math.round((beat - from) * spb * sr) / sr;
+  const T = (beat) => Math.round(tl.sec(beat) * sr) / sr;
   const ev = [];
   for (const n of notesIn(p, from, to, { chase: true, tracks: want })) {
     ev.push({ t: T(n.at), on: 1, n });
@@ -335,7 +337,7 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
     if (!s || !s.inst) continue;
     const note = e.n.note, t = e.t + held(s.id);
     s.events.push(e.on
-      ? { type: 'on', p: note.p | 0, v: Number.isFinite(note.v) ? +note.v : 0.8, time: t, f: Math.round(t * sr), x: noteExpr(note, spb, e.n.into) }
+      ? { type: 'on', p: note.p | 0, v: Number.isFinite(note.v) ? +note.v : 0.8, time: t, f: Math.round(t * sr), x: noteExpr(note, tl.mapped ? tl.spbAt(e.n.at) : spb, e.n.into) }
       : { type: 'off', p: note.p | 0, time: t, f: Math.round(t * sr) });
   }
   // audio clips
@@ -343,7 +345,7 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
     const s = byId.get(a.track);
     const asset = assets && (assets[a.clip.asset] || (assets.get && assets.get(a.clip.asset)));
     if (!asset) { warn({ kind: 'asset', track: a.track, asset: a.clip.asset, message: `audio asset "${a.clip.asset}" is missing: that clip is silent` }); continue; }
-    const t0 = T(a.at) + held(a.track), offset = (+a.clip.offset || 0) + a.into * spb;
+    const t0 = T(a.at) + held(a.track), offset = (+a.clip.offset || 0) + (a.intoSec ?? a.into * spb);
     const dur = asset.channels[0].length / asset.sr, left = dur - (offset >= 0 ? offset : 0);
     if (left <= 0.001) continue;
     let t1 = Math.min(T(a.end) + held(a.track), t0 + left);
@@ -363,7 +365,7 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
       return f ? f.core : null;
     };
     // (through the tail, as the browser's render does: a cut or a swell after the last clip is part of the ending)
-    for (const g of autoIn(p, from, from + len / sr / spb, { chase: true, lanes: lanes.filter((L) => L.kind === 'device') })) {
+    for (const g of autoIn(p, from, tl.beat(len / sr), { chase: true, lanes: lanes.filter((L) => L.kind === 'device') })) {
       const core = coreOf(g.track, g.insert);
       if (!core) continue;
       const h = g.track === 'master' ? 0 : held(g.track);
@@ -377,7 +379,7 @@ export function renderSong(project, { from = 0, to, tracks = null, sr = 48000, t
     const s = L.track === 'master' ? master : byId.get(L.track);
     if (!s) continue;
     const h = L.track === 'master' ? 0 : held(L.track);
-    const grid = mixGrid(L.lane, L.param, blocksN, (fr) => from + (fr / sr - h) / spb);
+    const grid = mixGrid(L.lane, L.param, blocksN, (fr) => tl.beat(fr / sr - h));
     if (L.param === 'gain') s.gGrid = grid.g; else { s.lGrid = grid.l; s.rGrid = grid.r; }
   }
   // a param's value at frame i of block b: the Web Audio linear ramp between grid points b and b + 1

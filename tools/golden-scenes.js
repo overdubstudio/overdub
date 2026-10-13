@@ -10,6 +10,7 @@
 //               the lanes both renderers play (docs/research/AUTOMATION.md 3.5)
 //   sidechain   a bass and a pad ducking under kicks through Dim Switch's key (one key a muted ghost kick), both renderers
 //   master-clean  the same mix through Red Line at -1 dBTP on the master and a clean ceiling (master.clip 'clean')
+//   flip:tempo-map  a drum part on a song whose tempo map follows a recording drifting 92 -> 96 BPM (our own signal)
 //   demo:<id>   a song from the demo shelf (only those listed in SHELF_SCENES), whole, as demoById builds it (its ids
 //               are stable already), its timestamps pinned. Each scene is pinned on purpose, not the whole shelf.
 //   inst:core.wavetable:akwf   Light Table on two of its AKWF tables (the bank in app/src/devices/builtin/akwf.js),
@@ -117,6 +118,69 @@ function masterCleanScene() {
   return { ...sc, name: 'master-clean', project: p };
 }
 
+// flip:tempo-map: the grid bent to a recording (core/music.js "The tempo map"). Our own signal: a quiet sine
+// "recording" with a one-sample click on every beat of a grid that drifts from 92 to 96 BPM over 8 bars, the song's
+// tempo map anchored on each downbeat, and a drum part (a click kernel defined in the song: one sample at 0.5, then a
+// decay by multiplication, so it renders bit for bit anywhere) on every beat. Every hit lands on its click.
+export const MAP_BARS = 8;
+export function mapAnchors(bars = MAP_BARS) {
+  const A = [{ beat: 0, sec: 0 }];
+  for (let k = 0; k < bars; k++) A.push({ beat: 4 * (k + 1), sec: A[k].sec + (4 * 60) / (92 + (4 * k) / (bars - 1)) });
+  return A;
+}
+export const CLICK_KERNEL = {
+  id: 'overdub.golden-click', name: 'Golden Click', kind: 'instrument', cat: 'drums', by: 'overdub', params: [], tail: 1,
+  kernel: `({
+  poly: 4,
+  create({ sr }) {
+    return {
+      voice() {
+        let a = 0, k = 0;
+        return {
+          start(pitch, v) { a = 0.5 * v; k = 0; },
+          release() {},
+          render(L, R, n) {
+            for (let i = 0; i < n; i++) { const y = k === 0 ? a : a * 0.25; L[i] += y; R[i] += y; a = k === 0 ? a : a * 0.995; k++; }
+            return a > 1e-5;
+          },
+        };
+      },
+    };
+  },
+})`,
+};
+export function tempoMapScene() {
+  const sr = 48000, A = mapAnchors(), beats = 4 * MAP_BARS;
+  const secs = A[A.length - 1].sec + 1, len = Math.ceil(secs * sr);
+  const rec = new Float32Array(len);
+  for (let i = 0; i < len; i++) rec[i] = 0.05 * Math.sin((2 * Math.PI * 110 * i) / sr);
+  const clicks = [];
+  for (let b = 0; b < beats; b++) {
+    const k = Math.floor(b / 4), s = A[k].sec + ((b - A[k].beat) * (A[k + 1].sec - A[k].sec)) / (A[k + 1].beat - A[k].beat);
+    const f = Math.round(s * sr);
+    rec[f] = 0.8;
+    clicks.push(f);
+  }
+  const hits = notes(Array.from({ length: beats }, (_, b) => ({ p: b % 2 ? 38 : 36, t: b, d: 0.25, v: b % 4 === 0 ? 1 : 0.8 })));
+  return {
+    name: 'flip:tempo-map', browser: true, opts: { from: 0, to: beats, tail: 1 }, clicks,
+    assets: { a_record: { sr, channels: [rec] } },
+    project: project({
+      title: 'flip: tempo map', tempo: 94, devices: asDevices([CLICK_KERNEL]),
+      tempoMap: { anchors: A, clip: 'c_record' },
+      assets: { a_record: { kind: 'audio', name: 'Recording', sr, channels: 1, duration: len / sr } },
+      tracks: [
+        { id: 't_record', name: 'Original', kind: 'audio', instrument: null, inserts: [],
+          clips: [{ id: 'c_record', kind: 'audio', start: 0, length: beats, asset: 'a_record', offset: 0, gain: 0, name: 'Original', by: 'you' }],
+          gain: 0, pan: 0, mute: false, solo: false, arm: false, by: 'you' },
+        { id: 't_drums', name: 'Drums', kind: 'instrument', instrument: { device: CLICK_KERNEL.id, params: {} }, inserts: [],
+          clips: [{ id: 'c_drums', kind: 'notes', start: 0, length: beats, notes: hits, by: 'overdub' }],
+          gain: 0, pan: 0, mute: false, solo: false, arm: false, by: 'overdub' },
+      ],
+    }),
+  };
+}
+
 // the shelf songs pinned as scenes (kernel devices only; tools/demos-test.js renders them in the browser)
 const SHELF_SCENES = ['sodium', 'red-eye', 'late-checkout', 'wake-up-call', 'lobby-bar', 'room-service', 'turndown', 'ice-machine', 'vacancy', 'service-lift', 'boiler-room'];
 
@@ -212,6 +276,7 @@ export function scenes() {
   out.push(automationScene());
   out.push(sidechainScene());
   out.push(masterCleanScene());
+  out.push(tempoMapScene());
   for (const [s, here] of shelfScenes()) if (here) out.push(s);
   return out;
 }

@@ -28,12 +28,14 @@ the agent asking before it takes anything out of a song from a link.
   once the person chooses it and signs in, and a Claude of their own always comes first. While an ask runs, the
   person's words and what the agent's tools read from the song go to the service and on to Anthropic; the service
   holds the conversation in memory for that ask only, and keeps no prompts, songs or take ids, only what each ask
-  cost in credits and tokens. The sign-in is a session cookie, httpOnly on the service's own origin, so the page holds
-  no token; the browser keeps only the person's choice, which History entries each ask made (for credits back, so
-  the service never learns a take) and an 80% notice seen. The service owns the system prompt and the tools: the page
-  sends their version, never its own. `?cloud=` works only from a studio on this machine to a service on this machine,
-  so a link can't point anyone's song at another server; a checkout address from the service opens only if it's
-  `https:`. Nothing opens an ask before its price is on screen (`tools/cloud-test.js`).
+  cost in credits and tokens. Signing in is with Google, in a popup on the service's own origin; the page takes a
+  "signed in" message only from that exact origin, and all it does then is ask the service who is signed in. The session
+  is a cookie, httpOnly on the service's own origin, so the page holds no token; the browser keeps only the person's
+  choice, which History entries each ask made (for credits back, so the service never learns a take) and an 80% notice
+  seen. The service owns the system prompt and the tools: the page sends their version, never its own. `?cloud=` works
+  only from a studio on this machine to a service on this machine, so a link can't point anyone's song at another
+  server; a checkout address from the service opens only if it's `https:`. Nothing opens an ask before its price is on
+  screen (`tools/cloud-test.js`).
 - **Their songs.** A song lives in the browser; a share link carries it in the URL hash, which never reaches a server.
 - **Their machine**, when they run the local server, the MCP server or the Node renderer.
 - **Who made what**: bylines, History and the provenance report.
@@ -81,11 +83,11 @@ runs; and text in a song written to steer an agent.
   in the head; `app/index.html` says why each allowance is there). Scripts come from the site itself, worklet modules
   included: each is a file there (`kernel/processor.js`, `devices/worklets/`, `vendor/clawd/worklets/`,
   `input/cap-worklet.js`), so no script comes from a `data:` or `blob:` URL (`blob:` stays in `worker-src` for the
-  engine's timer Worker). Connections go to the site and the relay (and loopback, for local work; a deploy that
-  switches on the hosted agent adds its service, and the frame of its sign-in check),
-  images to the site, `data:` and `blob:`, media to the site and `blob:`, and fonts and stylesheets to the site alone:
-  the faces are files there (`app/style/fonts.css`, each family beside its licence), so no other host's CSS is on the
-  studio's pages and no visitor's address goes to a font host, from any page. Inline scripts (but the
+  engine's timer Worker). Connections go to the site and the relay (and loopback, for local work; a deploy that switches
+  on the hosted agent adds its service; signing in to it is a popup on the service's own origin, not a frame), images to
+  the site, `data:` and `blob:`, media to the site and `blob:`, and fonts and stylesheets to the site alone: the faces
+  are files there (`app/style/fonts.css`, each family beside its licence), so no other host's CSS is on the studio's
+  pages and no visitor's address goes to a font host, from any page. Inline scripts (but the
   library's and gallery's own, by hash), inline event handlers, plugins, `<base>` and forms are refused. CloudFront's
   managed policy adds HSTS, `X-Frame-Options: SAMEORIGIN`, `nosniff` and a referrer policy.
 - **Authorship.** A link signs every part that isn't an agent's, an earlier guest's or the house's as the guest who
@@ -125,7 +127,7 @@ runs; and text in a song written to steer an agent.
 | In Node the device check ran the kernel in the process that writes the report, so a kernel could rewrite it or print its own | Medium | The kernel runs in a child process that reads `app/src` only, writes no files and starts no processes; the parent measures the samples it sends (`engine/node/check.js`). The network is still open, and the samples are still the kernel's, so a kernel written to fool the check can |
 | A kernel that never returns: the agent waited until reload, and live audio stops with no recovery | Medium (availability) | Checks have a deadline and Stop works (`62f4c8a`); renders don't queue behind a held one (`289ad3d`); live playback is open |
 | Song size limits weren't applied to a link | Low to medium | Fixed (`2e39267`) |
-| `?relay=` worked on the live site (shows Connect; could send a tab's token to a local port) | Low | Fixed (`e53e3a9`); the relay's trial switch, `?connect=1`, showed Connect for the hosted relay only, and now the relay is live Connect shows for everyone, still pointed only at the hosted relay |
+| `?relay=` worked on the live site (shows Connect; could send a tab's token to a local port) | Low | Fixed (`e53e3a9`); the relay's trial switch, `?connect=1`, showed Connect for the hosted relay only. `?connect=1` is retired (0015): the `relay` toggle in `app/site-config.json` decides, and no link switches a studio on the live site |
 | The bridge took any request without an Origin, so a page could take over the live tab (denial of service) | Low | Fixed (`62f4c8a`) |
 | `Infinity` from a song file reached clip positions; a deeply nested link threw | Low | Fixed (`2e39267`) |
 | Kernels in one audio context share the worklet's built-in prototypes | Low | Open |

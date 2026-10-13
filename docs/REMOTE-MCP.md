@@ -16,10 +16,11 @@ claude.ai (Anthropic's cloud)                     relay (server/relay.js)       
 
 ## For the human
 
-**Live.** The relay runs at `https://overdub-relay.ajsmithhq.com`, and every studio shows the Connect tab
-(`RELAY_LIVE = true` in `app/src/agent/remote.js`). Turning that off again hides the tab on the live site except for a
-browser that opened `/app/?connect=1` (`relayPreview`, the switch from the relay's trial; `?connect=0` undoes it). It
-reveals Connect for the hosted relay and nothing else; `?relay=` stays local-only.
+**Live.** The relay runs at `https://overdub-relay.ajsmithhq.com`, and every studio shows the Connect tab: the
+`relay` feature toggle (`on('relay')`, `app/src/toggles.js`) is on, and every deploy writes it on (`deploy: 'on'`;
+`tools/prod-check.js` fails if it's off). Turned off in `deploy/site-config.json`, the live site has no Connect tab, no
+`app.remote` and no request to the relay; only a local studio with `?relay=` shows it. The relay trial's `?connect=1`
+switch is retired: no link switches a studio on the live site.
 
 1. Open the studio, then the **Connect** tab in the right pane (next to Agent and History), and press **Turn on**.
 2. Copy the **connector URL**, `https://overdub-relay.ajsmithhq.com/s/<token>/mcp`.
@@ -193,7 +194,7 @@ Sessions live for 24 hours idle.
 `RELAY = 'https://overdub-relay.ajsmithhq.com'`. `?relay=http://localhost:<port>` overrides it for tests and local
 work, and only when the studio itself runs on localhost (`relayOverride`): on the live site it is ignored, so a
 crafted link can't show the Connect tab or point someone's tab at another relay. The studio's Content Security
-Policy allows the hosted relay's origin in `connect-src`, and loopback for local work; `RELAY_LIVE` (on) shows the
+Policy allows the hosted relay's origin in `connect-src`, and loopback for local work; the `relay` toggle (on) shows the
 Connect tab on the live site.
 
 ## Limits
@@ -413,8 +414,8 @@ that speaks both it and the older ones falls back to `initialize` with a server 
 ## Accounts: one URL, signed in with Overdub
 
 Built and tested, not deployed, and off unless configured. With it, every Claude app adds the same connector URL,
-`https://relay.overdubstudio.com/mcp`, and the person signs in with a free Overdub account (email, then a 6-digit
-code) instead of copying a private link per browser. The account service is the OAuth authorization server; the relay
+`https://relay.overdubstudio.com/mcp`, and the person signs in with a free Overdub account (Continue with Google, in a
+popup) instead of copying a private link per browser. The account service is the OAuth authorization server; the relay
 is the resource server and keeps no database.
 
 - **Claude's side.** A request to `/mcp` without a good access token gets `401` with
@@ -455,7 +456,7 @@ Claude Code needs no checkout: `claude mcp add --transport http overdub <relay>/
 | `RELAY_OAUTH_DEV` | `1` allows `http://localhost` for the URLs above; never in a deploy |
 
 The browser's mode is kept in `overdub:remote-mode` from the first load, so a reload or a new tab stays in account
-mode. In the studio, account mode turns on with `ACCOUNT_LIVE` in `app/src/agent/remote.js`, or locally with both
+mode. In the studio, account mode turns on with the `accounts` toggle (`on('accounts')`, `app/src/toggles.js`), or locally with both
 `?relay=http://localhost:<port>` and `?cloud=http://localhost:<port>`. `tools/relay-test.js` covers it with a fake
 account service.
 

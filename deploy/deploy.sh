@@ -7,8 +7,8 @@
 # Every kit the shipped code names must be here, or nothing is deployed; they go up before the code that names them.
 # Run deploy/setup.sh once first. Usage:
 #   deploy/deploy.sh [--skip-tests]                  the live site, from REF (default HEAD)
-#   deploy/deploy.sh [--skip-tests] --next [REF]     the preview, https://next.overdubstudio.com (deploy/next/setup.sh
-#                                                    once first), from REF (default HEAD): any committed ref; one
+#   deploy/deploy.sh [--skip-tests] --next [REF]     the preview, https://next.overdubstudio.com (its AWS is
+#                                                    infra/next's), from REF (default HEAD): any committed ref; one
 #                                                    older than the ribbon (app/src/ui/preview.js) ships without it
 #   DRY_RUN=1 deploy/deploy.sh ...                   stage the files and print the plan; no AWS calls
 # app/site-config.json, the deploy's switches, is never committed: this script is its one writer, for both sites. It
@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
 done
 DRY=${DRY_RUN:-}
 if [ "$TARGET" = next ]; then
-  BUCKET=next.overdubstudio.com HOST=next.overdubstudio.com IDFILE="$ROOT/deploy/.next-distribution-id" SETUP=deploy/next/setup.sh
+  BUCKET=next.overdubstudio.com HOST=next.overdubstudio.com IDFILE="$ROOT/deploy/.next-distribution-id" SETUP="terraform in infra/next (infra/README.md)"
 else
   BUCKET=overdub.ajsmithhq.com HOST=overdubstudio.com IDFILE="$ROOT/deploy/.distribution-id" SETUP=deploy/setup.sh
 fi

@@ -7,24 +7,28 @@ function in `path-rewrite.js`, no-cache text and day-cached media), and both shi
 | | Live | Preview |
 |---|---|---|
 | Address | https://overdubstudio.com | https://next.overdubstudio.com |
-| One-time setup | `deploy/setup.sh` | `deploy/next/setup.sh` |
+| AWS setup | `deploy/setup.sh` (once) | Terraform: `infra/next` ([`infra/README.md`](../infra/README.md)) |
 | Ship | `deploy/deploy.sh` (HEAD, or `REF=…`) | `deploy/deploy.sh --next [REF]` (any committed ref; HEAD by default) |
 | `app/site-config.json` (never committed) | written by the deploy: `deploy/site-config.json`, else `{}`, plus REF's `deploy: 'on'` toggles (relay, which `on('relay')` reads; accounts and the hosted agent are `on('accounts')` and `on('cloud.agent')`) | the same, plus `preview` and the commit |
 | Search engines | indexed | `X-Robots-Tag: noindex, nofollow` on every response |
 | Counts (`app/src/analytics.js`) | on | off (they count on `overdubstudio.com` only) |
 
-`DRY_RUN=1` before either script stages the files and prints what it would send, calling nothing:
-`DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`, `DRY_RUN=1 deploy/next/setup.sh`.
-`tools/analytics-test.js` runs both dry with a stub `aws` and checks the plan.
+`DRY_RUN=1` before the deploy stages the files and prints what it would send, calling nothing:
+`DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`. `tools/analytics-test.js` runs it dry with a stub `aws` and
+checks the plan (and runs the old `deploy/next/setup.sh` dry too: it is kept for that check, and no longer matches the
+account).
 
 ## How the preview works
 
-`deploy/next/setup.sh` (once; re-running skips what exists) makes the bucket `next.overdubstudio.com`, an ACM
-certificate for that name validated by a CNAME in the overdubstudio.com zone, a copy of the path-rewrite function whose
-home is `next.overdubstudio.com` (so its own paths resolve and nothing redirects testers to the live site), a response
-headers policy with the managed security headers plus `X-Robots-Tag: noindex, nofollow`, the distribution, the bucket
-policy that lets only that distribution read, and the A/AAAA alias. It writes the distribution id to
-`deploy/.next-distribution-id` (gitignored); `deploy.sh --next` reads it, or looks the distribution up by its alias.
+Its AWS is Terraform's, in [`infra/next`](../infra/README.md): the hosted zone `next.overdubstudio.com` (delegated from
+overdubstudio.com, whose zone is in another account), the bucket `next.overdubstudio.com`, an ACM certificate for that
+name validated by a CNAME in its own zone, a copy of the path-rewrite function whose home is `next.overdubstudio.com`
+(so its own paths resolve and nothing redirects testers to the live site; Terraform builds it from `path-rewrite.js`, so
+that file stays the one source), a response headers policy with the managed security headers plus
+`X-Robots-Tag: noindex, nofollow`, the distribution, the bucket policy that lets only that distribution read, and the
+A/AAAA alias. Terraform never touches the bucket's objects: `deploy.sh --next` ships them and invalidates. It reads the
+distribution id from `deploy/.next-distribution-id` (gitignored; `terraform -chdir=infra/next output -raw
+distribution_id`), or looks the distribution up by its alias.
 
 `deploy.sh --next REF` ships the same files the live site gets, with one difference in `app/site-config.json`, the
 deploy's switches. That file is never committed and `deploy.sh` is its one writer: for both sites it starts from the
@@ -58,9 +62,9 @@ the workflow by hand on `main` (Actions › ci › Run workflow), which runs the
 integration suites (browsers, servers, renders), so run `node tools/run-all.js` locally before merging.
 The deploy signs in to AWS with GitHub's OIDC token, never a stored key, as a role that can write the preview's bucket
 and invalidate its distribution and nothing else.
-`deploy/next/github-oidc.sh` (once, `AWS_PROFILE=overdub`; `DRY_RUN=1` prints the plan) makes the role and GitHub's
-identity provider; `BRANCHES` names the branches whose runs may assume it (default `main`). The role's
-ARN and the distribution id go in the repository variables `NEXT_DEPLOY_ROLE` and `NEXT_DISTRIBUTION`.
+`infra/next/github.tf` holds the role and GitHub's identity provider; `deploy_branches` names the branches whose runs
+may assume it (default `main`). The role's ARN and the distribution id (`terraform -chdir=infra/next output`) go in the
+repository variables `NEXT_DEPLOY_ROLE` and `NEXT_DISTRIBUTION`.
 
 What a tester should know: songs, keys and settings saved on the preview stay on the preview (each site keeps its own
 browser storage). Connect to Claude doesn't work there: the relay accepts the live origin only.

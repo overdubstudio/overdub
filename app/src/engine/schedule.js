@@ -4,6 +4,7 @@
 // the Node renderer, which reads the song through these too.
 
 import { dbToGain, frame, soon } from './util.js';
+import { hasTempoMap, beatSecs } from '../core/music.js';
 
 // Notes whose start is in [from, to). Each: { track, clip, note, at (song beat), off (song beat), key }; a chased
 // one also has chased: true and into (the beats it had already sounded: its bend and mod curves start that far in).
@@ -55,9 +56,10 @@ export function lastSound(p) {
 }
 
 // Audio clips that start in [from, to), or (fresh: after a start, a seek or a loop wrap) are already sounding at
-// `from`. Each: { track, clip, at (song beat it starts sounding), into (beats into the clip), end (song beat) }.
+// `from`. Each: { track, clip, at (song beat it starts sounding), into (beats into the clip), end (song beat) }; on a
+// song with a tempo map, also intoSec (the seconds `into` is there: the map's, not into × one tempo's).
 export function audioIn(p, from, to, { cut = Infinity, fresh = false, tracks = null } = {}) {
-  const out = [];
+  const out = [], mapped = hasTempoMap(p);
   for (const t of p.tracks || []) {
     if (tracks && !tracks.includes(t.id)) continue;
     for (const c of t.clips || []) {
@@ -65,7 +67,7 @@ export function audioIn(p, from, to, { cut = Infinity, fresh = false, tracks = n
       const cs = +c.start || 0, ce = cs + (+c.length || 0);
       const end = Math.min(ce, cut);
       if (cs >= from && cs < to) out.push({ track: t.id, clip: c, at: cs, into: 0, end, key: `${c.id}/a/${cs}` });
-      else if (fresh && cs < from && ce > from + 1e-6) out.push({ track: t.id, clip: c, at: from, into: from - cs, end, key: `${c.id}/a/${cs}` });
+      else if (fresh && cs < from && ce > from + 1e-6) out.push({ track: t.id, clip: c, at: from, into: from - cs, end, key: `${c.id}/a/${cs}`, ...(mapped ? { intoSec: beatSecs(p, from - cs, cs) } : {}) });
     }
   }
   return out;

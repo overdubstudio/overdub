@@ -136,7 +136,9 @@ export async function kernelInstance(c, def, opts = {}) {
         else if (clock.barAt) beat = (+clock.barAt(now) || 0) * (clock.beatsPerBar ? +clock.beatsPerBar() || 4 : 4);
       }
     } catch { /* a clock mid-rebuild: keep the defaults */ }
-    return { bpm, playing, beat, time: now };
+    // (offline, a song with a tempo map: the worklet follows its segments, which it can't be told about mid-render)
+    const map = offline && clock && clock.segments ? clock.segments() : null;
+    return map ? { bpm, playing, beat, time: now, map } : { bpm, playing, beat, time: now };
   };
 
   // kernel data: what's here now (an offline render waits for all of it; live, what is still loading comes later)

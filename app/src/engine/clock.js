@@ -11,12 +11,16 @@
 //   clock.next(t?)             the first bar line after t: { bar, time, len (that bar in seconds) }
 //   clock.phaseAt(t, bars=1)   where t is in a cycle of `bars` bars, 0..1
 //   clock.beatAt(t?) / beat()  the song position in beats (loop wraps included) at t (extra, for kernel hosts)
+//   clock.segments             offline on a song with a tempo map: () -> [{ time, beat, bpm }], where each segment of
+//                              the map starts (kernel/host.js hands them to the worklet's transport); else null
 //
 // The grid is continuous while the song plays (it does not jump at a loop wrap, so an LFO stays in phase across a
 // loop that is a whole number of bars). Stopped, it is a free grid from audio time 0 at the project tempo. Offline it
-// is a grid from time 0 at the project tempo, starting at the render's first beat, and playing() is true.
+// is a grid from time 0 at the project tempo, starting at the render's first beat, and playing() is true. A song with a
+// tempo map bends both: bpm() is the tempo of the segment the song is in (core/music.js "The tempo map").
 //
-// src: { now(), playing(), bpm(), beatsPerBar(), gridAt(t) -> grid beat, timeAtGrid(g) -> audio time, songBeatAt(t) }
+// src: { now(), playing(), bpm(), beatsPerBar(), gridAt(t) -> grid beat, timeAtGrid(g) -> audio time, songBeatAt(t),
+//        segments()? }
 
 export function createClock(src) {
   const bpb = () => { const n = +src.beatsPerBar(); return n > 0 ? n : 4; };
@@ -35,12 +39,27 @@ export function createClock(src) {
     phaseAt: (t, bars = 1) => { const x = clock.barAt(t) / (bars || 1); return x - Math.floor(x); },
     beatAt: (t) => src.songBeatAt(t == null ? src.now() : t),
     beat: () => src.songBeatAt(src.now()),
+    segments: typeof src.segments === 'function' ? () => src.segments() : null,
   };
   return clock;
 }
 
-// A fixed grid: offline renders (from beat `from`, at `bpm`), and the stopped transport (from time 0).
-export function gridClock(c, { bpm, beatsPerBar = 4, from = 0, playing = true }) {
+// A fixed grid: offline renders (from beat `from`, at `bpm`), and the stopped transport (from time 0). timeline: a
+// mapped song's (core/music.js timeline(p, from)): the grid follows the map instead, and segments() are its segments.
+export function gridClock(c, { bpm, beatsPerBar = 4, from = 0, playing = true, timeline = null }) {
+  if (timeline) {
+    const tl = timeline;
+    return createClock({
+      now: () => c.currentTime,
+      playing: () => playing,
+      bpm: () => tl.bpmAt(tl.beat(c.currentTime)),
+      beatsPerBar: () => beatsPerBar,
+      gridAt: (t) => tl.beat(t),
+      timeAtGrid: (g) => tl.sec(g),
+      songBeatAt: (t) => tl.beat(t),
+      segments: () => tl.segments(),
+    });
+  }
   const spb = 60 / bpm;
   return createClock({
     now: () => c.currentTime,

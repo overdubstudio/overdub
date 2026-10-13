@@ -23,6 +23,7 @@
 //            and each one left out is a warning.
 
 import { lanesOf, laneKey, paramSpec, MIXER, valueAt, toPos } from './automation.js';
+import { hasTempoMap, mapSec, mapTempo } from './music.js';
 
 export const DAWPROJECT_VERSION = '1.0';
 
@@ -171,6 +172,14 @@ export function dawprojectXml(p, { getDevice = () => null, audio = {}, app = {} 
   const lanes = [];
   const assetPaths = new Map();
   const secPerBeat = 60 / tempo;
+  // a tempo map (core/music.js): the arrangement's tempo is automated, a held step at every anchor, and an audio clip
+  // gets a warp at every anchor inside it, so it plays in its own seconds (unstretched) as it does in Overdub
+  const mapped = hasTempoMap(p), A = mapped ? p.tempoMap.anchors : null;
+  const innerWarps = (c, length, offset) => {
+    if (!mapped) return '';
+    const s0 = mapSec(A, c.start);
+    return A.filter((a) => a.beat > c.start + 1e-9 && a.beat < c.start + length - 1e-9).map((a) => `<Warp${attrs({ time: num(a.beat - c.start), contentTime: num(offset + a.sec - s0) })}/>`).join('');
+  };
   for (const t of p.tracks || []) {
     const clips = [];
     for (const c of [...(t.clips || [])].sort((a, b) => a.start - b.start)) {
@@ -186,7 +195,7 @@ export function dawprojectXml(p, { getDevice = () => null, audio = {}, app = {} 
           media.push({ asset: c.asset, path });
         }
         const offset = Math.max(0, Number(c.offset) || 0);
-        const secs = length * secPerBeat;
+        const secs = mapped ? mapSec(A, c.start + length) - mapSec(A, c.start) : length * secPerBeat;
         const wav = wavInfo(audio[c.asset]);
         const sr = wav?.sr || a?.sr || 48000, chans = wav?.channels || a?.channels || 2, dur = wav?.duration ?? a?.duration ?? (offset + secs);
         const gainNote = Number(c.gain) ? `Clip gain in Overdub: ${num(c.gain, 1)} dB.` : undefined;
@@ -195,7 +204,7 @@ export function dawprojectXml(p, { getDevice = () => null, audio = {}, app = {} 
           + `<Clip${attrs({ time: '0.0', duration: num(length), contentTimeUnit: 'beats', playStart: '0.0', fadeTimeUnit: 'beats', fadeInTime: '0.0', fadeOutTime: '0.0' })}>`
           + `<Warps${attrs({ id: id(), contentTimeUnit: 'seconds', timeUnit: 'beats' })}>`
           + `<Audio${attrs({ id: id(), name: a?.name, algorithm: 'stretch', channels: chans, duration: num(dur), sampleRate: sr })}><File${attrs({ path })}/></Audio>`
-          + `<Warp${attrs({ time: '0.0', contentTime: num(offset) })}/><Warp${attrs({ time: num(length), contentTime: num(offset + secs) })}/>`
+          + `<Warp${attrs({ time: '0.0', contentTime: num(offset) })}/>${innerWarps(c, length, offset)}<Warp${attrs({ time: num(length), contentTime: num(offset + secs) })}/>`
           + '</Warps></Clip></Clips></Clip>');
       } else {
         const notes = [];
@@ -214,15 +223,17 @@ export function dawprojectXml(p, { getDevice = () => null, audio = {}, app = {} 
   const secs = (p.sections || []).filter((s) => Number.isFinite(Number(s.start)));
   const markers = secs.length ? `<Markers${attrs({ id: id() })}>${secs.map((s) => `<Marker${attrs({ time: num(s.start), name: s.name, color: inkOf(s.color) })}/>`).join('')}</Markers>` : '';
 
+  const tempoId = id();
+  const tempoAuto = mapped ? `<TempoAutomation${attrs({ id: id(), unit: 'bpm', timeUnit: 'beats' })}><Target${attrs({ parameter: tempoId })}/>${A.slice(0, -1).map((a) => `<RealPoint${attrs({ time: num(a.beat), value: num(mapTempo(A, a.beat)), interpolation: 'hold' })}/>`).join('')}</TempoAutomation>` : '';
   const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + `<Project version="${DAWPROJECT_VERSION}">`
     + `<Application${attrs({ name: app.name || 'Overdub', version: app.version || '0.1.0' })}/>`
     + '<Transport>'
-    + `<Tempo${attrs({ id: id(), name: 'Tempo', unit: 'bpm', min: '20.0', max: '666.0', value: num(tempo) })}/>`
+    + `<Tempo${attrs({ id: tempoId, name: 'Tempo', unit: 'bpm', min: '20.0', max: '666.0', value: num(mapped ? mapTempo(A, 0) : tempo) })}/>`
     + `<TimeSignature${attrs({ id: id(), numerator: (num_ | 0) || 4, denominator: (den | 0) || 4 })}/>`
     + '</Transport>'
     + `<Structure>${structure.join('')}</Structure>`
-    + `<Arrangement${attrs({ id: id() })}><Lanes${attrs({ id: id(), timeUnit: 'beats' })}>${lanes.join('')}</Lanes>${markers}</Arrangement>`
+    + `<Arrangement${attrs({ id: id() })}>${tempoAuto}<Lanes${attrs({ id: id(), timeUnit: 'beats' })}>${lanes.join('')}</Lanes>${markers}</Arrangement>`
     + '<Scenes/>'
     + '</Project>';
   const project = indentXml(xml) + '\n';

@@ -65,7 +65,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub for agents (and their humans)</a></h1>
-    <p class="doc-meta">From <code>docs/AGENTS.md</code> (<a href="/docs/AGENTS.md">the Markdown</a>), about 54 min to read</p>
+    <p class="doc-meta">From <code>docs/AGENTS.md</code> (<a href="/docs/AGENTS.md">the Markdown</a>), about 56 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other: the human lays down a take, the agent
 plays over it, the human plays over that. This page is for both of you: the human who wants to plug an agent in, and
@@ -560,8 +560,11 @@ to half a decibel, and <code>clean</code> leaves it exactly as the limiter did, 
 <h2 id="reverb-stairwell-coreverb-or-echo-chamber-corerooms"><a class="h-link" href="#reverb-stairwell-coreverb-or-echo-chamber-corerooms">Reverb: Stairwell (<code>core.verb</code>) or Echo Chamber (<code>core.rooms</code>)</a></h2>
 <p>Two reverbs, for two jobs. <strong>Stairwell</strong> is long, lush and fully tweakable: a synthetic hall whose size, decay and
 tone are knobs, for pads, a wash under a lead, or a tail that blooms. <strong>Echo Chamber</strong> is a real space: a room's
-impulse response as it was recorded, its whole audible decay (every octave down 40 dB), then a tail fitted to it, for
-a vocal, a piano or a drum room that should sound like it was played somewhere. Its <code>room</code> is a switch of six measured rooms: <code>AULA</code>
+impulse response as it was recorded, its whole audible decay (every octave down 40 dB; the meeting room's first 80 ms,
+which sounds the same), then a tail fitted to it, for a vocal, a piano or a drum room that should sound like it was
+played somewhere. Echo Chamber is behind the <code>device.rooms</code> toggle: while it's off, <code>list_devices</code> doesn't list it and
+<code>get_guide &quot;devices&quot;</code> names Stairwell alone, but a song that already has it loads and plays it, and <code>get_device</code>
+reads it. Its <code>room</code> is a switch of six measured rooms: <code>AULA</code>
 (Aula Carolina, a former church, 3 m from the source), <code>AULA FAR</code> (the same church, 10 m), <code>LECTURE</code>, <code>STAIRS</code>,
 <code>OFFICE</code> and <code>MEETING</code>. A switch takes its label:</p>
 <div class="code" data-lang="json"><pre><code>[{ &quot;type&quot;: &quot;insert.add&quot;, &quot;track&quot;: &quot;Vox&quot;, &quot;insert&quot;: { &quot;device&quot;: &quot;core.rooms&quot;, &quot;params&quot;: { &quot;room&quot;: &quot;LECTURE&quot;, &quot;mix&quot;: 0.18 } } }]</code></pre></div>

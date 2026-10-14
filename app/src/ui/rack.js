@@ -51,6 +51,7 @@
 // other sound.
 
 import { h, css, icon, drag, clamp, fmtDb, byline } from './dom.js';
+import { offered } from '../toggles.js';
 import { DEVICE_CATS, paramValues, presetParams, presetOf, normParam, getDevice, heldDevice } from '../devices/registry.js';
 import { popFocus, popLabel, menu as kitMenu, songColor, isHexColor, touchFirst } from './arrange-kit.js';
 import { laneAt, specFor, valueAt, toPos } from '../core/automation.js';
@@ -606,7 +607,7 @@ export function devicePicker(app, anchor, { kind = 'effect', track = null, onPic
   let rows = [], at = 0;
   const draw = () => {
     const s = q.value.trim().toLowerCase();
-    const defs = app.devices.listDevices({ kind, q: s || undefined }).filter((d) => !only || only(d));
+    const defs = app.devices.listDevices({ kind, q: s || undefined }).filter((d) => offered(d) && (!only || only(d)));
     const by = new Map();
     // searching: one list, best name match first; browsing: by category
     if (s) by.set('_best', rankDevices(defs, s));
@@ -891,7 +892,7 @@ export default async function (app) {
 
       function emptyHint(t) {
         const want = [['core.verb', 'Reverb'], ['core.rooms', 'Real room'], ['core.delay', 'Delay'], ['core.comp', 'Compressor'], ['core.drive', 'Drive'], ['core.eq', 'EQ']]
-          .filter(([d]) => app.devices.getDevice(d));
+          .filter(([d]) => app.devices.getDevice(d) && offered(app.devices.getDevice(d)));
         const id = tid();
         return h('div.rk-hint.empty',
           h('p', 'No effects on this track yet. Drop one here, or add ', want.map(([d, n], i) => [i ? (i === want.length - 1 ? ' or ' : ', ') : null, h('button.btn.btn-txt.rk-chip', { onclick: () => addDevice(app, d, { track: id }) }, n)]), '.'),

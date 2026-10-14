@@ -666,7 +666,8 @@ not `dsp` names.
 ## Echo Chamber (`core.rooms`): measured rooms
 
 A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen
-University, AIR 1.4, MIT; docs/SOUNDS.md). The device is `app/src/devices/builtin/rooms.js`; its tail, filters and
+University, AIR 1.4, MIT; docs/SOUNDS.md). It is offered only while the `device.rooms` toggle is on (its definition's
+`toggle: 'device.rooms'`; docs/ARCHITECTURE.md, Toggles); a song that has it plays it either way. The device is `app/src/devices/builtin/rooms.js`; its tail, filters and
 room table are `rooms-lib.js` (kernel text, shared with the build so that what the fit measures is what plays).
 - **The model.** Each room plays its measured impulse response (binaural: the two ears are the left and right taps)
   until every octave from 125 Hz to 8 kHz has decayed 40 dB, then hands off to a tail fitted to the room's decay

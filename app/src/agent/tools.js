@@ -36,7 +36,7 @@ import { lexiconSummary } from './lexicon.js';
 import { catalog as transformCatalog } from '../core/transforms.js';
 import { installKeep, keepFirst, itemsText, whoseIds, takenBy, heldCodeFirst, HELD_CODE_FINE, kernelPrint } from './keep.js';
 import { keyChosen } from '../input/hum.js';
-import { on, offLine } from '../toggles.js';
+import { on, offLine, offered } from '../toggles.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -333,7 +333,11 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
         case 'genres': { const { genresGuide } = await import('./genres.js'); return { guide: genresGuide(input.section || null) }; }
         case 'workflows': { const { workflowsGuide } = await import('./workflows.js'); return { guide: workflowsGuide(input.section || null) }; }
         case 'etiquette': return { guide: ETIQUETTE };
-        case 'devices': return { guide: await kernelGuide() };
+        case 'devices': {
+          // (the reverb paragraph names Echo Chamber only while device.rooms is on; off, Stairwell alone)
+          const g = await kernelGuide(), { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../kernel/guide.js');
+          return { guide: GUIDE_REVERBS && !on('device.rooms') ? g.replace(GUIDE_REVERBS, GUIDE_REVERBS_ONE) : g };
+        }
         case 'ops': return { guide: OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT };
         case 'transforms': return { guide: 'Transforms (name: what it does. params, with their defaults):\n' + transformCatalog() };
         case 'lexicon': {
@@ -389,20 +393,23 @@ ${OPS_BRIEF}`,
 With detail "params" (the default while the list stays short; one device always has them) each param is listed as: key min..max unit (log) def=… role — what it does. Param values in ops are in these units and inside these ranges. Presets (named sounds) are listed by name: preset: "<name>" in instrument.set, track.add's instrument, insert.add or insert.set sets one. tag ("bass-music", "growl", "sub"...) lists only the devices with presets tagged so, and those presets.`,
     input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['instrument', 'effect'] }, cat: { type: 'string' }, query: { type: 'string' }, tag: { type: 'string', description: 'a preset tag: bass-music, dubstep, riddim, dnb, melodic, sub, growl, reese, wobble, stab, lead, chords, fx, drums, bus, master, pump' }, detail: { type: 'string', enum: ['brief', 'params'] } }, additionalProperties: false },
     run(input, { app }) {
-      let list = app.devices.listDevices({ kind: input.kind, cat: input.cat, q: input.query, tag: input.tag });
+      // (a built-in behind a toggle that's off isn't offered: toggles.js offered. get_device still reads it, and a song
+      // that has it plays it.)
+      const shown = (o) => app.devices.listDevices(o).filter(offered);
+      let list = shown({ kind: input.kind, cat: input.cat, q: input.query, tag: input.tag });
       // the song's held devices aren't in the registry (nothing can play them yet): said beside the list
       const held = heldNow(app).filter((d) => !input.kind || d.kind === input.kind);
       const heldOut = held.length ? { held: held.map((d) => `${d.id} "${String(d.name).slice(0, 100)}" (${d.kind}, kept off)`).join(', '), held_note: HELD_NOTE } : {};
       const categories = () => {
         const cats = {};
-        for (const d of app.devices.listDevices({ kind: input.kind })) { const k = `${d.kind} ${d.cat}`; cats[k] = (cats[k] || 0) + 1; }
+        for (const d of shown({ kind: input.kind })) { const k = `${d.kind} ${d.cat}`; cats[k] = (cats[k] || 0) + 1; }
         return Object.entries(cats).map(([k, n]) => `${k}: ${n}`).join(', ');
       };
       // a category nothing is filed under ("guitar": DI Box is a pluck): the devices that mention the word, and the
       // categories there are
       let note;
       if (!list.length && input.cat) {
-        const byWord = app.devices.listDevices({ kind: input.kind, q: [input.cat, input.query].filter(Boolean).join(' ') });
+        const byWord = shown({ kind: input.kind, q: [input.cat, input.query].filter(Boolean).join(' ') });
         note = `no device is filed under "${String(input.cat).slice(0, 40)}"${byWord.length ? `; these mention it` : ''}. The categories: ${categories()}`;
         list = byWord;
       }

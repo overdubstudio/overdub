@@ -1928,17 +1928,23 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
 - **A toggle never changes a song.** Nothing under `core/`, `audio/`, `kernel/` or `devices/registry.js` imports
   `toggles.js` (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
   data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-  menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
-  Browser, Find and `list_devices`, a `toggle` on a device definition read only where adding is offered, is
-  `device.rooms`'s work, built on its branch.)
+  menus, Browser and Find entries, doors, and the agent tools offered.
+- **Devices.** A built-in's definition may carry `toggle: '<id>'`. `offered(def)` (`toggles.js`) is false while that
+  toggle is off, and every place that offers a device for adding asks it: the device pickers and the empty chain's
+  chips (`ui/rack.js`), the Browser, the instrument menus, Find's Sound rows, `list_devices`, and the cloud agent's
+  free moves. The registry doesn't read it: `getDevice`, `get_device`, a song's inserts, `insert.add` by id, the
+  engine and the renders treat the device as always, so a saved or shared song that uses it loads and plays. A song's
+  own device (source `project`) can't hide itself with the field.
 - **Agent tools.** The catalog is static (`server/relay-catalog.json` doesn't move). A tool may carry `toggle: '<id>'`:
   `runTool` checks it before the required fields, the recording block and `run`, and while it's off the call answers
   `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
   goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
 - **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-  Find, `app.flip`'s pick and flip, `get_guide "workflows"`) and `stems.local` (the local stems runner, read by
-  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed). The tempo map neither hides.
+  Find, `app.flip`'s pick and flip, `get_guide "workflows"`), `stems.local` (the local stems runner, read by
+  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed) and `device.rooms` (Echo Chamber,
+  `core.rooms`: every device offer above, and its half of `get_guide "devices"`'s reverb paragraph, `GUIDE_REVERBS`).
+  The tempo map neither hides.
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
   (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
 

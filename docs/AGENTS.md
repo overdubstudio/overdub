@@ -598,8 +598,11 @@ to half a decibel, and `clean` leaves it exactly as the limiter did, with a hard
 
 Two reverbs, for two jobs. **Stairwell** is long, lush and fully tweakable: a synthetic hall whose size, decay and
 tone are knobs, for pads, a wash under a lead, or a tail that blooms. **Echo Chamber** is a real space: a room's
-impulse response as it was recorded, its whole audible decay (every octave down 40 dB), then a tail fitted to it, for
-a vocal, a piano or a drum room that should sound like it was played somewhere. Its `room` is a switch of six measured rooms: `AULA`
+impulse response as it was recorded, its whole audible decay (every octave down 40 dB; the meeting room's first 80 ms,
+which sounds the same), then a tail fitted to it, for a vocal, a piano or a drum room that should sound like it was
+played somewhere. Echo Chamber is behind the `device.rooms` toggle: while it's off, `list_devices` doesn't list it and
+`get_guide "devices"` names Stairwell alone, but a song that already has it loads and plays it, and `get_device`
+reads it. Its `room` is a switch of six measured rooms: `AULA`
 (Aula Carolina, a former church, 3 m from the source), `AULA FAR` (the same church, 10 m), `LECTURE`, `STAIRS`,
 `OFFICE` and `MEETING`. A switch takes its label:
 

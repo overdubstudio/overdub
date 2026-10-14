@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 130 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 131 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -1804,17 +1804,23 @@ the live config names a toggle the live registry doesn't know, or when a <code>d
 <li><strong>A toggle never changes a song.</strong> Nothing under <code>core/</code>, <code>audio/</code>, <code>kernel/</code> or <code>devices/registry.js</code> imports
 <code>toggles.js</code> (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
 data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
-Browser, Find and <code>list_devices</code>, a <code>toggle</code> on a device definition read only where adding is offered, is
-<code>device.rooms</code>'s work, built on its branch.)</li>
+menus, Browser and Find entries, doors, and the agent tools offered.</li>
+<li><strong>Devices.</strong> A built-in's definition may carry <code>toggle: '&lt;id&gt;'</code>. <code>offered(def)</code> (<code>toggles.js</code>) is false while that
+toggle is off, and every place that offers a device for adding asks it: the device pickers and the empty chain's
+chips (<code>ui/rack.js</code>), the Browser, the instrument menus, Find's Sound rows, <code>list_devices</code>, and the cloud agent's
+free moves. The registry doesn't read it: <code>getDevice</code>, <code>get_device</code>, a song's inserts, <code>insert.add</code> by id, the
+engine and the renders treat the device as always, so a saved or shared song that uses it loads and plays. A song's
+own device (source <code>project</code>) can't hide itself with the field.</li>
 <li><strong>Agent tools.</strong> The catalog is static (<code>server/relay-catalog.json</code> doesn't move). A tool may carry <code>toggle: '&lt;id&gt;'</code>:
 <code>runTool</code> checks it before the required fields, the recording block and <code>run</code>, and while it's off the call answers
 <code>{ error: &quot;&lt;name&gt; isn't on in this studio.&quot; }</code> (<code>offLine(id)</code>) and changes nothing. A <code>get_guide</code> topic a feature owns
 goes in <code>GUIDE_TOGGLES</code> (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
 through <code>guidePart(id, text)</code>, which is empty while off. The in-app system prompt doesn't vary with toggles.</li>
 <li><strong>In use.</strong> <code>workflow.flip</code> (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-Find, <code>app.flip</code>'s pick and flip, <code>get_guide &quot;workflows&quot;</code>) and <code>stems.local</code> (the local stems runner, read by
-<code>jobs/index.js</code> <code>pageJobs</code> beside the site config's stems entry: both are needed). The tempo map neither hides.</li>
+Find, <code>app.flip</code>'s pick and flip, <code>get_guide &quot;workflows&quot;</code>), <code>stems.local</code> (the local stems runner, read by
+<code>jobs/index.js</code> <code>pageJobs</code> beside the site config's stems entry: both are needed) and <code>device.rooms</code> (Echo Chamber,
+<code>core.rooms</code>: every device offer above, and its half of <code>get_guide &quot;devices&quot;</code>'s reverb paragraph, <code>GUIDE_REVERBS</code>).
+The tempo map neither hides.</li>
 <li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
 (<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
 </ul>

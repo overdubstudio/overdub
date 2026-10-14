@@ -541,8 +541,10 @@ else {
   ok(describeRoom({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22', `describe at defaults: "${describeRoom({})}"`);
   ok(rooms.look && rooms.look.shape === 'wide' && rooms.look.finish === 'hammer' && rooms.look.knob === 'cream' && rooms.look.label === 'plate'
     && rooms.look.color === '#cfc6b3' && rooms.look.ink === '#1d1a16' && rooms.look.led === '#ffb347', 'the face: wide, hammer, cream knobs, a plate, #cfc6b3 with #1d1a16 ink and a #ffb347 lamp (R25)');
+  // (Echo Chamber is offered only with device.rooms on: 'slow' turns it on to find the chip; 'missing' adds the insert
+  // the way a song has it, with the toggle off)
   for (const mode of ['slow', 'missing']) {
-    const o = await open('/app/', { query: 'new' });
+    const o = await open('/app/', { query: mode === 'slow' ? 'new&on=device.rooms' : 'new' });
     try {
       let release = null;
       const held = new Promise((r) => { release = r; });
@@ -591,6 +593,82 @@ else {
       const errs = o.errors.filter((e) => !/404|Failed to load resource/.test(e));
       ok(!errs.length, `${mode}: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);
     } finally { await o.close(); }
+  }
+  // device.rooms off (the default): nothing offers Echo Chamber (the empty chain's chips, the effect picker, the
+  // Browser, Find), but a saved song that has it loads and plays it, and so does a share link to it
+  {
+    const song = async (page) => page.evaluate(async () => {
+      const { createProject } = await import('/app/src/core/project.js');
+      const p = createProject({ title: 'Meeting' });
+      p.tempo = 120;
+      p.tracks = [{ id: 't_keys01', name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys', params: {} }, inserts: [{ id: 'fx_room01', device: 'core.rooms', on: true, params: { room: 0, mix: 1 }, by: 'you' }],
+        clips: [{ id: 'c_keys01', kind: 'notes', start: 0, length: 4, by: 'you', notes: [{ id: 'n1', p: 60, t: 0, d: 0.5, v: 0.9, by: 'you' }, { id: 'n2', p: 67, t: 1, d: 0.5, v: 0.9, by: 'you' }] }],
+        gain: 0, pan: 0, mute: false, solo: false, arm: false, by: 'you' }];
+      return p;
+    });
+    // the render: 4 beats and 2 s of tail, as the export does; the energy after the keys have rung out (1.25 s: the
+    // last note ends at beat 1.5, 0.75 s) to the end, with the room (AULA) on and bypassed
+    const tailOf = (page, p) => page.evaluate(async (p) => {
+      const { renderProject } = await import('/app/src/engine/render.js');
+      const { cleanProject } = await import('/app/src/core/project.js');
+      const e = async (q) => { const b = await renderProject(cleanProject(q), { from: 0, to: 4, tail: 2 }); let s = 0; const a = b.getChannelData(0), c = b.getChannelData(1), i0 = Math.round(1.25 * b.sampleRate); for (let i = i0; i < b.length; i++) s += a[i] * a[i] + c[i] * c[i]; return 10 * Math.log10(s / (b.length - i0) + 1e-30); };
+      const dry = JSON.parse(JSON.stringify(p)); dry.tracks[0].inserts[0].on = false;
+      return { wet: await e(p), dry: await e(dry) };
+    }, p);
+    const a = await open('/app/', { query: 'new' });
+    let hash = null, savedTail = null;
+    try {
+      await a.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+      const off = await a.page.evaluate(async () => {
+        const o = window.overdub, { devicePicker } = await import('/app/src/ui/rack.js');
+        const r = o.store.dispatch({ type: 'track.add', track: { kind: 'instrument', name: 'Vox', instrument: { device: 'core.bass', params: {} } } }, { by: 'you' });
+        o.ui.select({ track: r.created.track, insert: null });
+        o.ui.show('rack');
+        const t0 = Date.now();
+        while (!document.querySelector('.rk-hint .rk-chip') && Date.now() - t0 < 10000) await new Promise((res) => setTimeout(res, 50));
+        const chips = [...document.querySelectorAll('.rk-hint .rk-chip')].map((b) => b.textContent.trim());
+        const pick = devicePicker(o, document.body, { kind: 'effect', onPick() {} });
+        const picker = document.querySelector('.rk-plist')?.textContent || '';
+        pick.close();
+        const find = ['reverb', 'room', 'church', 'convolution'].some((w) => o.find.search(w).some((x) => x.id === 'sound:core.rooms'));
+        // (the Browser searched for "reverb": every section open)
+        o.browser.search('reverb');
+        await new Promise((res) => setTimeout(res, 300));
+        const rows = [...document.querySelectorAll('.br-row')].map((x) => x.dataset.device);
+        o.browser.search('');
+        return { on: o.toggles.on('device.rooms'), chips, stairwell: /Stairwell/.test(picker), picker: /Echo Chamber/.test(picker), find, browser: rows.includes('core.rooms'), browserStair: rows.includes('core.verb') };
+      });
+      ok(off.on === false && off.chips[0] === 'Reverb' && !off.chips.includes('Real room') && off.stairwell && !off.picker && !off.find && off.browserStair && !off.browser,
+        `device.rooms off: the empty chain offers ${off.chips.join(', ')} (no Real room), the effect picker${off.picker ? ' LISTS' : ' doesn\'t list'} Echo Chamber, the Browser${off.browser ? ' LISTS' : ' doesn\'t list'} it, and Find${off.find ? ' FINDS' : ' doesn\'t find'} it`);
+      // a saved song that has it (a file opened, a song restored: store.load), with the toggle off
+      const p = await song(a.page);
+      const held = await a.page.evaluate(async (p) => {
+        const o = window.overdub;
+        o.store.load(p, { by: 'you' });
+        o.ui.select({ track: 't_keys01', insert: null });
+        o.ui.show('rack');
+        const t0 = Date.now();
+        while (!document.querySelector('.rk-card[data-device="core.rooms"]') && Date.now() - t0 < 10000) await new Promise((res) => setTimeout(res, 50));
+        const { encodeShare } = await import('/app/src/core/share.js');
+        const enc = await encodeShare(o.store.get());
+        return { kept: o.store.get().tracks[0].inserts.some((x) => x.device === 'core.rooms' && x.on), card: !!document.querySelector('.rk-card[data-device="core.rooms"]'), hash: enc.ok ? enc.hash : null };
+      }, p);
+      hash = held.hash;
+      savedTail = await tailOf(a.page, p);
+      ok(held.kept && held.card && savedTail.wet > -60 && savedTail.wet - savedTail.dry > 40,
+        `device.rooms off: a saved song with Echo Chamber (AULA, MIX 1) loads with its card on the rack and plays it: after the keys ring out, ${savedTail.wet.toFixed(1)} dB with the room against ${savedTail.dry.toFixed(1)} dB bypassed`);
+      const errs = a.errors.filter((e) => !/404|Failed to load resource/.test(e));
+      ok(!errs.length, `device.rooms off: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);
+    } finally { await a.close(); }
+    // a share link to that song, opened in a studio with the toggle off
+    const b = await open('/app/' + (hash || ''));
+    try {
+      await b.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+      const got = await b.page.evaluate(() => { const t = window.overdub.store.get().tracks.find((x) => x.name === 'Keys'); return { on: window.overdub.toggles.on('device.rooms'), fx: t ? t.inserts.find((x) => x.device === 'core.rooms') : null, song: window.overdub.store.get() }; });
+      const sharedTail = got.fx ? await tailOf(b.page, got.song) : null;
+      ok(!!hash && got.on === false && got.fx && got.fx.params.room === 0 && sharedTail && Math.abs(sharedTail.wet - savedTail.wet) < 0.5 && sharedTail.wet - sharedTail.dry > 40,
+        `device.rooms off: its share link opens with Echo Chamber in the song and plays it the same (${sharedTail ? sharedTail.wet.toFixed(1) + ' dB after the keys ring out, ' + sharedTail.dry.toFixed(1) + ' dB bypassed' : 'no Echo Chamber in the song'})`);
+    } finally { await b.close(); }
   }
 }
 

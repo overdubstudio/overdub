@@ -98,6 +98,17 @@ const fmtDef = (d) => {
   return `${json.slice(0, -1)}, kernel: \`\n${kernel}\` }`;
 };
 
+// The guide's paragraph on the studio's reverbs, and the same with Stairwell alone: Echo Chamber is offered only while
+// the device.rooms toggle is on, so get_guide "devices" (agent/tools.js) says the second while it's off. (Nothing here
+// reads the toggle: kernel/ never imports toggles.js.)
+export const GUIDE_REVERBS = `Before writing a reverb, know the two the studio has: Stairwell (core.verb) is long, lush and fully tweakable, a
+synthetic hall for pads and washes; Echo Chamber (core.rooms) puts a real space, as recorded, its whole audible decay, on
+a vocal, a piano or a drum room (six rooms: insert.add with { room: 'LECTURE' }). Write your
+own for what neither does: a shimmer, a gated room, a reverb that moves.`;
+export const GUIDE_REVERBS_ONE = `Before writing a reverb, know the one the studio has: Stairwell (core.verb) is long, lush and fully tweakable, a
+synthetic hall for pads and washes. Write your own for what it doesn't do: a real room, a shimmer, a gated room, a
+reverb that moves.`;
+
 export const KERNEL_GUIDE = `# Writing an Overdub device (a kernel)
 
 A device is a definition plus a kernel: the source of ONE JavaScript expression that evaluates to an object. It runs
@@ -236,10 +247,7 @@ n) (mono x in, one output per taps channel; in place is fine) .set(taps) (new ta
 allocation) .reset() .latency (128 frames; 0 with direct: 128, which convolves the first 128 taps directly: declare
 it). fft(n) (n a power of two, 16..8192) -> .forward(x, Xr, Xi) (n/2 + 1 bins) .inverse(Xr, Xi, x). Both are the
 same doubles on every engine.
-Before writing a reverb, know the two the studio has: Stairwell (core.verb) is long, lush and fully tweakable, a
-synthetic hall for pads and washes; Echo Chamber (core.rooms) puts a real space, as recorded, its whole audible decay, on
-a vocal, a piano or a drum room (six rooms: insert.add with { room: 'LECTURE' }). Write your
-own for what neither does: a shimmer, a gated room, a reverb that moves.
+${GUIDE_REVERBS}
 
 ## What the check reports (define_device returns it)
 

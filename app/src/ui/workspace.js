@@ -17,7 +17,7 @@
 // with or without it. installWorkspace(ui, app, decision) is called by main.js straight after createShell.
 
 import { h, css, byline, authorOf } from './dom.js';
-import { on as toggleOn } from '../toggles.js';
+import { on as toggleOn, offered } from '../toggles.js';
 import { kitHashes, kitState, kitLine, prefetchKit } from './kitload.js';
 import { WORKSPACE_KEY, VIEWS, readSaved } from './workspace-view.js';
 
@@ -314,7 +314,7 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
     let defs = [];
     try { defs = app.devices?.listDevices?.() || []; } catch { defs = []; }
     for (const d of defs) {
-      if (d.kind !== 'instrument' && d.kind !== 'effect') continue;
+      if ((d.kind !== 'instrument' && d.kind !== 'effect') || !offered(d)) continue;
       const words = [d.kindLabel, d.cat, d.nod].filter(Boolean).map(String);
       out.push({ kind: 'sound', id: 'sound:' + d.id, title: d.name, purpose: d.blurb || d.kindLabel || '', aliases: words, def: d, preset: null });
       // (a preset's tags are words Find knows it by: "growl", "riddim", "bass music")

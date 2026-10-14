@@ -961,10 +961,10 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   imported module" and a model on one can't be fetched. The runner checks first (`elsewhere(config, location.origin)`):
   a runtime on another origin, or a model on another origin that isn't http: on this machine, leaves it off with an
   `offReason` that names the URL, and fetches nothing. Rather than widen the CSP for whichever CDN a deploy picks, the
-  deploy brings them here: `deploy/site-config.json`'s stems entry may carry `runtimeFrom` (a pinned https:
+  deploy brings them here: the committed `deploy/live-config.json`'s stems entry may carry `runtimeFrom` (a pinned https:
   onnxruntime-web dist directory, e.g. `https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/`) with
   `runtimeSha256` (the SHA-256 of the files' `shasum -a 256` manifest, or one per file), and `modelFrom` (checked
-  against `sha256`). `deploy/stage-stems.js` fetches `ort.webgpu.min.mjs` and `ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}`
+  against `sha256`; an https: URL, or `s3://<bucket>/<key>`, the live site's private models bucket, copied with `aws s3 cp`). `deploy/stage-stems.js` fetches `ort.webgpu.min.mjs` and `ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}`
   (the WebGPU build and the WebAssembly fallback both import them from beside it) into `deploy/.cache/`, checks them,
   stages them at `app/vendor/ort/` (the model at `app/vendor/models/<sha256>.onnx`) in the deploy's stage, never the
   checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
@@ -1853,7 +1853,7 @@ old in-browser key, is deleted on load and noted once (`overdub:agent:key-retire
 paid for with credits, for people without a Claude of their own. It's off unless the deploy names the
 service in `app/site-config.json` (`"cloud": { "api" }`; gitignored; `app/src/site-config.js` reads it once per load,
 `server/serve.js` answers it from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships
-`deploy/site-config.json` or `{}`; its other entries are the account service, `"accounts": { "api" }` (agent/remote.js),
+REF's `deploy/live-config.json` (or `SITE_CONFIG=<file>`) or `{}`; its other entries are the account service, `"accounts": { "api" }` (agent/remote.js),
 and the stems runner, "Jobs and the stems runner" above). With no configuration it stays absent.
 `?cloud=` points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
@@ -1887,12 +1887,12 @@ service's `GET /v1/config`.
   service to import; `tools/cloud-test.js` runs all of this against a fake of the service.
 
 **Remote MCP** ([REMOTE-MCP.md](REMOTE-MCP.md)): `server/relay.js` is the hosted relay for
-overdub-relay.ajsmithhq.com. It serves MCP Streamable HTTP at `/s/<token>/mcp` to claude.ai and hands calls to the tab
+mcp.overdubstudio.com. It serves MCP Streamable HTTP at `/s/<token>/mcp` to claude.ai and hands calls to the tab
 over `/s/<token>/{hello,events,result}`. The tab side takes the tab's secret in a header (the token in the URL is a
 one-way hash of it, so the connector URL alone can't pose as the tab), and `tools/list` is the relay's own catalog
 (`server/relay-catalog.json`), never the tab's. `agent/remote.js` (`app.remote`, the right-region "Connect" tab) is
 the page side; its calls run with `by: 'claude.ai'` (`kind: 'agent'`, added with `store.addAuthor`). It is live at
-overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`. Every studio shows the Connect tab (a local studio with `?relay=` talks to a
+mcp.overdubstudio.com and tested by `tools/relay-test.js`. Every studio shows the Connect tab (a local studio with `?relay=` talks to a
 local relay instead).
 
 ## Songs in and out

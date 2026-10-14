@@ -1,4 +1,4 @@
--- Athena database, table and view over CloudFront's standard (legacy) access logs for overdub.ajsmithhq.com.
+-- Athena database, table and view over CloudFront's standard (legacy) access logs for overdubstudio.com.
 -- deploy/analytics/setup.sh runs these statements one at a time with __LOGS__ replaced by s3://overdub-logs-<account>.
 -- The columns are CloudFront's standard log format (33 fields, tab separated, two header lines per file).
 -- Counts are the GETs of /app/e.gif and /site/e.gif sent by app/src/analytics.js and site/assets/analytics.js.

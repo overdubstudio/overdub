@@ -104,7 +104,7 @@ export function createStemsRunner(config, deps = {}) {
     origin = globalThis.location?.origin ?? null,
   } = deps;
   const why = config ? elsewhere(config, origin) : OFF;
-  if (why && why !== OFF) console.warn(`overdub: ${why} (the stems runtime and model are served from this site: deploy/site-config.json stems.runtimeFrom and modelFrom stage them at deploy; docs/ARCHITECTURE.md, "Jobs and the stems runner")`);
+  if (why && why !== OFF) console.warn(`overdub: ${why} (the stems runtime and model are served from this site: deploy/live-config.json stems.runtimeFrom and modelFrom stage them at deploy; docs/ARCHITECTURE.md, "Jobs and the stems runner")`);
   const off = () => Promise.reject(new Error(why));
   if (why) {
     return {

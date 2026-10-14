@@ -4,10 +4,12 @@
 //   3. on a faked production host (https://overdubstudio.com routed to the local server) exactly the right URLs
 //      fire for the right actions, with no referrer and no cookie, and nothing else
 //   4. Do Not Track, Global Privacy Control and automation (navigator.webdriver) send nothing
-//   5. the preview site (next.overdubstudio.com): deploy/next/setup.sh and deploy/deploy.sh --next plan the right
-//      things with DRY_RUN=1 (a stub aws on PATH, no credentials), the config the deploy writes puts up the Preview
-//      ribbon there (desktop and phone), and nothing is counted there; the committed config, and so the live site, has
-//      no ribbon
+//   5. the two sites' deploys (both in the Overdub account, their AWS Terraform's: infra/live, infra/next): what
+//      infra/live promises, read from its HCL (the cutover variable, the production-only role, the private buckets);
+//      deploy/analytics/setup.sh and deploy/deploy.sh (live and --next) plan the right things with DRY_RUN=1 (a stub aws
+//      on PATH, no credentials); a live deploy off GitHub Actions is refused, and the live site's config is the committed
+//      deploy/live-config.json; the config the deploy writes puts up the Preview ribbon on the preview (desktop and
+//      phone), and nothing is counted there; the live site has no ribbon
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -265,56 +267,80 @@ try {
     await context.close();
   }
 
-  /* ---------------------------------------------------------------- 5. the preview site */
+  /* ---------------------------------------------------------------- 5. the two sites' deploys */
   {
     // the scripts, dry: a stub aws comes first on PATH and there are no credentials, so nothing here reaches AWS
     const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'next-dry-'));
     fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
     const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
-    // DEPLOY_ENV=/dev/null: setup.sh would otherwise read deploy/.env, which on a working checkout holds the real ids;
-    // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from deploy/site-config.json;
+    // DEPLOY_ENV=/dev/null: the scripts would otherwise read deploy/.env;
+    // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from REF's deploy/live-config.json;
     // COMMUNITY_PIN=/dev/null (dry runs only): no shelf, so no overdub-devices checkout is needed (tools/community-test.js
     // checks the shelf's part)
-    for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF']) delete env[k];
+    for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF',
+      'LIVE_DISTRIBUTION', 'LOCAL_LIVE_DEPLOY', 'GITHUB_ACTIONS']) delete env[k];
     const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; const r = spawnSync('bash', [path.join(ROOT, script), ...args], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 120000 }); return { status: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
     const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
 
-    const setup = run('deploy/next/setup.sh');
-    const plan = setup.out;
-    t.ok(clean(setup), `deploy/next/setup.sh with DRY_RUN=1 runs without calling AWS (exit ${setup.status})${clean(setup) ? '' : ': ' + plan.slice(-300)}`);
-    t.ok(/\+ aws s3api create-bucket --bucket next\.overdubstudio\.com /.test(plan) && /BlockPublicPolicy=true/.test(plan)
-      && /"AWS:SourceArn": "arn:aws:cloudfront::\d+:distribution\/EDRYRUN"/.test(plan),
-      'setup: a private bucket only its own distribution may read');
-    t.ok(/\+ aws acm request-certificate --region us-east-1 --domain-name next\.overdubstudio\.com --validation-method DNS/.test(plan) && /"Type": "CNAME"/.test(plan) && /aws acm wait certificate-validated/.test(plan),
-      'setup: its own certificate, validated by a CNAME in the zone');
-    t.ok(/"Aliases": \{ "Quantity": 1, "Items": \["next\.overdubstudio\.com"\] \}/.test(plan) && /"OriginAccessControlId": "EOACDRYRUN"/.test(plan)
-      && /"EventType": "viewer-request"/.test(plan) && /var HOME = 'next\.overdubstudio\.com';/.test(plan) && !/var HOME = 'overdubstudio\.com';/.test(plan),
-      'setup: CloudFront with OAC and the path-rewrite function, its home set to next.overdubstudio.com');
-    t.ok(/"Header": "X-Robots-Tag", "Value": "noindex, nofollow"/.test(plan) && /"ResponseHeadersPolicyId": "RHPDRYRUN"/.test(plan),
-      'setup: every response says X-Robots-Tag: noindex, nofollow');
-    t.ok(/"Name": "next\.overdubstudio\.com", "Type": "A", "AliasTarget"/.test(plan) && /"Type": "AAAA"/.test(plan),
-      'setup: A and AAAA alias records for next.overdubstudio.com');
-    // and a filled-in env file is read: its ids are used and nothing is made in their place
-    const envFile = path.join(stub, 'env');
-    fs.writeFileSync(envFile, 'OAC=EOACFROMENV\nNEXT_ZONE=ZZONEFROMENV\nNEXT_CERT=arn:aws:acm:us-east-1:000000000000:certificate/from-env\n');
-    const withEnv = run('deploy/next/setup.sh', { DEPLOY_ENV: envFile });
-    t.ok(clean(withEnv) && /"OriginAccessControlId": "EOACFROMENV"/.test(withEnv.out) && !/create-origin-access-control/.test(withEnv.out)
-      && /"ACMCertificateArn": "arn:aws:acm:us-east-1:000000000000:certificate\/from-env"/.test(withEnv.out) && !/request-certificate/.test(withEnv.out)
-      && /--hosted-zone-id ZZONEFROMENV/.test(withEnv.out) && !/EOACDRYRUN|ZDRYRUN/.test(withEnv.out),
-      'setup: reads the ids in DEPLOY_ENV (else deploy/.env) and makes nothing it was given');
-    const setupSrc = fs.readFileSync(path.join(ROOT, 'deploy/next/setup.sh'), 'utf8');
-    t.ok(!/\b\d{12}\b/.test(setupSrc.replace(/000000000000/g, '')) && !/Z[0-9A-Z]{12,}/.test(setupSrc.replace(/Z2FDTNDATAQYW2/g, '')) && !/arn:aws:acm:[^:]*:\d/.test(setupSrc),
-      'setup: no account, zone or certificate id is written in it (only AWS\'s own constants)');
+    // Both sites' AWS is Terraform's (infra/live, infra/next): what the live site's directory promises, read from its HCL
+    // (tools/check.sh validates it; the plan itself needs credentials)
+    const hcl = (f) => fs.readFileSync(path.join(ROOT, 'infra/live', f), 'utf8');
+    const cdn = hcl('cdn.tf'), dns = hcl('dns.tf'), gh = hcl('github.tf'), bucket = hcl('bucket.tf'), vars = hcl('variables.tf');
+    t.ok(/variable "serve_names"[\s\S]*?default\s*=\s*false/.test(vars) && /aliases\s*=\s*var\.serve_names \? \[var\.domain, "www\.\$\{var\.domain\}"\] : \[\]/.test(cdn)
+      && /cloudfront_default_certificate = !var\.serve_names/.test(cdn) && /site_target = var\.serve_names \?/.test(dns) && /var\.old_distribution_domain/.test(dns),
+      'infra/live: the cutover is one variable: serve_names (false) gives the distribution no names and the default certificate, and keeps the apex and www records on the old distribution');
+    t.ok(/"var CLOUDFRONT_NAME = \$\{var\.serve_names \? "false" : "true"\};"/.test(cdn) && /path-rewrite\.js/.test(cdn) && /name\s*=\s*"overdub-path-rewrite"/.test(cdn),
+      'infra/live: until the cutover the path-rewrite function also serves the distribution\'s cloudfront.net name (CLOUDFRONT_NAME)');
+    t.ok(/data "aws_iam_openid_connect_provider" "github"/.test(gh) && !/resource "aws_iam_openid_connect_provider"/.test(gh)
+      && /"token\.actions\.githubusercontent\.com:sub" = "\$\{var\.github_sub_claim_prefix\}:environment:\$\{var\.deploy_environment\}"/.test(gh) && !/StringLike/.test(gh)
+      && /variable "deploy_environment"[\s\S]*?default\s*=\s*"production"/.test(vars),
+      'infra/live: the deploy role reuses infra/next\'s OIDC provider and trusts one subject, <prefix>:environment:production');
+    t.ok(/site\s*=\s*var\.domain/.test(bucket) && /models = "overdub-models-\$\{local\.account_id\}"/.test(bucket) && /block_public_policy\s*=\s*true/.test(bucket)
+      && /"AWS:SourceArn" = aws_cloudfront_distribution\.live\.arn/.test(bucket),
+      'infra/live: private buckets for the site (read only by its distribution) and the stems model');
+    t.ok(/s3:\/\/overdub-models-800849967977\//.test(fs.readFileSync(path.join(ROOT, 'deploy/live-config.json'), 'utf8')) && /account_id = "800849967977"/.test(bucket),
+      'deploy/live-config.json takes the model from infra/live\'s models bucket');
+    // the Athena half of the counts, dry; and it refuses AJ's personal account (a stub that answers sts with it)
+    const logs = run('deploy/analytics/setup.sh');
+    t.ok(clean(logs) && /CREATE DATABASE IF NOT EXISTS overdub/.test(logs.out) && /CREATE OR REPLACE VIEW overdub\.events/.test(logs.out),
+      `deploy/analytics/setup.sh, dry: the Athena database, table and view (exit ${logs.status})`);
+    const personal = path.join(stub, 'personal');
+    fs.mkdirSync(personal);
+    fs.writeFileSync(path.join(personal, 'aws'), '#!/bin/sh\ncase "$*" in "sts get-caller-identity"*) echo 165604225334; exit 0;; esac\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    const own = run('deploy/analytics/setup.sh', { DRY_RUN: '', PATH: `${personal}${path.delimiter}${process.env.PATH}` });
+    t.ok(own.status === 1 && /refusing: these credentials are AJ's personal account/.test(own.out) && !/aws was called/.test(own.out),
+      `deploy/analytics/setup.sh refuses AJ's personal account before anything else (exit ${own.status})`);
 
     const ref = spawnSync('git', ['rev-parse', '--short', 'HEAD~1'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
     const next = run('deploy/deploy.sh', '--skip-tests', '--next', 'HEAD~1');
     const live = run('deploy/deploy.sh', '--skip-tests');
     t.ok(clean(next) && clean(live), `deploy/deploy.sh with DRY_RUN=1, live and --next HEAD~1, runs without calling AWS (exit ${live.status}, ${next.status})`);
     t.ok(new RegExp(`^next: ${ref} \\(HEAD~1\\)`, 'm').test(next.out) && /\+ aws s3 sync \S+ s3:\/\/next\.overdubstudio\.com --only-show-errors --delete/.test(next.out)
-      && /\+ aws cloudfront create-invalidation --distribution-id \S+ --paths \/\*/.test(next.out) && !/s3:\/\/overdub\.ajsmithhq\.com/.test(next.out),
+      && /\+ aws cloudfront create-invalidation --distribution-id \S+ --paths \/\*/.test(next.out) && !/s3:\/\/overdubstudio\.com/.test(next.out),
       `deploy --next ships the named ref (${ref}) to the preview bucket only, and invalidates`);
-    t.ok(/\+ aws s3 sync \S+ s3:\/\/overdub\.ajsmithhq\.com --only-show-errors --delete/.test(live.out) && !/next\.overdubstudio\.com/.test(live.out),
-      'deploy without --next still ships to the live bucket only');
+    t.ok(/\+ aws s3 sync \S+ s3:\/\/overdubstudio\.com --only-show-errors --delete/.test(live.out) && !/next\.overdubstudio\.com/.test(live.out) && !/ajsmithhq/.test(live.out),
+      'deploy without --next ships to the live bucket, s3://overdubstudio.com, only');
+    // the live site from GitHub Actions only (deploy-live.yml); LOCAL_LIVE_DEPLOY=1 is the hatch, a dry run needs neither
+    const refused = run('deploy/deploy.sh', { DRY_RUN: '' }, '--skip-tests');
+    t.ok(refused.status === 1 && /not deploying: the live site deploys from GitHub Actions/.test(refused.out) && !/aws was called/.test(refused.out) && !/\+ aws/.test(refused.out),
+      `a live deploy off GitHub Actions, without LOCAL_LIVE_DEPLOY=1, is refused before anything is staged or called (exit ${refused.status})`);
+    const hatch = run('deploy/deploy.sh', { DRY_RUN: '', LOCAL_LIVE_DEPLOY: '1', LIVE_DISTRIBUTION: 'ELIVE', COMMUNITY_PIN: '', OVERDUB_DEVICES_DIR: path.join(stub, 'no-devices') }, '--skip-tests');
+    t.ok((/^live: .* -> s3:\/\/overdubstudio\.com, distribution ELIVE$/m.test(hatch.out) || /^not deploying: no checkout with the pinned shelf/m.test(hatch.out))
+      && !/not deploying: the live site deploys from GitHub Actions/.test(hatch.out),
+      `with LOCAL_LIVE_DEPLOY=1 it goes on past that check (here to the next stop, no overdub-devices checkout or the stub aws: exit ${hatch.status})`);
+    const liveRef = run('deploy/deploy.sh', '--skip-tests', 'HEAD~1');
+    t.ok(clean(liveRef) && new RegExp(`^live: ${ref} \\(HEAD~1\\)`, 'm').test(liveRef.out), `the live deploy ships a named REF too (deploy/deploy.sh --skip-tests <ref>, as deploy-live.yml runs it): ${(/^live: .*$/m.exec(liveRef.out) || [''])[0].slice(0, 80)}`);
+    // the live config is committed: with no SITE_CONFIG the deploy starts from REF's deploy/live-config.json (a dry run
+    // fetches no model or runtime it hasn't cached: deploy/stage-stems.js stages stand-ins and says so)
+    const noBase = { ...env };
+    delete noBase.SITE_CONFIG;
+    const committed = spawnSync('bash', [path.join(ROOT, 'deploy/deploy.sh'), '--skip-tests'], { cwd: ROOT, env: noBase, encoding: 'utf8', timeout: 300000 });
+    const comOut = (committed.stdout || '') + (committed.stderr || '');
+    const liveJson = JSON.parse(spawnSync('git', ['show', 'HEAD:deploy/live-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout || 'null');
+    const comCfg = (() => { try { return JSON.parse((/^app\/site-config\.json: (.*)$/m.exec(comOut) || [])[1]); } catch { return null; } })();
+    t.ok(committed.status === 0 && !/aws was called/.test(comOut) && liveJson?.stems?.modelFrom?.startsWith('s3://overdub-models-') && comCfg?.stems?.sha256 === liveJson.stems.sha256
+      && comCfg.stems.model === `vendor/models/${liveJson.stems.sha256}.onnx` && !('modelFrom' in comCfg.stems) && /^stems: (dry run: )?(the )?model from s3:\/\/overdub-models-/m.test(comOut),
+      `with no SITE_CONFIG the live deploy ships the committed deploy/live-config.json, its model from the private bucket (exit ${committed.status}: ${(/^stems: .*model.*$/m.exec(comOut) || ['no stems line'])[0].slice(0, 120)})`);
     const cfgOf = (out) => { try { return JSON.parse((/^app\/site-config\.json: (.*)$/m.exec(out) || [])[1]); } catch { return null; } };
     const nextCfg = cfgOf(next.out), liveCfg = cfgOf(live.out);
     const tracked = spawnSync('git', ['ls-files', 'app/site-config.json', 'deploy/site-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
@@ -324,7 +350,7 @@ try {
     t.ok(liveCfg && JSON.stringify(liveCfg) === '{}', `with no base the live deploy ships {} (${JSON.stringify(liveCfg)})`);
     t.ok(nextCfg && nextCfg.preview === true && nextCfg.env === 'preview' && nextCfg.ref === ref && Object.keys(nextCfg).length === 3,
       `the preview deploy adds its own keys (${JSON.stringify(nextCfg)})`);
-    // one base for both sites: a key in deploy/site-config.json reaches both, and the preview keeps it
+    // one base for both sites: a key in the base (SITE_CONFIG here) reaches both, and the preview keeps it
     const base = path.join(stub, 'site-config.json');
     fs.writeFileSync(base, JSON.stringify({ other: { api: 'https://switch.example' } }));
     const nextB = cfgOf(run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests', '--next', 'HEAD~1').out);

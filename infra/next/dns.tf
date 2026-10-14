@@ -1,5 +1,5 @@
-# The preview's own hosted zone, delegated from overdubstudio.com. The parent zone (and so the NS records that
-# delegate to this one) is in another AWS account and is not managed here.
+# The preview's own hosted zone, delegated from overdubstudio.com. The parent zone, and the NS record in it that
+# delegates to this one, are infra/live's.
 resource "aws_route53_zone" "next" {
   name    = var.domain
   comment = "staging delegated from overdubstudio.com"

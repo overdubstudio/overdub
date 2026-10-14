@@ -919,10 +919,10 @@ cross-origin isolated).</p></li>
 imported module&quot; and a model on one can't be fetched. The runner checks first (<code>elsewhere(config, location.origin)</code>):
 a runtime on another origin, or a model on another origin that isn't http: on this machine, leaves it off with an
 <code>offReason</code> that names the URL, and fetches nothing. Rather than widen the CSP for whichever CDN a deploy picks, the
-deploy brings them here: <code>deploy/site-config.json</code>'s stems entry may carry <code>runtimeFrom</code> (a pinned https:
+deploy brings them here: the committed <code>deploy/live-config.json</code>'s stems entry may carry <code>runtimeFrom</code> (a pinned https:
 onnxruntime-web dist directory, e.g. <code>https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/</code>) with
 <code>runtimeSha256</code> (the SHA-256 of the files' <code>shasum -a 256</code> manifest, or one per file), and <code>modelFrom</code> (checked
-against <code>sha256</code>). <code>deploy/stage-stems.js</code> fetches <code>ort.webgpu.min.mjs</code> and <code>ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}</code>
+against <code>sha256</code>; an https: URL, or <code>s3://&lt;bucket&gt;/&lt;key&gt;</code>, the live site's private models bucket, copied with <code>aws s3 cp</code>). <code>deploy/stage-stems.js</code> fetches <code>ort.webgpu.min.mjs</code> and <code>ort-wasm-simd-threaded.{,asyncify.,jsep.,jspi.}{mjs,wasm}</code>
 (the WebGPU build and the WebAssembly fallback both import them from beside it) into <code>deploy/.cache/</code>, checks them,
 stages them at <code>app/vendor/ort/</code> (the model at <code>app/vendor/models/&lt;sha256&gt;.onnx</code>) in the deploy's stage, never the
 checkout, and rewrites the shipped entry to those paths; a mismatch stops the deploy. deploy.sh then checks the
@@ -1727,7 +1727,7 @@ old in-browser key, is deleted on load and noted once (<code>overdub:agent:key-r
 paid for with credits, for people without a Claude of their own. It's off unless the deploy names the
 service in <code>app/site-config.json</code> (<code>&quot;cloud&quot;: { &quot;api&quot; }</code>; gitignored; <code>app/src/site-config.js</code> reads it once per load,
 <code>server/serve.js</code> answers it from <code>OVERDUB_CLOUD_ORIGIN</code> when there's no file, <code>deploy/deploy.sh</code> ships
-<code>deploy/site-config.json</code> or <code>{}</code>; its other entries are the account service, <code>&quot;accounts&quot;: { &quot;api&quot; }</code> (agent/remote.js),
+REF's <code>deploy/live-config.json</code> (or <code>SITE_CONFIG=&lt;file&gt;</code>) or <code>{}</code>; its other entries are the account service, <code>&quot;accounts&quot;: { &quot;api&quot; }</code> (agent/remote.js),
 and the stems runner, &quot;Jobs and the stems runner&quot; above). With no configuration it stays absent.
 <code>?cloud=</code> points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's <code>GET /v1/config</code>.</p>
@@ -1761,12 +1761,12 @@ line, out of credits (Top up and Use your own Claude, the same size), paused, to
 service to import; <code>tools/cloud-test.js</code> runs all of this against a fake of the service.</li>
 </ul>
 <p><strong>Remote MCP</strong> (<a href="remote-mcp.html">REMOTE-MCP.md</a>): <code>server/relay.js</code> is the hosted relay for
-overdub-relay.ajsmithhq.com. It serves MCP Streamable HTTP at <code>/s/&lt;token&gt;/mcp</code> to claude.ai and hands calls to the tab
+mcp.overdubstudio.com. It serves MCP Streamable HTTP at <code>/s/&lt;token&gt;/mcp</code> to claude.ai and hands calls to the tab
 over <code>/s/&lt;token&gt;/{hello,events,result}</code>. The tab side takes the tab's secret in a header (the token in the URL is a
 one-way hash of it, so the connector URL alone can't pose as the tab), and <code>tools/list</code> is the relay's own catalog
 (<code>server/relay-catalog.json</code>), never the tab's. <code>agent/remote.js</code> (<code>app.remote</code>, the right-region &quot;Connect&quot; tab) is
 the page side; its calls run with <code>by: 'claude.ai'</code> (<code>kind: 'agent'</code>, added with <code>store.addAuthor</code>). It is live at
-overdub-relay.ajsmithhq.com and tested by <code>tools/relay-test.js</code>. Every studio shows the Connect tab (a local studio with <code>?relay=</code> talks to a
+mcp.overdubstudio.com and tested by <code>tools/relay-test.js</code>. Every studio shows the Connect tab (a local studio with <code>?relay=</code> talks to a
 local relay instead).</p>
 <h2 id="songs-in-and-out"><a class="h-link" href="#songs-in-and-out">Songs in and out</a></h2>
 <ul>

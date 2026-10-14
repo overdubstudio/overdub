@@ -16,12 +16,12 @@ claude.ai (Anthropic's cloud)                     relay (server/relay.js)       
 
 ## For the human
 
-**Live.** The relay runs at `https://overdub-relay.ajsmithhq.com`, and every studio shows the Connect tab
+**Live.** The relay runs at `https://mcp.overdubstudio.com`, and every studio shows the Connect tab
 (`tools/prod-check.js` fails if the live studio has none). The relay trial's `?connect=1` switch is retired: no link
 switches a studio on the live site.
 
 1. Open the studio, then the **Connect** tab in the right pane (next to Agent and History), and press **Turn on**.
-2. Copy the **connector URL**, `https://overdub-relay.ajsmithhq.com/s/<token>/mcp`.
+2. Copy the **connector URL**, `https://mcp.overdubstudio.com/s/<token>/mcp`.
 3. In claude.ai, open **Settings → Connectors → Add custom connector**, name it Overdub, paste the URL and add it.
    In a chat, turn Overdub on in the tools menu and ask Claude to look at your song. On Team and Enterprise plans an
    Owner may have to add custom connectors. claude.ai warns that the connector has no sign-in: that's expected, the
@@ -189,7 +189,9 @@ The tab shows claude.ai as connected while any MCP session on its token has made
 Sessions live for 24 hours idle.
 
 `app/src/agent/remote.js` is the page module (`app.remote`), and the relay host is a constant:
-`RELAY = 'https://overdub-relay.ajsmithhq.com'`. `?relay=http://localhost:<port>` overrides it for tests and local
+`RELAY = 'https://mcp.overdubstudio.com'` (until October 2026 it was `overdub-relay.ajsmithhq.com`, in AJ's own AWS
+account; a connector added then needs the new URL from the Connect tab; `ACCOUNT_RELAY`, `relay.overdubstudio.com`, is
+the account relay's, "Accounts" below). `?relay=http://localhost:<port>` overrides it for tests and local
 work, and only when the studio itself runs on localhost (`relayOverride`): on the live site it is ignored, so a
 crafted link can't show the Connect tab or point someone's tab at another relay. The studio's Content Security
 Policy allows the hosted relay's origin in `connect-src`, and loopback for local work.
@@ -225,26 +227,28 @@ saw; earlier entries are whatever the client wrote. No file serving: `/` is one 
 
 ## Hosting
 
-`deploy/relay/` has three scripts. They are written, reviewed and run by hand. Each is idempotent and prints what
-it does.
+Its AWS is Terraform's, `infra/live/relay.tf` (in the Overdub account, beside the live site; `infra/README.md`), and
+`deploy/relay/deploy.sh` ships its code.
 
-- **`setup.sh`** (run once): an IAM role and instance profile (SSM, plus reading the one parameter below); the
-  origin secret as a SecureString in SSM Parameter Store; a security group in the default VPC whose only ingress is
-  TCP 8787 from CloudFront's origin-facing managed prefix list (no SSH); a **t4g.nano** running Amazon Linux 2023
-  with an 8 GB encrypted gp3 disk, user data that adds 512 MB of swap and installs `nodejs22` from dnf, and IMDSv2
-  required; an Elastic IP; a **CloudFront distribution** for `overdub-relay.ajsmithhq.com` with the
-  `*.ajsmithhq.com` certificate, the CachingDisabled cache policy, the AllViewerExceptHostHeader origin request
-  policy, all HTTP methods, an origin read timeout of 60 s, HTTPS only and no compression (so SSE isn't buffered);
-  and Route53 A/AAAA aliases. Everything is tagged `project=overdub`. It finishes by running `deploy.sh`.
+- **Terraform** (`terraform -chdir=infra/live apply`): an IAM role and instance profile (SSM, plus reading the one
+  parameter below); the origin secret (`random_password`) as a SecureString in SSM Parameter Store; a security group
+  in the default VPC whose only ingress is TCP 8787 from CloudFront's origin-facing managed prefix list (no SSH); a
+  **t4g.nano** running Amazon Linux 2023 with an 8 GB encrypted gp3 disk, user data that adds 512 MB of swap and
+  installs `nodejs22` from dnf, and IMDSv2 required; an Elastic IP; a **CloudFront distribution** for
+  `mcp.overdubstudio.com` with the live site's certificate (it names the apex, www and mcp), the CachingDisabled cache
+  policy, the AllViewerExceptHostHeader origin request policy, all HTTP methods, an origin read timeout of 60 s, HTTPS
+  only and no compression (so SSE isn't buffered); and Route53 A/AAAA aliases. A newer AL2023 image or an edited
+  first-boot script doesn't replace the instance (`ignore_changes`); `terraform apply -replace=aws_instance.relay`
+  does, then `deploy.sh`.
 - **`deploy.sh`**: checks `server/relay-catalog.json` is current, builds a release (`relay.js` plus that catalog),
   ships it inside an SSM `RunShellScript` command (tar, gzip and base64, about 42 KB, so no bucket and no SSH), and
   installs the env file and the systemd unit. The instance reads the origin secret from Parameter Store while the
   command runs; the command itself carries none. The unit runs with `DynamicUser`, a read-only filesystem and a
   320 MB memory cap. The script restarts the service, checks `/health` locally and through CloudFront, and keeps
-  the last three releases. `DRY_RUN=1` prints the remote script without calling AWS.
-- **`teardown.sh`**: deletes the DNS records, disables and then deletes the distribution, terminates the instance,
-  releases the Elastic IP, and deletes the security group, the parameter, and the instance profile and role (its
-  inline policy first).
+  the last three releases. It finds the instance by its `Name` tag (`overdub-relay`) and the distribution by its
+  alias (`RELAY_DOMAIN`, default `mcp.overdubstudio.com`), and refuses AJ's personal account. `DRY_RUN=1` prints the
+  remote script without calling AWS.
+- **Taking it down** is Terraform's too: removing `relay.tf` and applying, which deletes all of the above.
 
 The relay runs with `HOST=0.0.0.0 PORT=8787 RELAY_TRUST_PROXY=1 RELAY_ORIGIN_SECRET=<secret>`. CloudFront adds
 `x-overdub-origin: <secret>` to every origin request and the relay refuses requests without it (compared in constant
@@ -256,24 +260,18 @@ It lives in **SSM Parameter Store** as a SecureString, `/overdub/relay/origin-se
 default `aws/ssm` key. It used to travel inside the SSM command, whose parameters anyone who can read the account's
 command history can see. Now:
 
-- **One-time setup.** `setup.sh` does it: if the parameter doesn't exist it takes the distribution's current header
-  value (a relay set up before), or makes one (`openssl rand -hex 24`), and stores it with `aws ssm put-parameter`
-  from a file only you can read, never a command line. It gives the instance role an inline policy,
-  `overdub-relay-origin-secret`, allowing `ssm:GetParameter` on that one parameter (the managed
-  AmazonSSMManagedInstanceCore policy already allows it on every parameter; this names the one the relay needs).
-  The `aws/ssm` key needs no KMS grant for a principal in the same account. By hand it is:
-
-  ```sh
-  aws ssm put-parameter --name /overdub/relay/origin-secret --type SecureString --value "$(openssl rand -hex 24)"
-  ```
-
-  then re-run `deploy/relay/setup.sh`, which sets CloudFront's header from the parameter and deploys.
+- **Terraform makes it**: `random_password.origin_secret`, stored as the parameter and set as CloudFront's
+  `x-overdub-origin` header, so the two always agree. That puts the value in `infra/live`'s state (CloudFront's config
+  holds it anyway), which the state bucket keeps private, versioned and encrypted. The instance role has an inline
+  policy, `overdub-relay-origin-secret`, allowing `ssm:GetParameter` on that one parameter (the managed
+  AmazonSSMManagedInstanceCore policy already allows it on every parameter; this names the one the relay needs). The
+  `aws/ssm` key needs no KMS grant for a principal in the same account.
 - **On every deploy** the instance runs `aws ssm get-parameter --with-decryption` itself and writes the value only to
   `/etc/overdub-relay.env` (root, mode 600). The command and its output never contain it. `deploy.sh` checks that the
   parameter exists (by name, without reading it) before it sends anything.
-- **To rotate**: `aws ssm put-parameter --name /overdub/relay/origin-secret --type SecureString --overwrite --value
-  "$(openssl rand -hex 24)"`, then run `setup.sh`: it gives CloudFront the new header and redeploys. Requests fail
-  with `403` for the few minutes CloudFront takes to roll the change out.
+- **To rotate**: `terraform -chdir=infra/live apply -replace=random_password.origin_secret` (a new value for the
+  parameter and CloudFront's header), then `deploy/relay/deploy.sh` (the relay takes it). Requests fail with `403` for
+  the few minutes in between.
 
 **Cost** (us-east-1, on demand), about **$7.40 a month**:
 
@@ -296,7 +294,7 @@ close it, both small:
    with no public ingress at all. The catch: the instance still needs a way out for dnf and SSM, which means a
    NAT or VPC endpoints, and that costs more than the instance.
 2. **TLS on the instance.** Run Caddy or Node's `https` with a Let's Encrypt certificate for an origin name such
-   as `relay-origin.ajsmithhq.com`, issued with a DNS-01 challenge through Route53, then set the origin to
+   as `mcp-origin.overdubstudio.com`, issued with a DNS-01 challenge through Route53, then set the origin to
    `https-only`. This adds a renewal job and a narrowly scoped Route53 permission.
 
 ## Listing in Claude's directory
@@ -324,7 +322,7 @@ has been submitted for Overdub. From Anthropic's pages, read on 2 October 2026:
   Claude. Calls come from Anthropic's `160.79.104.0/21`.
 
 **What Overdub meets**: a remote Streamable HTTP server; per-person URLs that fit a URL pattern
-(`^https://overdub-relay\.ajsmithhq\.com/s/[A-Za-z0-9_-]{22}/mcp$`) with no sign-in; short tool names; a title and all
+(`^https://mcp\.overdubstudio\.com/s/[A-Za-z0-9_-]{22}/mcp$`) with no sign-in; short tool names; a title and all
 four hints on every tool ("Annotations", above); errors with a hint; results under claude.ai's 150,000-character
 ceiling and waits inside its 240 s; rate limits (the MCP spec says servers "MUST … Rate limit tool invocations"); song
 text marked as content; public docs; an icon.

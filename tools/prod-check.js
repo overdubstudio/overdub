@@ -1,7 +1,10 @@
 // Production smoke check: the live site serves, the studio boots, the demo song renders through the real engine,
-// and nothing errors. Not part of run-all (it needs the network): node tools/prod-check.js [base-url]
+// nothing errors, and the hosted relay the studio names (RELAY, app/src/agent/remote.js) answers. Not part of run-all
+// (it needs the network): node tools/prod-check.js [base-url]. .github/workflows/deploy-live.yml runs it after every
+// live deploy, against https://overdubstudio.com or, before deploy/cutover.sh, the distribution's cloudfront.net name.
 //
-// It also holds what deploy/headers.sh and the community shelf promise (docs/COMMUNITY-SHELF.md, "Where it's on"):
+// It also holds what the response headers policy (infra/live/cdn.tf's overdub-headers) and the community shelf promise
+// (docs/COMMUNITY-SHELF.md, "Where it's on"):
 // - always: /, /app/, /site/community/ and /community/ carry Content-Security-Policy: frame-ancestors 'none' and
 //   X-Frame-Options: DENY; each page's <meta> CSP is the one in this checkout (the header adds to it, never replaces
 //   it); /community/ is 200 and /community a 301 to it.
@@ -28,7 +31,7 @@ for (const [route, type] of [['/', 'text/html'], ['/app/', 'text/html'], ['/app/
 const head = await fetch(BASE + '/', { method: 'HEAD' });
 t.ok(/max-age=\d+/.test(head.headers.get('strict-transport-security') || ''), 'HSTS on');
 
-// ---- the frame headers (deploy/headers.sh) on every page a person can land on, and the meta CSPs left as they are
+// ---- the frame headers (infra/live/cdn.tf's overdub-headers) on every page a person can land on, and the meta CSPs left as they are
 const metaCsp = (html) => /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(html)?.[1] ?? null;
 for (const [route, file] of [['/', 'site/index.html'], ['/app/', 'app/index.html'], ['/site/community/', 'site/community/index.html'], ['/community/', 'site/community/index.html']]) {
   const r = await fetch(BASE + route, { redirect: 'manual' });
@@ -122,5 +125,16 @@ for (const [route, file] of [['/', 'site/index.html'], ['/app/', 'app/index.html
   const live = await page.evaluate(() => ({ remote: !!window.overdub.remote, tab: !!document.querySelector('.ew-tab[title="Connect"]') }));
   t.ok(live.remote && live.tab, `relay: the studio has app.remote (${live.remote}) and the Connect tab (${live.tab})`);
   await close();
+}
+// The relay behind Connect to Claude (infra/live/relay.tf): the one this checkout's studio talks to answers /health
+{
+  const RELAY = /^export const RELAY = '([^']+)'/m.exec(fs.readFileSync(path.join(ROOT, 'app/src/agent/remote.js'), 'utf8'))?.[1];
+  let health = null, why = '';
+  try {
+    const r = await fetch(RELAY + '/health', { cache: 'no-store' });
+    why = String(r.status);
+    health = r.ok ? await r.json() : null;
+  } catch (e) { why = e.message; }
+  t.ok(health?.ok === true, `the relay the studio names (${RELAY}) answers /health (${health ? `version ${health.version}, up ${health.uptime} s` : why})`);
 }
 t.done();

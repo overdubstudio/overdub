@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Ship server/relay.js (plus its tool catalog, server/relay-catalog.json) to the relay instance and restart it, over SSM
-# (no SSH, no bucket: the release travels inside the command, gzip + base64). Run deploy/relay/setup.sh once first.
+# (no SSH, no bucket: the release travels inside the command, gzip + base64). Its AWS is infra/live/relay.tf.
 #
-#   deploy/relay/deploy.sh [--skip-tests]
+#   AWS_PROFILE=overdub deploy/relay/deploy.sh [--skip-tests]   (DRY_RUN=1: builds the release, prints the remote script)
+#
+# The relay's name is RELAY_DOMAIN (default mcp.overdubstudio.com, infra/live's var.relay_domain; deploy/.env may set
+# it). It refuses to run in AJ's personal account (165604225334), where the first relay lived.
 #
 # On the instance: /opt/overdub-relay/releases/<stamp>/{relay.js,relay-catalog.json}, a current -> releases/<stamp>
 # symlink, /etc/overdub-relay.env (root only: PORT, HOST, RELAY_TRUST_PROXY, RELAY_ORIGIN_SECRET) and the systemd unit
@@ -10,12 +13,16 @@
 #
 # The origin secret never passes through this script or the SSM command, whose parameters anyone who can read the
 # account's SSM command history can see. The instance reads it from Parameter Store ($PARAM, a SecureString that
-# setup.sh makes) while the command runs, and writes it only to the root-only env file.
+# infra/live/relay.tf makes) while the command runs, and writes it only to the root-only env file.
 set -euo pipefail
-export AWS_REGION=${AWS_REGION:-us-east-1} AWS_PAGER=""
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+ENV_FILE=${DEPLOY_ENV:-$ROOT/deploy/.env}
+# shellcheck source=/dev/null
+if [ -f "$ENV_FILE" ]; then . "$ENV_FILE"; fi
+export AWS_REGION=${AWS_REGION:-us-east-1} AWS_PAGER=""
 NAME=overdub-relay
-DOMAIN=overdub-relay.ajsmithhq.com
+DOMAIN=${RELAY_DOMAIN:-mcp.overdubstudio.com}
+PERSONAL=165604225334
 PORT=8787
 PARAM=/overdub/relay/origin-secret   # SSM Parameter Store, SecureString (docs/REMOTE-MCP.md, "The origin secret")
 say() { printf '\033[1m%s\033[0m %s\n' "$1" "${*:2}"; }
@@ -32,13 +39,15 @@ if [ -n "${DRY_RUN:-}" ]; then
   INSTANCE=i-dryrun DIST=EDRYRUN
   say dry-run "no AWS calls: builds the release and prints the remote script"
 else
+[ "$(aws sts get-caller-identity --query Account --output text)" != "$PERSONAL" ] \
+  || { echo "refusing: these credentials are AJ's personal account ($PERSONAL). The relay lives in the Overdub account: AWS_PROFILE=overdub"; exit 1; }
 INSTANCE=$(aws ec2 describe-instances --filters Name=tag:Name,Values="$NAME" Name=tag:project,Values=overdub Name=instance-state-name,Values=running --query 'Reservations[].Instances[0].InstanceId | [0]' --output text)
-[ "$INSTANCE" != "None" ] && [ -n "$INSTANCE" ] || { echo "no running $NAME instance: run deploy/relay/setup.sh"; exit 1; }
+[ "$INSTANCE" != "None" ] && [ -n "$INSTANCE" ] || { echo "no running $NAME instance: terraform apply in infra/live (infra/README.md)"; exit 1; }
 DIST=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items && contains(Aliases.Items, '$DOMAIN')].Id | [0]" --output text)
-[ "$DIST" != "None" ] && [ -n "$DIST" ] || { echo "no CloudFront distribution for $DOMAIN: run deploy/relay/setup.sh"; exit 1; }
+[ "$DIST" != "None" ] && [ -n "$DIST" ] || { echo "no CloudFront distribution for $DOMAIN: terraform apply in infra/live (infra/README.md)"; exit 1; }
 # the secret's name only (describe-parameters never returns a value): the instance reads the value itself
 [ "$(aws ssm describe-parameters --parameter-filters "Key=Name,Option=Equals,Values=$PARAM" --query 'length(Parameters)' --output text)" = "1" ] \
-  || { echo "no $PARAM in Parameter Store: run deploy/relay/setup.sh (docs/REMOTE-MCP.md, \"The origin secret\")"; exit 1; }
+  || { echo "no $PARAM in Parameter Store: terraform apply in infra/live (docs/REMOTE-MCP.md, \"The origin secret\")"; exit 1; }
 fi
 say target "$INSTANCE behind $DIST"
 
@@ -106,7 +115,7 @@ lines.push(
   // never part of this command, and nothing here prints it
   'umask 077',
   `SECRET=$(aws ssm get-parameter --region ${region} --name ${param} --with-decryption --query Parameter.Value --output text)`,
-  `[ -n "$SECRET" ] && [ "$SECRET" != None ] || { echo "no origin secret in Parameter Store (${param}): run deploy/relay/setup.sh"; exit 1; }`,
+  `[ -n "$SECRET" ] && [ "$SECRET" != None ] || { echo "no origin secret in Parameter Store (${param}): terraform apply in infra/live (infra/README.md)"; exit 1; }`,
   `printf '%s\\n' 'PORT=${port}' 'HOST=0.0.0.0' 'RELAY_TRUST_PROXY=1' "RELAY_ORIGIN_SECRET=$SECRET" 'NODE_ENV=production' > /etc/overdub-relay.env`,
   'unset SECRET',
   'umask 022',

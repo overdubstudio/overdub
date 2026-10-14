@@ -1,13 +1,14 @@
 # Infrastructure
 
-Terraform for the AWS that the preview site, https://next.overdubstudio.com, runs on, and for the account-wide pieces
-around it. Everything is in the Overdub AWS account (800849967977, us-east-1). The live site, overdubstudio.com, is in
-another account and isn't here (`deploy/setup.sh`).
+Terraform for the AWS that both sites run on, https://overdubstudio.com and https://next.overdubstudio.com, the MCP
+relay at https://mcp.overdubstudio.com, and the account-wide pieces around them. Everything is in the Overdub AWS
+account (800849967977, us-east-1).
 
 | Directory | What it manages | State |
 |---|---|---|
 | `bootstrap/` | the state bucket, `overdub-tfstate-800849967977` | `bootstrap/terraform.tfstate` in that bucket |
 | `next/` | the preview (zone, bucket, certificate, CloudFront, DNS) and the account-wide pieces: GitHub's OIDC provider, the deploy role, the monthly budget | `opensource/next/terraform.tfstate` |
+| `live/` | the live site (the overdubstudio.com zone and records, bucket, certificate, CloudFront, the frame headers), the stems model's and the access logs' buckets, the production-only deploy role (on `next/`'s OIDC provider), and the MCP relay (`relay.tf`: EC2, EIP, security group, IAM, the origin secret in SSM, CloudFront, DNS) | `opensource/live/terraform.tfstate` |
 
 The private overdub-cloud repo has its own `infra/` for the API, with its state at `cloud/next/terraform.tfstate` in the
 same bucket. Its roles trust the GitHub OIDC provider this repo's `next/` owns (one per issuer per account).
@@ -24,7 +25,13 @@ terraform -chdir=infra/next init
 terraform -chdir=infra/next plan
 terraform -chdir=infra/next apply
 terraform -chdir=infra/next output        # the distribution id and deploy role ARN, for the repository variables
+terraform -chdir=infra/live init          # the same for live/ (its own state key); output gives LIVE_DISTRIBUTION
+terraform -chdir=infra/live plan          # and LIVE_DEPLOY_ROLE
 ```
+
+`live/` reads two things from `next/`'s side of the account: GitHub's OIDC provider (a data source; `next/` owns it)
+and the `next.overdubstudio.com` zone's name servers, for the delegation record. Apply `next/` first on a fresh account.
+Its budget is the account's, in `next/`; `live/` adds none.
 
 `next/` needs one value that isn't committed, since this repo is public: who the budget emails. Put it in
 `infra/next/private.auto.tfvars` (gitignored), or export `TF_VAR_budget_alert_emails`:
@@ -55,12 +62,25 @@ the CloudFront function, origin access control, response headers policy and dist
 policy, the OIDC provider and the budget. It never touches the bucket's objects. `deploy/deploy.sh --next [REF]` (and
 CI's deploy-staging job) still ships the committed tree with `aws s3 sync` and invalidates the distribution.
 
-The CloudFront function's code is `deploy/path-rewrite.js` with its home changed to `next.overdubstudio.com`
-(`next/cdn.tf`), so that file stays the one source for both sites. Editing it changes the next plan; the live site
-still gets it through `deploy/setup.sh`.
+The CloudFront function's code is `deploy/path-rewrite.js`: `next/cdn.tf` changes its home to `next.overdubstudio.com`,
+and `live/cdn.tf` sets `CLOUDFRONT_NAME` before the cutover. That file stays the one source for both sites: editing it
+changes both plans.
 
-Not managed here: the NS records in the parent overdubstudio.com zone that delegate `next.overdubstudio.com` (that zone
-is in another account), and AWS's managed CachingOptimized cache policy (a data source).
+The same goes for `live/`: Terraform never touches the site's or the models bucket's objects. `deploy/deploy.sh` (the
+deploy-live workflow) ships the site, the model is uploaded once with `aws s3 cp`, and `deploy/relay/deploy.sh` ships
+the relay's code to the instance over SSM. The Athena database and view over the logs are `deploy/analytics/setup.sh`'s.
+
+**The live cutover** is `live/`'s `serve_names` variable (false until the old distribution in AJ's personal account,
+which isn't in Terraform, has let go of overdubstudio.com and www): false, the distribution has no names and the
+apex/www records point at the old one; true, it takes both names and the certificate and the records point at it.
+
+**Secrets in state**: the relay's origin secret (`random_password`) is in `live/`'s state, since CloudFront's origin
+header carries it. The state bucket is private, versioned and encrypted; rotate with
+`terraform -chdir=infra/live apply -replace=random_password.origin_secret`, then `deploy/relay/deploy.sh`.
+
+Not managed here: AWS's managed cache and origin request policies (data sources), the old zone's ACM validation CNAMEs
+copied into the overdubstudio.com zone (left alone; delete once the old account's certificate is gone), and the domain
+registration (Route 53 Domains).
 
 ## Bootstrap: the bucket that holds its own state
 

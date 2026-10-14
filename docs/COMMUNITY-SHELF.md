@@ -7,7 +7,7 @@
 page is on localhost (then `COMMUNITY_LIVE`, later the `community` toggle), and Try is off even there (then `TRY_ON`, later
 `community.try`) until the worklet's prototypes are frozen
 (section 6). Since then (the shelf-live work, 2026-10-10) the freeze is built, the frame headers are sent locally and
-`deploy/headers.sh` makes them for CloudFront, the shelf is pinned and pulled, and there's an emergency off: section
+the response headers policies in Terraform (`infra/live`, `infra/next`) send them on CloudFront, the shelf is pinned and pulled, and there's an emergency off: section
 "Where it's on" says what's left before the switch. Still not built from Work package 3: the `credit` cleaning in
 `ops.js` and `project.js` and the knob escape in `faces.js`. The spec answers AJ's question ("do we have a marketplace
 concept? I'd love some community UI to browse and use these new devices") with a design, the files each part owns, and
@@ -601,8 +601,8 @@ device "<id>"."* Then the parameter is removed from the address bar, as `?device
 **Framing.** The studio's meta CSP can't set `frame-ancestors`, so it comes as a header. `server/serve.js` sends
 `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Content-Type-Options: nosniff` on
 every response, so no other site can frame the prompt and steer a click into it. On CloudFront the same two frame
-headers come from the response headers policy `deploy/headers.sh` makes (`overdub-headers`; the preview's
-`overdub-next-headers` adds noindex), on every path. It has to have run on the live distribution before the shelf is on.
+headers come from the response headers policy in `infra/live/cdn.tf` (`overdub-headers`; the preview's
+`overdub-next-headers`, `infra/next/cdn.tf`, adds noindex), on every path.
 
 ### Index source
 
@@ -900,8 +900,8 @@ All browser suites open Chromium through `tools/pw.js` (QUIET), on their own ser
   - No site page links to it.
   - `deploy.sh` holds it back, and `app/community/` is in `.gitignore`.
 - `tools/community-test.js` also checks the local server's headers: `/app/`, `/site/community/`, `/community/` and the
-  rest carry `X-Frame-Options: DENY`, `frame-ancestors 'none'` and `X-Content-Type-Options: nosniff`; and it runs
-  `deploy/headers.sh` dry and against a fake `aws` (made once, set on the distribution, a second run changes nothing).
+  rest carry `X-Frame-Options: DENY`, `frame-ancestors 'none'` and `X-Content-Type-Options: nosniff`; and it checks
+  that both Terraform policies (`infra/live/cdn.tf`, `infra/next/cdn.tf`) set them, with override on.
 - `tools/brand-test.js`:
   - The new CSS has no `border-radius: 99px`/`50%` and no coloured `border-left`/inset-shadow edges.
   - The new copy has no "safe", "secure", "sandboxed" (the worklet is not a sandbox), "verified", "marketplace", "buy",

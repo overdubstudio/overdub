@@ -23,7 +23,8 @@ node tools/<area>-test.js            # one area's checks; screenshots land in to
 node tools/docs-build.js             # rebuild site/docs/ after editing GUIDE, AGENTS, DEVICES, BENCH, REMOTE-MCP,
                                      # ARCHITECTURE or integrations/README.md (pages-test fails on a stale page)
 node tools/render.js song.json --hash   # the canonical render
-deploy/deploy.sh                     # ships the committed tree (git archive, never the working tree) to the live site
+# the live site ships from GitHub Actions only: Actions > deploy-live (approved; deploy/README.md)
+deploy/deploy.sh --skip-tests REF    # what that workflow runs: the committed tree (git archive) to overdubstudio.com
 deploy/deploy.sh --next [REF]        # ships a committed ref to the preview, next.overdubstudio.com (deploy/README.md)
 ```
 

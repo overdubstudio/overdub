@@ -19,7 +19,8 @@
 //                core.chorus (Double Track), core.filter (Keyhole), core.drive (Hot Print), core.crush (Chewed Tape),
 //                core.width (Gatefold), core.limiter (Red Line), core.eq8 (Slide Rule), core.shaper (Scribble Strip),
 //                core.multiband (Gaffer Tape), core.ducker (Dim Switch: keyed, a sidechain duck), core.clipper (Clip Lamp),
-//                core.drumbus (Drum Riser), core.stack (Half Stack), core.cab (Iso Cab), core.bassrig (Y Cable)
+//                core.drumbus (Drum Riser), core.stack (Half Stack), core.cab (Iso Cab), core.bassrig (Y Cable),
+//                core.rooms (Echo Chamber: measured rooms, kernel data, the aachen bank; without it the input passes dry)
 // Levels are measured by tools/sounds-test.js: instruments land around -16 LUFS on the test phrase, effects within
 // about a decibel of bypass at their defaults, every true peak at or under -1 dBTP.
 import poly from './poly.js';
@@ -74,9 +75,10 @@ import drumbus from './drumbus.js';
 import stack from './stack.js';
 import cab from './cab.js';
 import bassrig from './bassrig.js';
+import rooms from './rooms.js';
 
 export const INSTRUMENTS = [poly, bass, keys, pluck, drums, pad, piano, organ, strings, bassguitar, guitar, ep, mallets, poly2, brass, choir, drumroom, wavetable, clubkit];
-export const EFFECTS = [eq, comp, verb, delay, chorus, filter, drive, crush, width, limiter, eq8, shaper, multiband, ducker, clipper, drumbus, stack, cab, bassrig];
+export const EFFECTS = [eq, comp, verb, delay, chorus, filter, drive, crush, width, limiter, eq8, shaper, multiband, ducker, clipper, drumbus, stack, cab, bassrig, rooms];
 export const SAMPLED = [drumkit, upright, brushkit, handkit, grand, ensemble, vibes, ebass, eguitar, barisax, cello, flute, trumpet, metalkit];
 export const BUILTINS = [...INSTRUMENTS, ...SAMPLED, ...EFFECTS];
 export default BUILTINS;

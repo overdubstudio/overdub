@@ -629,10 +629,14 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   local('?on=all');
   const allG = await guides();
   const owned = Object.keys(tools.GUIDE_TOGGLES);
-  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x])));
+  // (a shared topic's toggled part: "devices" names Echo Chamber beside Stairwell only with device.rooms on, and
+  // differs by that paragraph alone)
+  const { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../app/src/kernel/guide.js');
+  const parts = { devices: (g) => g.replace(JSON.stringify(GUIDE_REVERBS).slice(1, -1), JSON.stringify(GUIDE_REVERBS_ONE).slice(1, -1)) };
+  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== (parts[x] || String)(allG[x]) || /isn't on in this studio/.test(offG[x])));
   const ownedOk = owned.every((x) => JSON.parse(offG[x]).error === T.offLine(tools.GUIDE_TOGGLES[x]) && JSON.parse(allG[x]).guide);
   t.ok(!differ.length && ownedOk && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && owned.join() === 'workflows',
-    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
+    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) and its toggled part (devices: Echo Chamber in the reverb paragraph) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
   // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
   tools.GUIDE_TOGGLES.ops = 'workflow.flip';
   local('');
@@ -884,6 +888,64 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       && ip.a_table === LT.params.find((q) => q.key === 'a_table').opts.indexOf('AKWF VOICE') && ip.a_pos === 0.25 && noLib.error && /Human voice/.test(noLib.hint || ''),
     `node: get_device lists Light Table's AKWF library (${fams.families?.length} families; "human voice" gives ${voice.waves?.length} waves), and a wave's params play it (${pickA && pickA.name}: table ${ip.a_table}, POS ${ip.a_pos})`);
     await run(app, 'apply_ops', { label: 'back', ops: [{ type: 'instrument.set', track: 'Arp', params: { a_table: 'BASIC', a_pos: 0.62 } }] });
+    // Echo Chamber (intent 0006, R30-R32): no new tool. insert.add takes ROOM's label, get_device lists the six rooms
+    // through the library field, get_project says it in one line, list_devices finds it by its words, and adjust's
+    // space move turns the room that's there instead of adding Stairwell. Echo Chamber is behind device.rooms: off (the
+    // default), list_devices doesn't offer it and get_guide "devices" names Stairwell alone, but a song that has it
+    // keeps it, get_project says it and get_device reads it; the checks after that run with it on.
+    {
+      const TG = await import('../app/src/toggles.js');
+      const { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../app/src/kernel/guide.js');
+      const words = ['reverb', 'room', 'church', 'hall', 'convolution'];
+      const listed = async () => { const out = []; for (const w of words) { const r = await run(app, 'list_devices', { query: w, detail: 'brief' }); if (/core\.rooms/.test(JSON.stringify(r))) out.push(w); } return out; };
+      TG.applyToggles(null, {});
+      const offWords = await listed(), offFx = JSON.stringify(await run(app, 'list_devices', { kind: 'effect', detail: 'brief' }));
+      const offCats = JSON.stringify(await run(app, 'list_devices', { cat: 'ambient' }));
+      const offGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
+      // (a saved song that has it: loaded as a file or a link is, with the toggle off)
+      const saved = JSON.parse(JSON.stringify(app.store.get()));
+      saved.tracks.find((x) => x.name === 'Arp').inserts.push({ id: 'fx_room01', device: 'core.rooms', on: true, params: { room: 5, mix: 0.3 }, by: 'you' });
+      const before = JSON.parse(JSON.stringify(app.store.get()));
+      app.store.load(saved);
+      const kept = app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
+      const gpOff = await run(app, 'get_project', { track: 'Arp' }), devOff = await run(app, 'get_device', { id: 'core.rooms' });
+      app.store.load(before);
+      t.ok(TG.on('device.rooms') === false && TG.offered(reg.getDevice('core.rooms')) === false && TG.offered(reg.getDevice('core.verb')) === true
+        && !offWords.length && !/core\.rooms|Echo Chamber/.test(offFx) && !/core\.rooms/.test(offCats) && /core\.verb/.test(offCats)
+        && !offGuide.includes('Echo Chamber') && offGuide.includes(GUIDE_REVERBS_ONE),
+      `node: with device.rooms off, list_devices offers no Echo Chamber (not under ${words.map((w) => `"${w}"`).join(', ')}, not among the effects or in ambient; Stairwell is) and get_guide "devices" names Stairwell alone${offWords.length ? '; listed under ' + offWords.join(', ') : ''}${/Echo Chamber/.test(offGuide) ? '; the guide names it' : ''}${/core\.verb/.test(offCats) ? '' : '; no Stairwell in ambient'}`);
+      t.ok(kept && kept.params.room === 5 && /Echo Chamber/.test(gpOff.song || '') && /Meeting room/.test(gpOff.song || '') && devOff.id === 'core.rooms' && !devOff.error,
+        `node: with it off, a saved song that has Echo Chamber keeps it (MEETING, mix ${kept?.params?.mix}), get_project says it and get_device reads it`);
+      TG.applyToggles({}, { search: '?on=device.rooms', host: 'localhost' });
+      const onGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
+      t.ok(onGuide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(onGuide), 'node: with device.rooms on, get_guide "devices" names both reverbs');
+      const n0 = (await tools.catalogSchemas()).length;
+      const add = await run(app, 'apply_ops', { label: 'a room', ops: [{ type: 'insert.add', track: 'Arp', insert: { device: 'core.rooms', params: { room: 'LECTURE', mix: 0.18 } } }] });
+      const ins = () => app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
+      const room = ins()?.params?.room;
+      const lib = await run(app, 'get_device', { id: 'core.rooms', library: '' }), stairs = await run(app, 'get_device', { id: 'core.rooms', library: 'stairs' }), dev = await run(app, 'get_device', { id: 'core.rooms' });
+      const want = ['label', 'id', 'name', 'place', 'what', 'distance', 't30', 'edt', 'tx', 'credit', 'params'];
+      const items = lib.items || [];
+      t.ok(add.ok && room === 2 && items.length === 6 && items.map((x) => x.label).join() === 'AULA,AULA FAR,LECTURE,STAIRS,OFFICE,MEETING'
+        && items.every((x) => want.every((k) => k in x) && x.params.room === x.label && x.credit === 'Rooms measured by RWTH Aachen University (AIR 1.4, MIT).' && x.t30['1k'] > 0)
+        && items[0].name === 'Aula Carolina' && items[0].distance === 3 && /^Aachen \(AIR 1\.4\): AULA, AULA FAR, LECTURE/.test(lib.families?.[0] || '') && /insert\.set/.test(lib.hint || '')
+        && stairs.waves?.length === 1 && stairs.waves[0].params.room === 'STAIRS' && /library/.test(dev.library_hint || ''),
+      `node: insert.add with room "LECTURE" sets index ${room}; get_device library "" lists ${items.length} rooms (${items.map((x) => x.label).join(', ')}), each with its header fields and params; "stairs" gives ${stairs.waves?.length}`);
+      const gp = await run(app, 'get_project', { track: 'Arp' });
+      const rl = (gp.song || '').split('\n').find((l) => /Echo Chamber/.test(l)) || '';
+      const def = reg.getDevice('core.rooms');
+      t.ok(def.describe({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22' && /Lecture room \(a lecture room, 5\.6 m\), pre 0 ms, decay ×1\.0, mix 0\.18/.test(rl),
+        `node: describe gives get_project one line ("${rl.trim()}"; at defaults "${def.describe({})}")`);
+      const found = await listed();
+      t.ok(found.length === words.length, `node: list_devices finds Echo Chamber under ${found.map((w) => `"${w}"`).join(', ')} (of ${words.join(', ')})`);
+      const mix0 = ins().params.mix;
+      const adj = await run(app, 'adjust', { axis: 'space', direction: 'more', target: { track: 'Arp' } });
+      const arp = app.store.get().tracks.find((x) => x.name === 'Arp');
+      t.ok(adj.ok !== false && ins().params.mix > mix0 && !arp.inserts.some((x) => x.device === 'core.verb') && (await tools.catalogSchemas()).length === n0 && n0 === 40,
+        `node: adjust space turns Echo Chamber's mix (${mix0} -> ${ins().params.mix}) and adds no Stairwell; still ${n0} tools`);
+      await run(app, 'apply_ops', { label: 'no room', ops: [{ type: 'insert.remove', track: 'Arp', insert: ins().id }] });
+      TG.applyToggles(null, {});
+    }
     const synth = await run(app, 'list_devices', { cat: 'synth' }), one = await run(app, 'list_devices', { query: 'wavetable' }), gtr = await run(app, 'list_devices', { cat: 'guitar' }), none = await run(app, 'list_devices', { query: 'zzqx' });
     t.ok(JSON.stringify(synth).length < 8000 && /core\.wavetable "Light Table"/.test(synth.devices) && /get_device gives one device's params/.test(synth.hint || '') && JSON.stringify(one).length < 12000 && /\[also m\{2-8\}_src/.test(one.devices)
       && /core\.guitar "DI Box"/.test(gtr.devices || '') && /no device is filed under "guitar"; these mention it\. The categories: instrument synth: \d+/.test(gtr.note || '') && none.devices === 'none match' && /instrument synth/.test(none.categories || ''),

@@ -426,7 +426,7 @@ async function phone(pw, srvUrl, run) {
     // and apart, at the top of the board (no band of empty wood), ‹ › paging to the next device whole; a finger's knob
     // drag is half as quick as a mouse's (48 px moves a third of the range by mouse, a sixth by touch)
     await tap('#ew-tab-rack'); await sleep(300);
-    const added = await E(() => { const a = window.overdub, t = a.store.get().tracks[0]; const r = a.store.dispatch([{ type: 'insert.add', track: t.id, insert: { device: 'core.crush' } }, { type: 'insert.add', track: t.id, insert: { device: 'core.drive' } }], { by: 'you', label: 'phone test' }); window.overdub.ui.select({ track: t.id }); return !!r.ok; });
+    const added = await E(() => { const a = window.overdub, t = a.store.get().tracks[0]; const r = a.store.dispatch([{ type: 'insert.add', track: t.id, insert: { device: 'core.crush' } }, { type: 'insert.add', track: t.id, insert: { device: 'core.drive' } }, { type: 'insert.add', track: t.id, insert: { device: 'core.rooms' } }], { by: 'you', label: 'phone test' }); window.overdub.ui.select({ track: t.id }); return !!r.ok; });
     await sleep(500);
     const devPage = () => E(() => {
       const board = document.querySelector('[data-panel="rack"] .rk-board'), br = board.getBoundingClientRect();
@@ -442,13 +442,19 @@ async function phone(pw, srvUrl, run) {
       const cr = card.querySelector('.rk-cap').getBoundingClientRect();
       return { name: card.querySelector('.rk-name')?.textContent, whole: fr.left >= br.left - 0.5 && fr.right <= br.right + 0.5, fw: Math.round(fr.width), bw: Math.round(br.width),
         gapTop: Math.round((cr.top - br.top) + (fr.top - cr.bottom)), knob: Math.round(Math.min(...[...card.querySelectorAll('.kn-dial')].map((d) => d.getBoundingClientRect().width))),
-        lbl: Math.min(...px('.kn-l')), val: Math.min(...px('.kn-v')), touching, scroll: Math.round(board.scrollLeft) };
+        lbl: Math.min(...px('.kn-l')), val: Math.min(...px('.kn-v')), touching, scroll: Math.round(board.scrollLeft),
+        // (Echo Chamber's room line and credit under its face: inside the board, 12 px words)
+        line: (() => { const l = card.querySelector('.rk-line'); if (!l) return null; const r = l.getBoundingClientRect(); return { inside: r.left >= br.left - 0.5 && r.right <= br.right + 0.5, px: Math.min(...[...l.children].map((e) => parseFloat(getComputedStyle(e).fontSize))), text: l.textContent.slice(0, 40) }; })() };
     });
     const pages = [];
-    for (let i = 0; i < 3; i++) {
+    // (the instrument, then Crush, Drive and Echo Chamber: a wide face that wraps, with its room line under it, R29)
+    for (let i = 0; i < 4; i++) {
       const d = await devPage(); pages.push(d);
-      if (i < 2) { await tap('[data-panel="rack"] .rk-more-rb svg'); await sleep(700); }
+      if (i < 3) { await tap('[data-panel="rack"] .rk-more-rb svg'); await sleep(700); }
     }
+    const ecp = pages.find((d) => d.name === 'Echo Chamber');
+    T.ok(ecp && ecp.whole && ecp.line && ecp.line.inside && ecp.line.px >= 12, `${label}: Echo Chamber's wide face pages in whole, its room line inside the board in ${ecp?.line?.px} px words (${JSON.stringify(ecp && { fw: ecp.fw, bw: ecp.bw, line: ecp.line })})`);
+    await noSideways('with Echo Chamber on a track');
     T.ok(added && pages.every((d) => !d.none && d.whole && d.fw >= d.bw * 0.6), `${label}: Devices shows one device at a time, whole and at the sheet's width, paging with › (${pages.map((d) => d.none ? 'none at ' + d.scroll : `${d.name} ${d.fw}/${d.bw}${d.whole ? '' : ' cut'}`).join(', ')})`);
     T.ok(pages.every((d) => !d.none && d.knob >= 44 && d.lbl >= 12 && d.val >= 12 && !d.touching), `${label}: device knobs are 44 px, labels and readouts 12 px and apart (${pages.map((d) => `${d.name}: knob ${d.knob}, label ${d.lbl?.toFixed?.(1)}, value ${d.val?.toFixed?.(1)}${d.touching ? `, ${d.touching} touching` : ''}`).join('; ')})`);
     T.ok(pages.every((d) => !d.none && d.gapTop <= 24), `${label}: each device sits at the top of the board, no band of empty wood (${pages.map((d) => d.gapTop).join(', ')} px of it over the face)`);

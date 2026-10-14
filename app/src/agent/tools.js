@@ -36,7 +36,6 @@ import { lexiconSummary } from './lexicon.js';
 import { catalog as transformCatalog } from '../core/transforms.js';
 import { installKeep, keepFirst, itemsText, whoseIds, takenBy, heldCodeFirst, HELD_CODE_FINE, kernelPrint } from './keep.js';
 import { keyChosen } from '../input/hum.js';
-import { on, offLine, offered } from '../toggles.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -270,12 +269,6 @@ const TARGET_SCHEMA = {
     insert: { type: 'string' }, section: { type: 'string' },
   },
 };
-// A guide topic that belongs to a feature behind a toggle (topic -> toggle id): while it's off the topic answers the
-// toggle's off line. The enum and the descriptions stay as they are (no schema change). Guide text a feature adds to a
-// shared topic goes through guidePart(toggle, text), which is '' while that toggle is off. "workflows" is Flip a song's (its
-// one section, flip); the tempo map it explains is core song format and stays in "ops" either way.
-export const GUIDE_TOGGLES = { workflows: 'workflow.flip' };
-export const guidePart = (toggle, text) => (on(toggle) ? text : '');
 // get_guide's topics, said once for both its descriptions
 const GUIDE_TOPICS = '"etiquette" (how to work with the human here: scope, proposals vs direct edits, measuring), "devices" (how to write a kernel instrument or effect for define_device, with the dsp stdlib and two complete examples), "ops" (every op and the notes / drum-grid text formats), "lexicon" (musical words → perceptual axes, for adjust; plus "personal": what THIS person means by warm, fat, tight, learned from their own A/B picks — follow it), "transforms" (every transform with its params and defaults), "genres" (how a named genre is built and mixed here, bass music and metal: the tempo, form, drums, sounds by device and preset, mix, master and the numbers it is held to), "workflows" (flip: a song brought in).';
 // Descriptions the in-app agent (agent/claude.js) gets in place of the catalog's: its system prompt already carries the
@@ -328,16 +321,11 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
     description: `Read one of the studio's guides (outside agents don't get Overdub's system prompt, so read these first): ${GUIDE_TOPICS}`,
     input_schema: { type: 'object', properties: { topic: { type: 'string', enum: ['etiquette', 'devices', 'ops', 'lexicon', 'transforms', 'genres', 'workflows'] }, section: { type: 'string', description: 'genres: bass-music or metal; workflows: flip' } }, required: ['topic'], additionalProperties: false },
     async run(input) {
-      if (GUIDE_TOGGLES[input.topic] && !on(GUIDE_TOGGLES[input.topic])) return err(offLine(GUIDE_TOGGLES[input.topic]));
       switch (input.topic) {
         case 'genres': { const { genresGuide } = await import('./genres.js'); return { guide: genresGuide(input.section || null) }; }
         case 'workflows': { const { workflowsGuide } = await import('./workflows.js'); return { guide: workflowsGuide(input.section || null) }; }
         case 'etiquette': return { guide: ETIQUETTE };
-        case 'devices': {
-          // (the reverb paragraph names Echo Chamber only while device.rooms is on; off, Stairwell alone)
-          const g = await kernelGuide(), { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../kernel/guide.js');
-          return { guide: GUIDE_REVERBS && !on('device.rooms') ? g.replace(GUIDE_REVERBS, GUIDE_REVERBS_ONE) : g };
-        }
+        case 'devices': return { guide: await kernelGuide() };
         case 'ops': return { guide: OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT };
         case 'transforms': return { guide: 'Transforms (name: what it does. params, with their defaults):\n' + transformCatalog() };
         case 'lexicon': {
@@ -393,9 +381,7 @@ ${OPS_BRIEF}`,
 With detail "params" (the default while the list stays short; one device always has them) each param is listed as: key min..max unit (log) def=… role — what it does. Param values in ops are in these units and inside these ranges. Presets (named sounds) are listed by name: preset: "<name>" in instrument.set, track.add's instrument, insert.add or insert.set sets one. tag ("bass-music", "growl", "sub"...) lists only the devices with presets tagged so, and those presets.`,
     input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['instrument', 'effect'] }, cat: { type: 'string' }, query: { type: 'string' }, tag: { type: 'string', description: 'a preset tag: bass-music, dubstep, riddim, dnb, melodic, sub, growl, reese, wobble, stab, lead, chords, fx, drums, bus, master, pump' }, detail: { type: 'string', enum: ['brief', 'params'] } }, additionalProperties: false },
     run(input, { app }) {
-      // (a built-in behind a toggle that's off isn't offered: toggles.js offered. get_device still reads it, and a song
-      // that has it plays it.)
-      const shown = (o) => app.devices.listDevices(o).filter(offered);
+      const shown = (o) => app.devices.listDevices(o);
       let list = shown({ kind: input.kind, cat: input.cat, q: input.query, tag: input.tag });
       // the song's held devices aren't in the registry (nothing can play them yet): said beside the list
       const held = heldNow(app).filter((d) => !input.kind || d.kind === input.kind);
@@ -779,12 +765,10 @@ export async function runTool(name, input, { by = 'claude', app = globalThis.win
   input = input && typeof input === 'object' ? input : parseMaybeJSON(input) || {};
   if (typeof input !== 'object') input = {};
   const missing = (tool.input_schema.required || []).filter((k) => input[k] == null || input[k] === '');
-  // a tool whose feature is off stays in every catalog and answers one line, changing nothing (app/src/toggles.js)
-  const off = !!tool.toggle && !on(tool.toggle);
   const t0 = Date.now();
   // a card held to hear it is a preview, not the song: let go of it before anything reads or changes the song for real
   const held = app._agentTools?.audition;
-  if (held && !off && !KEEPS_AUDITION.has(name)) {
+  if (held && !KEEPS_AUDITION.has(name)) {
     stopAudition(app, 'edit');
     app.ui?.toast?.(`${authorName(app, by)} is working on the song, so the take you held stopped. Hold it again to hear it.`, { kind: 'agent' });
   }
@@ -796,8 +780,7 @@ export async function runTool(name, input, { by = 'claude', app = globalThis.win
   // card (heldCall, below)
   const scope = by !== 'you' && app.store ? { id, by, t0, held: [], landed: [] } : null;
   const songAt = scope ? P(app)?.id : null;
-  if (off) result = err(offLine(tool.toggle));
-  else if (missing.length) result = err(`missing ${missing.map((k) => `"${k}"`).join(', ')}`, `${name} needs: ${(tool.input_schema.required || []).join(', ')}`);
+  if (missing.length) result = err(`missing ${missing.map((k) => `"${k}"`).join(', ')}`, `${name} needs: ${(tool.input_schema.required || []).join(', ')}`);
   else if ((blocked = recordingBlock(app, name, input, by))) result = blocked;
   else {
     const release = holdActor(app, by, name);
@@ -1101,7 +1084,7 @@ function selectionInfo(app) {
     }
   } catch { /* a nicety */ }
   out.trying = trying;
-  out.start = on('start.slice2') ? startInfo(app) : null;   // (the start.slice2 toggle's: off, always null)
+  out.start = startInfo(app);
   const link = fromLink(app);
   return link ? { from_link: link, ...out } : out;
 }

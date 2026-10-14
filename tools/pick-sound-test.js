@@ -194,21 +194,21 @@ const STATE = () => {
   };
 };
 // Hum it in your own time on a blank song: Sketch's Hum is on screen under the door in the studio's default layout;
-// when it isn't, the door's Hum a tune, then "No beat; I'll hum freely" (ui/start.js). -> the presses it took
+// when it isn't, Sketch is opened on Hum (the door's Hum a tune opens Start a song's stage instead, ui/start.js, and
+// its free hum stays on the stage). -> the presses it took
 const humIt = async (P) => {
   if (await P.E(() => !!window.overdub.ui.isOpen?.('bottom') && !!document.querySelector('.sk-hum')?.getClientRects().length)) return 0;
-  await P.page.getByRole('button', { name: 'Hum a tune' }).click();
+  await P.E(() => { const a = window.overdub; a.ui.show('sketch'); if (!a.ui.isOpen?.('bottom')) a.ui.setOpen?.('bottom', true); a.input?.emit?.('sketch:mode', 'hum'); });
   await sleep(300);
-  await P.page.getByRole('button', { name: 'No beat; I’ll hum freely' }).click();
-  return 2;
+  return 1;
+
 };
 const tapABeat = async (P) => {
-  await P.page.getByRole('button', { name: 'Tap a beat' }).click();
-  // (on a blank song Tap a beat opens Start a song's stage, ui/start.js: "Play to a click instead" is the first minute,
-  // R to record, as this path has always been)
-  await sleep(300);
-  if (await P.E(() => !!window.overdub.start?.step)) await P.page.getByRole('button', { name: 'Play to a click instead' }).click();
+  // (the first minute, R to record, as this path has always been: app.onboard.firstMinute; on a blank song the door's
+  // Tap a beat opens Start a song's stage instead, ui/start.js)
+  await P.E(() => window.overdub.onboard.firstMinute('tap'));
   await sleep(1500);
+
   await P.page.keyboard.press('r');
   await sleep(2300);
   for (let i = 0; i < 2; i++) for (const k of ['f', 'k', 'j', 'k', 'f', 'k', 'j', 'k']) { await P.page.keyboard.press(k); await sleep(250); }

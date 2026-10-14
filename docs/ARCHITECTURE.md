@@ -33,12 +33,11 @@ overdub/
   server/relay.js        the hosted relay for claude.ai (REMOTE-MCP.md; live)                         [agent layer]
                          relay-catalog.json: the tools it lists, generated (tools/relay-catalog.js)
   site/                  landing page, press/, docs/ (built by tools/docs-build.js), llms.txt         [brand]
-                         community/ (the community shelf's gallery, public at /community/; unlinked, and reading
-                         nothing until the community toggle is on)
+                         community/ (the community shelf's gallery, public at /community/)
   app/community/         the community shelf's bundled snapshot: gitignored, filled from overdub-devices
                          at deploy/community-pin.json's commit by tools/community-pull.js: the index,
-                         devices/ (one device file per entry) and clips/ (MP3 only); deploy.sh ships it
-                         no-cache once the site config names the community toggle, else holds it back [shelf]
+                         devices/ (one device file per entry) and clips/ (MP3 only); every deploy ships it
+                         no-cache                                                                     [shelf]
   app/index.html         the studio page; app/library.html the device shelf; app/gallery.html          [core]
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/<family>/: each woff2 and its licence)         [brand]
@@ -105,8 +104,7 @@ overdub/
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
-                         community.js (From the community in the Browser: previews, Try and its prompt; the
-                         community and community.try toggles)                                           [shelf]
+                         community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
                          the Notes panel's Tab view)                                                    [jam]
@@ -117,7 +115,7 @@ overdub/
                          lexicon.js + lexicon-personal.js, panel.js (chat UI), history.js, presence.js, diff.js,
                          keep.js (a song from a link: what waits for Keep), bridge.js (page side of MCP),
                          remote.js (page side of the relay), cloud.js, cloud-kind.js, cloud-panel.js (Claude
-                         on Overdub credits; off unless the cloud.agent toggle and cloud.api are set),
+                         on Overdub credits; off unless the site config names cloud.api),
                          community-tool.js (find_community_device)                                     [agent layer]
   tools/                 pw.js (browser harness, fixed), <area>-test.js checks, run-all.js, render.js, bench/
   integrations/          the Claude Code plugin and skill, configs for other MCP clients, check.js
@@ -555,26 +553,22 @@ until the person allows it.
 
 Instruments and effects people asked their agents for, from the community repo (`overdub-devices`), in the Browser
 under **From the community**. Nothing is sold, priced or rated. The spec is [COMMUNITY-SHELF.md](COMMUNITY-SHELF.md);
-SECURITY.md says what runs when. Behind two toggles (Toggles, below), both off: `community` (the shelf, in the studio
-and the gallery) and `community.try` (Try; the worklet's realm is frozen now). A developer turns them on for a load
-with `?on=community,community.try` on a local studio. The switch is a config change, `"toggles": { "community": "on",
-"community.try": "on" }` in `deploy/site-config.json`, plus a commit that links the gallery; COMMUNITY-SHELF.md,
-"Where it's on", lists what has to hold before it. Named `"off"`, `community` is the emergency off.
+SECURITY.md says what runs when. It is in every studio and on the gallery, Try included (the worklet's realm is
+frozen). Taking a device down is a pin change (a revoked entry in the studio's own copy), live at the next deploy.
 
 - **Where the shelf comes from.** The live studio reads one index, its own `/app/community/community-index.json`,
   deployed with it (`indexUrlAllowed` refuses any other origin on a page that isn't on localhost). That copy
   is pinned, not committed: `deploy/community-pin.json` (`{ repo, commit, index_sha256 }`, keys forever) names an
   overdub-devices commit, and `tools/community-pull.js` fills the gitignored `app/community/` from it with
   `git archive`, refusing on a wrong hash or a device file whose kernel isn't its entry's. Local development runs the
-  same pull. `tools/prod-check.js` holds the live copy to the pin once the shelf is on.
-- **Revocation and the emergency off.** While the shelf is on, the bundled index is read on every load, Browser open
-  or not, and each `revoked` fingerprint goes through `trust.forget`: the code is held in every song, and the held strip
-  says *"{Name} was taken off the shelf: {reason}"*. `app/site-config.json` key `community` (value `"off"`, the only
-  one) turns the shelf off with no code change, in the studio and the gallery; the revoked list still applies.
+  same pull. Every deploy ships it (deploy.sh). `tools/prod-check.js` holds the live copy to the pin.
+- **Revocation.** The bundled index is read on every load, Browser open or not, and each `revoked` fingerprint goes
+  through `trust.forget`: the code is held in every song, and the held strip says *"{Name} was taken off the shelf:
+  {reason}"*. A takedown is a pin that revokes the device, merged and deployed.
 
 - `devices/community.js` is the one reader of an index (`overdub-community-index/1`): the studio, the agent tool and the
   site gallery all read through it. `ASKED_MAX` is how long a requester line can be and still be drawn.
-- `app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
+- `app.community = { ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
   tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }`. `targetFor` says where a Try
   lands (`already: true` when it's on that track now: Try doesn't stack a second copy). On a new track a Try brings a
   two-bar part to hear the device on, in the same step.
@@ -951,11 +945,11 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   SHA-256 (its rate and every channel as 32-bit floats), the model's id and its version; in memory where IndexedDB is
   refused. A second run of the same input never reaches the runner; a cancelled job (an `AbortSignal`) rejects with
   `AbortError` and leaves nothing behind.
-- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless both the `stems.local`
-  toggle is on and `app/site-config.json` has `stems: { model, sha256, runtime?, id?, bytes? }` (`site-config.js`
+- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless
+  `app/site-config.json` has `stems: { model, sha256, runtime?, id?, bytes? }` (`site-config.js`
   `stemsConfig`: each URL resolved against the config file, so a path is on this site, then https:, or http: on this
-  machine, as for `cloud`; `runtime` defaults to `vendor/ort/ort.webgpu.min.mjs`). With either missing nothing is
-  fetched or imported. With both, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
+  machine, as for `cloud`; `runtime` defaults to `vendor/ort/ort.webgpu.min.mjs`). Without it nothing is
+  fetched or imported. With it, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
   mismatch is refused and the runtime never loaded), and kept in Cache Storage (`overdub-models`); ONNX Runtime Web is
   loaded by a dynamic `import()` of `stems.runtime`. No weights and no runtime are in this repo (`.gitignore`, and
   `tools/jobs-test.js` fails on a tracked one). WebGPU first, then WebAssembly on one thread (the studio isn't
@@ -977,8 +971,8 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   uploads `.mjs` as JavaScript and `.wasm` as `application/wasm`. `node deploy/stage-stems.js --manifest <dist>` prints
   the manifest and its hash to pin. Locally, `server/serve.js` answers `/app/vendor/ort/` from
   `OVERDUB_STEMS_RUNTIME_DIR` (a dist directory on this machine; else `app/vendor/ort/`, gitignored), and with no
-  `app/site-config.json` answers the stems entry from `OVERDUB_STEMS_MODEL`, `_SHA256` and (optional) `_RUNTIME`, with
-  `stems.local` on.
+  `app/site-config.json` answers the stems entry from `OVERDUB_STEMS_MODEL`, `_SHA256` and (optional) `_RUNTIME`.
+
 - **The DSP** (`stems/dsp.js`) is demucs' own around the network: the normalised STFT (4,096 / hop 1,024, the
   periodic Hann window) as `_spec` and `_ispec` do it, two real channels through one complex FFT, segments of 7.8 s
   with 25% overlap and a triangular crossfade (`apply_model`, shifts 0), and `separate.py`'s whole-song normalising.
@@ -1180,10 +1174,8 @@ one measured dispatch signed `'overdub'` (the house: unsigned on the lanes). It 
 `ui.point`. `app.coach = { expect(door), after(landing), dock(door, clips?), go(step), band(), preview(i), keep(),
 notThis(), end(), state(), beatUnder() }`.
 
-**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014),
-behind the `workflow.flip` toggle (off: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find's Help rows,
-`app.flip.pick()` and `flip()` answer the off line, and `get_guide "workflows"` too; the tempo map is core song
-format, so a song that has one loads, plays and renders the same either way): the door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
+**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014): the
+door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
 local files only, nothing is ever fetched from a link). `importers.importFlip` decodes and labels them
 (`core/flip.js` `labelFiles`: a lone file is the original; several are stems by their names, vocal / acapella /
 voice, drums / perc, bass, other / inst, and the one matching none the original). The import is one step by `'you'`,
@@ -1856,13 +1848,12 @@ from the shell), adds it and the API version to the page's Messages API request,
 old in-browser key, is deleted on load and noted once (`overdub:agent:key-retired`). The public site has no `/local/`.
 
 **Claude on Overdub credits** (provider `'cloud'`; built, not switched on): Claude run by Overdub's own service and
-paid for with credits, for people without a Claude of their own. It's off unless the deploy both turns the
-`cloud.agent` toggle on and names the service in `app/site-config.json` (gitignored; `app/src/site-config.js` reads it
-once per load, `server/serve.js` answers both from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh`
-ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles; its other switch is the stems runner, "Jobs
-and the stems runner" above); a `cloud.api` alone turns nothing on.
-`?cloud=` points a local studio at a local service only, and counts as the toggle there. The community shelf and its gallery read the `community` toggle
-(`community.try` for Try), off by default; there is no separate `community` key any more. No prices live here: the rate card, plans and packs come from the
+paid for with credits, for people without a Claude of their own. It's off unless the deploy names the
+service in `app/site-config.json` (`"cloud": { "api" }`; gitignored; `app/src/site-config.js` reads it once per load,
+`server/serve.js` answers it from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships
+`deploy/site-config.json` or `{}`; its other entries are the account service, `"accounts": { "api" }` (agent/remote.js),
+and the stems runner, "Jobs and the stems runner" above). With no configuration it stays absent.
+`?cloud=` points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
 - `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (Continue with Google opens
@@ -1899,8 +1890,8 @@ over `/s/<token>/{hello,events,result}`. The tab side takes the tab's secret in 
 one-way hash of it, so the connector URL alone can't pose as the tab), and `tools/list` is the relay's own catalog
 (`server/relay-catalog.json`), never the tab's. `agent/remote.js` (`app.remote`, the right-region "Connect" tab) is
 the page side; its calls run with `by: 'claude.ai'` (`kind: 'agent'`, added with `store.addAuthor`). It is live at
-overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`; the `relay` toggle (`on('relay')`) is on, so every
-studio shows the Connect tab (off, there is no tab and no `app.remote`, except on a local studio with `?relay=`).
+overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`. Every studio shows the Connect tab (a local studio with `?relay=` talks to a
+local relay instead).
 
 ## Songs in and out
 
@@ -1956,84 +1947,24 @@ of this version trusts the kept songs' devices, once), decodes a share link if t
 (the link's song, `?new`, `?demo`, the saved song, or the demo), the engine (a silent stand-in if it fails), the
 shell, then starts each module in `MODULES` (each `export default function (app)`) in order; one failing never stops
 the rest. Audio starts on the first gesture. URL switches: `?new`, `?demo=<id>`, `?device=<id>`, `?agent=mock`,
-`?coach`, `?autostart`, `?view=simple|full`, `?on=<toggle>,…` (a local studio only; Toggles, below), `#s=…`. Straight after the shell,
+`?coach`, `?autostart`, `?view=simple|full`, `#s=…`. Straight after the shell,
 `installWorkspace(ui, app)` gives it `ui.workspace`, before any module mounts a panel.
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,
-analytics, plugin, jam, site, toggles }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
-`browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.toggles` is
-`{ on(id), list() }` (Toggles, below).
+analytics, plugin, jam, site, siteConfig }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
+`browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.siteConfig` is
+`loadSiteConfig`'s answer as boot read it (main.js waits for it, at most 4 s, `CONFIG_WAIT_MS`, before the first
+module starts), or null when this load couldn't see it.
 
-## Toggles
+## How features ship
 
-Every feature a person would notice ships off and is turned on by the deploy, never by a code change.
-`app/src/toggles.js` is the one registry: each entry has an `id` (forever while it lives, never reused), a `name` (the
-off line uses it), a one-line `about`, its intent, and is off unless the config says `"on"`. Toggles are temporary: at
-most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has been on for a while.
-
-- **The config.** The deploy's `app/site-config.json` carries `"toggles": { "<id>": "on" | "off" }`. Only the exact
-  string `"on"` turns one on; no file (a 404 or 410), `{}`, no key or a non-object means all off. An id the
-  registry doesn't know is ignored with one console warning.
-- **Boot.** `main.js` starts the read at the top of boot, beside the device imports, and waits for it (at most 4 s,
-  `CONFIG_WAIT_MS`) before the first module starts, so `on()` is final and synchronous everywhere. A config this load
-  couldn't see (a network error, a 5xx or an HTML error page, JSON that doesn't parse, or past the cap) is not a file
-  that turns everything off: the `deploy: 'on'` defaults stand in for that load (`bootConfig`), so a blip never takes
-  Connect away from someone whose agent is driving their studio. A late answer changes nothing.
-- **`on(id)`.** Code asks `on(id)` and never reads a constant or the config itself. An id the registry doesn't have
-  throws (`no toggle "relays"`), so a typo fails loudly; the unit test scans `app/` and `site/` for every `on('…')`
-  literal. In Node, or before boot's read, it answers off. `app.toggles.on(id)` and `app.toggles.list()` (`[{ id, name,
-  on, by: 'site' | 'url' | 'off' }]`) are the same for the console and the tests.
-- **`?on=a,b` and `?on=all`.** On a local studio only (`localhost`, `127.0.0.1`, `[::1]`): those toggles are on for that
-  page load. Anywhere else `?on=` does nothing, so a link can never switch anyone's studio. The developer doors count
-  as their toggle there too: `?relay=<origin>` is `relay`, `?relay=` with `?cloud=` is `accounts`, `?cloud=<local
-  origin>` is `cloud.agent`.
-- **The deploy's defaults.** An entry marked `deploy: 'on'` was on live before the registry existed: deploy.sh writes
-  it `"on"` for both sites unless `deploy/site-config.json` names it (an explicit `"off"` is kept). Only `relay` has
-  it. `server/serve.js` with no `app/site-config.json` answers the same defaults (plus `cloud.agent` with
-  `OVERDUB_CLOUD_ORIGIN`), so a local studio shows what the live one does.
-- **What refuses.** deploy.sh checks the final config against REF's own registry (`auditToggles`): a `toggles` that
-  isn't an object, a value other than `"on"` or `"off"`, or an id REF doesn't register stops a live deploy; on `--next`
-  it is one warning line. It prints `toggles on: …`. `tools/prod-check.js` prints `toggles on live: …` and fails when
-  the live config names a toggle the live registry doesn't know, or when a `deploy: 'on'` toggle is off (relay: no
-  `app.remote` or no Connect tab fails too).
-- **A toggle never changes a song.** Nothing under `core/`, `audio/`, `kernel/` or `devices/registry.js` imports
-  `toggles.js` (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
-  data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-  menus, Browser and Find entries, doors, and the agent tools offered.
-- **Devices.** A built-in's definition may carry `toggle: '<id>'`. `offered(def)` (`toggles.js`) is false while that
-  toggle is off, and every place that offers a device for adding asks it: the device pickers and the empty chain's
-  chips (`ui/rack.js`), the Browser, the instrument menus, Find's Sound rows, `list_devices`, and the cloud agent's
-  free moves. The registry doesn't read it: `getDevice`, `get_device`, a song's inserts, `insert.add` by id, the
-  engine and the renders treat the device as always, so a saved or shared song that uses it loads and plays. A song's
-  own device (source `project`) can't hide itself with the field.
-- **Agent tools.** The catalog is static (`server/relay-catalog.json` doesn't move). A tool may carry `toggle: '<id>'`:
-  `runTool` checks it before the required fields, the recording block and `run`, and while it's off the call answers
-  `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
-  goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
-  through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
-- **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-  Find, `app.flip`'s pick and flip, `get_guide "workflows"`), `stems.local` (the local stems runner, read by
-  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed) and `device.rooms` (Echo Chamber,
-  `core.rooms`: every device offer above, and its half of `get_guide "devices"`'s reverb paragraph, `GUIDE_REVERBS`).
-  The tempo map neither hides.
-- **No constants left.** `community` and `community.try` moved onto `on()` with the shelf (`ui/community.js`, and the
-  gallery, which imports the registry and applies the same config); the unit test's list of constant switches is empty
-  and stays so. Only the shelf reads a toggle's raw value: `"community": "off"` by name keeps the studio reading its own
-  copy's deny list, and deploy.sh shipping that copy (the emergency off).
-- **`start.slice2`** (Start a song, the rest of it) is read in a few places. `ui/start.js` hands its door and stage to
-  `ui/start-slice1.js` (slice 1, as main had it) while it's off. `ui/coach-strip.js` doesn't start. Sketch's Each pass
-  offers Fold on a drum take only while it's on (a drum track's default is Layer either way). The others are the top bar's "~" (`ui/transport.js`), Song ▸ Start a song (`ui/export.js`), Find's Start a song (a
-  `toggle` on the feature in `ui/workspace.js`), the agent pane holding a message mid-take (`agent/panel.js`),
-  `get_selection.start` (null while off) and the demo agent's "tidy the timing" (`agent/mock.js`). The system prompt's
-  two Start a song lines stay either way. A clip the stage or a fold made loads and plays the same with it off.
-
-**Add one:** one entry in `TOGGLES`, off (the unit test checks the shape and the count), and `on('<id>')` at each way in
-(a menu item, a Browser row, a door, `toggle:` on a tool); then its entry in `overdub-intents`'s `toggles/TOGGLES.md`
-and the backlog items that decide when it goes on. **Turn one on live:** `"<id>": "on"` in `deploy/site-config.json`,
-deploy, then `node tools/prod-check.js` to see it in `toggles on live`. **Retire one:** make the code unconditional,
-delete the entry and every `on('<id>')`, and take the id out of `deploy/site-config.json` before the next deploy
-(deploy.sh refuses the leftover id). The id is never used again.
+There are no feature toggles (retired 2026-10-14). What is merged to `main` is shipped at the next live deploy;
+unfinished work waits on its branch until it's ready to merge. A dormant service (Claude on Overdub credits, Sign in
+with Overdub, the stems runner's model) is present only when the deploy's `app/site-config.json` names it
+(`"cloud"`, `"accounts"`, `"stems"`), so with no configuration it stays absent; that file holds configuration, never
+on/off switches (deploy.sh drops a leftover `"toggles"` key). The localhost developer doors (`?relay=`, `?cloud=`)
+point a local studio at local services and do nothing on any other host.
 
 ## Testing
 

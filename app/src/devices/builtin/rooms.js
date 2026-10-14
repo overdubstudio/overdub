@@ -386,9 +386,6 @@ export const LIBRARY = {
 
 export default defineDevice({
   id: 'core.rooms', name: 'Echo Chamber', kind: 'effect', cat: 'ambient', by: 'overdub',
-  // (offered for adding only while the device.rooms toggle is on: app/src/toggles.js offered; a song that has it
-  // plays it either way)
-  toggle: 'device.rooms',
   blurb: 'Real rooms, measured: a church down to an office',
   // (the plate's kind and the nod are also the words Find and list_devices know it by, R28: reverb, room, church,
   // hall, convolution; "ROOM REVERB" puts it among the first rooms Find shows for "room")

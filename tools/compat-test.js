@@ -445,7 +445,7 @@ addRoute('/app/community/', (req, res, url) => {
   return true;
 });
 async function shelf(b, base, tag) {
-  const { page, errors, offsite } = await openPage(b, base, '/site/community/?on=community');
+  const { page, errors, offsite } = await openPage(b, base, '/site/community/');
   const ok = await page.waitForFunction(() => window.__community?.ready, null, { timeout: 30000 }).then(() => true, () => false);
   const faces = await page.evaluate(() => document.querySelectorAll('.cs-face [data-face]').length);
   let played = null;

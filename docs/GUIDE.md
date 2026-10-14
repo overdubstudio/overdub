@@ -700,7 +700,7 @@ only: put it on a public address and anyone who reaches it spends your key.
 
 Hosting a copy of the site? The studio has a hosted agent built in, Claude on Overdub credits, but it's Overdub's own
 service and it's off in your copy: it only turns on when the site has an `app/site-config.json` that names a service
-and turns its toggle on (`"cloud": { "api": … }` and `"toggles": { "cloud.agent": "on" }`), and the repo has none.
+(`"cloud": { "api": … }`), and the repo has none.
 Without one, the studio shows nothing of it and connects to no one. (Pointing it at a service of your own also means
 adding that service to the page's `connect-src`, in `app/index.html`.)
 
@@ -780,11 +780,10 @@ an effect, or a mix move, goes straight through as usual, and after Make it your
   your mix's numbers beside it, and **A** and **B** switch between your mix and the reference, played at your mix's
   loudness. Ask the agent how yours compares and it measures both (`compare_to_reference`).
 
-- **A device from the community shelf** (a studio on your own computer only, for now, opened at `/app/?on=community`). Open **Instruments and
-  effects** (or Find anything, then type *community*) and scroll to **From the community**. ▶ on a row plays a
-  recording of the device; nothing of it runs. Tap the row for what it does, who made it, and its code to read. **Try**
-  isn't open yet. When it is, **Try on Vocals** (or whichever track is selected) asks whether to run code someone else
-  wrote before anything plays; a new track comes with two bars to hear the device on, and Undo takes it all back.
+- **A device from the community shelf.** Open **Instruments and effects** (or Find anything, then type *community*)
+  and scroll to **From the community**. ▶ on a row plays a recording of the device; nothing of it runs. Tap the row
+  for what it does, who made it, and its code to read. **Try on Vocals** (or whichever track is selected) asks whether
+  to run code someone else wrote before anything plays; a new track comes with two bars to hear the device on, and Undo takes it all back.
 
 ## Take it elsewhere
 

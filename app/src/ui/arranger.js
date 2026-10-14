@@ -57,7 +57,6 @@
 
 import { doorOf } from './start.js';
 import { h, css, icon, canvas, clamp, byline } from './dom.js';
-import { offered } from '../toggles.js';
 import {
   palette, resolveColor, rgba, authorKind, authorName, authorColor, isDrumTrack, deviceName, touched, flasher,
   presenceList, drawCrop, drawLabel, bylineOf, displayFont, snapTo, floorTo, SNAPS, snapLabel, menu, popover, closePopover, MOD, showAgent, touchFirst,
@@ -1273,7 +1272,8 @@ function mountArranger(el, app) {
   // Bass, Plucked... as the browser groups them, in a menu that scrolls. (It listed the first 14, so Light Table, Suitcase,
   // Mallet Bag, Step Ladder, Brass Rail and Risers were never there.) A drum kit's track opens a clip at the playhead.
   function addTrackMenu(anchor) {
-    const inst = app.devices.listDevices({ kind: 'instrument' }).filter(offered);
+    const inst = app.devices.listDevices({ kind: 'instrument' });
+
     const by = new Map();
     for (const d of inst) { if (!by.has(d.cat)) by.set(d.cat, []); by.get(d.cat).push(d); }
     if (!by.has('drums')) by.set('drums', [{ id: 'core.drums', name: 'Drums', blurb: 'a drum kit', cat: 'drums' }]);

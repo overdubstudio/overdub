@@ -1,43 +1,28 @@
-// The studio as the live site would run it with the community shelf switched on, for the checks that need the toggle on
-// before it is (the shelf-live spec: "with the live flag"). The studio is served under another name (overdub.test, not a
-// local host, so the shelf's local-only allowances are off, ?on= among them), and /app/site-config.json is answered on
-// the way through with the community toggles on (app/src/toggles.js), as the switch's deploy writes them. Nothing on
-// disk changes. A helper, not a suite: tools/community-test.js and the agent and relay checks use it.
+// The studio as the live site would run it, for the shelf's checks. The studio is served under another name
+// (overdub.test, not a local host, so the shelf's local-only allowances are off), with the studio's own shelf copy and
+// /app/site-config.json answered on the way through when asked. Nothing on disk changes. A helper, not a suite:
+// tools/community-test.js and the agent and relay checks use it.
 //
-//   const P = await openLive(path, { query, toggles, bundled, siteConfig, width, height, routes })
+//   const P = await openLive(path, { query, bundled, siteConfig, width, height, routes })
 //     path        '/app/' (default) or '/site/community/' …
 //     query       the page's query string, or (local) => query, given the real server's origin
-//     toggles     { community: 'on', 'community.try': 'on' } by default: merged under the site config's own toggles;
-//                 pass { 'community.try': 'off' } (merged over the default) to keep Try held back, 'off' for both
-//                 named off, or null to add nothing (the live site before the switch: the toggles left out)
 //     bundled     a directory to serve /app/community/ from (community-index.json from bundled-index.json when the
 //                 directory has one), read on every request, so a check can change it between loads; default:
 //                 whatever the studio's own server has (app/community/, the pull's)
 //     siteConfig  an object to serve as /app/site-config.json, or a function returning one, asked on every request;
-//                 default: the server's own answer. Its own "toggles" win over the toggles option, so
-//                 { toggles: { community: 'off' } } is the emergency off with the shelf otherwise switched on
+//                 default: the server's own answer
 //     routes      async (page, { host, local }) => {}: more routes, set after these, so they win
 //   P is pw.js's open() result, on http://overdub.test<path>?<query>, plus P.host, P.local (the real server's origin),
 //   P.configs (each site config the page was answered, parsed) and P.requests (every URL the page asked for)
 //
-//   await liveRoutes(page, { origin, local, toggles, bundled, siteConfig, errors, configs })
-//     the same routes on any origin (the relay's check switches the shelf on on its own localhost tab with it)
+//   await liveRoutes(page, { origin, local, bundled, siteConfig, errors, configs })
+//     the same routes on any origin (the relay's check serves the fixture shelf on its own localhost tab with it)
 import fs from 'node:fs';
 import path from 'node:path';
 import { open } from './pw.js';
 
 export const LIVE_HOST = 'overdub.test';
-export const SHELF_ON = Object.freeze({ community: 'on', 'community.try': 'on' });
-
-// the config served: the base's own keys, with the shelf toggles under the base's own toggles
-export function withToggles(base, toggles = SHELF_ON) {
-  const c = base && typeof base === 'object' && !Array.isArray(base) ? base : {};
-  const own = c.toggles && typeof c.toggles === 'object' && !Array.isArray(c.toggles) ? c.toggles : {};
-  const t = toggles === null ? {} : toggles === 'off' ? { community: 'off', 'community.try': 'off' } : { ...SHELF_ON, ...toggles };
-  return { ...c, toggles: { ...t, ...own } };
-}
-
-export async function liveRoutes(page, { origin, local, toggles = SHELF_ON, bundled = null, siteConfig = null, errors = [], configs = [] }) {
+export async function liveRoutes(page, { origin, local, bundled = null, siteConfig = null, errors = [], configs = [] }) {
   // (a predicate, not a glob: only this exact origin, never a server on another port of the same host, such as a relay)
   await page.route((u) => u.origin === origin, async (r) => {
     try {
@@ -57,7 +42,7 @@ export async function liveRoutes(page, { origin, local, toggles = SHELF_ON, bund
       let base;
       if (siteConfig) base = typeof siteConfig === 'function' ? siteConfig() : siteConfig;
       else { const res = await r.fetch({ url: local + u.pathname }); base = res.ok() ? await res.json().catch(() => ({})) : {}; }
-      const cfg = withToggles(base, toggles);
+      const cfg = base && typeof base === 'object' && !Array.isArray(base) ? base : {};
       configs.push(cfg);
       return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'cache-control': 'no-store' }, body: JSON.stringify(cfg) });
     }
@@ -76,7 +61,7 @@ export async function liveRoutes(page, { origin, local, toggles = SHELF_ON, bund
   }
 }
 
-export async function openLive(route = '/app/', { query = '', toggles = SHELF_ON, bundled = null, siteConfig = null, width, height, routes = null } = {}) {
+export async function openLive(route = '/app/', { query = '', bundled = null, siteConfig = null, width, height, routes = null } = {}) {
   const P = await open(route, { width, height });
   // routes still being answered when the check closes the page are let go first (Playwright's advice for routes in flight)
   const close = P.close;
@@ -88,7 +73,7 @@ export async function openLive(route = '/app/', { query = '', toggles = SHELF_ON
     P.configs = [];
     P.requests = [];
     P.page.on('request', (q) => P.requests.push(q.url()));
-    await liveRoutes(P.page, { origin: `http://${LIVE_HOST}`, local, toggles, bundled, siteConfig, errors: P.errors, configs: P.configs });
+    await liveRoutes(P.page, { origin: `http://${LIVE_HOST}`, local, bundled, siteConfig, errors: P.errors, configs: P.configs });
     if (routes) await routes(P.page, { host: LIVE_HOST, local });
     const q = typeof query === 'function' ? query(local) : query;
     P.url = `http://${LIVE_HOST}${route}${q ? `?${q}` : ''}`;

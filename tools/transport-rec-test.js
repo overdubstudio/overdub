@@ -396,11 +396,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(400);
     const blank = await E(() => { const c = document.querySelector('.ar-empty-card'); const b = c && [...c.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Tap a beat'); return { card: !!c && c.getClientRects().length > 0, primary: b?.classList.contains('btn-go') }; });
     T.ok(blank.card && blank.primary, `a blank song's first screen offers Tap a beat first (${JSON.stringify(blank)})`);
-    // (Tap a beat opens Start a song's stage, ui/start.js; its "Play to a click instead" is the first minute: the
-    // start.slice2 toggle is off here, so it is slice 1's stage, ui/start-slice1.js)
-    await E(() => [...document.querySelectorAll('.ar-empty-card button')].find((x) => x.textContent.trim() === 'Tap a beat')?.click());
-    await sleep(300);
-    await E(() => [...document.querySelectorAll('.st-stage button')].find((x) => x.textContent.trim() === 'Play to a click instead')?.click());
+    // (Tap a beat opens Start a song's stage, ui/start.js, which has a click view of its own; the first minute with a
+    // click is app.onboard.firstMinute, which the door uses when there's no stage)
+    await E(() => window.overdub.onboard.firstMinute('tap'));
     await sleep(900);
     const nb = await E(() => { const o = window.overdub, p = o.store.get(); return { tracks: p.tracks.map((t) => t.name), loop: p.loop, playing: o.engine.playing, click: o.engine.metronome, step: o.onboard.step, card: !!document.querySelector('.ob') }; });
     T.ok(nb.tracks.includes('Drums') && nb.loop.on && nb.loop.end - nb.loop.start === 8 && nb.playing && nb.click && nb.card && nb.step === 'take', `and, with a click, it starts the first minute on a new Drums track (${JSON.stringify(nb)})`);
@@ -536,9 +534,9 @@ for (const w of [1280, 1366, 1440]) {
 /* ================================================================ R on a drum track set to Fold folds the passes */
 // Three times round a 1-bar loop on Drums with R: what's played in two of three rounds or more stays; a kick played in
 // one round only is left out (in Takes with its pass), and the toast says so with Show them. A drum track's default is
-// Layer, with the start.slice2 toggle on as off (Q-F: AJ chose layer, 2026-10-11); Fold is picked for the track.
+// Layer (Q-F: AJ chose layer, 2026-10-11); Fold is picked for the track.
 {
-  const s = await open('/app/', { query: 'on=start.slice2', width: 1440, height: 900 });
+  const s = await open('/app/', { width: 1440, height: 900 });
   const { page, errors } = s;
   const E = (fn, a) => page.evaluate(fn, a);
   try {
@@ -569,7 +567,8 @@ for (const w of [1280, 1366, 1440]) {
     for (let i = 0; i < 60 && (await E(() => window.overdub.input.recorder.state)) !== 'idle'; i++) await sleep(50);
     await sleep(300);
     const r = await E((id) => { const o = window.overdub, t = o.store.track(id); return { clips: t.clips.map((c) => c.notes.map((n) => `${n.p}@${n.t}`).join(' ')), part: o.input.recorder.last?.parts?.[0] && { mode: o.input.recorder.last.parts[0].mode, kept: o.input.recorder.last.parts[0].kept, left: o.input.recorder.last.parts[0].left }, toast: [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).pop() || '', hist: o.store.history.length }; }, d.id);
-    T.ok(d.dflt === 'layer', `a drum track's default is still Layer with start.slice2 on (${d.dflt})`);
+    T.ok(d.dflt === 'layer', `a drum track's default is still Layer (${d.dflt})`);
+
     T.ok(d.mode === 'fold' && r.part?.mode === 'fold' && r.clips.join(' | ') === '36@1 38@2' && r.part.kept === 2 && r.part.left === 1, `R on a drum track set to Fold folds: three passes, the kick played once is left out (${r.clips.join(' | ')}; ${JSON.stringify(r.part)})`);
     T.ok(/Kept 2; left out 1\..*Show them/.test(r.toast), `the take's toast: "${r.toast.slice(0, 120)}"`);
     // Layer is still there, under its id, and remembered for the track

@@ -52,7 +52,6 @@ import { ROWS } from '../input/tap.js';
 import { transcribe, keyChosen } from '../input/hum.js';
 import { spellNote, keyLabel, scalePcs, parsePc, beatsPerBar, DRUM_MAP } from '../core/music.js';
 import { barsOf, isDrumTrack as isDrumT, leanWords } from '../input/recorder.js';
-import { on as toggleOn } from '../toggles.js';
 import { snapGentle } from '../input/timing.js';
 
 const MODES = [
@@ -885,9 +884,8 @@ function mount(el, app) {
     tgtSel.value = t ? t.id : k === 'audio' ? '' : 'new';
     tgtSel.title = t ? `R records onto ${t.name}${stk ? ', a new take over the one there' : ''}` : 'R records onto a new track';
     tgtSel.disabled = st !== 'idle';
-    // (Fold, for the drums with the start.slice2 toggle on (app/src/toggles.js): each time round is a round, and what
-    // you play most often stays; Layer stays the default)
-    const fold = (k === 'pads' && toggleOn('start.slice2')) || m === 'fold';
+    // (Fold, for the drums: each time round is a round, and what you play most often stays; Layer stays the default)
+    const fold = k === 'pads' || m === 'fold';
     const sg = seg([...(fold ? [['fold', 'Fold']] : []), ['layer', 'Layer'], ['take', 'New take']], m, (v) => { const tt = stripTarget(); if (tt && kindNow() !== 'audio') rec.setMode(tt, v); paintStrip(true); }, 'Each pass');
     const segB = (v) => sg.querySelector(`[data-v="${v}"]`);
     if (fold) segB('fold').title = 'Fold: each time round, what you play most often stays; a one-off miss is left out (and kept in Takes)';

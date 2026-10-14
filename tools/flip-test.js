@@ -25,9 +25,7 @@ writeWav(path.join(DIR, FILES.mix), song.mix, song.sr);
 for (const k of ['vocals', 'drums', 'bass', 'other']) writeWav(path.join(DIR, FILES[k]), song.stems[k], song.sr);
 const file = (k) => path.join(DIR, FILES[k]);
 
-// (Flip a song is behind workflow.flip and the local runner behind stems.local: on here, by ?on=, except where a check
-// says off)
-const ON = 'new&on=workflow.flip,stems.local';
+const ON = 'new';
 async function blank(opts = {}) {
   const o = await open('/app/', { query: ON, ...opts });
   await o.page.route('**/__flip/*', (route) => {
@@ -295,79 +293,31 @@ async function settle(page) {
   finally { await o.close(); }
 }
 
-/* ================================================================ off: workflow.flip and stems.local (the default) */
-// Off, nothing adds a flip: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find, app.flip refuses, the
-// runner is off. A song that already has a tempo map (core song format) loads, plays and renders exactly as with it on.
+/* ================================================================ in every studio (no switch: merged means shipped) */
+// A blank song's door has Flip a song beside the other three ways, Song ▸ Export has Release, and Find has the guide's
+// Flip a song heading.
 {
-  console.log('\nwith workflow.flip and stems.local off');
-  const mapped = async (page) => E(page, () => {
-    const app = window.overdub;
-    app.store.dispatch([{ type: 'track.add', track: { id: 't_k', name: 'Keys', instrument: { device: 'core.bass' } } },
-      { type: 'clip.add', track: 't_k', clip: { id: 'c_k', start: 0, length: 16, notes: [0, 2, 4, 6, 8, 10, 12, 14].map((t) => ({ p: 45 + (t % 5), t, d: 1, v: 0.8 })) } },
-      { type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat: 4, sec: 2 }, { beat: 8, sec: 5 }, { beat: 16, sec: 9 }] } }], { by: 'you', label: 'a mapped song' });
-    return JSON.stringify(app.store.get());
-  });
-  const sig = (page) => E(page, async () => {
-    const buf = await window.overdub.engine.render({ sr: 48000, tail: 1 });
-    const x = buf.getChannelData(0);
-    let s = 0, e = 0;
-    for (let i = 0; i < x.length; i++) { s += Math.abs(x[i]) * ((i % 9973) + 1); e += x[i] * x[i]; }
-    return { n: x.length, s: Math.round(s * 1e3) / 1e3, e: Math.round(e * 1e6) / 1e6 };
-  });
-  const on = await blank();
-  let text = null, onSig = null;
-  try {
-    text = await mapped(on.page);
-    onSig = await sig(on.page);
-  } catch (e) { t.ok(false, 'the mapped song (on) threw: ' + (e.stack || e)); }
-  finally { await on.close(); }
-  const o = await blank({ query: 'new' });
+  console.log('\nin every studio');
+  const o = await blank();
   const { page } = o;
   try {
     const d = await E(page, async () => {
-      const app = window.overdub;
       const ways = [...document.querySelectorAll('.st-door .st-way-b')].map((b) => b.textContent.trim());
       document.querySelector('.sm-btn').click();
       await new Promise((r) => setTimeout(r, 150));
-      const menu = [...document.querySelectorAll('.sm-i')].map((b) => b.textContent.trim());
       const release = !!document.querySelector('.sm-release');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      const picked = app.flip.pick();
-      const flipped = await app.flip.flip([]);
-      const { pageJobs } = await import('/app/src/jobs/index.js');
-      const runner = (await pageJobs()).runner('stems');
-      const toggles = app.toggles.list().filter((x) => x.id === 'workflow.flip' || x.id === 'stems.local').map((x) => `${x.id}:${x.on}`);
-      return { ways, menuN: menu.length, release, picked, flipped, runnerOn: runner.available, toggles };
-    });
-    t.ok(d.toggles.join() === 'workflow.flip:false,stems.local:false' && d.ways.join() === 'Tap a beat,Hum a tune,Play the keys', `off: the door has three ways (${d.ways.join(' · ')})`);
-    t.ok(d.menuN > 5 && !d.release, `off: the Song menu has no Export ▸ Release (${d.menuN} rows)`);
-    t.ok(d.picked === false && d.flipped.ok === false && d.flipped.error === "Flip a song isn't on in this studio." && d.runnerOn === false, `off: app.flip.pick() and flip() refuse ("${d.flipped.error}"); the stems runner is off`);
-    const helps = await E(page, async () => {
       window.overdub.find.open({ query: 'flip' });
       await new Promise((r) => setTimeout(r, 800));
-      const rows = window.overdub.find.search('flip a song').filter((x) => x.kind === 'help').map((x) => x.title);
-      const other = window.overdub.find.search('find anything').filter((x) => x.kind === 'help').map((x) => x.title);
+      const helps = window.overdub.find.search('flip a song').filter((x) => x.kind === 'help').map((x) => x.title);
       window.overdub.find.close();
-      return { rows, other };
+      return { ways, release, helps };
     });
-    t.ok(!helps.rows.includes('Flip a song') && helps.other.includes('Find anything'), `off: Find has no Flip a song (the guide's other headings are there: ${helps.other.slice(0, 2).join(', ')})`);
-    // the mapped song from the on studio: it loads, plays and renders the same here
-    const loaded = await E(page, async (txt) => {
-      const app = window.overdub;
-      app.exporter.loadText(txt, 'mapped.overdub.json');
-      for (let i = 0; i < 50 && !app.store.get().tempoMap; i++) await new Promise((r) => setTimeout(r, 100));
-      await app.engine.start?.();
-      app.engine.play?.();
-      await new Promise((r) => setTimeout(r, 400));
-      const playing = !!(app.engine.playing || app.engine.starting);
-      app.engine.stop?.();
-      return { map: app.store.get().tempoMap?.anchors?.length || 0, playing };
-    }, text);
-    const offSig = await sig(page);
-    t.ok(loaded.map === 4 && loaded.playing, `off: a song with a tempo map loads (${loaded.map} anchors) and plays`);
-    t.ok(onSig && JSON.stringify(offSig) === JSON.stringify(onSig), `off: and renders the same as with Flip a song on (${offSig.n} samples, ${JSON.stringify(offSig)} vs ${JSON.stringify(onSig)})`);
+    t.ok(d.ways.join() === 'Tap a beat,Hum a tune,Play the keys,Flip a song', `the door has four ways (${d.ways.join(' · ')})`);
+    t.ok(d.release, 'the Song menu has Export ▸ Release');
+    t.ok(d.helps.includes('Flip a song'), `Find has the guide's Flip a song (${d.helps.join(', ') || 'none'})`);
     t.ok(!real(o.errors).length, `no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
-  } catch (e) { t.ok(false, 'off threw: ' + (e.stack || e)); }
+  } catch (e) { t.ok(false, 'in every studio threw: ' + (e.stack || e)); }
   finally { await o.close(); }
 }
 

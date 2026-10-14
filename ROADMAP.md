@@ -24,16 +24,15 @@ At [overdubstudio.com](https://overdubstudio.com/app/), and in every clone of th
 
 ## Being built
 
-- **Start a song.** The first slice is live: tap a beat, then hum over it. Still to come: a coach strip that says
-  what to do next, the sound card on the stage, folding rounds over a click, and more than one reading of a hum to
-  choose from.
+- **Start a song.** Tap a beat, then hum over it, with a coach strip that says what to do next, the sound card on the
+  stage, folding rounds over a click, and more than one reading of a hum to choose from (live from the next deploy).
 - **The community shelf.** A gallery of devices people and their agents wrote, and a way to try one from the
-  studio. It's built and switched off away from localhost ([docs/COMMUNITY-SHELF.md](docs/COMMUNITY-SHELF.md)). Before
-  it goes on: the audio thread's built-ins frozen before any shelf kernel runs, frame headers, a pinned and
-  hash-checked index, and a way to take a device down that reaches every studio on its next load.
-- **Real Rooms.** A reverb that plays the start of a measured impulse response from a real space (a church, a hall,
-  a small room) and hands off to a fitted tail, with a zero-dependency convolver that renders the same in the worklet
-  and in Node.
+  studio, in every studio from the next deploy ([docs/COMMUNITY-SHELF.md](docs/COMMUNITY-SHELF.md)): the audio
+  thread's built-ins frozen before any shelf kernel runs, frame headers, a pinned and hash-checked index, and a way to
+  take a device down that reaches every studio on its next load.
+- **Real Rooms.** Echo Chamber, a reverb that plays the start of a measured impulse response from a real space (a
+  church, a hall, a small room) and hands off to a fitted tail, with a zero-dependency convolver that renders the same
+  in the worklet and in Node (live from the next deploy).
 - **More sampled instruments.** More sets under the same rule: CC0 or public domain, pinned by hash, checked by the
   same QA rubric (`tools/kits/qa.js`), and old songs never change.
 

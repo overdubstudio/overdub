@@ -32,7 +32,6 @@
 import { newId } from '../core/project.js';
 import { beatsPerBar } from '../core/music.js';
 import { planFlip, planStems, STEM_ROLES } from '../core/flip.js';
-import { on, offLine } from '../toggles.js';
 // (the analysis, its ops and the job layer load on the first flip, not with the studio)
 const lazy = { toOps: null, client: null, jobs: null };
 const toOps = async () => lazy.toOps || (lazy.toOps = await import('../audio/analyze/toOps.js'));
@@ -56,16 +55,13 @@ export default function (app) {
   const toast = (text, opts = {}) => ui?.toast?.(text, opts);
   const setLine = (text, fraction = null, actions = []) => { if (run) run.line = text ? { text, fraction, actions } : null; };
 
-  // (behind workflow.flip: off, nothing starts a flip; a song that already has a tempo map loads and plays as ever)
   function pick() {
-    if (!on('workflow.flip')) { toast(offLine('workflow.flip')); return false; }
     if (!app.importers?.pickFlip) return false;
     app.importers.pickFlip((files) => flip(files));
     return true;
   }
 
   async function flip(items, { split = true } = {}) {
-    if (!on('workflow.flip')) { toast(offLine('workflow.flip')); return { ok: false, error: offLine('workflow.flip') }; }
     if (run && run.busy) { toast('A flip is still running: its line in the arranger says where it is, and Cancel stops it.'); return { ok: false, error: 'busy' }; }
     if (P().tracks.some((t) => t.clips.length)) { toast('Flip a song is for a blank song: Song ▸ New song gives you one.'); return { ok: false, error: 'not blank' }; }
     if (!app.importers?.importFlip) return { ok: false, error: 'no importers' };

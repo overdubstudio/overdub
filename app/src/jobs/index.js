@@ -12,15 +12,13 @@
 //       input { sr, channels }; model { id, version } (default: the runner's); result for stems: { sr, stems:
 //       { drums, bass, other, vocals } }, each an array of channels. A cancelled job rejects with AbortError and
 //       leaves nothing in the cache. A runner that is off rejects with its reason (runner.offReason).
-//   await pageJobs() -> the page's jobs: the local stems runner as the site config says (off without one), and only
-//       while the stems.local toggle is on (both are needed: the config says where, the toggle says whether)
+//   await pageJobs() -> the page's jobs: the local stems runner as the site config says (off without one)
 //
 // A runner: { available, model, offReason?, estimate({ seconds }), run(input, { onProgress, signal }) }
 // (stems/runner.js, and fake.js for the tests).
 import { createJobsCache, jobKey, channelsOf } from './cache.js';
 import { loadSiteConfig } from '../site-config.js';
 import { createStemsRunner } from './stems/runner.js';
-import { on } from '../toggles.js';
 
 export const KINDS = ['stems'];
 
@@ -65,5 +63,6 @@ export function createJobs({ runners = {}, cache } = {}) {
 
 let page = null;
 export function pageJobs() {
-  return page || (page = loadSiteConfig().then((cfg) => createJobs({ runners: { stems: createStemsRunner(on('stems.local') ? cfg.stems : null) } })));
+  return page || (page = loadSiteConfig().then((cfg) => createJobs({ runners: { stems: createStemsRunner(cfg.stems)
+ } })));
 }

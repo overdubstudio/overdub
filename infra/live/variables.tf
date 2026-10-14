@@ -18,10 +18,10 @@ variable "serve_names" {
     The cutover switch. false: the distribution has no aliases and CloudFront's default certificate, serves its own
     cloudfront.net name (path-rewrite.js, CLOUDFRONT_NAME), and the apex and www records still point at the old
     distribution in AJ's personal account. true: it takes overdubstudio.com and www with the certificate, and the records
-    point at it. Turn it on only after the old distribution has let go of both names (the runbook's cutover).
+    point at it. On since the cutover, 2026-10-14 (the old distribution let go of both names first).
   EOT
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "old_distribution_domain" {

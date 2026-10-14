@@ -210,7 +210,7 @@
     },
     "library": {
      "type": "string",
-     "description": "a device with a library (Light Table's AKWF waves, Echo Chamber's rooms): \"\" lists its families (a small library comes whole), a family or part of a name lists those entries, each with the params that play it"
+     "description": "a device's library (Light Table's waves, Echo Chamber's rooms): \"\" lists its families (a small one whole); a family or part of a name lists those, with params"
     }
    },
    "required": [

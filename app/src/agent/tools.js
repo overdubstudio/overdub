@@ -349,7 +349,7 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
   {
     name: 'get_selection',
     annotations: { title: 'Read the selection', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: `What the human is looking at now: the selected track, clip (its notes in the text format), notes, time range (beats and bars), insert (with params), and the playhead. Act on THIS by default. Empty fields: nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they hear a sound on a track before keeping it (the song keeps the old one), else null. start: { step, kind, tempo, sure, rounds, landed } on Start a song's stage (play, hum: wait), else null.`,
+    description: `What the human is looking at now: the selected track, clip (its notes in the text format), notes, time range (beats and bars), insert (with params), and the playhead. Act on THIS by default. Empty fields: nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they try a sound on a track (the song keeps the old one), else null. start: { step, kind, tempo, sure, rounds, landed } on Start a song's stage (play, hum: wait), else null.`,
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
     run(input, { app }) { return selectionInfo(app); },
   },

@@ -53,3 +53,17 @@ resource "aws_route53_record" "next_delegation" {
   ttl     = 300
   records = data.aws_route53_zone.next.name_servers
 }
+
+# api.overdubstudio.com, the cloud API, is delegated to its own zone, which the private overdub-cloud repo owns (its
+# infra/shared) and deploys into. Looked up by name like next's above, so apply overdub-cloud's infra/shared first.
+data "aws_route53_zone" "api" {
+  name = "api.${var.domain}"
+}
+
+resource "aws_route53_record" "api_delegation" {
+  zone_id = aws_route53_zone.live.zone_id
+  name    = "api.${var.domain}"
+  type    = "NS"
+  ttl     = 300
+  records = data.aws_route53_zone.api.name_servers
+}

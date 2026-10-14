@@ -32,3 +32,18 @@ resource "aws_route53_record" "next_aaaa" {
     evaluate_target_health = false
   }
 }
+
+# api.next.overdubstudio.com, the cloud API's staging host, is delegated to its own zone. The zone is the private
+# overdub-cloud repo's (its infra/shared), which deploys the API; this repo only points at it. Looked up by name, so
+# a plan here fails until that zone exists: apply overdub-cloud's infra/shared first.
+data "aws_route53_zone" "api" {
+  name = "api.${var.domain}"
+}
+
+resource "aws_route53_record" "api_delegation" {
+  zone_id = aws_route53_zone.next.zone_id
+  name    = "api.${var.domain}"
+  type    = "NS"
+  ttl     = 300
+  records = data.aws_route53_zone.api.name_servers
+}

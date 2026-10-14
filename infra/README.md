@@ -10,8 +10,11 @@ account (800849967977, us-east-1).
 | `next/` | the preview (zone, bucket, certificate, CloudFront, DNS) and the account-wide pieces: GitHub's OIDC provider, the deploy role, the monthly budget | `opensource/next/terraform.tfstate` |
 | `live/` | the live site (the overdubstudio.com zone and records, bucket, certificate, CloudFront, the frame headers), the stems model's and the access logs' buckets, the production-only deploy role (on `next/`'s OIDC provider), and the MCP relay (`relay.tf`: EC2, EIP, security group, IAM, the origin secret in SSM, CloudFront, DNS) | `opensource/live/terraform.tfstate` |
 
-The private overdub-cloud repo has its own `infra/` for the API, with its state at `cloud/next/terraform.tfstate` in the
-same bucket. Its roles trust the GitHub OIDC provider this repo's `next/` owns (one per issuer per account).
+The private overdub-cloud repo deploys the API itself: its own `infra/` (`shared/`, then one `env/` stack per
+environment), with its state under `cloud/` in the same bucket. Its roles trust the GitHub OIDC provider this repo's
+`next/` owns (one per issuer per account). It also owns the API's zones, `api.overdubstudio.com` and
+`api.next.overdubstudio.com`; all this repo holds of the API is the NS record delegating each one (`live/` and `next/`
+`dns.tf`, which look the zones up by name). So overdub-cloud's `infra/shared` is applied before these records can plan.
 
 ## Running it
 

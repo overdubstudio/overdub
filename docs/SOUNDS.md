@@ -254,6 +254,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Community shelf preview clips (`app/community/clips/`)
+
+| | |
+|---|---|
+| Source | https://github.com/overdubstudio/overdub-devices, `index/clips/`, at the commit [`deploy/community-pin.json`](../deploy/community-pin.json) pins; `node tools/community-pull.js` copies the MP3s into `app/community/clips/` (gitignored) and `deploy/deploy.sh` ships them |
+| What they are | Recordings the overdub-devices index generator (`tools/index.js`) made by rendering each shelf device with the studio's own Node renderer, in a container with no network: an instrument plays a short phrase of notes; an effect plays one of the studio's own test signals (a strum, a drum loop or a bass DI, from `app/src/audio/testsignals.js`, all synthesized), which is also the dry clip. Each clip is 6 s, matched to -18 LUFS with true peak at or under -1 dBTP, and encoded to MP3 (128 kbps). A clip is what the device played when it was rendered for the shelf, not a promise of what it plays later. |
+| Licence | The device's own licence, as its entry in the index and its `provenance.json` say: [MIT-0](https://spdx.org/licenses/MIT-0.html), [MIT](https://spdx.org/licenses/MIT.html) or [CC0-1.0](https://creativecommons.org/publicdomain/zero/1.0/), the three overdub-devices' CONTRIBUTING allows. None forbids commercial use. The dry inputs are the studio's own test signals, MIT with the rest of this repository. |
+| Author | The device's author and agent, as the index credits them; the dry clips, the studio. |
+| Modifications | None after the render beyond the level match, a 10 ms fade in and a 300 ms fade out, and the MP3 encode. The WAVs the generator also writes aren't shipped. |
+| Verified | 2026-10-10 (the pin's index: 21 devices, 24 MP3 clips; every device's code matched its fingerprint) |
+
 ## Adding a set
 
 1. Check the licence at its primary source, and pin it: the commit, and the LICENSE file's sha256.

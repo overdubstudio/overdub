@@ -17,12 +17,91 @@ function in `path-rewrite.js`, no-cache text and day-cached media), and both shi
 `DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`, `DRY_RUN=1 deploy/next/setup.sh`.
 `tools/analytics-test.js` runs both dry with a stub `aws` and checks the plan.
 
+## The community shelf (`app/community/`)
+
+The studio's shelf is pinned, not committed: `deploy/community-pin.json` names an overdub-devices commit and the
+SHA-256 of its `index/community-index.json`. `deploy.sh` reads the pin **at REF**
+(`git show REF:deploy/community-pin.json`, never the working tree) and runs `tools/community-pull.js` into its stage
+after `git archive`. The pull reads that commit with `git archive <commit> index/` from the overdub-devices checkout
+(`OVERDUB_DEVICES_DIR`, else `../overdub-devices`), checks the index's hash and every device file's kernel against its
+entry, and copies the index, the device files and the MP3 clips. If it refuses, nothing is deployed. The index and device files go up as JSON and
+the clips as `audio/mpeg`, all `no-cache`, so a rebuild or a takedown is live at the next load.
+
+| At REF | What the deploy does with the shelf |
+|---|---|
+| no `deploy/community-pin.json` (any ref before the pin existed) | nothing: no shelf, as before |
+| a pin, and the site config going up leaves the `community` toggle out | pulls and checks it, then holds it back ("app/community: held back"); with no checkout to pull from it says so and goes on, so CI's preview deploy works without overdub-devices |
+| a pin, and the site config says `"toggles": { "community": "on" }` or `"off"` | ships it; a missing checkout or a refused pull stops the deploy |
+
+The site config is the staged `app/site-config.json` (below), so the live site and `--next` decide for themselves.
+`COMMUNITY_SHIP=1` ships it whatever the config says; `COMMUNITY_PIN=<file>` reads another pin, in a dry run only.
+`tools/community-test.js` runs the deploy dry against a fixture overdub-devices repo and checks the plan.
+
+Moving the shelf forward is a pull request that changes only `deploy/community-pin.json`:
+`node tools/community-pull.js --pin <overdub-devices commit>` checks that commit, writes the pin, fills
+`app/community/` and prints what's added, changed and taken down since the last pin, for the PR body
+(`.github/PULL_REQUEST_TEMPLATE/community-pin.md`). Adding needs the second person to accept the PR; a takedown pin
+merges at once and is reviewed after (overdub-devices' `docs/TAKEDOWN.md`).
+
+The emergency off needs no code change: set `"toggles": { "community": "off" }` in `deploy/site-config.json` and run
+`deploy.sh` (and `--next`, which keeps the key). The studio and the gallery are then off (no section, no Find words,
+`find_community_device` answers that the shelf isn't on, the gallery says so), on every host, except that the shelf
+still ships and the studio still reads `app/community/community-index.json` on every load and applies its `revoked`
+list, so turning the shelf off never un-revokes anything. Set it back to `"on"` and deploy again to turn it back on.
+(Taking the key out instead is off too, but holds the shelf back, deny list and all: use `"off"`.)
+
+Once the shelf is on, `node tools/prod-check.js` checks the live copy against the pin: the live index's SHA-256 is the
+pin's, its `built.from` is the pinned index's (read from `app/community/` when that's the pinned copy, else from the
+pin's commit in `OVERDUB_DEVICES_DIR` or `../overdub-devices`), no revoked fingerprint is listed, and a clip answers
+`audio/mpeg`. While the live `site-config.json` leaves the `community` toggle out it prints that those checks are
+skipped. Run it after every pin move.
+
+Switching it on, in order (COMMUNITY-SHELF.md, "Where it's on", has the why):
+
+1. The headers: `DRY_RUN=1 deploy/headers.sh`, then `deploy/headers.sh` and `deploy/headers.sh --next` (below).
+2. `deploy/setup.sh` and `deploy/next/setup.sh` again, so CloudFront runs the current `path-rewrite.js` (the
+   `/community/` path).
+3. `node tools/prod-check.js`: the frame headers on `/`, `/app/`, `/site/community/` and `/community/`, and
+   `/community` a 301.
+4. The pin moved to overdub-devices master's merge commit (`node tools/community-pull.js --pin <sha>`), in its own
+   pull request.
+5. The switch: `"toggles": { "community": "on", "community.try": "on" }` in `deploy/site-config.json` (no code
+   change), and the commit that links the gallery (the **Community** word in the site's top nav, the `llms.txt` line,
+   GUIDE.md's line). Then `deploy/deploy.sh`, which now ships `app/community/`, then `node tools/prod-check.js` again
+   for the shelf checks and to see both in `toggles on live`.
+
+## The response headers (`deploy/headers.sh`)
+
+Both distributions send a custom response headers policy in place of CloudFront's managed SecurityHeadersPolicy:
+`overdub-headers` on the live site, `overdub-next-headers` on the preview. It keeps the managed policy's values (HSTS
+for a year, `nosniff`, `strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`) with two changes, both
+with override on and on every path: `X-Frame-Options: DENY` (not SAMEORIGIN) and
+`Content-Security-Policy: frame-ancestors 'none'`. Nothing on the site is framed by another page, and the community
+shelf's trust prompt mustn't be. A header CSP holding only `frame-ancestors` adds to the pages' `<meta>` CSPs; it doesn't
+loosen them. The preview's copy adds `X-Robots-Tag: noindex, nofollow`. `server/serve.js` sends the same frame headers
+and `nosniff` locally.
+
+`deploy/headers.sh` makes the policy or brings it up to date (If-Match), then sets it on the distribution's default
+behaviour, and on any behaviour still on the managed policy, only when one differs; a second run changes nothing.
+`setup.sh` and `next/setup.sh` call it. For a distribution that already exists:
+
+```sh
+DRY_RUN=1 deploy/headers.sh            # the plan, no AWS calls (--next for the preview)
+deploy/headers.sh                      # live: deploy/.distribution-id, else the overdubstudio.com alias (DIST=<id> to name it)
+deploy/headers.sh --next               # the preview
+```
+
+CloudFront takes a few minutes to roll the change out. Then
+`curl -sI https://overdubstudio.com/app/ | grep -iE 'frame|content-security'` shows both headers.
+`aws cloudfront get-response-headers-policy --id 67f7725c-6f97-4210-82d7-5512b31e9d03` shows the managed values it
+copies.
+
 ## How the preview works
 
 `deploy/next/setup.sh` (once; re-running skips what exists) makes the bucket `next.overdubstudio.com`, an ACM
 certificate for that name validated by a CNAME in the overdubstudio.com zone, a copy of the path-rewrite function whose
 home is `next.overdubstudio.com` (so its own paths resolve and nothing redirects testers to the live site), a response
-headers policy with the managed security headers plus `X-Robots-Tag: noindex, nofollow`, the distribution, the bucket
+headers policy (`deploy/headers.sh --next`: the live site's headers plus `X-Robots-Tag: noindex, nofollow`), the distribution, the bucket
 policy that lets only that distribution read, and the A/AAAA alias. It writes the distribution id to
 `deploy/.next-distribution-id` (gitignored); `deploy.sh --next` reads it, or looks the distribution up by its alias.
 

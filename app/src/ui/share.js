@@ -87,8 +87,13 @@ export default function (app) {
   });
   // the held set changed (Play them, Play it in the Devices tab, another tab, a device the song lost): say so
   app.devices.onDevices?.((e) => { if (e.type === 'held') paintBanner(); });
-  // the community shelf read its index after the strip was drawn: its line on a held device (heldLines) draws now
-  ui.on('community:ready', () => { if (heldNow().length) paintBanner(); });
+  // the community shelf read its index after the strip was drawn: its line on a held device (heldLines) draws now. Its
+  // deny list may have just held code this song was running (trust.forget): then the song asks, as it would have on open
+  ui.on('community:ready', () => {
+    if (!heldNow().length) return;
+    if (!ask) ask = { from: share.listening ? 'link' : 'song', answered: null };
+    paintBanner();
+  });
   // a song opened from a file says so (ui/export.js), so the ask can say "This file"
   ui.on('song:opened', (d) => { if (ask && d?.from) { ask.from = d.from; paintBanner(); } });
 

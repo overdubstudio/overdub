@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 134 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 136 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -94,9 +94,12 @@ are covered by <code>tools/compat-test.js</code>.</li>
   server/relay.js        the hosted relay for claude.ai (REMOTE-MCP.md; live)                         [agent layer]
                          relay-catalog.json: the tools it lists, generated (tools/relay-catalog.js)
   site/                  landing page, press/, docs/ (built by tools/docs-build.js), llms.txt         [brand]
-                         community/ (the community shelf's gallery; deployed, unlinked, reads nothing off localhost)
-  app/community/         the community shelf's bundled snapshot: gitignored, built by overdub-devices'
-                         tools/index.js --out (docs/COMMUNITY-SHELF.md)                              [shelf]
+                         community/ (the community shelf's gallery, public at /community/; unlinked, and reading
+                         nothing until the community toggle is on)
+  app/community/         the community shelf's bundled snapshot: gitignored, filled from overdub-devices
+                         at deploy/community-pin.json's commit by tools/community-pull.js: the index,
+                         devices/ (one device file per entry) and clips/ (MP3 only); deploy.sh ships it
+                         no-cache once the site config names the community toggle, else holds it back [shelf]
   app/index.html         the studio page; app/library.html the device shelf; app/gallery.html          [core]
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/&lt;family&gt;/: each woff2 and its licence)         [brand]
@@ -163,8 +166,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
-                         community.js (From the community in the Browser: previews, Try and its prompt; off
-                         unless on localhost, COMMUNITY_LIVE)                                           [shelf]
+                         community.js (From the community in the Browser: previews, Try and its prompt; the
+                         community and community.try toggles)                                           [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
                          the Notes panel's Tab view)                                                    [jam]
@@ -561,17 +564,29 @@ the index only) and a Try whose dispatch failed after its allow.</li>
 <h3 id="the-community-shelf-uicommunityjs-devicescommunityjs"><a class="h-link" href="#the-community-shelf-uicommunityjs-devicescommunityjs">The community shelf (<code>ui/community.js</code>, <code>devices/community.js</code>)</a></h3>
 <p>Instruments and effects people asked their agents for, from the community repo (<code>overdub-devices</code>), in the Browser
 under <strong>From the community</strong>. Nothing is sold, priced or rated. The spec is COMMUNITY-SHELF.md;
-SECURITY.md says what runs when. Off on the live site (<code>COMMUNITY_LIVE</code>); Try is held (<code>TRY_ON</code>) until the worklet's
-prototypes are frozen, and a developer on localhost turns it on with localStorage <code>overdub:community-try</code> = <code>1</code>.</p>
+SECURITY.md says what runs when. Behind two toggles (Toggles, below), both off: <code>community</code> (the shelf, in the studio
+and the gallery) and <code>community.try</code> (Try; the worklet's realm is frozen now). A developer turns them on for a load
+with <code>?on=community,community.try</code> on a local studio. The switch is a config change, <code>&quot;toggles&quot;: { &quot;community&quot;: &quot;on&quot;, &quot;community.try&quot;: &quot;on&quot; }</code> in <code>deploy/site-config.json</code>, plus a commit that links the gallery; COMMUNITY-SHELF.md,
+&quot;Where it's on&quot;, lists what has to hold before it. Named <code>&quot;off&quot;</code>, <code>community</code> is the emergency off.</p>
 <ul>
-<li><code>devices/community.js</code> is the one reader of an index (<code>overdub-community-index/1</code>): the studio, the agent tool and the
-site gallery all read through it. <code>ASKED_MAX</code> is how long a requester line can be and still be drawn.</li>
-<li><code>app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track), tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }</code>. <code>targetFor</code> says where a Try
+<li><p><strong>Where the shelf comes from.</strong> The live studio reads one index, its own <code>/app/community/community-index.json</code>,
+deployed with it (<code>indexUrlAllowed</code> refuses any other origin on a page that isn't on localhost). That copy
+is pinned, not committed: <code>deploy/community-pin.json</code> (<code>{ repo, commit, index_sha256 }</code>, keys forever) names an
+overdub-devices commit, and <code>tools/community-pull.js</code> fills the gitignored <code>app/community/</code> from it with
+<code>git archive</code>, refusing on a wrong hash or a device file whose kernel isn't its entry's. Local development runs the
+same pull. <code>tools/prod-check.js</code> holds the live copy to the pin once the shelf is on.</p></li>
+<li><p><strong>Revocation and the emergency off.</strong> While the shelf is on, the bundled index is read on every load, Browser open
+or not, and each <code>revoked</code> fingerprint goes through <code>trust.forget</code>: the code is held in every song, and the held strip
+says <em>&quot;{Name} was taken off the shelf: {reason}&quot;</em>. <code>app/site-config.json</code> key <code>community</code> (value <code>&quot;off&quot;</code>, the only
+one) turns the shelf off with no code change, in the studio and the gallery; the revoked list still applies.</p></li>
+<li><p><code>devices/community.js</code> is the one reader of an index (<code>overdub-community-index/1</code>): the studio, the agent tool and the
+site gallery all read through it. <code>ASKED_MAX</code> is how long a requester line can be and still be drawn.</p></li>
+<li><p><code>app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track), tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }</code>. <code>targetFor</code> says where a Try
 lands (<code>already: true</code> when it's on that track now: Try doesn't stack a second copy). On a new track a Try brings a
-two-bar part to hear the device on, in the same step.</li>
-<li>Events: <code>community:ready</code> (<code>ui.emit</code>, after each read of the index: <code>ui/share.js</code> draws the held strip's shelf lines
+two-bar part to hear the device on, in the same step.</p></li>
+<li><p>Events: <code>community:ready</code> (<code>ui.emit</code>, after each read of the index: <code>ui/share.js</code> draws the held strip's shelf lines
 again) and <code>workspace:go</code> (<code>ui/workspace.js</code>, Find's Go to, with the query: a shelf word opens the Browser on the
-shelf).</li>
+shelf).</p></li>
 </ul>
 <h3 id="instance"><a class="h-link" href="#instance">Instance</a></h3>
 <p>What <code>instantiate(c, id, opts)</code> returns, for both flavours:</p>
@@ -599,7 +614,15 @@ checks), gets <code>dsp</code> (the stdlib, <code>kernel/dsp.js</code>) and noth
 share link, a device file or any agent, and the shadowed names are not a boundary: <code>[].constructor.constructor</code> still
 reaches the realm's <code>Function</code>. What makes it safe is where it runs: the AudioWorkletGlobalScope has no DOM, no
 localStorage (the person's songs and settings), no cookies and no network. It isn't isolated: a kernel shares the realm
-with every other device (SECURITY.md, &quot;Still open&quot;). On the main thread, <code>host.compileKernel(src)</code> is a
+with every other device in its audio context. Before any kernel runs the processor freezes that scope
+(<code>freezeRealm</code> in <code>worklet.js</code>): the global object (its bindings fixed, no new ones), every object reachable from it
+through properties and prototypes, and the intrinsics no global names (the iterator prototypes); the functions'
+<code>constructor</code> throws; and each node gets its own dsp stdlib (<code>kernelCore</code> takes a function that makes one), so its
+classes' prototypes aren't shared. One kernel can't patch what another uses. <code>kernel/processor.js</code> imports
+<code>devices/worklets/end.js</code> first, so END has wrapped <code>registerProcessor</code> before the freeze for the graph worklets that
+load later. The processor also stamps each node's messages with the def's id (<code>processorOptions.device</code>), so
+a kernel can't report as another device. Still open (SECURITY.md): reading the realm (an indirect <code>eval</code> reaches it),
+and a kernel data file two devices name, which is one writable decoded copy per context. The Node renderer doesn't freeze. On the main thread, <code>host.compileKernel(src)</code> is a
 parse only (<code>new Function</code> is built and never called) for a fast syntax error with its line; every other refusal
 (no <code>create()</code>, a bad <code>poly</code>, <code>Math.random</code> at compile time) comes back from the worklet as a compile-stage error.
 Never call <code>kernelCompiler(...).compile()</code> on the page. The Node renderer (<code>tools/render.js</code>) has no such scope: a
@@ -1712,7 +1735,8 @@ paid for with credits, for people without a Claude of their own. It's off unless
 once per load, <code>server/serve.js</code> answers both from <code>OVERDUB_CLOUD_ORIGIN</code> when there's no file, <code>deploy/deploy.sh</code>
 ships <code>deploy/site-config.json</code> or <code>{}</code>, plus the <code>deploy: 'on'</code> toggles; its other switch is the stems runner, &quot;Jobs
 and the stems runner&quot; above); a <code>cloud.api</code> alone turns nothing on.
-<code>?cloud=</code> points a local studio at a local service only, and counts as the toggle there. No prices live here: the rate card, plans and packs come from the
+<code>?cloud=</code> points a local studio at a local service only, and counts as the toggle there. The community shelf and its gallery read the <code>community</code> toggle
+(<code>community.try</code> for Try), off by default; there is no separate <code>community</code> key any more. No prices live here: the rate card, plans and packs come from the
 service's <code>GET /v1/config</code>.</p>
 <ul>
 <li><code>agent/cloud.js</code> (<code>app.agent.cloud</code>) is the account: the sign-in (Continue with Google opens
@@ -1858,8 +1882,10 @@ Find, <code>app.flip</code>'s pick and flip, <code>get_guide &quot;workflows&quo
 <code>jobs/index.js</code> <code>pageJobs</code> beside the site config's stems entry: both are needed) and <code>device.rooms</code> (Echo Chamber,
 <code>core.rooms</code>: every device offer above, and its half of <code>get_guide &quot;devices&quot;</code>'s reverb paragraph, <code>GUIDE_REVERBS</code>).
 The tempo map neither hides.</li>
-<li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
-(<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
+<li><strong>No constants left.</strong> <code>community</code> and <code>community.try</code> moved onto <code>on()</code> with the shelf (<code>ui/community.js</code>, and the
+gallery, which imports the registry and applies the same config); the unit test's list of constant switches is empty
+and stays so. Only the shelf reads a toggle's raw value: <code>&quot;community&quot;: &quot;off&quot;</code> by name keeps the studio reading its own
+copy's deny list, and deploy.sh shipping that copy (the emergency off).</li>
 <li><strong><code>start.slice2</code></strong> (Start a song, the rest of it) is read in a few places. <code>ui/start.js</code> hands its door and stage to
 <code>ui/start-slice1.js</code> (slice 1, as main had it) while it's off. <code>ui/coach-strip.js</code> doesn't start. Sketch's Each pass
 offers Fold on a drum take only while it's on (a drum track's default is Layer either way). The others are the top bar's &quot;~&quot; (<code>ui/transport.js</code>), Song ▸ Start a song (<code>ui/export.js</code>), Find's Start a song (a

@@ -655,6 +655,36 @@ try {
   t.ok(!errs.length, 'no page errors' + (errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''));
   await studio.close(); studio = null;
 
+  // ---- the community shelf on the live site (R20): the community toggles on (tools/community-live.js answers
+  // site-config.json with them on the way through) and the fixture shelf as the studio's own copy. Over the relay the tool answers from it,
+  // without `trusted`; the catalog doesn't move (no schema change), and it's still 40 tools.
+  {
+    const { liveRoutes } = await import('./community-live.js');
+    const s = studio = await open('/app/', { query: 'new' });
+    const configs = [], lerrs = [];
+    // (the link this file already made: a new one would spend the relay's new-link allowance for this address)
+    await s.page.evaluate((k) => localStorage.setItem('overdub:remote-secret', k), secret2);
+    await liveRoutes(s.page, { origin: s.base, local: s.base, bundled: path.join(ROOT, 'tools/fixtures/community-fake'), errors: lerrs, configs });
+    await s.page.goto(`${s.base}/app/?demo&relay=${encodeURIComponent(base)}`, { waitUntil: 'load' });
+    await s.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+    await s.page.evaluate(() => window.overdub.community.ready());
+    await s.page.evaluate(() => window.overdub.remote.enable());
+    await s.page.waitForFunction(() => window.overdub.remote.state === 'on', null, { timeout: 15000 });
+    const tk = await s.page.evaluate(() => window.overdub.remote.token);
+    const ss = await session(base, tk);
+    const list = await listOf(base, tk, ss.sid);
+    const f = await call(base, tk, ss.sid, 'find_community_device', { limit: 20 });
+    const inPage = await s.page.evaluate(() => window.overdub.tools.run('find_community_device', { limit: 20 }, { by: 'claude' }));
+    const chk = spawnSync(process.execPath, [path.join(ROOT, 'tools/relay-catalog.js'), '--check'], { encoding: 'utf8' });
+    const shipped = JSON.parse(read('server/relay-catalog.json') || '[]');
+    t.ok(configs.some((c) => c.toggles.community === 'on') && !f.res?.isError && f.data?.shelf?.vouched === true && f.data.results.length === inPage.results?.length && f.data.results.length >= 1
+      && f.data.results.every((x) => !('trusted' in x)) && inPage.results.every((x) => 'trusted' in x),
+      `shelf forced live: find_community_device through the relay answers from the studio's own copy (${f.data?.results?.length} results, vouched ${f.data?.shelf?.vouched}) with no \`trusted\`; the in-page agent gets it`);
+    t.ok(same(list, CATALOG) && list.length === 40 && shipped.length === 40 && chk.status === 0 && !lerrs.length && !realErrors(s.errors).length,
+      `shelf forced live: tools/list is still the catalog, server/relay-catalog.json is unchanged (relay-catalog.js --check: ${chk.status === 0 ? 'current' : 'stale'}), ${list.length} tools`);
+    await s.close(); studio = null;
+  }
+
   // ---- WebKit and Firefox: the tab reads its event stream with fetch (so the secret can go in a header), which every
   // engine has to stream; each turns Connect on and answers calls through the relay. (Skipped where not installed.)
   {

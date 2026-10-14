@@ -4,9 +4,12 @@
 (`app/src/devices/community.js`), the Browser's **From the community** with previews, the trust prompt and Try
 (`app/src/ui/community.js`), `find_community_device` and its card (`app/src/agent/community-tool.js`), the site gallery
 (`site/community/`, deployed since 2026-10-06 but unlinked) and `tools/community-test.js`. Held back: the whole shelf is off unless the
-page is on localhost (`COMMUNITY_LIVE`), and Try is off even there (`TRY_ON`) until the worklet's prototypes are frozen
-(section 6). Not built yet, all Work package 3: that freeze, the `credit` cleaning in `ops.js` and `project.js`, the
-knob escape in `faces.js` and the frame headers in `serve.js`. The spec answers AJ's question ("do we have a marketplace
+page is on localhost (then `COMMUNITY_LIVE`, now the `community` toggle), and Try is off even there (then `TRY_ON`, now
+`community.try`) until the worklet's prototypes are frozen
+(section 6). Since then (the shelf-live work, 2026-10-10) the freeze is built, the frame headers are sent locally and
+`deploy/headers.sh` makes them for CloudFront, the shelf is pinned and pulled, and there's an emergency off: section
+"Where it's on" says what's left before the switch. Still not built from Work package 3: the `credit` cleaning in
+`ops.js` and `project.js` and the knob escape in `faces.js`. The spec answers AJ's question ("do we have a marketplace
 concept? I'd love some community UI to browse and use these new devices") with a design, the files each part owns, and
 the tests that hold it. Draft 2 takes in two reviews, one of the security and one of Simple view on a
 phone. "Review notes" at the end lists what changed and what was turned down, with the reason.*
@@ -53,26 +56,58 @@ a phone, that card is the shortest route: ask, ▶, Try, Play it.
 
 ## Where it's on
 
-It ships **off on the live site** until AJ turns it on, and "off" means off, whatever the URL says:
+It ships **off on the live site** until AJ turns it on, and "off" means off, whatever the URL says. It sits behind two
+feature toggles (`app/src/toggles.js`; ARCHITECTURE.md, "Toggles"), both off: `community` (the shelf in the studio and
+the gallery) and `community.try` (Try). Turning it on is a config change, no code: `"toggles": { "community": "on",
+"community.try": "on" }` in the deploy's `deploy/site-config.json`, plus the commit that links the gallery (a
+**Community** word in the site's top nav, a line in `llms.txt`, the guide's line). `pages-test` checks whichever side
+of that commit the tree is on. Before the switch, all of these hold:
 
-- `COMMUNITY_LIVE = false` in `app/src/ui/community.js` (it moves to the `community` toggle next). While it is false,
-  everything the shelf does depends on `location.hostname` being `localhost` or `127.0.0.1`. On any other host,
-  `?community=`, `?community-device=` and a stored `overdub:community` are ignored. The Browser section isn't drawn,
-  Find's shelf words aren't added, and the agent tool answers *"The community shelf isn't on in this studio."*
-  Without that check, a link to `overdubstudio.com/app/?community=http://localhost:NNNN/…` would open the shelf and its
-  trust prompt on the live studio's origin, which holds the person's songs and drives their agents, since `connect-src`
-  already allows `localhost:*`.
-- The bundled snapshot (`app/community/`) is **gitignored**, so `deploy/deploy.sh`, which ships `git archive`, never
-  carries community devices or clips to overdubstudio.com.
+- overdub-devices' DRAFT-NOTES decisions are made (the security and contact address, the licence default, the money
+  and use statement), because the live gallery points people at that repo. They're AJ's.
+- The pin (below) points at a commit on overdub-devices' master, not a branch that could be squashed away, and the index
+  it names was rebuilt without draft wording.
+- `deploy/headers.sh` has run on both distributions, and `node tools/prod-check.js` shows the frame headers on `/`,
+  `/app/`, `/site/community/` and `/community/`.
+- On an iPhone with the ringer off, ▶ (an `<audio>` clip) and Try (Web Audio) are both heard, or the toast says why
+  not (section 3, "Phones"). A person checks it on the phone and writes the result in the pull request.
+
+- The `community` toggle is off. While it is, `?community=`, `?community-device=` and a stored `overdub:community`
+  are ignored, the Browser section isn't drawn, Find's shelf words aren't added, and the agent tool answers *"The
+  community shelf isn't on in this studio."* A developer turns it on for one load with `?on=community` (and Try with
+  `?on=community,community.try`), which counts only on `localhost`, `127.0.0.1` or `[::1]`: on any other host `?on=`
+  does nothing, so a link can't switch anyone's studio. And even with the toggle on, an index from another origin is
+  read only by a local page: without that, a link to `overdubstudio.com/app/?community=http://localhost:NNNN/…` would
+  open the shelf and its trust prompt on the live studio's origin, which holds the person's songs and drives their
+  agents, since `connect-src` already allows `localhost:*`.
+- The bundled snapshot (`app/community/`) is **gitignored**. The studio pins the shelf it ships in a committed file,
+  `deploy/community-pin.json` (an overdub-devices commit and the SHA-256 of its index), and `tools/community-pull.js`
+  fills `app/community/` from a sibling `../overdub-devices` checkout at exactly that commit, checking the index's hash
+  and every device file's kernel against its entry; it copies the index, the device files and the MP3 clips only.
+  Local development runs the same pull, so a laptop's shelf is the shipped one. `deploy/deploy.sh` runs it into its
+  stage and deploys nothing if it refuses; while the site config it ships leaves the `community` toggle out, the
+  pulled shelf is checked and then held back, so no community device or clip reaches overdubstudio.com before the
+  switch.
 - `site/community/` is committed and, since AJ approved it on 2026-10-06, `deploy.sh` ships it (its `HELD_BACK` list
-  is empty). No page links to it yet. The page keeps the studio's switch: while `COMMUNITY_LIVE` is false it reads
-  nothing away from localhost, and on overdubstudio.com it says *"The community shelf isn't on here yet."* It has
-  nothing to read there anyway: the index it reads by default is the studio's snapshot, which never ships. `pages-test`
-  checks all of this.
+  is empty), at `/community/` as well as `/site/community/`. No page links to it until the switch commit. The page keeps the studio's switch (it imports the registry and
+  reads the same config): while the `community` toggle is off it reads nothing, and on overdubstudio.com it says *"The
+  community shelf isn't on here yet."* It has
+  nothing to read there anyway: the index it reads by default is the studio's snapshot, which the deploy holds back
+  until the switch. `pages-test` checks all of this.
 - Nothing from the shelf runs before the trust prompt. A plain file import doesn't ask today; making it ask touches
   every import, not just the shelf, so it's a separate change.
-- **The API key in origin storage is not dealt with by this spec.** The prompt says plainly that the code runs in the
-  same tab as the key, and `COMMUNITY_LIVE` stays off until the key is out of origin storage.
+- **The emergency off** needs no code change: `"toggles": { "community": "off" }` in the deployed
+  `app/site-config.json` (`deploy/site-config.json`; deploy/README.md). Off is the toggle's default, but named `"off"`
+  it differs in one way: the deploy still ships the bundled index and the studio still reads it on every load and
+  applies its `revoked` list, so turning the shelf off never un-revokes anything.
+- **The API key is gone from the page** (SECURITY.md, "No API key on the page"), which was this spec's condition for
+  turning the shelf on. The prompt no longer mentions a key.
+- **Moving the shelf forward** is a pull request that changes only `deploy/community-pin.json`, made with
+  `node tools/community-pull.js --pin <commit>`, which prints what's added, changed and taken down for its body. Adding
+  needs two people (one merges the device in overdub-devices, the other accepts the pin); a takedown needs one and
+  ships before it's reviewed (overdub-devices' `docs/TAKEDOWN.md`). Once it's on, `node tools/prod-check.js` checks the
+  live index against the pin: its SHA-256, its `built.from`, no revoked fingerprint listed, and a clip that answers
+  `audio/mpeg`.
 
 What the shelf does differently from "install": nothing auto-runs, nothing installs into the studio, and a device only
 ever goes into the song you have open. There it travels like any other song device, and it's held on someone else's
@@ -193,7 +228,7 @@ decoding MP3. The studio never checks `pcm`, so a clip isn't tied to the index, 
 
 ### What the reader accepts
 
-The index is someone else's data, read on the origin that holds the API key. The reader (`app/src/devices/community.js`)
+The index is someone else's data, read on the origin that holds the person's songs. The reader (`app/src/devices/community.js`)
 copies what it knows into its own objects (an allow-list, like `parseDeviceFile`) and checks each value's **type and
 range** as well as its name. The rules:
 
@@ -256,7 +291,7 @@ The community repo owns its index. The generator lives there, uses the studio fr
 
 ```
 node tools/index.js                              every device; writes index/
-node tools/index.js --out ../overdub/app/community   the studio's bundled snapshot (gitignored there)
+node tools/index.js --out <dir>                  an index somewhere else (a look; the studio's snapshot comes from its pull)
 node tools/index.js --checks out/check.json      use a check report that already ran (a CI artifact) instead of checking
 node tools/index.js --encoder auto|lame|ffmpeg|none   (default auto: lame, then ffmpeg, then WAV only)
 node tools/index.js --allow-dirty                build from uncommitted edits (built.from says "+dirty")
@@ -367,8 +402,8 @@ buttons and there's no `/` key. The shelf is reached three ways, and each one br
 - **More.** The `browser` feature (`app/src/ui/workspace.js` `FEATURES`) gains the aliases `'community'`, `'shelf'`,
   `'other people'` and `'new sounds'`, so searching More for them finds **Instruments and effects**, whose line then
   names the community shelf. Adding it from there closes More and opens the Browser scrolled to the shelf's head
-  (`workspace:add` carries the query; a shelf word calls `reach()`). The aliases are added only while the shelf is on (a local host,
-  or `COMMUNITY_LIVE`).
+  (`workspace:add` carries the query; a shelf word calls `reach()`). The aliases are added only while the shelf is on (the `community`
+  toggle).
 - **A link or the agent's card.** `?community-device=` and the card's ▶ / Try call
   `app.ui.workspace.reach('browser', by)` and open the left sheet on that entry (`by` is `'you'` for a link, the agent
   for its card, so More's note says who brought it in).
@@ -431,7 +466,7 @@ MIT-0 · devices/example-author/back-seat at 249eac3 · Read the code · Keep it
 - **Read the code** fetches the device file (same policy and byte cap as Try) and shows its kernel with `textContent`
   in a `<pre>`, under the fingerprint's first 12 hex characters. Nothing is parsed beyond the JSON, and nothing runs.
 - **Keep it in this song, on no track** is a small text link: the existing import, behind the same prompt (section 3,
-  "Keep in this song"). While Try is held back (`TRY_ON`), neither Try nor this link is drawn: one line says Try isn't
+  "Keep in this song"). While Try is held back (the `community.try` toggle off), neither Try nor this link is drawn: one line says Try isn't
   open yet, and ▶ and Read the code stay.
 - No face is drawn in the Browser row; there isn't room. The site gallery draws faces (section 4).
 
@@ -540,7 +575,7 @@ or the agent's card, and it never shows the agent's words. The bundled-index ver
 > **Back Seat** is code. example-author asked for it, Claude Opus 5.5 wrote it. A person read it before it went on the
 > shelf.
 >
-> It runs on the studio's audio thread, in the same browser tab as your API key. It can't reach the network or your
+> It runs on the studio's audio thread, in this browser tab, beside your songs. It can't reach the network or your
 > files from there, but it can change how other devices sound. The check catches mistakes, not malice. The clip is a
 > recording, not a promise.
 >
@@ -552,7 +587,6 @@ or the agent's card, and it never shows the agent's words. The bundled-index ver
 
 - **Another origin:** the second sentence becomes *"The shelf at localhost:4000 says example-author asked for this. The
   studio can't confirm that."*, and "A person read it" goes.
-- **No key stored:** "in the same browser tab as your API key" becomes "in this browser tab".
 - **The numbers aren't here.** They're in the detail, so the prompt fits: **Play it on Vocals** is visible without
   scrolling at 390 × 664.
 - **Run it in any song from now on** starts unticked. Unticked, the code is allowed for this page load only
@@ -591,10 +625,11 @@ Without `new`, it opens the section on the entry in the current song. An id the 
 device "<id>"."* Then the parameter is removed from the address bar, as `?device=` is. While the shelf is off
 (section "Where it's on"), the parameter is ignored and removed.
 
-**Framing.** The studio's meta CSP can't set `frame-ancestors`, and only `server/relay.js` sends
-`frame-ancestors 'none'` today. `server/serve.js` sends `X-Frame-Options: DENY` and
-`Content-Security-Policy: frame-ancestors 'none'` for `/app/` and `/community/`, so no other site can frame the prompt
-and steer a click into it. CloudFront needs the same response headers before the shelf is on.
+**Framing.** The studio's meta CSP can't set `frame-ancestors`, so it comes as a header. `server/serve.js` sends
+`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Content-Type-Options: nosniff` on
+every response, so no other site can frame the prompt and steer a click into it. On CloudFront the same two frame
+headers come from the response headers policy `deploy/headers.sh` makes (`overdub-headers`; the preview's
+`overdub-next-headers` adds noindex), on every path. It has to have run on the live distribution before the shelf is on.
 
 ### Index source
 
@@ -603,11 +638,11 @@ and steer a click into it. CloudFront needs the same response headers before the
   `overdub:community` = `{ "url": "..." }`). A changed source is a lasting redirect, so it's never silent: the shelf
   line names it every time and offers **Back to the studio's copy**, which clears the key.
 - **Allowed URLs:** a path on the studio's own origin, or `http://localhost:*` / `http://127.0.0.1:*`, and only while
-  the page itself is on `localhost` or `127.0.0.1` (or `COMMUNITY_LIVE` is true, in which case only the studio's own
-  origin is allowed: the live studio reads a copy deployed with it, never a remote index). Anything else is refused before any fetch: *"The studio can read a shelf from
+  the page itself is on `localhost` or `127.0.0.1` (on any other host only the studio's own origin is allowed: the
+  live studio reads a copy deployed with it, never a remote index). Anything else is refused before any fetch: *"The studio can read a shelf from
   this site or from localhost only."*
-- A missing or unreadable index: the section is the empty state, a sentence and a button. *"No shelf here. Build one
-  with node tools/index.js --out ../overdub/app/community in overdub-devices."*
+- A missing or unreadable index: the section is the empty state, a sentence and a button. *"No shelf here. Fill it
+  with node tools/community-pull.js (it reads the pinned commit from ../overdub-devices)."*
 - The index is fetched once per page load (when the shelf is on), and again on Change.
 
 ### Taken off the shelf
@@ -650,7 +685,9 @@ nothing on other browsers), or say in the toast why there's no sound.
 ## 4. The site gallery: `site/community/`
 
 `site/community/index.html` + `community.css` + `community.js` (an external module, so the page's CSP needs no new
-inline hash). It follows the library page's layout (`app/library.html`): the face on its shelf, the paperwork under a
+inline hash). Its public address is `/community/` (`deploy/path-rewrite.js` and `server/serve.js` map it; `/community`
+redirects there, and `/site/community/` still serves the page, canonical to `https://overdubstudio.com/community/`). Its
+own files are linked by absolute paths, so both addresses load the same ones. It follows the library page's layout (`app/library.html`): the face on its shelf, the paperwork under a
 hairline, sections under a heavy rule. No cards and no stripes.
 
 - **Reads the same index** with the same reader (`/app/src/devices/community.js`), from
@@ -681,7 +718,9 @@ hairline, sections under a heavy rule. No cards and no stripes.
   "checked … read" clause and names the source. The licence explainer links to the repo's LICENSING.md once it has a
   URL.
 - **Shipped, not linked:** `deploy.sh` carries it (AJ, 2026-10-06), but nothing in `site/index.html`, `site/docs/` or
-  `llms.txt` links to it yet (this page takes no uploads). Off localhost it reads nothing until `COMMUNITY_LIVE` is on.
+  `llms.txt` links to it yet (this page takes no uploads). It reads nothing until the `community` toggle is on.
+  The switch commit links it (section "Where it's on"), and `pages-test` checks the links on whichever side of the
+  switch the tree is.
 
 ---
 
@@ -783,22 +822,27 @@ tool answers *"The community shelf isn't on in this studio."* with no results.
 
 ## 6. Running other people's kernels: what has to hold first
 
-Try runs code someone else wrote in the tab that holds the API key. Three things land before WP4's Try is switched on,
-even locally:
+Try runs code someone else wrote in the tab that holds the person's songs. Three things land before WP4's Try is
+switched on, even locally. All three are built now.
 
-1. **The worklet's built-in prototypes are frozen before any kernel runs** (`app/src/kernel/worklet.js`; SECURITY.md
-   lists it as open, item 3). Today a trusted kernel can reach the realm's `Function` through
+1. **The worklet's built-in prototypes are frozen before any kernel runs** (`app/src/kernel/worklet.js`
+   `freezeRealm`; SECURITY.md lists the finding as fixed). Before the freeze, a trusted kernel can reach the realm's `Function` through
    `[].constructor.constructor` and patch `MessagePort.prototype.postMessage` or the typed-array prototypes. That lets
    it fake `{ type: 'error' | 'log', message }` traffic for any device and bend what other devices output, and with it
    what `render_and_measure` and `adjust` report to the agent. Freezing `Object`, `Function`, `Array`, the typed
-   arrays, `MessagePort` and their prototypes, after the dsp stdlib is built, closes that. The worklet also labels each
+   arrays, `MessagePort` and their prototypes, after the dsp stdlib is built, closes that. (After review, 2026-10-11:
+   that list left the global bindings and the iterator, `Map`, `String` and other prototypes open, and the dsp
+   stdlib's classes shared. The freeze now takes the global object and everything reachable from it and from the
+   unnamed intrinsics, each node gets its own dsp stdlib, and `kernel-test` walks the scope from a kernel and finds
+   nothing unfrozen. Still open, in SECURITY.md: a kernel data file two devices name is one writable decoded copy.) The worklet also labels each
    message with the device id it knows a kernel by, never one the kernel supplies. `golden-test` must not move.
 2. **Trust is stored only after the check passes** (section 3, step 5).
-3. **The prompt says what the code can and can't do**, including the API key line (section 3, "The trust prompt").
+3. **The prompt says what the code can and can't do** (section 3, "The trust prompt").
 
 What stays open, said plainly in SECURITY.md's shelf row: an allowed kernel still shares the realm with every other
-device, can tell when it's being rendered for the shelf, and runs in the tab that holds the key. WASM kernels and the
-key leaving origin storage are what close those, and the shelf stays off on the live site until they do.
+device, can tell when it's being rendered for the shelf, and runs in the tab with the songs. WASM kernels are what
+would close those. The freeze and the stamped messages are what this spec asked for before the shelf goes on; the rest
+is written down rather than closed.
 
 ---
 
@@ -883,8 +927,9 @@ All browser suites open Chromium through `tools/pw.js` (QUIET), on their own ser
   - The hostile fixture renders numbers or nothing in the gallery's faces.
   - No site page links to it.
   - `deploy.sh` holds it back, and `app/community/` is in `.gitignore`.
-- `tools/community-test.js` also checks the local server's headers: `/app/` and `/community/` responses carry
-  `X-Frame-Options: DENY` and `frame-ancestors 'none'`; static responses carry `X-Content-Type-Options: nosniff`.
+- `tools/community-test.js` also checks the local server's headers: `/app/`, `/site/community/`, `/community/` and the
+  rest carry `X-Frame-Options: DENY`, `frame-ancestors 'none'` and `X-Content-Type-Options: nosniff`; and it runs
+  `deploy/headers.sh` dry and against a fake `aws` (made once, set on the distribution, a second run changes nothing).
 - `tools/brand-test.js`:
   - The new CSS has no `border-radius: 99px`/`50%` and no coloured `border-left`/inset-shadow edges.
   - The new copy has no "safe", "secure", "sandboxed" (the worklet is not a sandbox), "verified", "marketplace", "buy",
@@ -965,8 +1010,9 @@ track folded into the prompt; real phone assertions; Simple-view tests.
   the permanent one. Two allow buttons plus Not now breaks one primary per region and lengthens a sheet that has to fit
   390 × 664. A box, unticked, makes the larger grant the deliberate one with one primary.
 - **Try doesn't refuse while an API key is stored locally.** The review offered refusing or saying so. The shelf only
-  runs on localhost until `COMMUNITY_LIVE`, which stays off until the API key is out of origin storage. Refusing locally would stop AJ testing the
-  agent route with his own key. The prompt says it instead, in plain words.
+  runs on localhost until the `community` toggle is on live, which stays off until the API key is out of origin storage. Refusing locally would stop AJ testing the
+  agent route with his own key. The prompt says it instead, in plain words. (Since then the key has left the page
+  altogether, and the prompt's key line went with it.)
 - **`forget` on a failed check isn't needed.** With trust stored only after a pass (security 7), a failed check stores
   nothing, so there is nothing to forget. The `n === 1` rule from security 8 is kept for the one case left: a dispatch
   that fails after `allow`.

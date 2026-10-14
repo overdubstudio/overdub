@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time AWS setup for overdub.ajsmithhq.com (run once; safe to re-run: it skips what exists).
-# Bucket (private) -> CloudFront (OAC, the ajsmithhq.com wildcard cert, a path-rewrite function) -> Route53 alias.
+# Bucket (private) -> CloudFront (OAC, the ajsmithhq.com wildcard cert, a path-rewrite function, the response headers
+# policy deploy/headers.sh makes) -> Route53 alias.
 # Costs: S3 storage for ~20 MB and CloudFront requests; pennies a month at this scale.
 set -euo pipefail
 [ -f "$(dirname "$0")/.env" ] && . "$(dirname "$0")/.env"   # ZONE, CERT, OAC: see deploy/env.example
@@ -10,7 +11,6 @@ ZONE=${ZONE:?set ZONE in deploy/.env}          # the domain's hosted zone
 CERT=${CERT:?set CERT in deploy/.env}          # the domain + its wildcard
 OAC=${OAC:?set OAC in deploy/.env}             # an origin access control
 CACHE=658327ea-f89d-4fab-a63d-7e88639e58f6      # managed CachingOptimized
-SECURITY=67f7725c-6f97-4210-82d7-5512b31e9d03   # managed SecurityHeadersPolicy
 FN=overdub-path-rewrite
 HERE=$(cd "$(dirname "$0")" && pwd)
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
@@ -35,6 +35,8 @@ echo "function: $FN_ARN"
 # the distribution
 DIST=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items && contains(Aliases.Items, '$DOMAIN')].Id | [0]" --output text)
 if [ "$DIST" = "None" ] || [ -z "$DIST" ]; then
+  # the managed security headers, but X-Frame-Options DENY and CSP frame-ancestors 'none' (deploy/headers.sh)
+  RHP=$("$HERE/headers.sh" --policy-only)
   CFG=$(mktemp)
   cat > "$CFG" <<JSON
 {
@@ -49,7 +51,7 @@ if [ "$DIST" = "None" ] || [ -z "$DIST" ]; then
   "DefaultCacheBehavior": {
     "TargetOriginId": "s3-overdub", "ViewerProtocolPolicy": "redirect-to-https", "Compress": true,
     "AllowedMethods": { "Quantity": 2, "Items": ["GET", "HEAD"], "CachedMethods": { "Quantity": 2, "Items": ["GET", "HEAD"] } },
-    "CachePolicyId": "$CACHE", "ResponseHeadersPolicyId": "$SECURITY",
+    "CachePolicyId": "$CACHE", "ResponseHeadersPolicyId": "$RHP",
     "FunctionAssociations": { "Quantity": 1, "Items": [{ "FunctionARN": "$FN_ARN", "EventType": "viewer-request" }] }
   },
   "ViewerCertificate": { "ACMCertificateArn": "$CERT", "SSLSupportMethod": "sni-only", "MinimumProtocolVersion": "TLSv1.2_2021" },
@@ -59,6 +61,9 @@ JSON
   DIST=$(aws cloudfront create-distribution --distribution-config "file://$CFG" --query Distribution.Id --output text)
   rm -f "$CFG"
   echo "distribution: created $DIST"
+else
+  # one made before deploy/headers.sh existed sends the managed policy: the policy is brought up to date and set on it
+  DIST="$DIST" "$HERE/headers.sh"
 fi
 DIST_DOMAIN=$(aws cloudfront get-distribution --id "$DIST" --query Distribution.DomainName --output text)
 echo "distribution: $DIST ($DIST_DOMAIN)"

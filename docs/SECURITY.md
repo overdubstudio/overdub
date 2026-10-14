@@ -63,7 +63,8 @@ runs; and text in a song written to steer an agent.
   `demos-test`, `agent-test`, `library-test` and `provenance-test` check it, with every kernel that reaches the audio
   thread written down.
 - **The community shelf** (`ui/community.js`, `devices/community.js`; docs/COMMUNITY-SHELF.md). Off on the live site:
-  `COMMUNITY_LIVE` is false, and until it's true the shelf does nothing unless the page is on localhost or 127.0.0.1.
+  the `community` toggle is off, and until the deploy's site config turns it on the shelf does nothing (a local studio
+  turns it on for one load with `?on=community`; `?on=` does nothing on any other host).
   Its index is JSON, read by one reader that copies only the fields it knows, checks each and caps text; it never
   carries code, and clip and device URLs stay inside the index's own folder on its own origin. ▶ plays a recording
   from a `blob:` URL; no device code is fetched to hear one. **Try** fetches the device file (300 KB at most), refuses
@@ -71,7 +72,14 @@ runs; and text in a song written to steer an agent.
   an agent's card, focus on Not now, Play it held 600 ms), runs the device check, and only then trusts the hash (for
   this page load, or from now on if the person ticks the box) and puts it on as one step. The song gets the entry's
   name, blurb and request, never the file's. Only the studio's own copy of the index can take a hash back (its deny
-  list). Try itself is held (`TRY_ON`) until item 3 below is done. No agent tool reaches trust: `find_community_device`
+  list). Try itself is held (the `community.try` toggle) until the switch. What stays open once it's on, plainly: an allowed shelf
+  kernel still shares the audio thread's realm with every other device in the song (frozen, global bindings and all,
+  so it can't patch what they use or report as one of them, but it can read the realm: an indirect `eval` reaches its
+  globals; and a kernel data file two devices both name is decoded once per audio context, so a kernel that names a
+  kit another device plays can rewrite that kit's samples under it); a kernel
+  can tell when it's being rendered for the shelf (the device check's test signals, an offline context), so the
+  check can't prove how it behaves in a song; and it runs in the tab with the person's songs (no DOM, storage or
+  network in that scope, but the same tab). No agent tool reaches trust: `find_community_device`
   raises a card and the person presses Try. `define_device` refuses a shelf kernel as it is or with its names,
   comments or spacing changed; that keeps a shelf device's credit from being passed off as an agent's, and is not a
   boundary (code an agent defines is trusted here, changed or not). `community-test` checks it.
@@ -130,7 +138,7 @@ runs; and text in a song written to steer an agent.
 | `?relay=` worked on the live site (shows Connect; could send a tab's token to a local port) | Low | Fixed (`e53e3a9`); the relay's trial switch, `?connect=1`, showed Connect for the hosted relay only. `?connect=1` is retired (0015): the `relay` toggle in `app/site-config.json` decides, and no link switches a studio on the live site |
 | The bridge took any request without an Origin, so a page could take over the live tab (denial of service) | Low | Fixed (`62f4c8a`) |
 | `Infinity` from a song file reached clip positions; a deeply nested link threw | Low | Fixed (`2e39267`) |
-| Kernels in one audio context share the worklet's built-in prototypes | Low | Open |
+| Kernels in one audio context share the worklet's built-in prototypes | Low | Fixed: before any kernel runs the scope is frozen, its global bindings (`Float32Array`, `registerProcessor`, no new globals) and every object reachable from them or from the intrinsics no global names (the iterator prototypes among them); each node gets its own dsp stdlib; the functions' `constructor` throws; and each node's messages carry its own device id (`d59e2ed`, the global bindings and iterators after review). `kernel-test` walks the scope from a kernel and finds nothing unfrozen. Still open: the realm is read-shared (below), and a kernel data file two devices name is one decoded copy per context, writable by either kernel |
 | Google Fonts on every page: each visitor's IP goes to Google, and CSS can read attribute values on the key's page | Low | Fixed: the fonts are files on the site (`app/style/fonts.css`), no page asks Google for anything, and the policies name no font or style host (`font-src 'self'`); the provenance report takes the same files, inside it when it is saved |
 | The relay's memory and capacity limits; its origin secret travels in SSM command parameters | Low, before it ships | Fixed: caps on bodies, held and unread bytes, sessions, streams and calls in flight, a rate limit per address (an IPv6 /64), `429`/`503` with `Retry-After` (calls in flight: a tool error saying when); the instance reads the secret from Parameter Store |
 | Analytics: only words from a fixed list are sent, but CloudFront's logs keep IP, browser and referrer for 90 days | Info | Disclosed; AJ's call |
@@ -151,22 +159,20 @@ Code, no decision needed:
    the only way out. A heartbeat could rebuild the audio context without the newest song device and name it. (A
    link's or a file's kernel now hangs only after the person has let it play, and its code stays trusted after that.)
 2. **Song renders** (`render_and_measure` on a song with a hanging kernel) have no deadline yet.
-3. **Freeze the worklet's built-in prototypes** before any kernel runs. The community shelf's Try waits on it
-   (`TRY_ON` in `ui/community.js`).
-4. **Self-host the fonts: done.** The five families the pages draw in (Archivo, Atkinson Hyperlegible Next and Mono,
+3. **Self-host the fonts: done.** The five families the pages draw in (Archivo, Atkinson Hyperlegible Next and Mono,
    and the device faces' Rubik Dirt and Silkscreen) are woff2 files on the site, each folder in `app/style/fonts/`
    with its licence (the SIL OFL 1.1), declared in `app/style/fonts.css` with the weights, widths and ranges Google
    Fonts served, so nothing on a page moved; `tokens.css` imports it, so every page that has the tokens has the faces.
    No page asks Google for anything; the studio's, library's and gallery's policies say `font-src 'self'` and name no
    style host. The provenance report takes the same files: by URL in its tab, inside the page when it is saved.
-5. **The relay, before it ships: fixed.** The tab now proves a 256-bit secret the connector URL doesn't carry (the
+4. **The relay, before it ships: fixed.** The tab now proves a 256-bit secret the connector URL doesn't carry (the
    token is a one-way SHA-256 of it; a browser that kept an old token gets a new pair and is told once); `tools/list`
    is the relay's own catalog (`server/relay-catalog.json`, generated from `tools.js` and checked), and other names
    are refused; caps on bytes, sessions and streams, and a rate limit per address or /64, answer `429` or `503` with
    `Retry-After` (a call one too many in flight is a tool error that says when to retry); the instance reads the
    origin secret from Parameter Store; and its host is in the policy's `connect-src`. It is deployed (about $7.40 a month) and
    on for everyone. Left: the plain-HTTP hop from CloudFront to the instance (REMOTE-MCP.md, "Known gap").
-6. **Smaller:** the engine's timer Worker as a file (so `worker-src` can be `'self'`); warn when sharing a song a link can't carry (past the limits); make the loop's values finite at load;
+5. **Smaller:** the engine's timer Worker as a file (so `worker-src` can be `'self'`); warn when sharing a song a link can't carry (past the limits); make the loop's values finite at load;
    give the landing and docs pages a policy (their inline scripts need hashes).
 
 AJ's calls:
@@ -175,8 +181,10 @@ AJ's calls:
    tokens a turn used shown to the person. (What it takes away already waits for Keep: below.)
 2. **Whether a sender's agent signatures travel.** Today a link's `claude` parts stay Claude's, on the sender's word
    (the ask names such a device "Claude for Sam", so the listener knows whose link it came in).
-3. **The policy as a CloudFront header**, for `frame-ancestors` and violation reports (it must carry the library's and
-   gallery's script hashes).
+3. **The full policy as a CloudFront header**, with violation reports (it must carry the library's and gallery's
+   script hashes). `frame-ancestors 'none'` is sent now, with `X-Frame-Options: DENY`: by the local server, and on the
+   site by the response headers policy `deploy/headers.sh` sets (AJ runs it). The rest of the header policy is still
+   his call.
 4. **How long CloudFront's logs keep IPs.**
 
 Decided and built:

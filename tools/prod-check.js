@@ -1,9 +1,26 @@
 // Production smoke check: the live site serves, the studio boots, the demo song renders through the real engine,
 // and nothing errors. Not part of run-all (it needs the network): node tools/prod-check.js [base-url]
+//
+// It also holds what deploy/headers.sh and the community shelf promise (docs/COMMUNITY-SHELF.md, "Where it's on"):
+// - always: /, /app/, /site/community/ and /community/ carry Content-Security-Policy: frame-ancestors 'none' and
+//   X-Frame-Options: DENY; each page's <meta> CSP is the one in this checkout (the header adds to it, never replaces
+//   it); /community/ is 200 and /community a 301 to it.
+// - only while the live /app/site-config.json names the community toggle, "on" or "off" (the emergency off still
+//   ships the studio's own copy, for its deny list; deploy/deploy.sh), else one line says they're skipped:
+//   the live index's SHA-256 is deploy/community-pin.json's, its built.from is the pinned index's, no revoked hash is
+//   listed in its devices, and a clip answers audio/mpeg. The pinned index is app/community/ when its hash is the pin's
+//   (node tools/community-pull.js), else the pin's commit in the overdub-devices checkout (OVERDUB_DEVICES_DIR, else
+//   ../overdub-devices).
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { openUrl, tally } from './pw.js';
 
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BASE = process.argv[2] || 'https://overdubstudio.com';
 const t = tally('prod');
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 
 for (const [route, type] of [['/', 'text/html'], ['/app/', 'text/html'], ['/app/src/main.js', 'text/javascript'], ['/llms.txt', 'text/plain'], ['/docs/AGENTS.md', 'text/markdown'], ['/app', null]]) {
   const r = await fetch(BASE + route, { redirect: 'manual' });
@@ -12,6 +29,62 @@ for (const [route, type] of [['/', 'text/html'], ['/app/', 'text/html'], ['/app/
 }
 const head = await fetch(BASE + '/', { method: 'HEAD' });
 t.ok(/max-age=\d+/.test(head.headers.get('strict-transport-security') || ''), 'HSTS on');
+
+// ---- the frame headers (deploy/headers.sh) on every page a person can land on, and the meta CSPs left as they are
+const metaCsp = (html) => /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/i.exec(html)?.[1] ?? null;
+for (const [route, file] of [['/', 'site/index.html'], ['/app/', 'app/index.html'], ['/site/community/', 'site/community/index.html'], ['/community/', 'site/community/index.html']]) {
+  const r = await fetch(BASE + route, { redirect: 'manual' });
+  const csp = r.headers.get('content-security-policy') || '', xfo = r.headers.get('x-frame-options') || '';
+  t.ok(r.status === 200 && /(^|;)\s*frame-ancestors 'none'\s*(;|$)/.test(csp) && xfo.toUpperCase() === 'DENY',
+    `${route}: Content-Security-Policy frame-ancestors 'none' and X-Frame-Options DENY (${r.status}; csp ${JSON.stringify(csp)}, x-frame-options ${JSON.stringify(xfo)})`);
+  const live = metaCsp(await r.text()), here = metaCsp(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+  t.ok(live === here, `${route}: its <meta> CSP is ${file}'s, unchanged${here == null ? ' (none)' : ''}${live === here ? '' : ` (live: ${JSON.stringify(live)})`}`);
+}
+{
+  const r = await fetch(BASE + '/community', { redirect: 'manual' });
+  t.ok(r.status === 301 && r.headers.get('location') === '/community/', `/community is a 301 to /community/ (${r.status} ${r.headers.get('location')})`);
+}
+
+// ---- the community shelf, once it's switched on
+{
+  let cfg = null;
+  try { cfg = await (await fetch(BASE + '/app/site-config.json', { cache: 'no-store' })).json(); } catch { cfg = null; }
+  const live = cfg?.toggles && typeof cfg.toggles === 'object' ? cfg.toggles.community : undefined;
+  if (live !== 'on' && live !== 'off') t.note(`the community shelf checks are skipped: the live site-config.json has the community toggle ${live === undefined ? 'left out' : JSON.stringify(live)}`);
+  else {
+    const pin = JSON.parse(fs.readFileSync(path.join(ROOT, 'deploy/community-pin.json'), 'utf8'));
+    const r = await fetch(BASE + '/app/community/community-index.json', { cache: 'no-store' });
+    const raw = Buffer.from(await r.arrayBuffer());
+    const got = sha256(raw);
+    t.ok(r.status === 200 && got === pin.index_sha256, `the live index's SHA-256 is the pin's (${r.status}; ${got.slice(0, 12)}, pin ${pin.index_sha256.slice(0, 12)} at overdub-devices ${pin.commit.slice(0, 7)})`);
+    let index = null;
+    try { index = JSON.parse(raw.toString('utf8')); } catch { /* the check below fails */ }
+    // the pinned index: the pulled copy when it's the pin's, else the pin's commit in the overdub-devices checkout
+    let pinned = null, where = '';
+    const local = path.join(ROOT, 'app/community/community-index.json');
+    if (fs.existsSync(local) && sha256(fs.readFileSync(local)) === pin.index_sha256) { pinned = JSON.parse(fs.readFileSync(local, 'utf8')); where = 'app/community/'; }
+    else {
+      try {
+        const { verify } = await import('./community-pull.js');
+        const from = process.env.OVERDUB_DEVICES_DIR || path.join(ROOT, '..', 'overdub-devices');
+        pinned = verify(from, pin.commit, { indexSha: pin.index_sha256 }).index;
+        where = `${from} at ${pin.commit.slice(0, 7)}`;
+      } catch (e) { where = `not found (${e.message}; run node tools/community-pull.js)`; }
+    }
+    const bf = index?.built?.from, pf = pinned?.built?.from;
+    t.ok(!!bf && bf === pf, `the live index's built.from is the pinned index's (${bf}; pinned ${pf ?? '-'}, read from ${where})`);
+    const listed = new Set((index?.devices || []).map((e) => e && e.sha256));
+    const revoked = (Array.isArray(index?.revoked) ? index.revoked : []).map((x) => x && x.sha256);
+    const still = revoked.filter((h) => listed.has(h));
+    t.ok(!!index && !still.length, `no revoked fingerprint is listed in the live index's devices (${revoked.length} revoked, ${listed.size} listed${still.length ? '; still listed: ' + still.map((h) => String(h).slice(0, 12)).join(', ') : ''})`);
+    const clip = (index?.devices || []).flatMap((e) => e?.preview?.wet?.clips || []).find((c) => c && c.type === 'audio/mpeg');
+    if (!clip) t.ok(false, 'a clip answers audio/mpeg (the live index names no MP3 clip)');
+    else {
+      const c = await fetch(new URL(clip.src, BASE + '/app/community/'), { method: 'HEAD' });
+      t.ok(c.status === 200 && (c.headers.get('content-type') || '').startsWith('audio/mpeg'), `a clip answers audio/mpeg (${clip.src}: ${c.status} ${c.headers.get('content-type')})`);
+    }
+  }
+}
 
 {
   const { page, errors, close } = await openUrl(BASE + '/');

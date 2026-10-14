@@ -57,6 +57,7 @@ export const REPORTS = {
   "core.stack": {"hash":"arsvxt","kind":"effect","ok":true,"lufs":-20.6,"deltaLU":0.3,"truePeak":-15.5,"cpu":3.9,"tail":0,"warnings":1,"measured":"2026-10-08"},
   "core.cab": {"hash":"en6ywr","kind":"effect","ok":true,"lufs":-20.9,"deltaLU":0,"truePeak":-3.3,"cpu":1.6,"tail":0,"warnings":0,"measured":"2026-10-08"},
   "core.bassrig": {"hash":"wjpfeo","kind":"effect","ok":true,"lufs":-23.3,"deltaLU":-2.4,"truePeak":-8.1,"cpu":3.4,"tail":0,"warnings":1,"measured":"2026-10-08"},
+  "core.rooms": {"hash":"1lwhhii","kind":"effect","ok":true,"lufs":-20.9,"deltaLU":-0.1,"truePeak":-6.1,"cpu":6.5,"tail":2.6,"warnings":0,"measured":"2026-10-11"},
   "claude.tidal-cathedral": {"hash":"6xsgee","kind":"effect","ok":true,"lufs":-20.8,"deltaLU":0.1,"truePeak":-6,"cpu":0.7,"tail":4.2,"warnings":0},
   "claude.firefly": {"hash":"1myklet","kind":"instrument","ok":true,"lufs":-17.1,"deltaLU":-3.1,"truePeak":-1.9,"cpu":1,"tail":0.4,"warnings":0},
   "claude.night-bus": {"hash":"10w43c0","kind":"effect","ok":true,"lufs":-20.8,"deltaLU":0.1,"truePeak":-6.6,"cpu":0.7,"tail":1.9,"warnings":1},

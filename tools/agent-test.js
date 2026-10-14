@@ -629,10 +629,14 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   local('?on=all');
   const allG = await guides();
   const owned = Object.keys(tools.GUIDE_TOGGLES);
-  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x])));
+  // (a shared topic's toggled part: "devices" names Echo Chamber beside Stairwell only with device.rooms on, and
+  // differs by that paragraph alone)
+  const { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../app/src/kernel/guide.js');
+  const parts = { devices: (g) => g.replace(JSON.stringify(GUIDE_REVERBS).slice(1, -1), JSON.stringify(GUIDE_REVERBS_ONE).slice(1, -1)) };
+  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== (parts[x] || String)(allG[x]) || /isn't on in this studio/.test(offG[x])));
   const ownedOk = owned.every((x) => JSON.parse(offG[x]).error === T.offLine(tools.GUIDE_TOGGLES[x]) && JSON.parse(allG[x]).guide);
   t.ok(!differ.length && ownedOk && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && owned.join() === 'workflows',
-    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
+    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) and its toggled part (devices: Echo Chamber in the reverb paragraph) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
   // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
   tools.GUIDE_TOGGLES.ops = 'workflow.flip';
   local('');
@@ -884,6 +888,64 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       && ip.a_table === LT.params.find((q) => q.key === 'a_table').opts.indexOf('AKWF VOICE') && ip.a_pos === 0.25 && noLib.error && /Human voice/.test(noLib.hint || ''),
     `node: get_device lists Light Table's AKWF library (${fams.families?.length} families; "human voice" gives ${voice.waves?.length} waves), and a wave's params play it (${pickA && pickA.name}: table ${ip.a_table}, POS ${ip.a_pos})`);
     await run(app, 'apply_ops', { label: 'back', ops: [{ type: 'instrument.set', track: 'Arp', params: { a_table: 'BASIC', a_pos: 0.62 } }] });
+    // Echo Chamber (intent 0006, R30-R32): no new tool. insert.add takes ROOM's label, get_device lists the six rooms
+    // through the library field, get_project says it in one line, list_devices finds it by its words, and adjust's
+    // space move turns the room that's there instead of adding Stairwell. Echo Chamber is behind device.rooms: off (the
+    // default), list_devices doesn't offer it and get_guide "devices" names Stairwell alone, but a song that has it
+    // keeps it, get_project says it and get_device reads it; the checks after that run with it on.
+    {
+      const TG = await import('../app/src/toggles.js');
+      const { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../app/src/kernel/guide.js');
+      const words = ['reverb', 'room', 'church', 'hall', 'convolution'];
+      const listed = async () => { const out = []; for (const w of words) { const r = await run(app, 'list_devices', { query: w, detail: 'brief' }); if (/core\.rooms/.test(JSON.stringify(r))) out.push(w); } return out; };
+      TG.applyToggles(null, {});
+      const offWords = await listed(), offFx = JSON.stringify(await run(app, 'list_devices', { kind: 'effect', detail: 'brief' }));
+      const offCats = JSON.stringify(await run(app, 'list_devices', { cat: 'ambient' }));
+      const offGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
+      // (a saved song that has it: loaded as a file or a link is, with the toggle off)
+      const saved = JSON.parse(JSON.stringify(app.store.get()));
+      saved.tracks.find((x) => x.name === 'Arp').inserts.push({ id: 'fx_room01', device: 'core.rooms', on: true, params: { room: 5, mix: 0.3 }, by: 'you' });
+      const before = JSON.parse(JSON.stringify(app.store.get()));
+      app.store.load(saved);
+      const kept = app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
+      const gpOff = await run(app, 'get_project', { track: 'Arp' }), devOff = await run(app, 'get_device', { id: 'core.rooms' });
+      app.store.load(before);
+      t.ok(TG.on('device.rooms') === false && TG.offered(reg.getDevice('core.rooms')) === false && TG.offered(reg.getDevice('core.verb')) === true
+        && !offWords.length && !/core\.rooms|Echo Chamber/.test(offFx) && !/core\.rooms/.test(offCats) && /core\.verb/.test(offCats)
+        && !offGuide.includes('Echo Chamber') && offGuide.includes(GUIDE_REVERBS_ONE),
+      `node: with device.rooms off, list_devices offers no Echo Chamber (not under ${words.map((w) => `"${w}"`).join(', ')}, not among the effects or in ambient; Stairwell is) and get_guide "devices" names Stairwell alone${offWords.length ? '; listed under ' + offWords.join(', ') : ''}${/Echo Chamber/.test(offGuide) ? '; the guide names it' : ''}${/core\.verb/.test(offCats) ? '' : '; no Stairwell in ambient'}`);
+      t.ok(kept && kept.params.room === 5 && /Echo Chamber/.test(gpOff.song || '') && /Meeting room/.test(gpOff.song || '') && devOff.id === 'core.rooms' && !devOff.error,
+        `node: with it off, a saved song that has Echo Chamber keeps it (MEETING, mix ${kept?.params?.mix}), get_project says it and get_device reads it`);
+      TG.applyToggles({}, { search: '?on=device.rooms', host: 'localhost' });
+      const onGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
+      t.ok(onGuide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(onGuide), 'node: with device.rooms on, get_guide "devices" names both reverbs');
+      const n0 = (await tools.catalogSchemas()).length;
+      const add = await run(app, 'apply_ops', { label: 'a room', ops: [{ type: 'insert.add', track: 'Arp', insert: { device: 'core.rooms', params: { room: 'LECTURE', mix: 0.18 } } }] });
+      const ins = () => app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
+      const room = ins()?.params?.room;
+      const lib = await run(app, 'get_device', { id: 'core.rooms', library: '' }), stairs = await run(app, 'get_device', { id: 'core.rooms', library: 'stairs' }), dev = await run(app, 'get_device', { id: 'core.rooms' });
+      const want = ['label', 'id', 'name', 'place', 'what', 'distance', 't30', 'edt', 'tx', 'credit', 'params'];
+      const items = lib.items || [];
+      t.ok(add.ok && room === 2 && items.length === 6 && items.map((x) => x.label).join() === 'AULA,AULA FAR,LECTURE,STAIRS,OFFICE,MEETING'
+        && items.every((x) => want.every((k) => k in x) && x.params.room === x.label && x.credit === 'Rooms measured by RWTH Aachen University (AIR 1.4, MIT).' && x.t30['1k'] > 0)
+        && items[0].name === 'Aula Carolina' && items[0].distance === 3 && /^Aachen \(AIR 1\.4\): AULA, AULA FAR, LECTURE/.test(lib.families?.[0] || '') && /insert\.set/.test(lib.hint || '')
+        && stairs.waves?.length === 1 && stairs.waves[0].params.room === 'STAIRS' && /library/.test(dev.library_hint || ''),
+      `node: insert.add with room "LECTURE" sets index ${room}; get_device library "" lists ${items.length} rooms (${items.map((x) => x.label).join(', ')}), each with its header fields and params; "stairs" gives ${stairs.waves?.length}`);
+      const gp = await run(app, 'get_project', { track: 'Arp' });
+      const rl = (gp.song || '').split('\n').find((l) => /Echo Chamber/.test(l)) || '';
+      const def = reg.getDevice('core.rooms');
+      t.ok(def.describe({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22' && /Lecture room \(a lecture room, 5\.6 m\), pre 0 ms, decay ×1\.0, mix 0\.18/.test(rl),
+        `node: describe gives get_project one line ("${rl.trim()}"; at defaults "${def.describe({})}")`);
+      const found = await listed();
+      t.ok(found.length === words.length, `node: list_devices finds Echo Chamber under ${found.map((w) => `"${w}"`).join(', ')} (of ${words.join(', ')})`);
+      const mix0 = ins().params.mix;
+      const adj = await run(app, 'adjust', { axis: 'space', direction: 'more', target: { track: 'Arp' } });
+      const arp = app.store.get().tracks.find((x) => x.name === 'Arp');
+      t.ok(adj.ok !== false && ins().params.mix > mix0 && !arp.inserts.some((x) => x.device === 'core.verb') && (await tools.catalogSchemas()).length === n0 && n0 === 40,
+        `node: adjust space turns Echo Chamber's mix (${mix0} -> ${ins().params.mix}) and adds no Stairwell; still ${n0} tools`);
+      await run(app, 'apply_ops', { label: 'no room', ops: [{ type: 'insert.remove', track: 'Arp', insert: ins().id }] });
+      TG.applyToggles(null, {});
+    }
     const synth = await run(app, 'list_devices', { cat: 'synth' }), one = await run(app, 'list_devices', { query: 'wavetable' }), gtr = await run(app, 'list_devices', { cat: 'guitar' }), none = await run(app, 'list_devices', { query: 'zzqx' });
     t.ok(JSON.stringify(synth).length < 8000 && /core\.wavetable "Light Table"/.test(synth.devices) && /get_device gives one device's params/.test(synth.hint || '') && JSON.stringify(one).length < 12000 && /\[also m\{2-8\}_src/.test(one.devices)
       && /core\.guitar "DI Box"/.test(gtr.devices || '') && /no device is filed under "guitar"; these mention it\. The categories: instrument synth: \d+/.test(gtr.note || '') && none.devices === 'none match' && /instrument synth/.test(none.categories || ''),
@@ -909,9 +971,9 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     // device guide, every op's fields, the lexicon); a cap so it can't regrow unnoticed
     const sys = await prompt.buildSystemPrompt();
     const tg = await run(app, 'get_guide', { topic: 'transforms' }), dg = await run(app, 'get_guide', { topic: 'devices' });
-    t.ok(sys.length < 9500 && sys.includes(prompt.ETIQUETTE) && sys.includes(prompt.NOTES_BRIEF) && !sys.includes(prompt.OPS_CHEATSHEET) && !sys.includes((dg.guide || 'x').slice(0, 400)) && /get_guide "devices"/.test(sys) && /get_guide "ops"/.test(sys)
+    t.ok(sys.length < 9750 && sys.includes(prompt.ETIQUETTE) && sys.includes(prompt.NOTES_BRIEF) && !sys.includes(prompt.OPS_CHEATSHEET) && !sys.includes((dg.guide || 'x').slice(0, 400)) && /get_guide "devices"/.test(sys) && /get_guide "ops"/.test(sys)
       && /humanize: .*amount=0\.35/.test(tg.guide || '') && /get_guide "transforms"/.test(cat.find((x) => x.name === 'transform').description) && /etiquette is in your system prompt/.test(tools.IN_APP_DESCRIPTIONS.get_guide),
-      `node: the system prompt is ${sys.length} chars (under 9,500; 29,509 before the prompt diet), with the etiquette and without the ops sheet or the device guide, which get_guide serves; get_guide "transforms" has every transform's params`);
+      `node: the system prompt is ${sys.length} chars (under 9,750: 9,500 until Start a song's lines; 29,509 before the prompt diet), with the etiquette and without the ops sheet or the device guide, which get_guide serves; get_guide "transforms" has every transform's params`);
     // Claude Code cuts an MCP tool's description at 2,048 characters (measured: a 3,000- and a 6,000-char description cost
     // the same tokens as a 2,048 one), so what an agent must say or refuse sits before that, in every tool
     const MCP_CUT = 2048, long = cat.filter((x) => x.description.length > MCP_CUT).map((x) => x.name);
@@ -2854,6 +2916,92 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const landed = await page.evaluate(() => { const o = window.overdub, t = o.store.get().tracks.find((x) => x.name === 'Chime'); return { by: o.store.get().devices['probe.trim']?.by, reg: o.devices.getDevice('probe.trim')?.source, insert: t?.inserts.find((fx) => fx.device === 'probe.trim')?.by, held: (o.trust?.held?.() || []).map((d) => d.id) }; });
   t.ok(kept.kept === true && kept.check && landed.by === 'mcp:probe' && landed.reg === 'project' && landed.insert === 'mcp:probe' && landed.held.includes('sam.chime') && realErrors(errors).length === 0,
     `Keep runs the device check and lands it, signed by the agent (${JSON.stringify(landed)}; check ok: ${kept.check?.ok}); Sam's device stays held; no page errors${realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 2).join(' | ') : ''}`);
+  await close();
+}
+
+/* ------------------------------------------------------------------ 3b. Start a song (R28, R29) */
+// docs/AGENTS.md: get_selection.start says where a Start a song run is (null with no stage open); a message sent while
+// the take is played waits in the box ("Sends when your take is in.") and goes when the stage reaches 'in'; the demo
+// agent's "loosen it" / "tighten it" / "tidy the timing" re-plan the selected clip and count the change they made.
+{
+  const { perform } = await import('./sloppy.js');
+  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast&on=start.slice2' });
+  await ready(page);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { const o = window.overdub; o.ui.setOpen('right', true); o.ui.show('agent'); });
+  await page.waitForFunction(() => window.overdub.agent.provider === 'mock', null, { timeout: 5000 }).catch(() => {});
+  const startOf = async () => (await run(page, 'get_selection', {})).start;
+  const shut = await startOf();
+  await page.evaluate(() => window.overdub.start.open({ kind: 'tap' }));
+  await page.waitForTimeout(300);
+  const K = 36, S = 38, H = 42, ROW = { [K]: 'kick', [S]: 'snare', [H]: 'hat' };
+  const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 8 }, (_, i) => [i / 2, H])];
+  const hits = perform(ROCK, { bpm: 96, bars: 3, jitter: 0.03, drift: 0.04, seed: 3, start: 0 });
+  const t0 = await page.evaluate(() => performance.now() + 40);
+  await page.evaluate(([hs]) => { for (const x of hs) window.overdub.start.tap(x.row, x.ms); }, [hits.map((x) => ({ row: ROW[x.p], ms: t0 + x.t * 1000 }))]);
+  await page.waitForTimeout(200);
+  const playing = await startOf();
+  const keys = playing ? Object.keys(playing).join() : '';
+  t.ok(shut === null && playing?.step === 'play' && playing.kind === 'tap' && playing.landed === null && keys === 'step,kind,tempo,sure,rounds,landed' && (playing.tempo === null || Number.isInteger(playing.tempo)),
+    `get_selection.start: null with no stage open, then { step: 'play', kind: 'tap', landed: null } while the beat is played (${JSON.stringify(playing)})`);
+  // a message while the take is played: it waits in the box, and the composer says when it goes
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'loosen it', send: true }));
+  await page.waitForTimeout(250);
+  const waits = await page.evaluate(() => ({ box: document.querySelector('.ag-input').value, status: document.querySelector('.ag-status')?.textContent || '', users: document.querySelectorAll('.ag-user').length, busy: window.overdub.agent.busy, lamp: !!document.querySelector('.ag-status .ag-lamp') }));
+  t.ok(waits.box === 'loosen it' && waits.status === 'Sends when your take is in.' && waits.users === 0 && !waits.busy && !waits.lamp,
+    `a message sent while the take is played waits in the box: "${waits.status}" (${JSON.stringify(waits)})`);
+  await shot('agent-start-waits');
+  // Done: the take is in; the message goes, and the demo loosens the beat it landed
+  await page.evaluate(() => { const o = window.overdub; o.start.on('land', (l) => { const c = o.store.findClip(l.clip).clip; window.__landedNotes = c.notes.map((n) => ({ id: n.id, t: n.t })); }); o.start.done(); });
+  await page.waitForFunction(() => window.overdub.start.step === 'in', null, { timeout: 5000 }).catch(() => {});
+  const inStep = await startOf();
+  const landed = await page.evaluate(() => window.overdub.start.landed());
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 1 && !window.overdub.agent.busy && /Undo takes it back|already|loosen/.test([...document.querySelectorAll('.ag-agent .ag-text')].map((x) => x.textContent).join(' ')), null, { timeout: 20000 }).catch(() => {});
+  t.ok(inStep?.step === 'in' && inStep.kind === 'tap' && Number.isInteger(inStep.tempo) && Math.abs(inStep.tempo - 96) <= 6 && typeof inStep.sure === 'boolean' && inStep.rounds === 3 && inStep.landed?.clip === landed?.clip && inStep.landed?.track === landed?.track,
+    `on 'in' it says the take: ${JSON.stringify(inStep)}`);
+  const said = async () => page.evaluate(() => ({ users: [...document.querySelectorAll('.ag-user .ag-text')].map((x) => x.textContent.trim()), reply: (() => { const ms = [...document.querySelectorAll('.ag-agent')]; const last = ms[ms.length - 1]; return last ? [...last.querySelectorAll('.ag-text')].map((x) => x.textContent).join(' ').replace(/\s+/g, ' ') : ''; })(), status: document.querySelector('.ag-status')?.textContent || '', box: document.querySelector('.ag-input').value }));
+  const moves = (clip, was) => page.evaluate(([c, w]) => { const o = window.overdub, f = o.store.findClip(c), tempo = o.store.get().tempo; const now = new Map(f.clip.notes.map((n) => [n.id, n.t])); const d = w.map((n) => Math.abs((now.get(n.id) ?? n.t) - n.t)).filter((x) => x > 1e-4); return { n: d.length, m: f.clip.notes.length, ms: d.length ? Math.round((d.reduce((a, b) => a + b, 0) / d.length) * 60000 / tempo) : 0, last: o.store.history.at(-1), notes: f.clip.notes.map((n) => ({ id: n.id, t: n.t })) }; }, [clip, was]);
+  const before = await page.evaluate(() => window.__landedNotes);
+  const loose = await moves(landed?.clip, before || []);
+  const s1 = await said();
+  const m1 = /^Loosened your beat: (\d+) of (\d+) hits moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s1.reply.trim());
+  t.ok(s1.users.join() === 'loosen it' && s1.box === '' && !/Sends when/.test(s1.status) && m1 && +m1[1] === loose.n && +m1[2] === loose.m && +m1[3] === loose.ms && loose.n > 0 && loose.last?.by === 'claude' && loose.last?.label === 'timing: loose',
+    `it went when the take was in, and the demo loosened the beat from what was played: "${s1.reply.trim()}" (measured ${loose.n} of ${loose.m}, ${loose.ms} ms; History "${loose.last?.label}" by ${loose.last?.by})`);
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'tighten it', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 2 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const tight = await moves(landed?.clip, loose.notes);
+  const s2 = await said();
+  const m2 = /^Tidied your beat: (\d+) of (\d+) hits moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s2.reply.trim());
+  const backTight = (before || []).every((n) => tight.notes.find((x) => x.id === n.id)?.t === n.t);
+  t.ok(m2 && +m2[1] === tight.n && +m2[2] === tight.m && +m2[3] === tight.ms && tight.n === loose.n && backTight && tight.last?.label === 'timing: tight',
+    `"tighten it" puts each hit back where Tight had it: "${s2.reply.trim()}" (measured ${tight.n} of ${tight.m}, ${tight.ms} ms; back as landed: ${backTight})`);
+  await page.evaluate(() => window.overdub.start.close({ to: 'song' }));
+  await page.waitForTimeout(200);
+  const after = await startOf();
+  t.ok(after === null, `closed, get_selection.start is null again (${JSON.stringify(after)})`);
+  // a clip with no take behind it: Tight is a Quantize, and Loose can't be done
+  const keys2 = await page.evaluate(() => {
+    const o = window.overdub;
+    const r = o.store.dispatch([{ type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$k', ref: 'c', clip: { start: 0, length: 4, notes: 'C4@0.06:0.5 E4@1:0.5 G4@1.94:0.5 C5@3.1:0.5' } }], { by: 'you' });
+    o.ui.select({ track: r.created.k, clip: r.created.c, notes: [] });
+    const c = o.store.findClip(r.created.c).clip;
+    return { clip: r.created.c, notes: c.notes.map((n) => ({ id: n.id, t: n.t })), hist: o.store.history.length };
+  });
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'loosen it', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 3 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const s3 = await said();
+  const hist3 = await page.evaluate(() => window.overdub.store.history.length);
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'tidy the timing', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 4 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const q = await moves(keys2.clip, keys2.notes);
+  const s4 = await said();
+  const m4 = /^Tidied your tune: (\d+) of (\d+) notes moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s4.reply.trim());
+  t.ok(/From here it can only go tighter\./.test(s3.reply) && hist3 === keys2.hist && m4 && +m4[1] === q.n && q.n === 3 && +m4[2] === 4 && +m4[3] === q.ms && q.last?.by === 'claude' && q.last?.label === 'timing: tight',
+    `with no take behind the clip, "loosen it" changes nothing ("${s3.reply.trim().slice(0, 70)}") and "tidy the timing" quantizes it: "${s4.reply.trim()}"`);
+  t.ok(realErrors(errors).length === 0, 'Start a song with the agent: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
 

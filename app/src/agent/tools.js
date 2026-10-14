@@ -36,7 +36,7 @@ import { lexiconSummary } from './lexicon.js';
 import { catalog as transformCatalog } from '../core/transforms.js';
 import { installKeep, keepFirst, itemsText, whoseIds, takenBy, heldCodeFirst, HELD_CODE_FINE, kernelPrint } from './keep.js';
 import { keyChosen } from '../input/hum.js';
-import { on, offLine } from '../toggles.js';
+import { on, offLine, offered } from '../toggles.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const r2 = (x) => Math.round(x * 100) / 100;
@@ -333,7 +333,11 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
         case 'genres': { const { genresGuide } = await import('./genres.js'); return { guide: genresGuide(input.section || null) }; }
         case 'workflows': { const { workflowsGuide } = await import('./workflows.js'); return { guide: workflowsGuide(input.section || null) }; }
         case 'etiquette': return { guide: ETIQUETTE };
-        case 'devices': return { guide: await kernelGuide() };
+        case 'devices': {
+          // (the reverb paragraph names Echo Chamber only while device.rooms is on; off, Stairwell alone)
+          const g = await kernelGuide(), { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../kernel/guide.js');
+          return { guide: GUIDE_REVERBS && !on('device.rooms') ? g.replace(GUIDE_REVERBS, GUIDE_REVERBS_ONE) : g };
+        }
         case 'ops': return { guide: OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT };
         case 'transforms': return { guide: 'Transforms (name: what it does. params, with their defaults):\n' + transformCatalog() };
         case 'lexicon': {
@@ -349,7 +353,7 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
   {
     name: 'get_selection',
     annotations: { title: 'Read the selection', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: `What the human is looking at right now: the selected track, clip (with its notes in the text format), the selected notes, the time range (beats and bars), the selected insert (with params), and the playhead. Act on THIS by default. Empty fields mean nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they're hearing a sound on a track before keeping it (the song still has the old one), else null.`,
+    description: `What the human is looking at now: the selected track, clip (its notes in the text format), notes, time range (beats and bars), insert (with params), and the playhead. Act on THIS by default. Empty fields: nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they try a sound on a track (the song keeps the old one), else null. start: { step, kind, tempo, sure, rounds, landed } on Start a song's stage (play, hum: wait), else null.`,
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
     run(input, { app }) { return selectionInfo(app); },
   },
@@ -389,20 +393,23 @@ ${OPS_BRIEF}`,
 With detail "params" (the default while the list stays short; one device always has them) each param is listed as: key min..max unit (log) def=… role — what it does. Param values in ops are in these units and inside these ranges. Presets (named sounds) are listed by name: preset: "<name>" in instrument.set, track.add's instrument, insert.add or insert.set sets one. tag ("bass-music", "growl", "sub"...) lists only the devices with presets tagged so, and those presets.`,
     input_schema: { type: 'object', properties: { kind: { type: 'string', enum: ['instrument', 'effect'] }, cat: { type: 'string' }, query: { type: 'string' }, tag: { type: 'string', description: 'a preset tag: bass-music, dubstep, riddim, dnb, melodic, sub, growl, reese, wobble, stab, lead, chords, fx, drums, bus, master, pump' }, detail: { type: 'string', enum: ['brief', 'params'] } }, additionalProperties: false },
     run(input, { app }) {
-      let list = app.devices.listDevices({ kind: input.kind, cat: input.cat, q: input.query, tag: input.tag });
+      // (a built-in behind a toggle that's off isn't offered: toggles.js offered. get_device still reads it, and a song
+      // that has it plays it.)
+      const shown = (o) => app.devices.listDevices(o).filter(offered);
+      let list = shown({ kind: input.kind, cat: input.cat, q: input.query, tag: input.tag });
       // the song's held devices aren't in the registry (nothing can play them yet): said beside the list
       const held = heldNow(app).filter((d) => !input.kind || d.kind === input.kind);
       const heldOut = held.length ? { held: held.map((d) => `${d.id} "${String(d.name).slice(0, 100)}" (${d.kind}, kept off)`).join(', '), held_note: HELD_NOTE } : {};
       const categories = () => {
         const cats = {};
-        for (const d of app.devices.listDevices({ kind: input.kind })) { const k = `${d.kind} ${d.cat}`; cats[k] = (cats[k] || 0) + 1; }
+        for (const d of shown({ kind: input.kind })) { const k = `${d.kind} ${d.cat}`; cats[k] = (cats[k] || 0) + 1; }
         return Object.entries(cats).map(([k, n]) => `${k}: ${n}`).join(', ');
       };
       // a category nothing is filed under ("guitar": DI Box is a pluck): the devices that mention the word, and the
       // categories there are
       let note;
       if (!list.length && input.cat) {
-        const byWord = app.devices.listDevices({ kind: input.kind, q: [input.cat, input.query].filter(Boolean).join(' ') });
+        const byWord = shown({ kind: input.kind, q: [input.cat, input.query].filter(Boolean).join(' ') });
         note = `no device is filed under "${String(input.cat).slice(0, 40)}"${byWord.length ? `; these mention it` : ''}. The categories: ${categories()}`;
         list = byWord;
       }
@@ -436,7 +443,7 @@ With detail "params" (the default while the list stays short; one device always 
     name: 'get_device',
     annotations: { title: 'Read a device', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     description: 'One device: params (ranges, units, roles, descriptions), presets, look, flavour, and — for kernel devices written in this project — the kernel source (set source: true to also read a built-in kernel, e.g. core.testfilter, as a worked example to fork). A device the song brought whose code hasn\'t been allowed on this computer comes back with held: true (kept off; only the person can let it play). A device with over 40 params tells the params that repeat by number (mod slots, LFOs, bands) once and names its presets with their blurbs; detail "full" gives every param on its own line and what each preset changes. preset: "<name>" returns one preset\'s whole params.',
-    input_schema: { type: 'object', properties: { id: { type: 'string' }, source: { type: 'boolean' }, preset: { type: 'string', description: 'a preset\'s name: returns that preset\'s whole params' }, tag: { type: 'string', description: 'only the presets tagged so ("bass-music", "growl", "sub"...)' }, detail: { type: 'string', enum: ['brief', 'full'], description: 'a device with over 40 params: "brief" (default) or "full"' }, library: { type: 'string', description: 'a device with a library (Light Table\'s AKWF waves): "" lists its families, a family or part of a wave\'s name lists those waves, each with the params that play it' } }, required: ['id'], additionalProperties: false },
+    input_schema: { type: 'object', properties: { id: { type: 'string' }, source: { type: 'boolean' }, preset: { type: 'string', description: 'a preset\'s name: returns that preset\'s whole params' }, tag: { type: 'string', description: 'only the presets tagged so ("bass-music", "growl", "sub"...)' }, detail: { type: 'string', enum: ['brief', 'full'], description: 'a device with over 40 params: "brief" (default) or "full"' }, library: { type: 'string', description: 'a device\'s library (Light Table\'s waves, Echo Chamber\'s rooms): "" lists its families (a small one whole); a family or part of a name lists those, with params' } }, required: ['id'], additionalProperties: false },
     run(input, { app }) {
       const kept = app.devices.heldDevice?.(input.id);
       if (kept) {
@@ -468,12 +475,21 @@ With detail "params" (the default while the list stays short; one device always 
       // a device's library (Light Table's AKWF single cycles): its families, or the waves that match, with their params
       if (input.library != null) {
         const lib = d.library;
-        if (!lib || !Array.isArray(lib.items)) return err(`${d.name} has no library`, 'only a device with one (Light Table: AKWF waves) lists it');
+        if (!lib || !Array.isArray(lib.items)) return err(`${d.name} has no library`, 'only a device with one (Light Table: AKWF waves; Echo Chamber: its rooms) lists it');
         const q = String(input.library).trim().toLowerCase();
-        if (!q) return { id: d.id, library: lib.about, families: lib.groups.map((g) => `${g.name} (${g.table}): ${lib.items.filter((x) => x.group === g.name).map((x) => x.name).join(', ')}`), hint: 'library: "<family or wave>" gives each wave\'s params; set them with instrument.set' };
-        const hits = lib.items.filter((x) => x.group.toLowerCase() === q || x.params.a_table?.toLowerCase?.() === q || x.name.toLowerCase().includes(q) || x.group.toLowerCase().includes(q));
-        if (!hits.length) return err(`no wave in ${d.name}'s library matches "${String(input.library).slice(0, 60)}"`, `its families: ${lib.groups.map((g) => g.name).join(', ')}`);
-        return { id: d.id, library: lib.about, waves: hits.slice(0, 60).map((x) => ({ name: x.name, family: x.group, params: x.params })), ...(hits.length > 60 ? { more: hits.length - 60 } : {}), hint: `play one: { "type": "instrument.set", "track": "…", "params": ${JSON.stringify(hits[0].params)} }` };
+        // (each entry as the device gives it: Light Table's waves are a name and params; Echo Chamber's rooms carry
+        // their label, place, T30s and credit too. A small library, its six rooms, comes whole on "")
+        const entry = (x) => { const { group, params, ...rest } = x; return { ...rest, family: group, params }; };
+        const setOp = d.kind === 'instrument' ? '{ "type": "instrument.set", "track": "…", "params": ' : '{ "type": "insert.set", "track": "…", "insert": "…", "patch": { "params": ';
+        const play = (x) => `play one: ${setOp}${JSON.stringify(x.params)}${d.kind === 'instrument' ? ' }' : ' } }'}`;
+        if (!q) {
+          const small = lib.items.length <= 12;
+          return { id: d.id, library: lib.about, families: lib.groups.map((g) => `${g.name} (${g.table}): ${lib.items.filter((x) => x.group === g.name).map((x) => x.label || x.name).join(', ')}`),
+            ...(small ? { items: lib.items.map(entry), hint: play(lib.items[0]) } : { hint: 'library: "<family or wave>" gives each wave\'s params; set them with instrument.set' }) };
+        }
+        const hits = lib.items.filter((x) => x.group.toLowerCase() === q || x.params.a_table?.toLowerCase?.() === q || x.name.toLowerCase().includes(q) || x.group.toLowerCase().includes(q) || (typeof x.label === 'string' && x.label.toLowerCase().includes(q)));
+        if (!hits.length) return err(`no ${lib.items.length <= 12 ? 'entry' : 'wave'} in ${d.name}'s library matches "${String(input.library).slice(0, 60)}"`, `its families: ${lib.groups.map((g) => g.name).join(', ')}`);
+        return { id: d.id, library: lib.about, waves: hits.slice(0, 60).map(entry), ...(hits.length > 60 ? { more: hits.length - 60 } : {}), hint: play(hits[0]) };
       }
       const big = d.params.length > BIG_DEVICE, full = input.detail === 'full';
       const shown = big ? d.params.filter((q) => !q.hidden) : d.params;
@@ -482,7 +498,7 @@ With detail "params" (the default while the list stays short; one device always 
       // (Studio A's window, 2026-10-03) a drum kit's own names for its notes, so an agent writes its articulations
       const kn = kitNotes(d);
       if (kn) { out.notes = kn; out.notes_hint = NOTES_HINT; }
-      if (d.library && Array.isArray(d.library.items)) out.library_hint = `${d.library.about}. get_device { "id": "${d.id}", "library": "" } lists the families and their waves; "library": "<family or wave>" gives each one's params`;
+      if (d.library && Array.isArray(d.library.items)) out.library_hint = `${d.library.about}. get_device { "id": "${d.id}", "library": "" } lists the families and their entries; "library": "<family or name>" gives each one's params`;
       const dPresets = input.tag ? (d.presets || []).filter((x) => x.tags && x.tags.includes(input.tag)) : d.presets;
       if (dPresets && dPresets.length) {
         if (big && !full) {
@@ -646,7 +662,7 @@ measure: true renders each take before showing it (a scratch copy over the targe
   {
     name: 'get_recording',
     annotations: { title: 'Check the recorder', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    description: 'Is the human recording? state: "idle", "count" (the count-in) or "rec"; the tracks the take goes onto (each with its mode: "layer", every loop pass adds into one clip, or "take", every pass a new take), where it started, the loop it records in and the pass it is on, and the notes in so far. While they record, edits to those tracks (named by track, clip or insert, or the selection when a tool defaults to it), to the timeline (tempo, meter, loop, sections, inserting or removing bars) or to any track\'s arm, and an undo or revert that would touch them, are refused with error "recording"; other tracks are fine. wait_seconds (max 120) waits for the take to end; then get_project shows it (a take\'s clips share a take group, the earlier passes muted) and get_capture has every pass.',
+    description: 'Is the human recording? state: "idle", "count" (the count-in) or "rec"; the tracks the take goes onto (each with its mode: "fold" (drums: what most passes played), "layer" (passes add into one clip) or "take" (a new take each pass)), where it started, its loop and pass, and the notes in so far. While they record, edits to those tracks (named by track, clip, insert or a tool\'s default selection), to the timeline (tempo, meter, loop, sections, bars) or to any track\'s arm, and an undo or revert that would touch them, are refused with error "recording"; other tracks are fine. wait_seconds (max 120) waits for the take to end; then get_project shows it (a take\'s clips share a take group, the earlier passes muted) and get_capture has every pass.',
     input_schema: { type: 'object', properties: { wait_seconds: { type: 'number' } }, additionalProperties: false },
     async run(input, { app, signal }) { return getRecording(app, input, signal); },
   },
@@ -1024,6 +1040,22 @@ export function coherentSelection(app) {
   if (f && f.track.id === sel.track) return sel;
   return { ...sel, clip: null, notes: new Set() };
 }
+// Start a song (ui/start.js, app.start), read-only: where the run is and what's in so far. Numbers and ids only, no song
+// text. null when the stage isn't open. tempo: the BPM the stage shows (null while it reads "~"); sure: whether the
+// studio is sure where the 1 is (a tap) or the hum settled on a steady beat (fit 0.5 or more); rounds: times round so
+// far, or kept; landed: the clip the take went in as, once it has.
+export function startInfo(app) {
+  const s = app.start;
+  if (!s?.step) return null;
+  const tryIt = (f) => { try { return f(); } catch { return null; } };
+  const take = tryIt(() => s.take?.()), click = tryIt(() => s.click?.()), hum = s.step === 'hum' ? tryIt(() => s.hum?.()) : null, landed = tryIt(() => s.landed?.());
+  const tempo = s.step === 'play' ? tryIt(() => s.tempoShown?.())
+    : hum ? (hum.mode === 'free' ? hum.bpm : hum.over ? app.store.get().tempo : hum.speed)
+      : take ? take.bpm : null;
+  const sure = take ? (take.kind === 'hum' ? (take.fit == null ? null : take.fit >= 0.5) : take.sure ?? null) : hum?.mode === 'free' && hum.fit != null ? hum.fit >= 0.5 : null;
+  const rounds = take?.rounds ?? click?.rounds ?? (hum?.round || null);
+  return { step: s.step, kind: s.kind || null, tempo: Number.isFinite(tempo) ? Math.round(tempo) : null, sure, rounds: Number.isFinite(rounds) ? rounds : null, landed: landed?.clip ? { track: landed.track ?? null, clip: landed.clip } : null };
+}
 function selectionInfo(app) {
   const sel = coherentSelection(app);
   const p = P(app);
@@ -1069,6 +1101,7 @@ function selectionInfo(app) {
     }
   } catch { /* a nicety */ }
   out.trying = trying;
+  out.start = on('start.slice2') ? startInfo(app) : null;   // (the start.slice2 toggle's: off, always null)
   const link = fromLink(app);
   return link ? { from_link: link, ...out } : out;
 }

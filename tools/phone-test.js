@@ -24,11 +24,15 @@
 // fewer controls on screen, the top row's title, stop, play, record, agent and Find on screen as 40 px keys, the Song
 // menu, Tempo and Key off the bar, and Find as a bottom sheet inside the viewport and no taller than 70% of it, Full
 // studio, the Song menu, Tempo and Key first, 40 px rows, a 16 px search field, no text under 12 px, closing again.
+// Then Start a song's coach strip on a blank song in Chromium at 390x844: once a beat is in, the strip docks with no
+// sideways scroll and its primary inside the screen as a 44 px target; Build a band around it opens the styles as a
+// bottom sheet no taller than 70% of the screen, Keep the band inside it.
 // Screenshots: tools/.out/phone-<engine>-<width>-<pane>.png
 //
 //   node tools/phone-test.js                     all six
 //   node tools/phone-test.js chromium            just Chromium (390, 430, on its side and simple); also webkit
 //   node tools/phone-test.js simple              just the simple view passes (simple chromium: one of them)
+//   node tools/phone-test.js coach               just the coach strip
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -50,7 +54,8 @@ const RUNS = [
   { engine: 'webkit', device: 'iPhone 13', turn: [750, 342] },
   { engine: 'chromium', w: 390, h: 844, simple: true },
   { engine: 'webkit', device: 'iPhone 13', simple: true },
-].filter((r) => !only.length || (only.includes('simple') ? r.simple && (only.length === 1 || only.includes(r.engine)) : only.includes(r.engine)));
+  { engine: 'chromium', w: 390, h: 844, coach: true },
+].filter((r) => !only.length || (only.includes('coach') ? r.coach : only.includes('simple') ? r.simple && (only.length === 1 || only.includes(r.engine)) : only.includes(r.engine)));
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|the server responded with a status of 404/.test(e);
 
 function findPlaywright() {
@@ -421,7 +426,7 @@ async function phone(pw, srvUrl, run) {
     // and apart, at the top of the board (no band of empty wood), ‹ › paging to the next device whole; a finger's knob
     // drag is half as quick as a mouse's (48 px moves a third of the range by mouse, a sixth by touch)
     await tap('#ew-tab-rack'); await sleep(300);
-    const added = await E(() => { const a = window.overdub, t = a.store.get().tracks[0]; const r = a.store.dispatch([{ type: 'insert.add', track: t.id, insert: { device: 'core.crush' } }, { type: 'insert.add', track: t.id, insert: { device: 'core.drive' } }], { by: 'you', label: 'phone test' }); window.overdub.ui.select({ track: t.id }); return !!r.ok; });
+    const added = await E(() => { const a = window.overdub, t = a.store.get().tracks[0]; const r = a.store.dispatch([{ type: 'insert.add', track: t.id, insert: { device: 'core.crush' } }, { type: 'insert.add', track: t.id, insert: { device: 'core.drive' } }, { type: 'insert.add', track: t.id, insert: { device: 'core.rooms' } }], { by: 'you', label: 'phone test' }); window.overdub.ui.select({ track: t.id }); return !!r.ok; });
     await sleep(500);
     const devPage = () => E(() => {
       const board = document.querySelector('[data-panel="rack"] .rk-board'), br = board.getBoundingClientRect();
@@ -437,13 +442,19 @@ async function phone(pw, srvUrl, run) {
       const cr = card.querySelector('.rk-cap').getBoundingClientRect();
       return { name: card.querySelector('.rk-name')?.textContent, whole: fr.left >= br.left - 0.5 && fr.right <= br.right + 0.5, fw: Math.round(fr.width), bw: Math.round(br.width),
         gapTop: Math.round((cr.top - br.top) + (fr.top - cr.bottom)), knob: Math.round(Math.min(...[...card.querySelectorAll('.kn-dial')].map((d) => d.getBoundingClientRect().width))),
-        lbl: Math.min(...px('.kn-l')), val: Math.min(...px('.kn-v')), touching, scroll: Math.round(board.scrollLeft) };
+        lbl: Math.min(...px('.kn-l')), val: Math.min(...px('.kn-v')), touching, scroll: Math.round(board.scrollLeft),
+        // (Echo Chamber's room line and credit under its face: inside the board, 12 px words)
+        line: (() => { const l = card.querySelector('.rk-line'); if (!l) return null; const r = l.getBoundingClientRect(); return { inside: r.left >= br.left - 0.5 && r.right <= br.right + 0.5, px: Math.min(...[...l.children].map((e) => parseFloat(getComputedStyle(e).fontSize))), text: l.textContent.slice(0, 40) }; })() };
     });
     const pages = [];
-    for (let i = 0; i < 3; i++) {
+    // (the instrument, then Crush, Drive and Echo Chamber: a wide face that wraps, with its room line under it, R29)
+    for (let i = 0; i < 4; i++) {
       const d = await devPage(); pages.push(d);
-      if (i < 2) { await tap('[data-panel="rack"] .rk-more-rb svg'); await sleep(700); }
+      if (i < 3) { await tap('[data-panel="rack"] .rk-more-rb svg'); await sleep(700); }
     }
+    const ecp = pages.find((d) => d.name === 'Echo Chamber');
+    T.ok(ecp && ecp.whole && ecp.line && ecp.line.inside && ecp.line.px >= 12, `${label}: Echo Chamber's wide face pages in whole, its room line inside the board in ${ecp?.line?.px} px words (${JSON.stringify(ecp && { fw: ecp.fw, bw: ecp.bw, line: ecp.line })})`);
+    await noSideways('with Echo Chamber on a track');
     T.ok(added && pages.every((d) => !d.none && d.whole && d.fw >= d.bw * 0.6), `${label}: Devices shows one device at a time, whole and at the sheet's width, paging with › (${pages.map((d) => d.none ? 'none at ' + d.scroll : `${d.name} ${d.fw}/${d.bw}${d.whole ? '' : ' cut'}`).join(', ')})`);
     T.ok(pages.every((d) => !d.none && d.knob >= 44 && d.lbl >= 12 && d.val >= 12 && !d.touching), `${label}: device knobs are 44 px, labels and readouts 12 px and apart (${pages.map((d) => `${d.name}: knob ${d.knob}, label ${d.lbl?.toFixed?.(1)}, value ${d.val?.toFixed?.(1)}${d.touching ? `, ${d.touching} touching` : ''}`).join('; ')})`);
     T.ok(pages.every((d) => !d.none && d.gapTop <= 24), `${label}: each device sits at the top of the board, no band of empty wood (${pages.map((d) => d.gapTop).join(', ')} px of it over the face)`);
@@ -734,6 +745,70 @@ async function simplePhone(pw, srvUrl, run) {
       const closed = await E(() => ![...document.querySelectorAll('input')].some((i) => /^Find anything/.test(i.placeholder || '') && i.getClientRects().length));
       T.ok(closed, `${label}: and it closes again`);
     }
+    const errs = errors.slice(0, 4);
+    T.ok(!errs.length, `${label}: no console or page errors${errs.length ? ': ' + errs.join(' | ').slice(0, 500) : ''}`);
+  } catch (e) {
+    T.ok(false, `${label}: the run finished (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`);
+  }
+  await browser.close().catch(() => {});
+}
+
+// ------------------------------------------------------------------------------------------------ the coach strip
+async function coachPhone(pw, srvUrl, run) {
+  const label = `${run.engine} ${run.w}x${run.h}, the coach strip`;
+  let browser;
+  try {
+    browser = await pw.chromium.launch({ headless: !HEADED, executablePath: HEADED ? undefined : findChromium(), args: ['--autoplay-policy=no-user-gesture-required', ...QUIET, ...TEXT] });
+  } catch (e) {
+    const msg = String(e && e.message || e).split('\n')[0];
+    if (process.env.REQUIRE_ALL) T.ok(false, `${label}: launches (${msg})`);
+    else T.note(`${label}: not available here, skipped (${msg})`);
+    return;
+  }
+  const context = await browser.newContext({ viewport: { width: run.w, height: run.h }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + (e && (e.stack || e.message) || e)));
+  page.on('console', (m) => { if (m.type() === 'error' && !ignorable(m.text())) errors.push('console: ' + m.text()); });
+  const E = (fn, arg) => page.evaluate(fn, arg);
+  const shot = (n) => page.screenshot({ path: path.join(OUTDIR, `phone-${run.engine}-${run.w}-coach-${n}.png`) });
+  const noSideways = async (where) => { const s = await E(pageWide); T.ok(s.doc <= s.vw && s.body <= s.vw && s.sx === 0, `${label}: no sideways page scroll ${where} (${s.doc} px in ${s.vw})`); };
+  const box = (sel) => E((q) => { const el = document.querySelector(q); if (!el || !el.getClientRects().length) return null; const r = el.getBoundingClientRect(); return { t: Math.round(r.top), b: Math.round(r.bottom), l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height), vw: innerWidth, vh: innerHeight }; }, sel);
+  const inside = (b) => !!b && b.l >= 0 && b.r <= b.vw && b.t >= 0 && b.b <= b.vh;
+  try {
+    await page.goto(srvUrl + '/app/?new&on=start.slice2', { waitUntil: 'load' });
+    await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
+    await sleep(600);
+    // a beat, tapped on the stage (app.start.tap: the pads' own path), landed, and back to the song
+    await E(() => {
+      const st = window.overdub.start, t0 = performance.now();
+      st.open({ kind: 'tap' });
+      const beat = [[0, 'kick'], [1, 'snare'], [2, 'kick'], [2.5, 'kick'], [3, 'snare']];
+      for (let r = 0; r < 3; r++) for (const [b, row] of beat) st.tap(row, t0 + (r * 4 + b) * 600);
+      st.done();
+    });
+    await sleep(500);
+    await E(() => window.overdub.start.close({ to: 'song' }));
+    await sleep(400);
+    const go = await box('.cs .cs-go');
+    T.ok(inside(go) && go.h >= 43.5, `${label}: the strip docks, its primary inside the screen as a 44 px target (${go ? `${go.l},${go.t}..${go.r},${go.b}, ${go.h} px` : 'missing'})`);
+    await noSideways('with the strip');
+    await shot('tune');
+    // Build a band around it: the rows as a bottom sheet
+    await E(() => window.overdub.coach.go('band'));
+    await sleep(150);
+    await page.tap('.cs .cs-go');
+    await sleep(1200);
+    const sh = await box('.cs-sheetwrap'), keep = await box('.cs-sheetwrap .cs-go');
+    T.ok(!!sh && sh.b >= sh.vh - 1 && sh.b <= sh.vh + 0.5 && sh.h <= sh.vh * 0.7 + 1 && sh.l >= 0 && sh.r <= sh.vw, `${label}: the band's styles open as a bottom sheet, no taller than 70% of the screen (${sh ? `${sh.h} of ${sh.vh} px` : 'missing'})`);
+    T.ok(inside(keep) && keep.h >= 43.5, `${label}: Keep the band is inside the screen as a 44 px target (${keep ? `${keep.t}..${keep.b}` : 'missing'})`);
+    await noSideways('with the styles open');
+    await shot('band');
+    await page.tap('.cs-sheetwrap .cs-x');
+    await sleep(200);
+    const gone = await E(() => !document.querySelector('.cs') && window.overdub.ui.state.coach === null);
+    T.ok(gone, `${label}: × ends the run`);
     const errs = errors.slice(0, 4);
     T.ok(!errs.length, `${label}: no console or page errors${errs.length ? ': ' + errs.join(' | ').slice(0, 500) : ''}`);
   } catch (e) {
@@ -1180,8 +1255,8 @@ const pw = findPlaywright();
 try {
   for (const run of RUNS) {
     const t0 = Date.now();
-    console.log(`\n${run.engine} ${run.device || run.w + 'x' + run.h}${run.turn ? ' on its side' : ''}${run.simple ? ', the simple view' : ''}`);
-    await (run.turn ? sideways : run.simple ? simplePhone : phone)(pw, srv.url, run);
+    console.log(`\n${run.engine} ${run.device || run.w + 'x' + run.h}${run.turn ? ' on its side' : ''}${run.simple ? ', the simple view' : ''}${run.coach ? ', the coach strip' : ''}`);
+    await (run.coach ? coachPhone : run.turn ? sideways : run.simple ? simplePhone : phone)(pw, srv.url, run);
     T.note(`${((Date.now() - t0) / 1000).toFixed(1)} s`);
   }
 } finally {

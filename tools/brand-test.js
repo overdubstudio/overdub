@@ -53,6 +53,12 @@ const stok = {};
 for (const m of siteCss.matchAll(/(--(?:paper|ink|ink-2))\s*:\s*(#[0-9a-f]{6})/g)) stok[m[1]] = m[2];
 for (const t of ['--ink', '--ink-2']) T.ok(stok[t] && ratio(stok[t], stok['--paper']) >= 4.5, `tape box: ${t} ${stok[t]} on --paper ${stok['--paper']} is AA (${stok[t] ? ratio(stok[t], stok['--paper']).toFixed(2) : '?'}:1)`);
 T.ok(ratio(stok['--ink'], tok['--accent']) >= 4.5, `tape box: ink on a leader-green button is AA (${ratio(stok['--ink'], tok['--accent']).toFixed(2)}:1)`);
+// Echo Chamber's face (intent 0006 R25): its printed ink on its hammered cream is AA
+{
+  const { default: rooms } = await import('../app/src/devices/builtin/rooms.js');
+  const L = rooms.look || {}, r = L.ink && L.color ? ratio(L.ink, L.color) : 0;
+  T.ok(r >= 4.5, `Echo Chamber's face: ink ${L.ink} on ${L.color} is AA (${r.toFixed(2)}:1)`);
+}
 {
   // the faces come from the site: tokens.css imports fonts.css, which declares Archivo over its width axis to 125
   let fontsSrc = '';
@@ -285,9 +291,16 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
 
   // in the page: every family a page draws in is loaded, and every font file it fetched came from /app/style/fonts/
   const { page, base, errors, close } = await open('/app/', { query: 'demo', width: 1440, height: 900 });
+  // the studio fetches more files than the browser's default resource-timing buffer (250 entries) holds, and the font
+  // files come late: without room for them they go uncounted
+  await page.addInitScript(() => performance.setResourceTimingBufferSize(5000));
   const BRAND = ['Archivo', 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible Mono'];
   const PAGES = [['the studio', '/app/?demo', BRAND, 'html[data-ready="1"]'], ['the landing page', '/', BRAND, null], ['a docs page', '/site/docs/guide.html', BRAND, null],
     ['the device faces (gallery)', '/app/gallery.html?only=pedal.quack,amp.punk,core.keys', ['Rubik Dirt', 'Silkscreen', 'Atkinson Hyperlegible Next'], null]];
+  // the studio fetches some 250 modules before its fonts (main had them at entries 247-249), and a browser keeps only
+  // 250 resource timings by default and drops the rest, so the font files went missing from the list, not the page:
+  // room for every entry on each page, and a full buffer is a failure of this check rather than a quiet miss
+  await page.addInitScript(() => performance.setResourceTimingBufferSize(5000));
   const off = [];
   page.on('request', (r) => { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol) && u.host !== new URL(base).host) off.push(u.host); });
   // (the browser keeps 250 resource timings by default, and the studio loads more modules than that before its fonts:
@@ -303,10 +316,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
       await document.fonts.ready;
       const name = (x) => String(x.family).replace(/^["']|["']$/g, '');
       const loaded = [...new Set([...document.fonts].filter((x) => x.status === 'loaded').map(name))];
-      const files = performance.getEntriesByType('resource').filter((e) => /\.woff2(\?|$)/.test(e.name)).map((e) => e.name);
-      return { missing: want.filter((w) => !loaded.includes(w)), loaded, files, foreign: files.filter((u) => !u.startsWith(location.origin + '/app/style/fonts/')) };
+      const all = performance.getEntriesByType('resource'), files = all.filter((e) => /\.woff2(\?|$)/.test(e.name)).map((e) => e.name);
+      return { full: all.length >= 5000, missing: want.filter((w) => !loaded.includes(w)), loaded, files, foreign: files.filter((u) => !u.startsWith(location.origin + '/app/style/fonts/')) };
     }, want);
-    T.ok(!f.missing.length && f.files.length && !f.foreign.length, `${what}: ${want.join(', ')} loaded, from ${f.files.length - f.foreign.length} font files in /app/style/fonts/${f.missing.length ? '; not loaded: ' + f.missing.join(', ') : ''}${f.foreign.length ? `; ${f.foreign.length} from elsewhere: ${f.foreign.slice(0, 2).join(', ')}` : ''}`);
+    T.ok(!f.full && !f.missing.length && f.files.length && !f.foreign.length, `${what}: ${want.join(', ')} loaded, from ${f.files.length - f.foreign.length} font files in /app/style/fonts/${f.full ? ' (the resource timing buffer filled, so some files may be missing from the count)' : ''}${f.missing.length ? '; not loaded: ' + f.missing.join(', ') : ''}${f.foreign.length ? `; ${f.foreign.length} from elsewhere: ${f.foreign.slice(0, 2).join(', ')}` : ''}`);
     if (route.startsWith('/app/?demo')) {
       // the top bar's title fits itself once the bar settles, however early the fonts arrive (this is the page's second
       // load, so they're quick: with the faces in before the bar settled, "Night Shift" used to stay cut at 18 px)

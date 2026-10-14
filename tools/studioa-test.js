@@ -386,6 +386,9 @@ if (!process.env.NODE_ONLY) {
   const { open } = await import('./pw.js');
   const { page, errors, close } = await open('/app/');
   try {
+    // the builtins register during boot (main.js imports them before it sets window.overdub): wait for that, as the
+    // other device tests do, instead of racing it from the load event
+    await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
     const run = (over, quick) => page.evaluate(async ({ over, quick }) => {
       const { getDevice } = await import('/app/src/devices/registry.js');
       const { checkDevice, summarize } = await import('/app/src/kernel/check.js');

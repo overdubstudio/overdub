@@ -57,6 +57,7 @@
 
 import { doorOf } from './start.js';
 import { h, css, icon, canvas, clamp, byline } from './dom.js';
+import { offered } from '../toggles.js';
 import {
   palette, resolveColor, rgba, authorKind, authorName, authorColor, isDrumTrack, deviceName, touched, flasher,
   presenceList, drawCrop, drawLabel, bylineOf, displayFont, snapTo, floorTo, SNAPS, snapLabel, menu, popover, closePopover, MOD, showAgent, touchFirst,
@@ -1272,7 +1273,7 @@ function mountArranger(el, app) {
   // Bass, Plucked... as the browser groups them, in a menu that scrolls. (It listed the first 14, so Light Table, Suitcase,
   // Mallet Bag, Step Ladder, Brass Rail and Risers were never there.) A drum kit's track opens a clip at the playhead.
   function addTrackMenu(anchor) {
-    const inst = app.devices.listDevices({ kind: 'instrument' });
+    const inst = app.devices.listDevices({ kind: 'instrument' }).filter(offered);
     const by = new Map();
     for (const d of inst) { if (!by.has(d.cat)) by.set(d.cat, []); by.get(d.cat).push(d); }
     if (!by.has('drums')) by.set('drums', [{ id: 'core.drums', name: 'Drums', blurb: 'a drum kit', cat: 'drums' }]);
@@ -3073,7 +3074,8 @@ function mountArranger(el, app) {
         const passes = live.passes.filter((ps) => ps.track === id);
         // what played here before is set back under the band, so what you play reads as it lands: a new take
         // replaces it (the room over it, nearly opaque); layered hits sit on top of it (half the room over it)
-        const layer = passes.length ? passes.every((ps) => ps.mode === 'layer') : (recorder()?.modeFor?.(id) || (isDrumTrack(app, t) ? 'layer' : 'take')) === 'layer';
+        const lay = (m) => m === 'layer' || m === 'fold';   // (Fold records as Layer does)
+        const layer = passes.length ? passes.every((ps) => lay(ps.mode)) : lay(recorder()?.modeFor?.(id) || (isDrumTrack(app, t) ? 'layer' : 'take'));
         g.fillStyle = rgba(pal.bg, layer ? 0.55 : 0.86); g.fillRect(x0, y, x1 - x0, hh);
         g.fillStyle = rgba(pal.rec, 0.1); g.fillRect(x0, y, x1 - x0, hh);
         g.fillStyle = pal.rec; g.fillRect(x0, y, x1 - x0, 1); g.fillRect(x0, y + hh - 1, x1 - x0, 1);

@@ -6,7 +6,11 @@
 // bridges load. No edit to drumgrid.js: this is a tab of its own beside Beat.
 //
 //   app.grooves = { select(id), style(id), hear(id?, { alone }), stop(), hearing(), put(id?, { bar, bars, track }),
-//                   tap(voice, ms), find(), clearTaps(), taps(), results(), plan(), build(), view() }
+//                   tap(voice, ms), find(), clearTaps(), taps(), results(), plan(), build(), view(),
+//                   fit({ bpm, bar = 1, bars }) }
+// fit: the grooves that sit at a tempo (Start a song's "Put a beat under it", ui/coach-strip.js): a list of its own,
+// the closest to the middle of its range first, and Put reads "Use it", at that bar for those bars. Using one puts it
+// in the song as Put does ('grooves:placed') and the tab goes back to the styles.
 //
 // Hearing a groove is a preview (store.preview: never in History, never in the redo stack): a "Hearing" track with the
 // groove on it, played from the Put bar. Alone, it is soloed; with the song, the song's drum tracks are muted for it.
@@ -143,6 +147,7 @@ function mountGrooves(el, app) {
   function renderList() {
     pics = [];
     if (S.view === 'plan') return renderPlan();
+    if (S.view === 'fit' && S.fit) return renderFit();
     if (S.view === 'taps' && S.found) {
       const f = S.found;
       const song = store.get().tempo;
@@ -164,6 +169,27 @@ function mountGrooves(el, app) {
     list.replaceChildren(...out);
     dirty = true;
   }
+  // the grooves that sit at the song's tempo (fit): their range holds it, the closest to its middle first
+  const fitting = (bpm) => lib.grooves.filter((g) => g.part !== 'fill' && g.tempo[0] <= bpm && bpm <= g.tempo[1])
+    .sort((a, b) => Math.abs((a.tempo[0] + a.tempo[1]) / 2 - bpm) - Math.abs((b.tempo[0] + b.tempo[1]) / 2 - bpm));
+  function renderFit() {
+    const gs = fitting(S.fit.bpm);
+    list.replaceChildren(
+      h('div.gv-listhead', h('span', `At ${S.fit.bpm} BPM`), h('span.t3', ` ${gs.length} ${gs.length === 1 ? 'groove sits' : 'grooves sit'} at your song’s tempo`), h('button.btn.btn-txt', { type: 'button', onclick: () => unfit() }, 'Back to the styles')),
+      ...gs.map((g) => row(g, g.styleName)));
+    dirty = true;
+  }
+  function fit({ bpm, bar = 1, bars = null } = {}) {
+    const b = Math.round(Number(bpm) || store.get().tempo);
+    S.fit = { bpm: b, bar: Math.max(1, Math.round(bar) || 1), bars: bars ? Math.max(1, Math.round(bars)) : null };
+    S.view = 'fit';
+    const gs = fitting(b);
+    if (gs.length && !gs.some((g) => g.id === S.groove)) { S.groove = gs[0].id; S.style = gs[0].style; }
+    S.bars = S.fit.bars; S.bar = S.fit.bar;
+    renderStyles(); renderList(); syncBar(); syncBuild();
+    return gs.map((g) => g.id);
+  }
+  function unfit() { S.fit = null; S.bar = null; S.bars = null; S.view = 'style'; renderStyles(); renderList(); syncBar(); }
   function selectGroove(id, { quiet = false } = {}) {
     const g = G.getGroove(id);
     if (!g) return;
@@ -202,7 +228,7 @@ function mountGrooves(el, app) {
     forBars.hidden = fill;
     if (document.activeElement !== barsIn) barsIn.value = S.bars ?? G.defaultBars(g);
     if (document.activeElement !== barIn) barIn.value = S.bar ?? playheadBar(app);
-    putB.textContent = fill ? 'Put it at the end of bar' : 'Put it at bar';
+    putB.textContent = S.view === 'fit' ? 'Use it' : fill ? 'Put it at the end of bar' : 'Put it at bar';
     const t = targetTrack(app);
     onWhat.textContent = t ? `on ${t.name}` : 'on a new Drums track';
     hearB.setAttribute('aria-pressed', String(!!A));
@@ -226,6 +252,7 @@ function mountGrooves(el, app) {
     const r = putGroove(app, { groove: g, track: opts.track, bar: opts.bar ?? putBar(), bars: opts.bars ?? putBars(g), by: 'you', under: 'cut' });
     if (!r.ok) { ui.toast(r.error, { kind: 'bad' }); return r; }
     ui.toast(`${r.summary.replace(/ \(.*?\)\./, '.').replace(/\.$/, '')}.`, { action: { label: 'Undo', run: () => store.undo({ by: 'you' }) } });
+    if (S.view === 'fit') unfit();
     try { app.arranger?.show?.([r.clip], 'you'); } catch { /* the arranger draws it anyway */ }
     return r;
   }
@@ -625,6 +652,7 @@ function mountGrooves(el, app) {
     results: () => (S.found ? S.found.results.map((r) => ({ id: r.groove.id, score: r.score, matched: r.matched, of: r.of })) : null),
     plan: () => showPlan(), build,
     view: () => S.view,
+    fit: (o) => fit(o),
     selected: () => S.groove,
   };
   return {

@@ -62,8 +62,14 @@ the pads sound straight away. After six hits or so the BPM shows; after two bars
 your hits; once you've played the same thing twice it counts the rounds. What you play most often is what's kept: a
 hit you played in one round of three is left out, one you played in both of two rounds stays. **Done** (`Space`) puts
 it in the song at once: the tempo, a Drums track, the clip and a loop over it, one undo step, signed by you.
-**Start again** (`⌫`) clears it (the take stays in **Takes**). **Play to a click instead** is the older way: a Drums
-track, two bars looping with the click, `R` to record.
+**Start again** (`⌫`) clears it (the take stays in **Takes**). While the BPM isn't showing yet, the top bar's tempo
+reads "~".
+
+**Play to a click instead** keeps you on the stage with two bars and a ball that bounces on each beat. Pick a
+**Speed** (Slow 80, Easy 100, Upbeat 120) or **Tap it** (`T`, four times; `←` `→` step the speed), and a bar of count-in
+(4 3 2 1, *Come in on 1.*) brings you in. Keep going round: at each wrap the rounds fold, what you played most often
+stays and plays back tight, and one-off misses drop out. **Done** puts it in the song at the click's tempo.
+**Free time instead** goes back.
 
 Then it loops while you decide:
 
@@ -73,17 +79,30 @@ Then it loops while you decide:
 - **Not quite?** If the studio isn't sure where the 1 is, it says so. The other ways your beat could go (the bar
   starting on another kick, or twice as slow) are listed, and picking one plays it at once. **Use this one** keeps it;
   `Esc` puts back what was there.
-- **Hum over it** (`Enter`) is the next part: the stage folds away, the beat keeps looping and Sketch is on Hum.
-  **Back to the song** (`Esc`) just folds it away.
+- **The sound**: the sound card sits beside your take. `↓` tries the next sound, **Keep** keeps it (its own undo
+  step), and the line says what the track plays now.
+- **Hum over it** (`Enter`) is the next part, on the stage over your beat. **Back to the song** (`Esc`) folds it away.
 
 **Hum a tune** starts a simple beat looping at 100 BPM so you have something to hum against. **Speed** (Slow 80, Easy
 100, Upbeat 120) and **Beat** (Simple, Rock, Lo-fi) change what you hear, not the song. **Hum** (`H`) puts the beat in
-the song and records your hum over it from the next bar line; `Space` stops, and the tune lands on a new Melody track.
-**No beat; I'll hum freely** is Sketch's Hum in your own time. Headphones keep the beat out of your hum.
+the song and counts you in for a bar; hum as many times round as you like, and `Space` stops. The steadiest round
+lands on a new Melody track, the others kept muted under it, and the beat and the tune are one undo step. **In tune**
+on the Timing line puts it in the key's scale, or leaves it as you sang it. **No beat; I'll hum freely** stays on the
+stage: hum at any speed, the notes appear as you sing, and **Done** finds the beat in your hum. If the hum didn't settle
+on a steady beat it says so, and you can hear the other ways it could go (each with a soft tick on every beat) or
+**hum it again over a beat**. Headphones keep the beat out of your hum.
+
+**The next parts.** Once your take is in, a strip under the song walks the rest: **Beat**, **Tune**, **Band** (each word
+takes you to that step). **Hum over it**, **Play keys over it** and **Tap more on the drums** reopen the stage over
+your song at its tempo. **Put a beat under it** opens Grooves at your song's tempo (**Use it** puts one in). **Build a
+band around it**: `↓` `↑` hear each style on the loop, nothing kept until **Keep the band** (one undo step); **Not
+this one** goes back to the styles. At the end the strip counts your song, offers **Make it longer** and **Share**, and
+goes. `×` ends it at any step.
 
 `Esc` before you've played anything closes the stage; after, it asks once (*Leave without keeping this take? It stays
 in Takes.*). **Skip to the studio** is always top right. While you play on the stage, an agent's changes to the song
-wait until it's in.
+wait until it's in, and a message you send it waits too (*Sends when your take is in.*). Ask the demo agent to
+*tidy the timing*, *tighten it* or *loosen it* on a clip you started, and it says how many hits it moved.
 
 ## Flip a song
 
@@ -699,7 +718,7 @@ underwater in a cathedral."* The agent writes it as a small piece of audio code.
   `.overdub-device.json` file. In another song, **Import a device…** in the Song menu (`⌘⇧I`) brings it in. It is
   checked again on the way in, and refused, with the report, if it fails.
 
-The [device library](/app/library.html) has 65 devices: the 52 built-in instruments and effects, and 13 Claude
+The [device library](/app/library.html) has 66 devices: the 53 built-in instruments and effects, and 13 Claude
 wrote, each from one request, and the request is on the card. Play any of them on the page. The Guitar Studio's 101
 pedals and 27 amps aren't on that shelf; find them in the studio's browser. To write one by hand, see
 [Writing devices](DEVICES.md).

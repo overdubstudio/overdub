@@ -23,6 +23,7 @@
 
 import { kitHashes, kitState, kitLine, prefetchKit } from './kitload.js';
 import { h, css, icon, byline } from './dom.js';
+import { offered } from '../toggles.js';
 import { DEVICE_CATS, presetParams } from '../devices/registry.js';
 import { addDevice, applyRig, guitar, swatchOf, authorKind, authorName, currentTrack, rankDevices, isMismatch } from './rack.js';
 import { songColor, touchFirst, menu } from './arrange-kit.js';
@@ -238,7 +239,8 @@ export default async function (app) {
         const searching = !!s;
         const match = (d) => !s || (d.id + ' ' + d.name + ' ' + (d.blurb || '') + ' ' + (d.nod || '') + ' ' + (d.kindLabel || '') + ' ' + catName(d.cat)).toLowerCase().includes(s);
         const proj = store.get().devices || {};
-        const all = devices.listDevices();
+        // (a built-in behind a toggle that's off isn't offered: toggles.js offered; a song's own devices always are)
+        const all = devices.listDevices().filter((d) => offered(d) || proj[d.id]);
         const held = (devices.heldDevices?.() || []).filter((d) => match(d));
         const heldIds = new Set(held.map((d) => d.id));
         const mine = all.filter((d) => (d.source === 'project' || proj[d.id]) && !heldIds.has(d.id) && match(d));

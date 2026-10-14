@@ -207,6 +207,53 @@ redistribution and claims nothing of the songs made with it. Contributed sounds 
 | Modifications | A subset: nine single cycles from each of 12 families, picked by measure (`node tools/akwf-bank.js --pick`). Packed losslessly into `app/src/devices/builtin/akwf.js`, which is in this repository and carried in the kernel's source; each cycle's spectrum turned to sine phase, RMS-scaled and band-limited per octave when the tables are built. `node tools/akwf-bank.js` rebuilds the module from the pinned files (`--verify` offline). |
 | Verified | 2026-10-06 |
 
+## Aachen Impulse Response Database: Echo Chamber's rooms (`core.rooms`)
+
+Echo Chamber (intent 0006, "Real Rooms") is a built-in effect; the README and the site don't list it until AJ's
+listening trial passes. The bank is built (`node tools/fetch-kits.js --only air-rooms`) and pinned; its QA report is
+`tools/.out/library/rooms/qa.json`, and every room is waiting on a waiver (below).
+
+| | |
+|---|---|
+| Source | https://www.iks.rwth-aachen.de/en/research/tools-downloads/databases/aachen-impulse-response-database/ (the page links `air_database_release_1_4.zip`) |
+| Pinned | `air_database_release_1_4.zip` sha256 `d2fd52767505c402e8aed9299dcd046493c8254cfab2f769fcf480dc7c616a5f` (202,650,373 bytes, Last-Modified 2020-09-28); `AIR_1_4/license.txt` sha256 `576e14bfd0215f50085d9980f8586f2cd3e69b0db43cbf1cb12aa49807406347`; `AIR_1_4/readme.txt` sha256 `4bbf73d029d4696654eed903ff75648b47c86241fd0c44f568974f71230f27f0`; the twelve `.mat` files (each room's left and right ear), each by sha256, in [`tools/kits/air-rooms.js`](../tools/kits/air-rooms.js). The recipe reads only those members, by HTTP range, and holds the server to the zip's pinned size |
+| Licence | MIT. `AIR_1_4/license.txt`, read from the zip itself on 2026-10-10, is quoted in full below. The build refuses to run unless that file has the pinned hash and begins "MIT License". `readme.txt` says "This database is under the MIT license. For further details see license.txt" |
+| Author | Marco Jeub et al., RWTH Aachen University, Institute of Communication Systems (IKS; "Institute of Communication Systems and Data Processing (IND)" in the licence) |
+| What they are | Binaural room impulse responses (a dummy head's two ears) at 48 kHz, read from the `.mat` files. The Aula Carolina is only in those files. The six rooms are the Aula Carolina (a former church) at 3 m and 10 m, the lecture room at 5.56 m, the stairway at 2 m, the office at 2 m and the meeting room at 1.9 m |
+| Modifications | Per room: both ears from the direct sound's arrival (the onset, the first sample within 20 dB of the left ear's peak, less 0.5 ms) to the cut, the first moment every octave from 125 Hz to 8 kHz has decayed 40 dB (AULA 6.74 s, AULA FAR 6.92 s, LECTURE 0.61 s, STAIRS 0.85 s, OFFICE 0.5 s; MEETING 80 ms, cut by ear: in the listening trial's second round its 80 ms, 200 ms, 310 ms and full IR sounded almost the same, so the cheapest ships). The direct sound (to 2.5 ms after the onset) is faded out over 1 ms, because the dry path is the direct sound. Past each octave's own -40 dB point the recording is replaced, over a 50 ms crossfade, by octave-band noise (seeded, deterministic) along the line that octave was decaying on: below that, Aula's recording carries a pedestal decaying four to eight times slower than the room, and the small rooms meet their noise. The rest is windowed so that it and the fitted tail add up to the measured envelope in 10 ms frames, then faded to 0 at the cut over 5 ms. Peak-normalised, rounded to 24 bits, the gain in the header. The tail's fit (three T60s, the line scale, its delay, its EQ and gain, and how far it stands over the room at the cut) and each room's level are numbers in the header, not audio. The rest of each IR, past the cut, is not shipped |
+| QA | `tools/.out/library/rooms/qa.json` scores each room's hybrid, rendered by the kernel, against its measured IR (spec R13), and against the IR as cleaned (its octaves past -40 dB extrapolated). On 2026-10-11, after the trial moved the cuts: the decay curves (the deciding check, per octave 250 Hz-4 kHz within 1 dB to -30 dB) are within 0.61 dB in every room cut by the rule (AULA 0.61, LECTURE 0.60, STAIRS 0.59, AULA FAR 0.58, OFFICE 0.48), and within 0.76 dB at 125 Hz and 8 kHz (bar 2). T20, EDT and C80 pass in those five, T30 within 5.1% (AULA FAR 5.1% at 250 Hz misses the 5% bar by a tenth: against the cleaned IR, 1.3%: it is the recording's pedestal in the reference curve). MEETING, cut by ear at 80 ms on 2026-10-13 (it was 0.43 dB at the rule's 310 ms), hands its decay to the fitted tail early: its decay curves are 4.16 dB out at 500 Hz (1.78 dB at 125 Hz and 8 kHz), T30 12.9%, EDT 8.7%, C80 1.62 dB, which AJ heard as almost the same as the full IR. Every room cut by the rule misses the seam's 10 ms frames (5.2-7.1 dB against 1.5; MEETING at 80 ms, 1.94 dB): at a -40 dB seam the energy left is a few low octaves, whose 10 ms frames swing several dB between any two recordings of the same decay. So all six still carry "waiver pending AJ". Each room's misses are qa.json's `verdicts` |
+| Kit | `sha256-70220003b4cf7c4af7f2aa10958da18f1645d9e47a7b634414a98a65d9b06a33` (24-bit stereo, 48 kHz, six rooms, 4.53 MB as .odk, 3.26 MB packed and gzipped) |
+| Verified | 2026-10-10 (the source); the bank rebuilt 2026-10-11 |
+
+The notice, as `license.txt` gives it (its line breaks kept). It goes into the bank's `meta.notice` as well:
+
+```text
+MIT License
+
+Copyright (c) 2011 RWTH Aachen University
+              Institute of Communication Systems and Data Processing (IND)
+              https://www.iks.rwth-aachen.de/forschung/tools-downloads/databases/aachen-impulse-response-database/
+              Marco Jeub, jeub@ind.rwth-aachen.de
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Community shelf preview clips (`app/community/clips/`)
 
 | | |

@@ -100,7 +100,9 @@ overdub/
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
                          export.js (the Song menu, files out), provenance.js, share.js, onboard.js, reference.js,
-                         start.js (Start a song: the blank song's door and its stage, app.start),
+                         start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
+                         (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
+                         coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
                          community.js (From the community in the Browser: previews, Try and its prompt; the
@@ -454,7 +456,7 @@ Ids are forever; display names are not. The built-ins are named after studio obj
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
-core.multiband Gaffer Tape; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
+core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
 with the vendored pedals' (`tools/guitar-test.js` checks).
 A def the studio ships may carry `describe(params)` (one line of text for `get_project`, in place of the params' JSON:
 core/project.js `summarize`), and a param `hidden` (not on the face or in the generic window), `auto: false` (no lane)
@@ -471,9 +473,11 @@ is a literal in the kernel's source, packed so the kernel stays under its 256 KB
 Param `role` (for agents and semantic controls): `tone level drive mix time feedback rate depth size decay attack
 release pitch shape width gate sens` (or omit). `unit`: `Hz dB ms s % st note x`.
 
-**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 52 built-ins, fourteen
+**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 53 built-ins, fourteen
 of them sampled: Virtuosity Kit, Parlour Upright, Rusty Brushes, Hand Crate, Full Stick, Rosin, Damper Bar, Roundwound,
-Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data), `devices/guitar/` (the
+Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data; eighteen play
+kernel data in all: those fourteen, Half Stack, Iso Cab and Y Cable on the cab bank, and Echo Chamber on measured
+rooms), `devices/guitar/` (the
 Guitar Studio's 101 pedals and 27 amps, with 16 cabinets and 5 mics inside the amps, and its 156 rigs as device chains)
 and `devices/library/` (the house shelf: ten kernels Claude wrote, `claude.*`, `source: 'library'`, each with its
 `request`; also loaded by the Node renderer). `devices/showcase.js` holds the three devices the demo song carries as
@@ -1006,6 +1010,8 @@ right   Agent, Connect, History (tabs)
 ```js
 ui.panel({ id, region, title, icon?, order?, mount(el, ctx) { return { update(evt), frame(now), unmount() } } })
 ui.show(panelId, { save?, by? }) ; ui.state ; ui.select(sel) ; ui.on(type, fn) ; ui.emit(type, detail) ; ui.toast(text, { kind, action })
+ui.dock                           // a slot at the foot of the arranger, over the bottom pane: no room until something docks (the coach strip)
+ui.point(el, { ms = 2000 })       // grease-pencil crop marks on a control the studio names; unsigned, gone after ms, still under reduced motion
 ui.announce(text)                 // a screen-reader-only status line (agent edits and messages while the Agent tab is hidden)
 ui.keys.add({ key: 'Space' | 'KeyZ' | ..., mod: 'mod' | 'shift' | 'alt' | 'mod+shift' | null, run(e), when?(), label, group, global?, feature? })
 ui.state = { selection: { track, clip, notes: Set<noteId>, range: { from, to } | null, insert }, zoom: { pxPerBeat, trackH },
@@ -1123,16 +1129,56 @@ the only round, in both of two, in half or more of three or more; the rest stray
 snares on 2 and 4) and `readingsOf` (the other 1, the tempo halved or doubled within 60 to 180). **Done** dispatches
 `core/start.js` `planStart` once, by `'you'`: on a blank song the rounded tempo and a loop over the take, a new track
 named by `newPartFor`, one clip. The Timing words (`atLevel`) and the readings are `notes.replace` (and `clip.set`,
-`project.set`) dispatched with `join` on that transaction, so one undo takes the lot. **Hum a tune** previews a groove
-(`agent/grooves-tool.js` `putGroove` dry run) at a chosen speed; **Hum** dispatches it with the tempo and loop, then
-`app.onboard.humOver()` and `recorder.record()`. While the stage is on its play steps, `app.start.busy` is true and
-`agent/tools.js` refuses song-changing tools with `recording`. Its keys are `ui.keys` declarations with `first: true`,
-and while it's open the studio's single keys are held under it. `app.start = { open({ kind: 'tap' | 'hum' }), close(),
-step ('play' | 'hum' | 'in' | 'readings' | null), kind, busy, tap(row, perfMs), done(), again(), setLevel(level),
-readings(), useReading(i), humNow(), humFree(), leave(), landed(), take(), on('step' | 'land' | 'close', fn),
-choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i), back() }), pickChoice(i) }`. `choose` is the
-readings step for another flow (step `'choose'`): its rows, picking one calls `pick` (it plays), Use this one `use`,
-and Back, Esc or any other way out `back`.
+`project.set`) dispatched with `join` on that transaction, so one undo takes the lot. The take goes to capture with the
+clip's id, what was played as played (`raw`) and the rounds, so `capture.ofClip(clip)` can re-plan it later (the demo
+agent's "tidy the timing" does).
+
+**Play to a click instead** stays on the stage (`S.view` `'click'`): `ui/beatwindow.js` `mountBeatWindow` draws two
+bars (160 px a bar or more) with a ball driven by `engine.beat` (a reverse-print cell instead under reduced motion), a
+bar of count-in from a stopped transport, **Speed** and **Tap it** as `store.preview`s, and the rounds folded at each
+wrap (`foldRounds`) and played at Tight on the preview track. **Done** lands the fold through `planStart`, at the
+click's tempo. The hum steps are `ui/start-hum.js`: over a beat (H puts the beat in and records in `'take'` mode onto a
+new Melody track with one bar of count-in; the beat and the tune are one undo step through the recorder's `join`; the
+steadiest round is kept) and free (the pitch trace and the notes as they form, `humReadingsOf` for the readings, a
+side-stick tick on a preview track while they're heard). On `'in'` the stage hosts the sound card (`app.sounds.setHost`,
+`offer({ track, from: 'take', take })`; its Keep is a `.btn`, its own undo step) and its primary is the run's next part
+(`app.coach.after`).
+
+Over the song, `open({ kind, over: { track, clip } })` reopens the stage with the song as the guide: the loop over the
+clip's bars (a hum's made 4 bars, `longerPlan`, one undo step with the take), Speed and Beat hidden, the tempo never
+changed. A hum or the keys go onto a new track (`'take'` mode, the steadiest round kept); taps go over the click view
+and fold into the Drums clip (`notes.add`).
+
+While the stage is on its play steps (`'play'`, `'hum'`), `app.start.busy` is true: `agent/tools.js` refuses
+song-changing tools with `recording`, and the Agent tab holds a message until the stage reaches `'in'` or closes.
+`get_selection.start` (`agent/tools.js` `startInfo`) is `{ step, kind, tempo, sure, rounds, landed: { track, clip } |
+null }` while it's open, else `null`. Its keys are `ui.keys` declarations with `first: true`, and while it's open the
+studio's single keys are held under it.
+
+```
+app.start = { open({ kind: 'tap' | 'hum' | 'keys', view: 'free' | 'click', free, over }), close({ to, quiet }),
+  step ('play' | 'hum' | 'in' | 'readings' | null), kind, view, busy, tap(row, perfMs), done(), again(), leave(),
+  setView(view), setSpeed(bpm), tapTempo(perfMs), click(), window(), setLevel(level), readings(), useReading(i),
+  humNow(), humFree(), hum(), setTune(on), againOverBeat(), tick(), landed(), take(), tempoShown(),
+  on('step' | 'land' | 'close', fn) -> off, choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i),
+  back() }), pickChoice(i) }
+```
+
+`choose` is the readings step for another flow (step `'choose'`, Flip a song's grids): its rows, picking one calls `pick`
+(it plays), Use this one `use`, and Back, Esc or any other way out `back`.
+
+The top bar's tempo reads "~" (`aria-valuetext` "finding the tempo") while `tempoShown()` is null on `'play'`.
+
+**The coach strip** (`ui/coach-strip.js`, `app.coach`, mounted after `start.js`) docks in `ui.dock` when the stage closes
+to the song after a landing, or on the first part of a door that doesn't use the stage (Draw a beat, Pick a groove, Play
+the keys, Ask: `app.coach.expect(door)`). Its run sheet (Beat, Tune, Band) is words, the current one over a 2 px cream
+rule; each step has one `.btn-go`, up to two text buttons and ×. Its state is `ui.state.coach` (`{ run, step, done }`),
+never stored: a reload ends the run. **Put a beat under it** opens Grooves at the song's tempo (`app.grooves.fit({ bpm,
+bar, bars })`, whose Put reads **Use it**). **Build a band around it** lists the `STYLES` rows: ↓/↑ hear one through
+`agent/arrange-tool.js` `buildBand(..., { preview: true })` (`store.preview`, nothing in History); **Keep the band** is
+one measured dispatch signed `'overdub'` (the house: unsigned on the lanes). It points at the controls it names with
+`ui.point`. `app.coach = { expect(door), after(landing), dock(door, clips?), go(step), band(), preview(i), keep(),
+notThis(), end(), state(), beatUnder() }`.
 
 **Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014),
 behind the `workflow.flip` toggle (off: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find's Help rows,
@@ -1537,7 +1583,9 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
     the track's Input from the Inspector, else Sketch's picker; one asset per take, each pass a clip at its offset,
     the measured round trip taken off).
   - **Commit**: `planTake(project, take)` (pure) builds the ops; one `store.dispatch` by `'you'` (one undo step).
-    Layer (drum tracks; `recorder.setMode(track, 'layer' | 'take')` changes it, Sketch's **Each pass**) adds every
+    Fold (`'fold'`, picked per track; a drum track's default is Layer) keeps what was played in most passes and leaves out the rest at the stop
+    (`input/rounds.js` `foldRounds`; the toast reads "Kept {k}; left out {s}." with **Show them**). Layer
+    (`recorder.setMode(track, 'fold' | 'layer' | 'take')` changes it, Sketch's **Fold**, **Layer**, **New take**) adds every
     pass's notes into the clip under them (`notes.add`; a hit on one already there is merged, and the summary says
     how many were) and makes clips only where there are none; while it records, each hit is previewed
     (`store.preview`) so the next pass plays it. A miss is replaced, not added: when a pass closes, a hit an earlier
@@ -1952,21 +2000,33 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
 - **A toggle never changes a song.** Nothing under `core/`, `audio/`, `kernel/` or `devices/registry.js` imports
   `toggles.js` (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
   data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-  menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
-  Browser, Find and `list_devices`, a `toggle` on a device definition read only where adding is offered, is
-  `device.rooms`'s work, built on its branch.)
+  menus, Browser and Find entries, doors, and the agent tools offered.
+- **Devices.** A built-in's definition may carry `toggle: '<id>'`. `offered(def)` (`toggles.js`) is false while that
+  toggle is off, and every place that offers a device for adding asks it: the device pickers and the empty chain's
+  chips (`ui/rack.js`), the Browser, the instrument menus, Find's Sound rows, `list_devices`, and the cloud agent's
+  free moves. The registry doesn't read it: `getDevice`, `get_device`, a song's inserts, `insert.add` by id, the
+  engine and the renders treat the device as always, so a saved or shared song that uses it loads and plays. A song's
+  own device (source `project`) can't hide itself with the field.
 - **Agent tools.** The catalog is static (`server/relay-catalog.json` doesn't move). A tool may carry `toggle: '<id>'`:
   `runTool` checks it before the required fields, the recording block and `run`, and while it's off the call answers
   `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
   goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
 - **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-  Find, `app.flip`'s pick and flip, `get_guide "workflows"`) and `stems.local` (the local stems runner, read by
-  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed). The tempo map neither hides.
+  Find, `app.flip`'s pick and flip, `get_guide "workflows"`), `stems.local` (the local stems runner, read by
+  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed) and `device.rooms` (Echo Chamber,
+  `core.rooms`: every device offer above, and its half of `get_guide "devices"`'s reverb paragraph, `GUIDE_REVERBS`).
+  The tempo map neither hides.
 - **No constants left.** `community` and `community.try` moved onto `on()` with the shelf (`ui/community.js`, and the
   gallery, which imports the registry and applies the same config); the unit test's list of constant switches is empty
   and stays so. Only the shelf reads a toggle's raw value: `"community": "off"` by name keeps the studio reading its own
   copy's deny list, and deploy.sh shipping that copy (the emergency off).
+- **`start.slice2`** (Start a song, the rest of it) is read in a few places. `ui/start.js` hands its door and stage to
+  `ui/start-slice1.js` (slice 1, as main had it) while it's off. `ui/coach-strip.js` doesn't start. Sketch's Each pass
+  offers Fold on a drum take only while it's on (a drum track's default is Layer either way). The others are the top bar's "~" (`ui/transport.js`), Song ▸ Start a song (`ui/export.js`), Find's Start a song (a
+  `toggle` on the feature in `ui/workspace.js`), the agent pane holding a message mid-take (`agent/panel.js`),
+  `get_selection.start` (null while off) and the demo agent's "tidy the timing" (`agent/mock.js`). The system prompt's
+  two Start a song lines stay either way. A clip the stage or a fold made loads and plays the same with it off.
 
 **Add one:** one entry in `TOGGLES`, off (the unit test checks the shape and the count), and `on('<id>')` at each way in
 (a menu item, a Browser row, a door, `toggle:` on a tool); then its entry in `overdub-intents`'s `toggles/TOGGLES.md`

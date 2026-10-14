@@ -647,6 +647,38 @@ try {
   });
   T.ok(cpu.pct < 50 && cpu.maxVoices >= 16, `16-voice synth + 8 kernel effects (4 oversampled filters, 4 echoes): ${cpu.pct.toFixed(1)}% of real time (${Math.round(cpu.ms)} ms for 8 s, ${cpu.maxVoices} voices)`);
 
+  // ------------------------------------------------------------------ CPU: Echo Chamber against Stairwell (R36)
+  // checkDevice's cpu (its 4 s render on the DI strum) for core.rooms at its heaviest room (AULA, its default: 6.74 s
+  // of measured room) against core.verb at its defaults, the median of 5 each, alternating, in this one page. At most
+  // 4.5x: AJ raised R36's budget (1.5x) on 2026-10-11, after the listening trial heard the 80-200 ms rooms' synthetic
+  // tail (T2), and the rooms now play their decay as measured until every octave is 40 dB down. Measured 3.0-3.3x here
+  // (AULA FAR 3.27x, the small rooms 2.2-2.4x; 4.2x in Node with the machine saturated); the old 150 ms AULA on this
+  // kernel 1.6-1.9x. The device check renders 4
+  // s from a fresh instance, so it sees AULA's late partitions filling and create()'s warm-up: the steady state, 4 s
+  // timed once AULA is full, is 5.1x Stairwell's in this page (5.5x in Node; tools/rooms-test.js holds that at 7x).
+  // Without the aachen bank it plays nothing and is skipped.
+  console.log('cpu: Echo Chamber against Stairwell');
+  const rc = await page.evaluate(async () => {
+    const { check } = window.K;
+    const rooms = (await import('/app/src/devices/builtin/rooms.js')).default, verb = (await import('/app/src/devices/builtin/verb.js')).default;
+    const { loadData } = await import('/app/src/kernel/data.js');
+    if (!(await loadData(rooms.data.aachen))) return { missing: true };
+    const cv = [], cr = [];
+    for (let i = 0; i < 5; i++) {
+      const v = await check.checkDevice(verb, { quick: true }), r = await check.checkDevice(rooms, { quick: true });
+      if (!v.cpu || !r.cpu) return { failed: [v.errors[0], r.errors[0]] };
+      cv.push(v.cpu.ms); cr.push(r.cpu.ms);
+    }
+    const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1];
+    return { verb: med(cv), rooms: med(cr), cv, cr };
+  });
+  if (rc.missing) T.note('Echo Chamber against Stairwell: skipped, the aachen bank hasn\'t been fetched (node tools/fetch-kits.js --only air-rooms)');
+  else {
+    const ratio = rc.rooms / rc.verb;
+    const say = `Chromium: Echo Chamber (AULA, the heaviest room) ${rc.rooms} ms for the device check's 4 s render against Stairwell's ${rc.verb} ms: ${rc.failed ? 'no cpu: ' + rc.failed.join(' | ') : ratio.toFixed(2) + 'x'} (at most 4.5x; median of 5)`;
+    T.ok(!rc.failed && ratio > 0 && ratio <= 4.5, say);
+  }
+
   // ------------------------------------------------------------------ a live AudioContext
   console.log('realtime');
   const rt = await page.evaluate(async () => {

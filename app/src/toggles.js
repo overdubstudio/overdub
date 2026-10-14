@@ -27,8 +27,10 @@
 //
 // No DOM at import: Node imports this (deploy.sh, the unit tests). A toggle never changes how a saved song sounds: it
 // hides only the ways to add more (nothing under core/, audio/, kernel/ or devices/registry.js reads it). Agent tools:
-// a tool's toggle: '<id>' field (agent/tools.js runTool) and get_guide's GUIDE_TOGGLES / guidePart. Hiding an off
-// feature's devices from the Browser, Find and list_devices (a toggle on the device definition) is device.rooms's work.
+// a tool's toggle: '<id>' field (agent/tools.js runTool) and get_guide's GUIDE_TOGGLES / guidePart. A built-in device
+// may carry toggle: '<id>' on its definition (Echo Chamber: device.rooms): offered(def) is false while that toggle is
+// off, and every place that offers devices to add asks it (the device pickers and the empty chain's chips, the Browser,
+// Find, list_devices, the agent's free moves). A song that already has the device loads, plays and renders as ever.
 
 import { cloudOverride } from './site-config.js';
 
@@ -79,6 +81,16 @@ export function list() {
 /** @param {string} id */
 export function offLine(id) {
   return `${known(id).name} isn't on in this studio.`;
+}
+
+/**
+ * Whether a device is offered for adding: false only for a built-in whose definition names a toggle that is off. A
+ * song's own device (source 'project', a library or community device) can't hide itself with a toggle field.
+ * @param {{ source?: string, toggle?: unknown } | null | undefined} def
+ */
+export function offered(def) {
+  if (!def || (def.source && def.source !== 'builtin') || typeof def.toggle !== 'string') return true;
+  return on(def.toggle);
 }
 
 /** @returns {Record<string, 'on'>} */

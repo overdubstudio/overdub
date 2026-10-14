@@ -98,16 +98,11 @@ const fmtDef = (d) => {
   return `${json.slice(0, -1)}, kernel: \`\n${kernel}\` }`;
 };
 
-// The guide's paragraph on the studio's reverbs, and the same with Stairwell alone: Echo Chamber is offered only while
-// the device.rooms toggle is on, so get_guide "devices" (agent/tools.js) says the second while it's off. (Nothing here
-// reads the toggle: kernel/ never imports toggles.js.)
+// The guide's paragraph on the studio's reverbs.
 export const GUIDE_REVERBS = `Before writing a reverb, know the two the studio has: Stairwell (core.verb) is long, lush and fully tweakable, a
 synthetic hall for pads and washes; Echo Chamber (core.rooms) puts a real space, as recorded, its whole audible decay, on
 a vocal, a piano or a drum room (six rooms: insert.add with { room: 'LECTURE' }). Write your
 own for what neither does: a shimmer, a gated room, a reverb that moves.`;
-export const GUIDE_REVERBS_ONE = `Before writing a reverb, know the one the studio has: Stairwell (core.verb) is long, lush and fully tweakable, a
-synthetic hall for pads and washes. Write your own for what it doesn't do: a real room, a shimmer, a gated room, a
-reverb that moves.`;
 
 export const KERNEL_GUIDE = `# Writing an Overdub device (a kernel)
 

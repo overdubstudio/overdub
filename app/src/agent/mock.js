@@ -28,7 +28,6 @@
 // line (emit 'fine', drawn small by the panel). Take names lead with a plain word ("bouncier"), the theory under it.
 
 import { runTool, coherentSelection, cancelRequest } from './tools.js';
-import { on as toggleOn } from '../toggles.js';
 import { songEnd } from '../core/project.js';
 import { statusFor } from './claude.js';
 import { noteName, parsePc, spellNote, formatNotes } from '../core/music.js';
@@ -118,7 +117,7 @@ export async function runMock(app, text, { signal, emit, setStatus, fast = false
   if (sounds) { await sceneSounds(app, { say, tool }, sounds); setStatus(''); emit('end', { turn }); return; }
   // the timing of the selected notes clip ("tidy the timing", "tighten it", "loosen it"): ahead of the words, so
   // "tighten it" on a clip is its timing, not a sound
-  const timing = toggleOn('start.slice2') ? timingAsk(app, t) : null;   // (the start.slice2 toggle's, app/src/toggles.js)
+  const timing = timingAsk(app, t);
   if (timing) { await sceneTiming(app, { say, tool }, timing); setStatus(''); emit('end', { turn }); return; }
   const { scene, rest, clauses } = route(t);
   const ctx = { say, fine, tool, think, st, t, emit, turn, clauses, offer, ask, pick };

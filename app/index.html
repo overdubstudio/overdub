@@ -18,12 +18,12 @@
        - style-src 'unsafe-inline': the panels inject their own <style> elements.
        - connect-src https://overdub-relay.ajsmithhq.com : the hosted relay behind Connect to Claude (RELAY in
          src/agent/remote.js; docs/REMOTE-MCP.md). The tab talks to it only while Connect is on, and its own key travels
-         in a request header, never in a URL. (The relay is live: the 'relay' toggle, src/toggles.js, shows Connect here.)
+         in a request header, never in a URL. (The relay is live: every studio shows Connect.)
        - connect-src http://localhost:* http://127.0.0.1:* : a relay on this machine (?relay=, which the studio honours
          only when it is itself on localhost; tools/relay-test.js, node server/relay.js). A meta policy can't depend on
          the host, so the live site carries these two as well, but nothing there connects to them.
-       - Not here yet: a deploy that switches on Claude on Overdub credits (the cloud.agent toggle and cloud.api in
-         app/site-config.json; src/toggles.js, src/site-config.js) adds its service's origin to connect-src, and only
+       - Not here yet: a deploy that switches on Claude on Overdub credits (cloud.api in app/site-config.json;
+         src/site-config.js) adds its service's origin to connect-src, and only
          there: signing in is a popup window on the service's own origin (Google, then its done page), which this
          policy doesn't govern, so there is no frame-src. Without it the studio asks no cloud origin anything; on a
          local studio the loopback entries above already let it reach a local service.
@@ -33,7 +33,8 @@
   <title>Overdub Studio</title>
   <meta name="description" content="A studio for you and your agents: hum it, tap it, play it, say it, and build any instrument or effect together.">
   <meta name="theme-color" content="#141210">
-  <!-- The deploy's switches (src/site-config.js, src/toggles.js): boot waits for them before the first module, so the
+  <!-- The deploy's configuration (src/site-config.js): boot waits
+ for them before the first module, so the
        read starts here, beside the stylesheets. site-config.js's fetch takes this response: one request per load. -->
   <link rel="preload" href="./site-config.json" as="fetch" crossorigin>
   <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">

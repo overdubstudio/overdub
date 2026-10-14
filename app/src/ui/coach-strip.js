@@ -29,13 +29,11 @@
 //   preview(i), keep() -> Promise, notThis(), end(), state() -> { run, door, step, done, words, rows, sel, line } | null }
 // On a phone (640 px and under) it is the onboard phone strip's look (.ob-mini-row: the line, the primary, ×), the run
 // sheet's words wrapping, and the style rows open as a bottom sheet up to 70% of the height.
-// The strip is the start.slice2 toggle's (app/src/toggles.js): off, it doesn't start and there is no app.coach.
 
 import { h, css } from './dom.js';
 import { STYLES, STYLE_IDS } from '../core/arrange.js';
 import { songEnd } from '../core/project.js';
 import { isDrumTrack } from '../input/recorder.js';
-import { on as toggleOn } from '../toggles.js';
 
 const RUNS = {
   beat: { words: ['beat', 'tune', 'band'], done: ['beat'] },
@@ -48,7 +46,6 @@ const plural = (n, w, ws = w + 's') => `${n} ${n === 1 ? w : ws}`;
 const BYE_MS = 6000;
 
 export default function (app) {
-  if (!toggleOn('start.slice2')) return null;
   const { store, ui } = app;
   css('coach-strip', CSS);
   const PHONE = window.matchMedia('(max-width: 640px)');

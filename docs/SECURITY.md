@@ -62,9 +62,7 @@ runs; and text in a song written to steer an agent.
   see held devices but no tool lets them play, and `define_device` refuses a held kernel under any id. `share-test`,
   `demos-test`, `agent-test`, `library-test` and `provenance-test` check it, with every kernel that reaches the audio
   thread written down.
-- **The community shelf** (`ui/community.js`, `devices/community.js`; docs/COMMUNITY-SHELF.md). Off on the live site:
-  the `community` toggle is off, and until the deploy's site config turns it on the shelf does nothing (a local studio
-  turns it on for one load with `?on=community`; `?on=` does nothing on any other host).
+- **The community shelf** (`ui/community.js`, `devices/community.js`; docs/COMMUNITY-SHELF.md). In every studio.
   Its index is JSON, read by one reader that copies only the fields it knows, checks each and caps text; it never
   carries code, and clip and device URLs stay inside the index's own folder on its own origin. ▶ plays a recording
   from a `blob:` URL; no device code is fetched to hear one. **Try** fetches the device file (300 KB at most), refuses
@@ -72,7 +70,7 @@ runs; and text in a song written to steer an agent.
   an agent's card, focus on Not now, Play it held 600 ms), runs the device check, and only then trusts the hash (for
   this page load, or from now on if the person ticks the box) and puts it on as one step. The song gets the entry's
   name, blurb and request, never the file's. Only the studio's own copy of the index can take a hash back (its deny
-  list). Try itself is held (the `community.try` toggle) until the switch. What stays open once it's on, plainly: an allowed shelf
+  list). What stays open, plainly: an allowed shelf
   kernel still shares the audio thread's realm with every other device in the song (frozen, global bindings and all,
   so it can't patch what they use or report as one of them, but it can read the realm: an indirect `eval` reaches its
   globals; and a kernel data file two devices both name is decoded once per audio context, so a kernel that names a
@@ -135,7 +133,7 @@ runs; and text in a song written to steer an agent.
 | In Node the device check ran the kernel in the process that writes the report, so a kernel could rewrite it or print its own | Medium | The kernel runs in a child process that reads `app/src` only, writes no files and starts no processes; the parent measures the samples it sends (`engine/node/check.js`). The network is still open, and the samples are still the kernel's, so a kernel written to fool the check can |
 | A kernel that never returns: the agent waited until reload, and live audio stops with no recovery | Medium (availability) | Checks have a deadline and Stop works (`62f4c8a`); renders don't queue behind a held one (`289ad3d`); live playback is open |
 | Song size limits weren't applied to a link | Low to medium | Fixed (`2e39267`) |
-| `?relay=` worked on the live site (shows Connect; could send a tab's token to a local port) | Low | Fixed (`e53e3a9`); the relay's trial switch, `?connect=1`, showed Connect for the hosted relay only. `?connect=1` is retired (0015): the `relay` toggle in `app/site-config.json` decides, and no link switches a studio on the live site |
+| `?relay=` worked on the live site (shows Connect; could send a tab's token to a local port) | Low | Fixed (`e53e3a9`); the relay's trial switch, `?connect=1`, showed Connect for the hosted relay only. `?connect=1` is retired (0015): every studio has Connect, and no link switches a studio on the live site |
 | The bridge took any request without an Origin, so a page could take over the live tab (denial of service) | Low | Fixed (`62f4c8a`) |
 | `Infinity` from a song file reached clip positions; a deeply nested link threw | Low | Fixed (`2e39267`) |
 | Kernels in one audio context share the worklet's built-in prototypes | Low | Fixed: before any kernel runs the scope is frozen, its global bindings (`Float32Array`, `registerProcessor`, no new globals) and every object reachable from them or from the intrinsics no global names (the iterator prototypes among them); each node gets its own dsp stdlib; the functions' `constructor` throws; and each node's messages carry its own device id (`d59e2ed`, the global bindings and iterators after review). `kernel-test` walks the scope from a kernel and finds nothing unfrozen. Still open: the realm is read-shared (below), and a kernel data file two devices name is one decoded copy per context, writable by either kernel |

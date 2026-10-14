@@ -6,15 +6,9 @@
 //
 // There is no marketplace: nothing here is sold, priced, rated or counted. It's a shelf.
 //
-// Behind the community toggle (app/src/toggles.js; docs/COMMUNITY-SHELF.md, "Where it's on"): off unless the deploy's
-// app/site-config.json says "toggles": { "community": "on" }, or a local studio (localhost, 127.0.0.1) is opened with
-// ?on=community. While it's off, ?community=, ?community-device= and a stored overdub:community are ignored, the section
-// isn't drawn, Find's shelf words aren't added and the tool answers "isn't on".
-//
-// The emergency off is the same toggle written "off" by name: "toggles": { "community": "off" } (the deploy writes it,
-// no code change). Off is off either way, with one difference: named "off", the studio's own copy is still read on
-// every load and its deny list still applied (trust.forget), so turning the shelf off never un-revokes anything (and
-// deploy/deploy.sh keeps shipping the copy). Left out, the shelf has never been on, so there is nothing to read.
+// The studio's own copy (app/community/, pinned by deploy/community-pin.json and shipped by every deploy) is read on
+// every load, and its deny list applied (trust.forget) before anything else, so a device taken off the shelf is taken
+// back in every browser on the next load.
 //
 // What runs when:
 //   - Browsing reads the index (JSON: never code). ▶ fetches a clip under the URL policy (devices/community.js), checks
@@ -27,12 +21,11 @@
 //     the song is the file's code under the index's words: name, blurb, nod, request and look come from the entry the
 //     person saw, never from the file. A new track gets a two-bar part to hear it on (an empty track plays silence), and
 //     an effect already on the track isn't stacked a second time.
-//   - Try has its own toggle, community.try, off until the switch (the worklet's realm is frozen now, its global
-//     bindings and everything reachable from them, and each node gets its own dsp stdlib: kernel/worklet.js
-//     freezeRealm; what a kernel can still do to another device, it can only through a kernel data file both name,
-//     SECURITY.md). On a local studio, ?on=community,community.try lets a developer use it before then.
+//   - Try leans on the frozen worklet realm (its global bindings and everything reachable from them, and each node
+//     gets its own dsp stdlib: kernel/worklet.js freezeRealm; what a kernel can still do to another device, it can
+//     only through a kernel data file both name, SECURITY.md).
 //
-//   app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
+//   app.community = { ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
 //                     tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }
 //
 // Storage: 'overdub:community' = { "url": "<index url>" } (Change, in the full studio; Back to the studio's copy clears
@@ -49,8 +42,6 @@ import { kernelPrint } from '../agent/keep.js';
 import { communityTool } from '../agent/community-tool.js';
 import { demoProject } from '../core/demo.js';
 import { parseNotes } from '../core/music.js';
-import { loadSiteConfig } from '../site-config.js';
-import { on as toggleOn } from '../toggles.js';
 
 const STORE_KEY = 'overdub:community';
 const catName = (c) => (DEVICE_CATS.find(([k]) => k === c) || [c, c])[1];
@@ -61,7 +52,6 @@ const say = {
   // (the Browser's line at the top says what a click or a tap on the studio's own devices does; a shelf row adds nothing)
   target: 'A row here adds nothing: ▶ plays a recording, and Try asks before any code runs.',
   vouched: 'A person read it before it went on the shelf. It passed the studio check.',
-  heldBack: 'Trying shelf devices in the studio isn’t open yet. You can hear each one and read its code.',
   clipRefused: 'That clip wasn’t played: it isn’t audio the studio takes, or it’s over 2 MB.',
 };
 // the shelf's words in Find: a query that finds the Browser by one of them opens it on the shelf
@@ -109,8 +99,6 @@ async function fetchCapped(url, cap, types = null) {
 export default async function (app) {
   const { store, ui, devices } = app;
   const params = new URLSearchParams(location.search);
-  // the community toggle, final for this load (main.js applied the site config before any module started)
-  const on = toggleOn('community');
   const tools = installTools(app);
   const tool = communityTool(app);
   const S = { status: 'off', url: null, bundled: false, how: 'bundled', all: [], entries: [], built: null, skipped: 0, refused: 0, newer: false, inputs: {}, revoked: new Map(), bundledEntries: [], kind: 'all', open: null, code: new Map(), reached: false, busy: new Set() };
@@ -121,17 +109,13 @@ export default async function (app) {
   const strip = (...keys) => { try { const u = new URL(location.href); let n = 0; for (const k of keys) if (u.searchParams.has(k)) { u.searchParams.delete(k); n++; } if (n) history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* fine */ } };
 
   app.community = {
-    on: () => on,
     ready: () => loading || Promise.resolve(),
     state: () => ({ entries: S.entries, bundled: S.bundled, source: S.bundled ? 'bundled' : S.url, url: S.url, built: S.built, newer: S.newer, status: S.status }),
     section, reach, offer, targetFor, tryEntry, matchKernel, heldLines, stop: () => player.stop(),
   };
   tools.register(tool);
-  if (!on) strip('community', 'community-device');
 
   css('ew-community', SHELF_CSS);
-  // Try: its own toggle (the worklet freeze; docs/COMMUNITY-SHELF.md, section 6)
-  const tryOn = () => toggleOn('community.try');
 
   /* ---------------------------------------------------------------- the index */
   const bundledUrl = new URL(BUNDLED_INDEX, location.href).href;
@@ -157,28 +141,13 @@ export default async function (app) {
   function load() {
     loading = (async () => {
       S.status = 'loading';
-      // off and never named in the deploy's config: the shelf has never been on here, so there's nothing to read. Named
-      // "off" (the emergency off), the studio's own copy is still read below for its deny list.
-      if (!on) {
-        let cfg = null;
-        try { cfg = await loadSiteConfig(); } catch { cfg = null; }
-        const t = cfg?.toggles;
-        if (!(t && typeof t === 'object' && t.community === 'off')) { S.status = 'off'; ui.emit('community:ready', { status: S.status }); return; }
-      }
-      const src = on ? chosenSource() : { url: bundledUrl, how: 'bundled' };
+      const src = chosenSource();
       S.url = src.url; S.how = src.how; S.bundled = src.url === bundledUrl;
-      // the studio's own copy is read every load, whatever the section shows and even with the shelf off: its deny
-      // list, and what the held strip and the prompt may say as fact
+      // the studio's own copy is read every load, whatever the section shows: its deny list, and what the held strip
+      // and the prompt may say as fact
       const own = await readFrom(bundledUrl, true);
       S.revoked = new Map((own.revoked || []).map((r) => [r.sha256, r]));
       if (S.revoked.size) { try { app.trust?.forget?.([...S.revoked.keys()]); } catch (e) { console.warn('overdub: the shelf could not take a hash back', e); } }
-      if (!on) {
-        // off: nothing listed, nothing in Find, no tool results; the held strip still says what was taken down
-        S.bundledEntries = []; S.all = []; S.entries = []; S.status = 'off';
-        strip('community', 'community-device');
-        ui.emit('community:ready', { status: S.status });
-        return;
-      }
       S.bundledEntries = own.entries || [];
       const r = S.bundled ? own : await readFrom(S.url, false);
       S.all = r.entries || [];
@@ -186,7 +155,7 @@ export default async function (app) {
       S.built = r.built || null; S.skipped = r.skipped || 0; S.refused = r.refused || 0; S.newer = !!r.newer; S.inputs = r.inputs || {};
       S.status = r.newer ? 'newer' : r.error && !S.all.length ? 'none' : 'ready';
       prints = null;
-      // Find finds the Browser by the shelf's words while it's on, and says the shelf is in there
+      // Find finds the Browser by the shelf's words, and says the shelf is in there
       try {
         const f = ui.workspace?.FEATURES?.find((x) => x.id === 'browser');
         if (f) {
@@ -202,7 +171,7 @@ export default async function (app) {
     return loading;
   }
   load();
-  ui.on('ready', async () => { await loading; if (on && refusedSource) ui.toast(say.refusedSource, { kind: 'bad', ms: 6000 }); });
+  ui.on('ready', async () => { await loading; if (refusedSource) ui.toast(say.refusedSource, { kind: 'bad', ms: 6000 }); });
 
   // the studio's own copy's hashes, worked out as kernel prints (keep.js) the first time an agent defines a device while
   // the shelf has entries: define_device refuses a shelf device's code, as it is or with its names or spacing changed.
@@ -414,7 +383,6 @@ export default async function (app) {
   // placing it), req (the agent's card) } -> { ok, ... }
   async function tryEntry(e, { by = 'you', track = null, anchor = null, keepOnly = false, req = null } = {}) {
     const no = (text, extra = {}) => { ui.toast(text, { kind: 'bad', ms: 8000 }); return { ok: false, error: text, ...extra }; };
-    if (!tryOn()) return no(say.heldBack, { held: true });
     if (S.busy.has(e.id)) return { ok: false, busy: true };
     if (S.revoked.has(e.sha256)) return no(`${e.name} was taken off the shelf: ${S.revoked.get(e.sha256).reason}`);
     // a second Try on the same track would put a second copy in series: a different sound from the one previewed
@@ -516,7 +484,6 @@ export default async function (app) {
     return h(`span.${cls}`, a, e.agent ? [' with ', byline(`agent:${e.agent.replace(/ \(.*\)$/, '')}`, { app, title: e.agent })] : null);
   }
   function section({ q = '', searching = false, prefs, savePrefs, render }) {
-    if (!on) return null;
     const noShelf = S.status === 'none' || S.status === 'loading';
     // with no shelf here (and nobody pointing at one), the Browser stays as it was
     if (noShelf && S.how === 'bundled' && !S.reached) return null;
@@ -594,10 +561,10 @@ export default async function (app) {
     const own = e.origin === 'bundled';
     const target = targetFor(e);
     const nums = plainNumbers(e.measured, e.kind);
-    // held back (community.try off), there's no Try and no Keep to press: a line says so, and hearing and reading stay
-    const held = !tryOn();
-    const tryBtn = held ? null : h('button.btn.btn-go.cs-try', { type: 'button' }, tryWords(target));
-    if (tryBtn) { paintTry(tryBtn, e); tryBtn.addEventListener('click', () => tryEntry(e, { anchor: tryBtn }).then(() => app.browser?.render?.())); }
+    const tryBtn = h('button.btn.btn-go.cs-try', { type: 'button' }, tryWords(target));
+    paintTry(tryBtn, e);
+    tryBtn.addEventListener('click', () => tryEntry(e, { anchor: tryBtn }).then(() => app.browser?.render?.()));
+
     const codeBox = h('pre.cs-code', { hidden: true });
     const read = h('button.btn.btn-txt.cs-read', { type: 'button' }, 'Read the code');
     read.addEventListener('click', async () => {
@@ -605,11 +572,11 @@ export default async function (app) {
       try { const { bytes } = await fetchCapped(e.device, LIMITS.deviceBytes); const def = parseDeviceFile(new TextDecoder().decode(bytes)); codeBox.textContent = `// fingerprint ${e.sha256.slice(0, 12)}${kernelHash(def.kernel) === e.sha256 ? '' : ' (this file doesn’t match it)'}\n${def.kernel}`; codeBox.hidden = false; }
       catch (err) { ui.toast(`Couldn’t read ${e.name}’s file: ${err.message}.`, { kind: 'bad' }); }
     });
-    const keep = held ? null : h('button.btn.btn-txt.cs-keep', { type: 'button', title: 'It goes in the song’s own list, under “Written in this song”, on no track until you put it on one', onclick: () => tryEntry(e, { keepOnly: true, anchor: keep }) }, 'Keep it in this song, on no track');
+    const keep = h('button.btn.btn-txt.cs-keep', { type: 'button', title: 'It goes in the song’s own list, under “Written in this song”, on no track until you put it on one', onclick: () => tryEntry(e, { keepOnly: true, anchor: keep }) }, 'Keep it in this song, on no track');
     return h('div.cs-detail', { dataset: { community: e.id } },
       h('p.cs-d-head', h('b', e.name), ' — ', e.blurb),
       h('div.cs-d-hear', playButton(e), dryButton(e)),
-      held ? h('p.cs-held', say.heldBack) : h('div.cs-d-try', tryBtn),
+      h('div.cs-d-try', tryBtn),
       e.request ? h('blockquote.cs-request', `“${e.request}”`) : null,
       h('p.cs-by', 'by ', credit(e, 'cs-credit'), e.requester && e.requester.length <= ASKED_MAX ? h('small.cs-asked', `Asked for by ${e.requester}`) : null),
       own ? null : h('p.cs-says', 'The shelf says:'),
@@ -702,8 +669,8 @@ export default async function (app) {
     ui.on('ready', async () => {
       strip('community-device');
       await app.community.ready();
-      if (!on) return;
-      const e = entryById(S.entries, wanted);
+      const e = entryById
+(S.entries, wanted);
       if (!e) { ui.toast(`The shelf has no device “${String(wanted).slice(0, 60)}”.`, { kind: 'bad', ms: 6000 }); return; }
       if (fresh) {
         try { store.load(demoProject(), { by: 'you' }); } catch (err) { console.warn('overdub: Night Shift did not open', err); }
@@ -741,7 +708,6 @@ const SHELF_CSS = `
 .cs-detail p { margin: 0; }
 .cs-d-head b { color: var(--text); }
 .cs-d-hear, .cs-d-try { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.cs-held { color: var(--text-3); font-size: 11.5px; }
 .cs-request { margin: 0; padding: 0; font-style: italic; color: var(--text-2); }
 .cs-by { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; }
 .cs-asked { color: var(--text-3); font-size: 11.5px; }

@@ -66,9 +66,7 @@
 // blocked. A landed take goes to capture with its clip id, what was played as played and the rounds (capture.ofClip).
 // On 'in' the stage holds the sound card (app.sounds.setHost, then offer({ track, from: 'take', take })) and gives the
 // host back when it closes; the card's Keep is a .btn there (one primary a region) and the line says what plays now.
-//
-// All of the above is the start.slice2 toggle (app/src/toggles.js). Off, doorOf and the default export hand over to
-// ui/start-slice1.js (slice 1 as main had it); the other switch points are listed in docs/ARCHITECTURE.md (Toggles).
+
 
 import { h, css, canvas, tok, byline } from './dom.js';
 import { ROWS } from '../input/tap.js';
@@ -82,8 +80,6 @@ import { isDrumTrack } from '../input/recorder.js';
 import { TYPE_MAP } from '../input/qwerty.js';
 import { longerPlan } from './sketch.js';
 import { putGroove } from '../agent/grooves-tool.js';
-import { on as toggleOn } from '../toggles.js';
-import slice1, { doorOf as doorOfSlice1 } from './start-slice1.js';
 
 const LEVEL_WORD = { tight: 'Tight', loose: 'Loose', played: 'As played' };
 const SPEEDS = [['Slow', 80], ['Easy', 100], ['Upbeat', 120]];
@@ -93,9 +89,7 @@ const plural = (n, w, ws = w + 's') => `${n} ${n === 1 ? w : ws}`;
 const agentName = (app) => app.agent?.name || app.agent?.provider?.name || null;
 
 // The door: the blank song's ways in. ctx: { addTrackMenu(anchor), showAgent(), openDemo() } from the arranger.
-// (start.slice2 off: the door and the stage are slice 1's, ui/start-slice1.js, as main had them)
 export function doorOf(app, ctx = {}) {
-  if (!toggleOn('start.slice2')) return doorOfSlice1(app, ctx);
   const go = (fn) => (e) => { e?.preventDefault?.(); fn(); };
   const st = () => app.start;
   const tap = () => (st() ? st().open({ kind: 'tap' }) : app.onboard?.firstMinute?.('tap'));
@@ -112,8 +106,7 @@ export function doorOf(app, ctx = {}) {
     row('Tap a beat', 'F J K L on your keys, or the pads on screen. Any speed.', tap, true),
     row('Hum a tune', 'Over a simple beat, or on its own. Nothing records until you press Hum.', hum),
     row('Play the keys', 'Your computer keys or a MIDI keyboard. Any speed.', keys),
-    // (behind workflow.flip: off, the door has its three ways)
-    toggleOn('workflow.flip') ? row('Flip a song', 'Bring a song you own. It gets split, mapped and marked; the drop is yours.', flip) : null);
+    row('Flip a song', 'Bring a song you own. It gets split, mapped and marked; the drop is yours.', flip));
   // ↑ ↓ walk the ways
   ledger.addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -135,7 +128,7 @@ export function doorOf(app, ctx = {}) {
 }
 
 export default function (app) {
-  if (!toggleOn('start.slice2')) return slice1(app);
+
   const { store, ui, engine } = app;
   css('start', CSS);
   const fns = new Map();

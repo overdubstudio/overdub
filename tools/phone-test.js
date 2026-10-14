@@ -777,7 +777,7 @@ async function coachPhone(pw, srvUrl, run) {
   const box = (sel) => E((q) => { const el = document.querySelector(q); if (!el || !el.getClientRects().length) return null; const r = el.getBoundingClientRect(); return { t: Math.round(r.top), b: Math.round(r.bottom), l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height), vw: innerWidth, vh: innerHeight }; }, sel);
   const inside = (b) => !!b && b.l >= 0 && b.r <= b.vw && b.t >= 0 && b.b <= b.vh;
   try {
-    await page.goto(srvUrl + '/app/?new&on=start.slice2', { waitUntil: 'load' });
+    await page.goto(srvUrl + '/app/?new', { waitUntil: 'load' });
     await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
     await sleep(600);
     // a beat, tapped on the stage (app.start.tap: the pads' own path), landed, and back to the song

@@ -5,7 +5,6 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deployDefaults } from '../app/src/toggles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -58,24 +57,21 @@ export function byteRange(header, size) {
   return [start, end];
 }
 
-// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
-// deploy/deploy.sh would ship with no base: the registry's deploy: 'on' toggles (app/src/toggles.js: relay), so a local
-// studio shows Connect as the live one does. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
+// The deploy's configuration (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
+// deploy/deploy.sh would ship with no base: {}. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
 // try it against (a local overdub-cloud, say): `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js` adds
-// its cloud.api and turns cloud.agent on. The stems runner stays off unless OVERDUB_STEMS_MODEL and OVERDUB_STEMS_SHA256
+// its cloud.api. The stems runner stays off unless OVERDUB_STEMS_MODEL and OVERDUB_STEMS_SHA256
 // name a model you exported (a URL on this machine, or a path on this site), for trying it locally: that adds the
-// stems entry and turns stems.local on. Its runtime is OVERDUB_STEMS_RUNTIME when set, else the default
+// stems entry. Its runtime is OVERDUB_STEMS_RUNTIME when set, else the default
 // vendor/ort/ort.webgpu.min.mjs, which this server answers from OVERDUB_STEMS_RUNTIME_DIR (an onnxruntime-web dist
 // directory on this machine) or app/vendor/ort/ (gitignored). Nothing in the repo holds either. Read on each request,
 // so a test can set them.
 const env = (k) => String(process.env[k] || '').trim();
 function siteConfig(res) {
   const api = env('OVERDUB_CLOUD_ORIGIN');
-  const toggles = { ...deployDefaults(), ...(api ? { 'cloud.agent': 'on' } : {}) };
-  const body = api ? { cloud: { api }, toggles } : { toggles };
+  const body = api ? { cloud: { api } } : {};
   if (env('OVERDUB_STEMS_MODEL')) {
     body.stems = { model: env('OVERDUB_STEMS_MODEL'), sha256: env('OVERDUB_STEMS_SHA256'), ...(env('OVERDUB_STEMS_RUNTIME') ? { runtime: env('OVERDUB_STEMS_RUNTIME') } : {}) };
-    toggles['stems.local'] = 'on';
   }
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));

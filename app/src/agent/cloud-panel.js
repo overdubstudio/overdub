@@ -25,7 +25,6 @@
 // mono, the price as a word beside Send. Nothing here signs anything: the hosted agent's work is signed Claude.
 
 import { css } from '../ui/dom.js';
-import { offered } from '../toggles.js';
 import { HOSTED_NAME } from './cloud.js';
 import { freeMove } from './cloud-kind.js';
 import { listDevices } from '../devices/registry.js';
@@ -73,7 +72,8 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
   let current = null;           // what the chip shows: a quote, or { free }
   function freeFor(text) {
     let devices = [];
-    try { devices = listDevices().filter(offered); } catch { devices = []; }
+    try { devices = listDevices();
+ } catch { devices = []; }
     return freeMove(text, { devices, hasTrack: !!ui.state.selection?.track });
   }
   function update() {

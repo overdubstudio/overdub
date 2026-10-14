@@ -13,12 +13,12 @@ import { createShell } from './ui/shell.js';
 import { decideView, WORKSPACE_KEY } from './ui/workspace-view.js';
 import { installWorkspace } from './ui/workspace.js';
 import { loadSiteConfig } from './site-config.js';
-import * as toggles from './toggles.js';
 
 const SAVE_KEY = 'overdub:project', PREV_KEY = 'overdub:previous';
 const params = new URLSearchParams(location.search);
-// How long boot waits for app/site-config.json (the feature toggles, app/src/toggles.js) before it starts the modules
-// with every toggle off. The read runs beside the device imports, so it costs nothing unless it's the slower of the two.
+// How long boot waits for app/site-config.json (the deploy's configuration, app/src/site-config.js: app.siteConfig)
+// before it starts the modules without it. The read runs beside the device imports, so it costs nothing unless it's the
+// slower of the two.
 const CONFIG_WAIT_MS = 4000;
 
 // Device libraries (each registers its devices on import). Missing ones are skipped so the studio still opens.
@@ -243,14 +243,13 @@ async function boot() {
     ownLink: (res) => trustOwnLink(res),
     since: () => trust.since,
   };
-  // the feature toggles (app/src/toggles.js): final before any module starts, so on() is synchronous everywhere. A
-  // config this load couldn't see (failed, or past the cap) gives the deploy's defaults (relay) for this load, not
-  // all off, and a later answer doesn't change that (toggles.js bootConfig)
+  // the deploy's configuration (app/src/site-config.js), read before any module starts so it's synchronous for them
+  // (app.siteConfig, or null when this load couldn't see it: a dormant service, accounts, stays absent then)
   const cfg = await configRead;
-  if (cfg === 'late') console.warn(`overdub: site-config.json took over ${CONFIG_WAIT_MS / 1000} s; only the deploy's defaults are on for this load`);
-  else if (!cfg || cfg.read === 'failed') console.warn("overdub: site-config.json couldn't be read; only the deploy's defaults are on for this load");
-  toggles.applyToggles(toggles.bootConfig(cfg), { search: location.search, host: location.hostname });
-  app.toggles = { on: toggles.on, list: toggles.list };
+  if (cfg === 'late') console.warn(`overdub: site-config.json took over ${CONFIG_WAIT_MS / 1000} s; starting without it`);
+  else if (!cfg || cfg.read === 'failed') console.warn("overdub: site-config.json couldn't be read; starting without it");
+  app.siteConfig = cfg && typeof cfg === 'object' ? cfg : null;
+
   window.overdub = app;
   app.ui = createShell(root, app);
   // the workspace (ui/workspace.js): which features are on screen, More, the view switch; before the panels register

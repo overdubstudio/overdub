@@ -541,10 +541,9 @@ else {
   ok(describeRoom({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22', `describe at defaults: "${describeRoom({})}"`);
   ok(rooms.look && rooms.look.shape === 'wide' && rooms.look.finish === 'hammer' && rooms.look.knob === 'cream' && rooms.look.label === 'plate'
     && rooms.look.color === '#cfc6b3' && rooms.look.ink === '#1d1a16' && rooms.look.led === '#ffb347', 'the face: wide, hammer, cream knobs, a plate, #cfc6b3 with #1d1a16 ink and a #ffb347 lamp (R25)');
-  // (Echo Chamber is offered only with device.rooms on: 'slow' turns it on to find the chip; 'missing' adds the insert
-  // the way a song has it, with the toggle off)
+  // ('slow' finds the chip; 'missing' adds the insert the way a song has it)
   for (const mode of ['slow', 'missing']) {
-    const o = await open('/app/', { query: mode === 'slow' ? 'new&on=device.rooms' : 'new' });
+    const o = await open('/app/', { query: 'new' });
     try {
       let release = null;
       const held = new Promise((r) => { release = r; });
@@ -594,8 +593,9 @@ else {
       ok(!errs.length, `${mode}: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);
     } finally { await o.close(); }
   }
-  // device.rooms off (the default): nothing offers Echo Chamber (the empty chain's chips, the effect picker, the
-  // Browser, Find), but a saved song that has it loads and plays it, and so does a share link to it
+  // every place that offers devices offers Echo Chamber (the empty chain's chips, the effect picker, the Browser,
+  // Find); a saved song that has it loads and plays it, and so does a share link to it
+
   {
     const song = async (page) => page.evaluate(async () => {
       const { createProject } = await import('/app/src/core/project.js');
@@ -619,7 +619,7 @@ else {
     let hash = null, savedTail = null;
     try {
       await a.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
-      const off = await a.page.evaluate(async () => {
+      const offers = await a.page.evaluate(async () => {
         const o = window.overdub, { devicePicker } = await import('/app/src/ui/rack.js');
         const r = o.store.dispatch({ type: 'track.add', track: { kind: 'instrument', name: 'Vox', instrument: { device: 'core.bass', params: {} } } }, { by: 'you' });
         o.ui.select({ track: r.created.track, insert: null });
@@ -636,11 +636,11 @@ else {
         await new Promise((res) => setTimeout(res, 300));
         const rows = [...document.querySelectorAll('.br-row')].map((x) => x.dataset.device);
         o.browser.search('');
-        return { on: o.toggles.on('device.rooms'), chips, stairwell: /Stairwell/.test(picker), picker: /Echo Chamber/.test(picker), find, browser: rows.includes('core.rooms'), browserStair: rows.includes('core.verb') };
+        return { chips, stairwell: /Stairwell/.test(picker), picker: /Echo Chamber/.test(picker), find, browser: rows.includes('core.rooms'), browserStair: rows.includes('core.verb') };
       });
-      ok(off.on === false && off.chips[0] === 'Reverb' && !off.chips.includes('Real room') && off.stairwell && !off.picker && !off.find && off.browserStair && !off.browser,
-        `device.rooms off: the empty chain offers ${off.chips.join(', ')} (no Real room), the effect picker${off.picker ? ' LISTS' : ' doesn\'t list'} Echo Chamber, the Browser${off.browser ? ' LISTS' : ' doesn\'t list'} it, and Find${off.find ? ' FINDS' : ' doesn\'t find'} it`);
-      // a saved song that has it (a file opened, a song restored: store.load), with the toggle off
+      ok(offers.chips[0] === 'Reverb' && offers.chips.includes('Real room') && offers.stairwell && offers.picker && offers.find && offers.browserStair && offers.browser,
+        `every place that offers devices offers Echo Chamber: the empty chain (${offers.chips.join(', ')}), the effect picker${offers.picker ? '' : ' (NOT)'}, the Browser${offers.browser ? '' : ' (NOT)'} and Find${offers.find ? '' : ' (NOT)'}`);
+      // a saved song that has it (a file opened, a song restored: store.load)
       const p = await song(a.page);
       const held = await a.page.evaluate(async (p) => {
         const o = window.overdub;
@@ -656,18 +656,18 @@ else {
       hash = held.hash;
       savedTail = await tailOf(a.page, p);
       ok(held.kept && held.card && savedTail.wet > -60 && savedTail.wet - savedTail.dry > 40,
-        `device.rooms off: a saved song with Echo Chamber (AULA, MIX 1) loads with its card on the rack and plays it: after the keys ring out, ${savedTail.wet.toFixed(1)} dB with the room against ${savedTail.dry.toFixed(1)} dB bypassed`);
+        `a saved song with Echo Chamber (AULA, MIX 1) loads with its card on the rack and plays it: after the keys ring out, ${savedTail.wet.toFixed(1)} dB with the room against ${savedTail.dry.toFixed(1)} dB bypassed`);
       const errs = a.errors.filter((e) => !/404|Failed to load resource/.test(e));
-      ok(!errs.length, `device.rooms off: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);
+      ok(!errs.length, `offered and saved: no page errors${errs.length ? ' (' + errs.slice(0, 2).join(' | ') + ')' : ''}`);
     } finally { await a.close(); }
-    // a share link to that song, opened in a studio with the toggle off
+    // a share link to that song, opened in another studio
     const b = await open('/app/' + (hash || ''));
     try {
       await b.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
-      const got = await b.page.evaluate(() => { const t = window.overdub.store.get().tracks.find((x) => x.name === 'Keys'); return { on: window.overdub.toggles.on('device.rooms'), fx: t ? t.inserts.find((x) => x.device === 'core.rooms') : null, song: window.overdub.store.get() }; });
+      const got = await b.page.evaluate(() => { const t = window.overdub.store.get().tracks.find((x) => x.name === 'Keys'); return { fx: t ? t.inserts.find((x) => x.device === 'core.rooms') : null, song: window.overdub.store.get() }; });
       const sharedTail = got.fx ? await tailOf(b.page, got.song) : null;
-      ok(!!hash && got.on === false && got.fx && got.fx.params.room === 0 && sharedTail && Math.abs(sharedTail.wet - savedTail.wet) < 0.5 && sharedTail.wet - sharedTail.dry > 40,
-        `device.rooms off: its share link opens with Echo Chamber in the song and plays it the same (${sharedTail ? sharedTail.wet.toFixed(1) + ' dB after the keys ring out, ' + sharedTail.dry.toFixed(1) + ' dB bypassed' : 'no Echo Chamber in the song'})`);
+      ok(!!hash && got.fx && got.fx.params.room === 0 && sharedTail && Math.abs(sharedTail.wet - savedTail.wet) < 0.5 && sharedTail.wet - sharedTail.dry > 40,
+        `its share link opens with Echo Chamber in the song and plays it the same (${sharedTail ? sharedTail.wet.toFixed(1) + ' dB after the keys ring out, ' + sharedTail.dry.toFixed(1) + ' dB bypassed' : 'no Echo Chamber in the song'})`);
     } finally { await b.close(); }
   }
 }

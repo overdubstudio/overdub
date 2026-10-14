@@ -242,8 +242,8 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
     delete process.env.OVERDUB_STEMS_MODEL; delete process.env.OVERDUB_STEMS_SHA256; delete process.env.OVERDUB_STEMS_RUNTIME_DIR;
     fs.rmSync(ortDir, { recursive: true, force: true });
     const bc = stemsConfig(b.stems, srv.url + '/app/site-config.json');
-    ok(!fs.existsSync(path.join(ROOT, 'app/site-config.json')) ? !a.stems && a.toggles?.['stems.local'] !== 'on' && bc?.model === 'http://127.0.0.1:9/htdemucs.onnx' && bc.runtime === srv.url + '/app/vendor/ort/ort.webgpu.min.mjs' && b.toggles['stems.local'] === 'on' : true,
-      'the local server answers stems only from OVERDUB_STEMS_* (for trying a model you exported, locally), with stems.local on and the runtime on this server');
+    ok(!fs.existsSync(path.join(ROOT, 'app/site-config.json')) ? !a.stems && bc?.model === 'http://127.0.0.1:9/htdemucs.onnx' && bc.runtime === srv.url + '/app/vendor/ort/ort.webgpu.min.mjs' : true,
+      'the local server answers stems only from OVERDUB_STEMS_* (for trying a model you exported, locally), with the runtime on this server');
     ok(js.status === 200 && /javascript/.test(js.headers.get('content-type')) && jsText.includes('stand') && up.status === 404, `and serves /app/vendor/ort/ from OVERDUB_STEMS_RUNTIME_DIR, as JavaScript, one plain file name only (a climb out: ${up.status})`);
   } finally { await srv.close(); }
 }
@@ -285,7 +285,7 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
     const run = async (stems) => {
       const stage = path.join(tmp, 'stage-' + runs++), cfgFile = path.join(stage, 'app/site-config.json');
       fs.mkdirSync(path.dirname(cfgFile), { recursive: true });
-      fs.writeFileSync(cfgFile, JSON.stringify({ toggles: { 'stems.local': 'on' }, stems }));
+      fs.writeFileSync(cfgFile, JSON.stringify({ stems }));
       let e = null, lines = null;
       try { lines = await stageStems({ configFile: cfgFile, stage, cacheDir: path.join(tmp, 'cache'), fetch: fake }); } catch (x) { e = x; }
       return { e, lines, stage, cfg: JSON.parse(fs.readFileSync(cfgFile, 'utf8')) };

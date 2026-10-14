@@ -706,8 +706,7 @@ choice plays the Filter 4x12 at the same level, and the card says so.</li>
 </ul>
 <h2 id="echo-chamber-corerooms-measured-rooms"><a class="h-link" href="#echo-chamber-corerooms-measured-rooms">Echo Chamber (<code>core.rooms</code>): measured rooms</a></h2>
 <p>A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen
-University, AIR 1.4, MIT; docs/SOUNDS.md). It is offered only while the <code>device.rooms</code> toggle is on (its definition's
-<code>toggle: 'device.rooms'</code>; docs/ARCHITECTURE.md, Toggles); a song that has it plays it either way. The device is <code>app/src/devices/builtin/rooms.js</code>; its tail, filters and
+University, AIR 1.4, MIT; docs/SOUNDS.md). The device is <code>app/src/devices/builtin/rooms.js</code>; its tail, filters and
 room table are <code>rooms-lib.js</code> (kernel text, shared with the build so that what the fit measures is what plays).</p>
 <ul>
 <li><strong>The model.</strong> Each room plays its measured impulse response (binaural: the two ears are the left and right taps)

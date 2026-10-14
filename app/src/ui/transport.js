@@ -24,7 +24,7 @@
 // Start a song (ui/start.js) finding the tempo from your playing (its play step): Tempo reads "~" (aria-valuetext
 // "finding the tempo") until the stage shows a BPM (app.start.tempoShown()), then that BPM, and the song's own once the
 // stage closes. Meanwhile it can't be dragged, typed, stepped or scrolled (Done puts the tempo in), and the ball is
-// still. (The start.slice2 toggle's: off, the top bar is as main had it.)
+// still.
 //
 // The ball (the metronome you can see): one cell per beat of the bar (the bar's first wider) beside the position, and
 // a square that travels from cell to cell on a shallow arc, lowest exactly on the beat, drawn from engine.beat (the
@@ -60,7 +60,6 @@ import { lanesOf } from '../core/automation.js';
 import { songEnd } from '../core/project.js';
 import { hasTempoMap } from '../core/music.js';
 import { newPartFor } from '../core/sounds.js';
-import { on as toggleOn } from '../toggles.js';
 
 const METERS = [[4, 4], [3, 4], [6, 8], [2, 4], [5, 4], [7, 8], [12, 8]];
 const SCALE_LIST = [['major', 'Major'], ['minor', 'Minor'], ['dorian', 'Dorian'], ['mixolydian', 'Mixolydian'], ['phrygian', 'Phrygian'],
@@ -612,8 +611,7 @@ function mountTransport(el, app) {
   let tdrag = null;
   // While Start a song finds the tempo from your playing (its play step), the tempo reads "~" until the stage shows a
   // BPM, then that BPM; it can't be dragged, typed or scrolled (Done puts the tempo in), and the ball stays still
-  // (the start.slice2 toggle's, app/src/toggles.js: off, the tempo is the song's as main had it)
-  const finding = () => toggleOn('start.slice2') && app.start?.step === 'play';
+  const finding = () => app.start?.step === 'play';
   let findingSaid = false;
   const findingSay = () => {
     if (!finding()) return false;

@@ -4,14 +4,15 @@
 (`app/src/devices/community.js`), the Browser's **From the community** with previews, the trust prompt and Try
 (`app/src/ui/community.js`), `find_community_device` and its card (`app/src/agent/community-tool.js`), the site gallery
 (`site/community/`, deployed since 2026-10-06 but unlinked) and `tools/community-test.js`. Held back: the whole shelf is off unless the
-page is on localhost (then `COMMUNITY_LIVE`, now the `community` toggle), and Try is off even there (then `TRY_ON`, now
+page is on localhost (then `COMMUNITY_LIVE`, later the `community` toggle), and Try is off even there (then `TRY_ON`, later
 `community.try`) until the worklet's prototypes are frozen
 (section 6). Since then (the shelf-live work, 2026-10-10) the freeze is built, the frame headers are sent locally and
 `deploy/headers.sh` makes them for CloudFront, the shelf is pinned and pulled, and there's an emergency off: section
 "Where it's on" says what's left before the switch. Still not built from Work package 3: the `credit` cleaning in
 `ops.js` and `project.js` and the knob escape in `faces.js`. The spec answers AJ's question ("do we have a marketplace
 concept? I'd love some community UI to browse and use these new devices") with a design, the files each part owns, and
-the tests that hold it. Draft 2 takes in two reviews, one of the security and one of Simple view on a
+the tests that hold it. (2026-10-14: the feature toggles are retired. The shelf and Try are in every studio, and
+every deploy ships the pinned shelf: section "Where it's on".) Draft 2 takes in two reviews, one of the security and one of Simple view on a
 phone. "Review notes" at the end lists what changed and what was turned down, with the reason.*
 
 *Since then: the studio is one view with everything on screen, More became Find (⌘K), and Simple view is reached only
@@ -56,58 +57,33 @@ a phone, that card is the shortest route: ask, ▶, Try, Play it.
 
 ## Where it's on
 
-It ships **off on the live site** until AJ turns it on, and "off" means off, whatever the URL says. It sits behind two
-feature toggles (`app/src/toggles.js`; ARCHITECTURE.md, "Toggles"), both off: `community` (the shelf in the studio and
-the gallery) and `community.try` (Try). Turning it on is a config change, no code: `"toggles": { "community": "on",
-"community.try": "on" }` in the deploy's `deploy/site-config.json`, plus the commit that links the gallery (a
-**Community** word in the site's top nav, a line in `llms.txt`, the guide's line). `pages-test` checks whichever side
-of that commit the tree is on. Before the switch, all of these hold:
+In every studio, Try included: there are no feature toggles (retired 2026-10-14; what is merged to `main` ships at the
+next live deploy). The gallery is shipped too; linking it from the site (a **Community** word in the top nav, a line
+in `llms.txt`) is its own commit, and `pages-test` checks whichever side of that commit the tree is on.
 
-- overdub-devices' DRAFT-NOTES decisions are made (the security and contact address, the licence default, the money
-  and use statement), because the live gallery points people at that repo. They're AJ's.
-- The pin (below) points at a commit on overdub-devices' master, not a branch that could be squashed away, and the index
-  it names was rebuilt without draft wording.
-- `deploy/headers.sh` has run on both distributions, and `node tools/prod-check.js` shows the frame headers on `/`,
-  `/app/`, `/site/community/` and `/community/`.
-- On an iPhone with the ringer off, ▶ (an `<audio>` clip) and Try (Web Audio) are both heard, or the toast says why
-  not (section 3, "Phones"). A person checks it on the phone and writes the result in the pull request.
-
-- The `community` toggle is off. While it is, `?community=`, `?community-device=` and a stored `overdub:community`
-  are ignored, the Browser section isn't drawn, Find's shelf words aren't added, and the agent tool answers *"The
-  community shelf isn't on in this studio."* A developer turns it on for one load with `?on=community` (and Try with
-  `?on=community,community.try`), which counts only on `localhost`, `127.0.0.1` or `[::1]`: on any other host `?on=`
-  does nothing, so a link can't switch anyone's studio. And even with the toggle on, an index from another origin is
-  read only by a local page: without that, a link to `overdubstudio.com/app/?community=http://localhost:NNNN/…` would
-  open the shelf and its trust prompt on the live studio's origin, which holds the person's songs and drives their
-  agents, since `connect-src` already allows `localhost:*`.
+- An index from another origin is read only by a local page: without that, a link to
+  `overdubstudio.com/app/?community=http://localhost:NNNN/…` would open the shelf and its trust prompt on the live
+  studio's origin, which holds the person's songs and drives their agents, since `connect-src` already allows
+  `localhost:*`.
 - The bundled snapshot (`app/community/`) is **gitignored**. The studio pins the shelf it ships in a committed file,
   `deploy/community-pin.json` (an overdub-devices commit and the SHA-256 of its index), and `tools/community-pull.js`
   fills `app/community/` from a sibling `../overdub-devices` checkout at exactly that commit, checking the index's hash
   and every device file's kernel against its entry; it copies the index, the device files and the MP3 clips only.
   Local development runs the same pull, so a laptop's shelf is the shipped one. `deploy/deploy.sh` runs it into its
-  stage and deploys nothing if it refuses; while the site config it ships leaves the `community` toggle out, the
-  pulled shelf is checked and then held back, so no community device or clip reaches overdubstudio.com before the
-  switch.
+  stage, ships it on every deploy, and deploys nothing if it refuses (or, live, if there's no checkout to pull from).
 - `site/community/` is committed and, since AJ approved it on 2026-10-06, `deploy.sh` ships it (its `HELD_BACK` list
-  is empty), at `/community/` as well as `/site/community/`. No page links to it until the switch commit. The page keeps the studio's switch (it imports the registry and
-  reads the same config): while the `community` toggle is off it reads nothing, and on overdubstudio.com it says *"The
-  community shelf isn't on here yet."* It has
-  nothing to read there anyway: the index it reads by default is the studio's snapshot, which the deploy holds back
-  until the switch. `pages-test` checks all of this.
+  is empty), at `/community/` as well as `/site/community/`.
 - Nothing from the shelf runs before the trust prompt. A plain file import doesn't ask today; making it ask touches
   every import, not just the shelf, so it's a separate change.
-- **The emergency off** needs no code change: `"toggles": { "community": "off" }` in the deployed
-  `app/site-config.json` (`deploy/site-config.json`; deploy/README.md). Off is the toggle's default, but named `"off"`
-  it differs in one way: the deploy still ships the bundled index and the studio still reads it on every load and
-  applies its `revoked` list, so turning the shelf off never un-revokes anything.
+- **Taking a device down** is a pin that revokes it: the studio reads its bundled index on every load and applies its
+  `revoked` list (`trust.forget`), so the next deploy takes it back in every browser.
 - **The API key is gone from the page** (SECURITY.md, "No API key on the page"), which was this spec's condition for
   turning the shelf on. The prompt no longer mentions a key.
 - **Moving the shelf forward** is a pull request that changes only `deploy/community-pin.json`, made with
   `node tools/community-pull.js --pin <commit>`, which prints what's added, changed and taken down for its body. Adding
   needs two people (one merges the device in overdub-devices, the other accepts the pin); a takedown needs one and
-  ships before it's reviewed (overdub-devices' `docs/TAKEDOWN.md`). Once it's on, `node tools/prod-check.js` checks the
-  live index against the pin: its SHA-256, its `built.from`, no revoked fingerprint listed, and a clip that answers
-  `audio/mpeg`.
+  ships before it's reviewed (overdub-devices' `docs/TAKEDOWN.md`). `node tools/prod-check.js` checks the live index
+  against the pin: its SHA-256, its `built.from`, no revoked fingerprint listed, and a clip that answers `audio/mpeg`.
 
 What the shelf does differently from "install": nothing auto-runs, nothing installs into the studio, and a device only
 ever goes into the song you have open. There it travels like any other song device, and it's held on someone else's
@@ -402,8 +378,7 @@ buttons and there's no `/` key. The shelf is reached three ways, and each one br
 - **More.** The `browser` feature (`app/src/ui/workspace.js` `FEATURES`) gains the aliases `'community'`, `'shelf'`,
   `'other people'` and `'new sounds'`, so searching More for them finds **Instruments and effects**, whose line then
   names the community shelf. Adding it from there closes More and opens the Browser scrolled to the shelf's head
-  (`workspace:add` carries the query; a shelf word calls `reach()`). The aliases are added only while the shelf is on (the `community`
-  toggle).
+  (`workspace:add` carries the query; a shelf word calls `reach()`). The aliases are added once the shelf is read.
 - **A link or the agent's card.** `?community-device=` and the card's ▶ / Try call
   `app.ui.workspace.reach('browser', by)` and open the left sheet on that entry (`by` is `'you'` for a link, the agent
   for its card, so More's note says who brought it in).
@@ -466,8 +441,7 @@ MIT-0 · devices/example-author/back-seat at 249eac3 · Read the code · Keep it
 - **Read the code** fetches the device file (same policy and byte cap as Try) and shows its kernel with `textContent`
   in a `<pre>`, under the fingerprint's first 12 hex characters. Nothing is parsed beyond the JSON, and nothing runs.
 - **Keep it in this song, on no track** is a small text link: the existing import, behind the same prompt (section 3,
-  "Keep in this song"). While Try is held back (the `community.try` toggle off), neither Try nor this link is drawn: one line says Try isn't
-  open yet, and ▶ and Read the code stay.
+  "Keep in this song").
 - No face is drawn in the Browser row; there isn't room. The site gallery draws faces (section 4).
 
 ### Hear it
@@ -622,8 +596,7 @@ define).
 - Nothing is fetched until the page has loaded and ▶ or Try is pressed.
 
 Without `new`, it opens the section on the entry in the current song. An id the index doesn't list: *"The shelf has no
-device "<id>"."* Then the parameter is removed from the address bar, as `?device=` is. While the shelf is off
-(section "Where it's on"), the parameter is ignored and removed.
+device "<id>"."* Then the parameter is removed from the address bar, as `?device=` is.
 
 **Framing.** The studio's meta CSP can't set `frame-ancestors`, so it comes as a header. `server/serve.js` sends
 `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Content-Type-Options: nosniff` on
@@ -718,9 +691,8 @@ hairline, sections under a heavy rule. No cards and no stripes.
   "checked … read" clause and names the source. The licence explainer links to the repo's LICENSING.md once it has a
   URL.
 - **Shipped, not linked:** `deploy.sh` carries it (AJ, 2026-10-06), but nothing in `site/index.html`, `site/docs/` or
-  `llms.txt` links to it yet (this page takes no uploads). It reads nothing until the `community` toggle is on.
-  The switch commit links it (section "Where it's on"), and `pages-test` checks the links on whichever side of the
-  switch the tree is.
+  `llms.txt` links to it yet (this page takes no uploads). The commit that links it (section "Where it's on") is its
+  own, and `pages-test` checks the links on whichever side of it the tree is.
 
 ---
 
@@ -815,8 +787,8 @@ with the best match on the named or selected track, the way the tone scene offer
 
 **Registration:** `ui/community.js` registers the tool through `installTools(app).register`. Its schema is in
 `agent/extra-schemas.js`, so `catalogSchemas()`, `server/mcp.js`, the bridge and `server/relay-catalog.json` (rebuilt
-with `tools/relay-catalog.js`) list it before a tab connects. While the shelf is off (section "Where it's on"), the
-tool answers *"The community shelf isn't on in this studio."* with no results.
+with `tools/relay-catalog.js`) list it before a tab connects. In a studio with no shelf module, the tool answers *"The community shelf isn't here in
+this studio."* with no results.
 
 ---
 

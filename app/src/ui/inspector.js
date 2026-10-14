@@ -4,7 +4,6 @@
 // slider is one undo step. Fields being typed in are never overwritten by a refresh.
 
 import { h, css, icon, fmtDb, byline } from './dom.js';
-import { offered } from '../toggles.js';
 import { authorKind, authorName, authorVar } from './rack.js';
 import { MOD } from './arrange-kit.js';
 import { TRACK_COLORS } from '../core/project.js';
@@ -148,7 +147,8 @@ export default function (app) {
       }
 
       function trackSection(t) {
-        const insts = devices.listDevices({ kind: 'instrument' }).filter((d) => offered(d) || d.id === t.instrument?.device);
+        const insts = devices.listDevices({ kind: 'instrument' });
+
         const kids = [
           text('Name', () => store.track(t.id)?.name || '', (v) => v && dispatch({ type: 'track.set', track: t.id, patch: { name: v } }, 'rename track')),
           row('Colour', h('div.in-colors', TRACK_COLORS.map((c, i) => h('button.in-color' + (t.color === c ? '.on' : ''), { style: { background: c }, title: `Colour ${i + 1}`, 'aria-label': `Colour ${i + 1}`, onclick: () => dispatch({ type: 'track.set', track: t.id, patch: { color: c } }, 'track colour') })))),

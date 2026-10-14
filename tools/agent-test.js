@@ -504,15 +504,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 {
   const tools = await import('../app/src/agent/tools.js');
   const { FLIP_FENCED } = await import('../app/src/agent/workflows.js');
-  const T = await import('../app/src/toggles.js');
   const gg = tools.TOOLS.find((x) => x.name === 'get_guide');
-  // behind workflow.flip: off (the default), the topic answers the off line; the ops guide's tempo.map is core and stays
-  T.applyToggles({}, { search: '', host: 'localhost' });
-  const offFlip = await gg.run({ topic: 'workflows', section: 'flip' });
-  const offOps = await gg.run({ topic: 'ops' });
-  t.ok(offFlip.error === "Flip a song isn't on in this studio." && !offFlip.guide && /type: 'tempo\.map'/.test(offOps.guide) && tools.GUIDE_TOGGLES.workflows === 'workflow.flip',
-    `node: with workflow.flip off, get_guide "workflows" answers "${offFlip.error}"; the ops guide still has tempo.map (the map is core song format)`);
-  T.applyToggles({}, { search: '?on=workflow.flip', host: 'localhost' });
   const flip = await gg.run({ topic: 'workflows', section: 'flip' });
   const all = await gg.run({ topic: 'workflows' });
   const none = await gg.run({ topic: 'workflows', section: 'drop' });
@@ -534,7 +526,6 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     tracks: [{ id: 't_o', name: 'Original', kind: 'audio', mute: true, clips: [{ id: 'c_o', kind: 'audio', name: 'Original', start: 1.5, length: 30, asset: 'a_o', offset: 0 }] }],
     tempoMap: { anchors, clip: 'c_o', clipStart: 1.5 } });
   const text = summarize(p, { detail: 'summary' }).split('\n');
-  T.applyToggles(null, {});
   t.ok(/^Grid follows Original: 96 BPM nominal, [\d.]+–[\d.]+, 1 free span \(beats 12–24\); key D minor/.test(text[1]) && /Bridge \[12–28\] \(s_b\) key F major/.test(text.join('\n')) && !/off its grid/.test(text[1]), `node: get_project says the map in one line ("${text[1].slice(0, 90)}…") and each section's key`);
   p.tracks[0].clips[0].start = 2;
   t.ok(/Original is off its grid by 313 ms/.test(summarize(p, { detail: 'summary' })), 'node: a move that left the recording behind its grid is said, in ms');
@@ -580,77 +571,26 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(tools.schemas().every((x) => x.annotations && x.annotations.title), 'node: app.tools.schemas() carries each static tool\'s annotations');
 }
 
-/* ------------------------------------------------------------------ 0b1t. an off feature's tool and guide topic (Node) */
-// Feature toggles (app/src/toggles.js; intent 0015 R20, R21): a tool carrying toggle: '<id>' stays in every catalog and,
-// while its toggle is off, answers the toggle's off line before anything else and changes nothing. A get_guide topic
-// mapped to an off toggle does the same. Nothing real is behind a toggle yet, so the real guides and the catalog don't move.
+/* ------------------------------------------------------------------ 0b1t. every guide topic answers (Node) */
+// Every get_guide topic answers its guide (nothing is behind a switch: what is merged ships), the prompt's own text for
+// etiquette and ops, and the devices guide names both reverbs.
 {
   const { createStore } = await import('../app/src/core/store.js');
   const tools = await import('../app/src/agent/tools.js');
-  const T = await import('../app/src/toggles.js');
   const { ETIQUETTE, OPS_CHEATSHEET, NOTES_FORMAT } = await import('../app/src/agent/prompt.js');
   const getDevice = (id) => ({ id, name: id, kind: 'instrument', params: [] });
   const store = createStore(null, { getDevice });
-  store.dispatch({ type: 'track.add', track: { name: 'Bass', instrument: { device: 'core.bass' } } }, { by: 'you' });
   const app = { store, devices: { getDevice }, ui: { emit() {}, toast() {} } };
   tools.installTools(app);
   const catalog = async () => JSON.stringify(await tools.catalogSchemas());
   const cat0 = await catalog();
-  const local = (search) => T.applyToggles({}, { search, host: 'localhost' });
-  local('');
-  let ran = 0;
-  app.tools.register({
-    name: 'flip_probe', toggle: 'workflow.flip', description: 'a throwaway tool behind workflow.flip',
-    annotations: { title: 'Flip probe', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    input_schema: { type: 'object', properties: { gain: { type: 'number' } }, required: ['gain'], additionalProperties: false },
-    run(input, { app: a }) { ran++; a.store.dispatch({ type: 'track.set', track: a.store.get().tracks[0].id, patch: { gain: input.gain } }, { by: 'claude' }); return { ok: true }; },
-  });
-  const listed = tools.schemas().find((x) => x.name === 'flip_probe');
-  const song0 = JSON.stringify(store.get()), h0 = store.history.length;
-  const offR = await app.tools.run('flip_probe', {}, { by: 'mcp:probe' });   // gain missing too: the toggle answers first
-  const offR2 = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
-  t.ok(offR.error === "Flip a song isn't on in this studio." && !offR.hint && JSON.stringify(offR2) === JSON.stringify(offR) && ran === 0 && JSON.stringify(store.get()) === song0 && store.history.length === h0
-    && listed && !('toggle' in listed),
-    `node: a tool behind an off toggle stays listed (its schema has no toggle field) and answers "${offR.error}" before the missing-field check, without running (${ran} runs, ${store.history.length - h0} history entries)`);
-  T.applyToggles({}, { search: '?on=workflow.flip', host: 'overdubstudio.com' });
-  const pub = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
-  t.ok(pub.error === offR.error && ran === 0, `node: ?on=workflow.flip does nothing on the live host: "${pub.error}"`);
-  local('?on=workflow.flip');
-  const onR = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
-  t.ok(onR.ok && ran === 1 && store.get().tracks[0].gain === -6 && store.history.length === h0 + 1,
-    `node: with ?on=workflow.flip on a local studio the same call runs (gain ${store.get().tracks[0].gain}, ${ran} run)`);
-  tools.TOOLS.splice(tools.TOOLS.findIndex((x) => x.name === 'flip_probe'), 1);
-
-  // get_guide: every real topic, byte for byte, with every toggle off and every toggle on, and the prompt's own text
   const topics = tools.TOOLS.find((x) => x.name === 'get_guide').input_schema.properties.topic.enum;
-  const guides = async () => { const o = {}; for (const topic of topics) o[topic] = JSON.stringify(await app.tools.run('get_guide', { topic }, { by: 'mcp:probe' })); return o; };
-  local('');
-  const offG = await guides();
-  local('?on=all');
-  const allG = await guides();
-  const owned = Object.keys(tools.GUIDE_TOGGLES);
-  // (a shared topic's toggled part: "devices" names Echo Chamber beside Stairwell only with device.rooms on, and
-  // differs by that paragraph alone)
-  const { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../app/src/kernel/guide.js');
-  const parts = { devices: (g) => g.replace(JSON.stringify(GUIDE_REVERBS).slice(1, -1), JSON.stringify(GUIDE_REVERBS_ONE).slice(1, -1)) };
-  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== (parts[x] || String)(allG[x]) || /isn't on in this studio/.test(offG[x])));
-  const ownedOk = owned.every((x) => JSON.parse(offG[x]).error === T.offLine(tools.GUIDE_TOGGLES[x]) && JSON.parse(allG[x]).guide);
-  t.ok(!differ.length && ownedOk && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && owned.join() === 'workflows',
-    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) and its toggled part (devices: Echo Chamber in the reverb paragraph) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
-  // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
-  tools.GUIDE_TOGGLES.ops = 'workflow.flip';
-  local('');
-  const gOff = await app.tools.run('get_guide', { topic: 'ops' }, { by: 'mcp:probe' });
-  local('?on=workflow.flip');
-  const gOn = JSON.stringify(await app.tools.run('get_guide', { topic: 'ops' }, { by: 'mcp:probe' }));
-  delete tools.GUIDE_TOGGLES.ops;
-  local('');
-  const part = [tools.guidePart('workflow.flip', 'flip text')];
-  local('?on=workflow.flip');
-  part.push(tools.guidePart('workflow.flip', 'flip text'));
-  T.applyToggles(null, {});
-  t.ok(gOff.error === "Flip a song isn't on in this studio." && gOn === offG.ops && part[0] === '' && part[1] === 'flip text',
-    `node: a guide topic mapped to an off toggle answers "${gOff.error}", and on it's the guide again; guidePart is '' while off ("${part[0]}", "${part[1]}")`);
+  const G = {};
+  for (const topic of topics) G[topic] = await app.tools.run('get_guide', { topic }, { by: 'mcp:probe' });
+  const missing = topics.filter((x) => typeof G[x].guide !== 'string' || !G[x].guide.length);
+  const { GUIDE_REVERBS } = await import('../app/src/kernel/guide.js');
+  t.ok(!missing.length && G.etiquette.guide === ETIQUETTE && G.ops.guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && G.devices.guide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(G.devices.guide),
+    `node: every guide topic answers its guide (${topics.join(', ')})${missing.length ? '; no guide: ' + missing.join(', ') : ''}, and "devices" names Stairwell and Echo Chamber`);
   // the catalog the relay lists is the same bytes, and server/relay-catalog.json is still current
   const { spawnSync } = await import('node:child_process');
   const chk = spawnSync(process.execPath, [path.join(HERE, 'relay-catalog.js'), '--check'], { encoding: 'utf8' });
@@ -890,19 +830,13 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     await run(app, 'apply_ops', { label: 'back', ops: [{ type: 'instrument.set', track: 'Arp', params: { a_table: 'BASIC', a_pos: 0.62 } }] });
     // Echo Chamber (intent 0006, R30-R32): no new tool. insert.add takes ROOM's label, get_device lists the six rooms
     // through the library field, get_project says it in one line, list_devices finds it by its words, and adjust's
-    // space move turns the room that's there instead of adding Stairwell. Echo Chamber is behind device.rooms: off (the
-    // default), list_devices doesn't offer it and get_guide "devices" names Stairwell alone, but a song that has it
-    // keeps it, get_project says it and get_device reads it; the checks after that run with it on.
+    // space move turns the room that's there instead of adding Stairwell. A saved song that has it keeps it,
+    // get_project says it and get_device reads it.
     {
-      const TG = await import('../app/src/toggles.js');
-      const { GUIDE_REVERBS, GUIDE_REVERBS_ONE } = await import('../app/src/kernel/guide.js');
+      const { GUIDE_REVERBS } = await import('../app/src/kernel/guide.js');
       const words = ['reverb', 'room', 'church', 'hall', 'convolution'];
       const listed = async () => { const out = []; for (const w of words) { const r = await run(app, 'list_devices', { query: w, detail: 'brief' }); if (/core\.rooms/.test(JSON.stringify(r))) out.push(w); } return out; };
-      TG.applyToggles(null, {});
-      const offWords = await listed(), offFx = JSON.stringify(await run(app, 'list_devices', { kind: 'effect', detail: 'brief' }));
-      const offCats = JSON.stringify(await run(app, 'list_devices', { cat: 'ambient' }));
-      const offGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
-      // (a saved song that has it: loaded as a file or a link is, with the toggle off)
+      // (a saved song that has it: loaded as a file or a link is)
       const saved = JSON.parse(JSON.stringify(app.store.get()));
       saved.tracks.find((x) => x.name === 'Arp').inserts.push({ id: 'fx_room01', device: 'core.rooms', on: true, params: { room: 5, mix: 0.3 }, by: 'you' });
       const before = JSON.parse(JSON.stringify(app.store.get()));
@@ -910,15 +844,10 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       const kept = app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
       const gpOff = await run(app, 'get_project', { track: 'Arp' }), devOff = await run(app, 'get_device', { id: 'core.rooms' });
       app.store.load(before);
-      t.ok(TG.on('device.rooms') === false && TG.offered(reg.getDevice('core.rooms')) === false && TG.offered(reg.getDevice('core.verb')) === true
-        && !offWords.length && !/core\.rooms|Echo Chamber/.test(offFx) && !/core\.rooms/.test(offCats) && /core\.verb/.test(offCats)
-        && !offGuide.includes('Echo Chamber') && offGuide.includes(GUIDE_REVERBS_ONE),
-      `node: with device.rooms off, list_devices offers no Echo Chamber (not under ${words.map((w) => `"${w}"`).join(', ')}, not among the effects or in ambient; Stairwell is) and get_guide "devices" names Stairwell alone${offWords.length ? '; listed under ' + offWords.join(', ') : ''}${/Echo Chamber/.test(offGuide) ? '; the guide names it' : ''}${/core\.verb/.test(offCats) ? '' : '; no Stairwell in ambient'}`);
       t.ok(kept && kept.params.room === 5 && /Echo Chamber/.test(gpOff.song || '') && /Meeting room/.test(gpOff.song || '') && devOff.id === 'core.rooms' && !devOff.error,
-        `node: with it off, a saved song that has Echo Chamber keeps it (MEETING, mix ${kept?.params?.mix}), get_project says it and get_device reads it`);
-      TG.applyToggles({}, { search: '?on=device.rooms', host: 'localhost' });
+        `node: a saved song that has Echo Chamber keeps it (MEETING, mix ${kept?.params?.mix}), get_project says it and get_device reads it`);
       const onGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
-      t.ok(onGuide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(onGuide), 'node: with device.rooms on, get_guide "devices" names both reverbs');
+      t.ok(onGuide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(onGuide), 'node: get_guide "devices" names both reverbs');
       const n0 = (await tools.catalogSchemas()).length;
       const add = await run(app, 'apply_ops', { label: 'a room', ops: [{ type: 'insert.add', track: 'Arp', insert: { device: 'core.rooms', params: { room: 'LECTURE', mix: 0.18 } } }] });
       const ins = () => app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
@@ -944,7 +873,6 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       t.ok(adj.ok !== false && ins().params.mix > mix0 && !arp.inserts.some((x) => x.device === 'core.verb') && (await tools.catalogSchemas()).length === n0 && n0 === 40,
         `node: adjust space turns Echo Chamber's mix (${mix0} -> ${ins().params.mix}) and adds no Stairwell; still ${n0} tools`);
       await run(app, 'apply_ops', { label: 'no room', ops: [{ type: 'insert.remove', track: 'Arp', insert: ins().id }] });
-      TG.applyToggles(null, {});
     }
     const synth = await run(app, 'list_devices', { cat: 'synth' }), one = await run(app, 'list_devices', { query: 'wavetable' }), gtr = await run(app, 'list_devices', { cat: 'guitar' }), none = await run(app, 'list_devices', { query: 'zzqx' });
     t.ok(JSON.stringify(synth).length < 8000 && /core\.wavetable "Light Table"/.test(synth.devices) && /get_device gives one device's params/.test(synth.hint || '') && JSON.stringify(one).length < 12000 && /\[also m\{2-8\}_src/.test(one.devices)
@@ -2925,7 +2853,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 // agent's "loosen it" / "tighten it" / "tidy the timing" re-plan the selected clip and count the change they made.
 {
   const { perform } = await import('./sloppy.js');
-  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast&on=start.slice2' });
+  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast' });
   await ready(page);
   await page.waitForTimeout(500);
   await page.evaluate(() => { const o = window.overdub; o.ui.setOpen('right', true); o.ui.show('agent'); });
@@ -3023,8 +2951,8 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 }
 
 /* ------------------------------------------------------------------ 5. the community shelf on the live site */
-// the community toggles on in a routed site config and the studio served as overdub.test (tools/community-live.js), with the
-// fixture shelf as the studio's own copy: find_community_device as the live site will answer it (R20), and
+// the studio served as overdub.test (tools/community-live.js), with the fixture shelf
+// as the studio's own copy: find_community_device as the live site will answer it (R20), and
 // define_device's side door with the Browser never opened (R21)
 {
   const { openLive, LIVE_HOST } = await import('./community-live.js');
@@ -3043,7 +2971,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     const b = await app.tools.run('define_device', { device: { id: 'copy-b', name: 'Copy', kind: 'effect', params, kernel: k.replace('return {', 'return  {').replace(/\n/g, '\n  ') } }, { by: 'mcp:probe' });
     return { a, b, defined: Object.keys(app.store.get().devices).filter((x) => /copy/.test(x)), detail: !!document.querySelector('.cs-detail') };
   });
-  t.ok(P.configs.some((c) => c.toggles.community === 'on') && sd.a.refused && /from the community shelf/.test(sd.a.error || '') && sd.b.refused && !sd.defined.length && !sd.detail,
+  t.ok(sd.a.refused && /from the community shelf/.test(sd.a.error || '') && sd.b.refused && !sd.defined.length && !sd.detail,
     `live shelf (R21): define_device refuses a shelf kernel and one with its spacing changed, with the Browser never opened ("${(sd.a.error || '').slice(0, 70)}…")`);
   const r = await page.evaluate(async () => {
     const app = window.overdub;
@@ -3079,12 +3007,6 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(!fourth.offered && fourth.error === 'the person has said no to these for now', `live shelf (R20): after three No thanks: "${fourth.error}"`);
   t.ok(realErrors(errors).length === 0, 'live shelf: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await P.close();
-  // the emergency off (R14): the same routes, and the site config says "toggles": { "community": "off" }
-  const Q = await openLive('/app/', { bundled: FIX, siteConfig: { toggles: { community: 'off' } }, query: 'agent=mock&fast' });
-  await ready(Q.page);
-  const off = await Q.page.evaluate(async () => ({ on: window.overdub.community.on(), find: await window.overdub.tools.run('find_community_device', { query: 'echo' }, { by: 'claude' }), put: await window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'mcp:probe' }) }));
-  t.ok(!off.on && off.find.error === 'The community shelf isn\'t on in this studio.' && !off.find.results.length && off.put.error === off.find.error, `live shelf, emergency off (R20): "${off.find.error}"`);
-  await Q.close();
 }
 
 t.done();

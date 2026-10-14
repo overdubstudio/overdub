@@ -31,6 +31,9 @@ The browser checks use `tools/pw.js` (playwright-core + a cached Chromium; overr
 
 ## Rules
 
+- **Merged means shipped.** There are no feature toggles: what is merged to `main` ships at the next live deploy, and
+  unfinished work waits on its branch. `app/site-config.json` is configuration (a dormant service's origin), never an
+  on/off switch.
 - **The song is the document.** Everything that changes a song goes through `store.dispatch(ops, { by })` — the GUI,
   the in-app agent and MCP agents alike. Never mutate `store.get()` directly. New kinds of change are new ops in
   `app/src/core/ops.js`, each with an exact inverse.

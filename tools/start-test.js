@@ -15,8 +15,7 @@ const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 
 const real = (errs) => errs.filter((e) => !/status of 404 .*kits|Failed to load resource: the server responded with a status of 404/.test(e));
 
 async function blank({ width = 1440, height = 900 } = {}) {
-  // (the door's fourth way, Flip a song, is behind workflow.flip: on here; tools/flip-test.js checks it off)
-  const o = await open('/app/', { query: 'new&on=start.slice2,workflow.flip', width, height });
+  const o = await open('/app/', { query: 'new', width, height });
   await o.page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
   await o.page.waitForTimeout(500);
   return o;
@@ -69,56 +68,6 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(gone && back, `nothing over a song with tracks, and the door is back when it's blank again (${gone}, ${back})`);
     t.ok(!real(o.errors).length, `door: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
   } catch (e) { t.ok(false, 'door threw: ' + (e.stack || e)); }
-  finally { await o.close(); }
-}
-
-/* ================================================================ the start.slice2 toggle off: slice 1, as main has it */
-// Every other block here opens the studio with ?on=start.slice2 (a local studio only). This one leaves it off: the door
-// and the stage are slice 1's (ui/start-slice1.js), with no coach strip, no click view, no free hum on the stage, no
-// Song ▸ Start a song or Find entry, and "~" never in the top bar. (A drum track records each pass as Layer, on or off.)
-{
-  console.log('\nthe start.slice2 toggle off');
-  // (workflow.flip on: slice 1's door has Flip a song as main has it)
-  const o = await open('/app/', { query: 'new&on=workflow.flip' });
-  const { page } = o;
-  try {
-    await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-    await page.waitForTimeout(500);
-    const d = await E(page, async () => {
-      const o = window.overdub, door = document.querySelector('.st-door');
-      const id = o.store.dispatch({ type: 'track.add', ref: 'd', track: { name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums' } } }, { by: 'you' }).created.d;
-      const mode = o.input.recorder.modeFor(id);
-      o.store.undo();
-      const { runTool } = await import('/app/src/agent/tools.js');
-      const sel = await runTool('get_selection', {}, { by: 'you', app: o });
-      return { on: o.toggles.on('start.slice2'), title: door?.querySelector('.ar-empty-title')?.textContent, ways: [...(door?.querySelectorAll('.st-way-b') || [])].map((b) => b.textContent.trim()),
-        coach: o.coach === undefined && !document.querySelector('.ew-dock')?.children.length, mode, find: o.ui.workspace.FEATURES.some((f) => f.id === 'start'),
-        startSong: o.exporter.startSong?.() ?? null, api: typeof o.start?.setView, selStart: sel && 'start' in sel ? sel.start : 'missing' };
-    });
-    t.ok(!d.on && d.title === 'Take 1 is yours.' && d.ways.join() === 'Tap a beat,Hum a tune,Play the keys,Flip a song', `off: the door is slice 1's ("${d.title}", ${d.ways.join(' · ')}; start.slice2 ${d.on ? 'on' : 'off'})`);
-    t.ok(d.mode === 'layer', `off: a drum track records each pass as Layer, as main has it (${d.mode})`);
-    t.ok(d.coach && !d.find && d.startSong === false && d.api === 'undefined' && d.selStart === null,
-      `off: no coach strip, no Start a song in Find, startSong() does nothing, no click view in the stage's API, get_selection.start null (${JSON.stringify(d)})`);
-    await E(page, () => window.overdub.exporter.openMenu());
-    await page.waitForTimeout(250);
-    const menu = await E(page, () => ({ rows: document.querySelectorAll('.sm-i').length, start: !!document.querySelector('.sm-start') }));
-    await page.keyboard.press('Escape');
-    t.ok(menu.rows > 3 && !menu.start, `off: the Song menu has no Start a song row (${JSON.stringify(menu)})`);
-    // the stage: tapping, the top bar keeps the song's tempo (no "~"); Play to a click instead is the first minute
-    await E(page, () => [...document.querySelectorAll('.st-way-b')].find((b) => b.textContent.trim() === 'Tap a beat')?.click());
-    await page.waitForTimeout(300);
-    await playRock(page, { rounds: 1 });
-    await page.waitForTimeout(400);
-    const play = await E(page, () => ({ step: window.overdub.start.step, tempo: document.querySelector('.tp-tempo-num')?.textContent }));
-    t.ok(play.step === 'play' && play.tempo !== '~' && /^\d/.test(play.tempo || ''), `off: tapping on the stage, the top bar's tempo stays the song's (${JSON.stringify(play)})`);
-    await E(page, () => window.overdub.start.again());
-    await E(page, () => [...document.querySelectorAll('.st-stage button')].find((b) => b.textContent.trim() === 'Play to a click instead')?.click());
-    await page.waitForTimeout(900);
-    const fm = await E(page, () => { const o = window.overdub; return { step: o.start.step, minute: !!o.onboard?.minute, tracks: o.store.get().tracks.map((x) => x.name) }; });
-    t.ok(!fm.step && fm.minute && fm.tracks.includes('Drums'), `off: Play to a click instead is the first minute, off the stage (${JSON.stringify(fm)})`);
-    await E(page, () => { const o = window.overdub; o.engine.stop?.(); o.onboard?.stop?.(); });
-    t.ok(!real(o.errors).length, `toggle off: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
-  } catch (e) { t.ok(false, 'toggle off threw: ' + (e.stack || e)); }
   finally { await o.close(); }
 }
 
@@ -426,7 +375,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const hm = sloppyHum(MEL, { tempo: 100, sloppy: 0.06, seed: 4 });
   const file = path.join(OUTDIR, 'start-free-hum.wav');
   const secs = wav(hm.x, hm.sr, file, { lead: 0.6, tail: 1.6 });
-  const o = await open('/app/', { query: 'new&on=start.slice2', fakeAudio: file });
+  const o = await open('/app/', { query: 'new', fakeAudio: file });
   const { page } = o;
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
@@ -501,7 +450,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const hm = sloppyHum(MEL, { tempo: 100, sloppy: 0.04, seed: 6 });
   const file = path.join(OUTDIR, 'start-hum-over.wav');
   wav(hm.x, hm.sr, file, { lead: 0.9, tail: 6 });
-  const o = await open('/app/', { query: 'new&on=start.slice2', fakeAudio: file });
+  const o = await open('/app/', { query: 'new', fakeAudio: file });
   const { page } = o;
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
@@ -773,7 +722,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const hm = sloppyHum(MEL, { tempo: 100, sloppy: 0.04, seed: 6 });
   const file = path.join(OUTDIR, 'start-run-hum.wav');
   wav(hm.x, hm.sr, file, { lead: 2.9, tail: 6 });
-  const o = await open('/app/', { query: 'new&on=start.slice2', fakeAudio: file });
+  const o = await open('/app/', { query: 'new', fakeAudio: file });
   const { page } = o;
   let presses = 0;
   const press = async (sel) => { presses++; await page.click(sel); };

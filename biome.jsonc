@@ -25,10 +25,12 @@
       // Never, wherever the list grows to. Kernel source: these functions' own text (fn.toString(), `${fn}`) is
       // pasted into a built-in kernel, and a kernel is trusted by the SHA-256 of its source (devices/trust.js).
       // Reformatting them changes the kernels of core.eq8, core.multiband, core.stack, core.bassrig and
-      // core.wavetable, and holds every saved song's copy.
+      // core.wavetable (and, once it lands, core.rooms), and holds every saved song's copy.
       "!app/src/devices/builtin/amp-lib.js",
       "!app/src/devices/builtin/eq8-curve.js",
       "!app/src/devices/builtin/multiband-curve.js",
+      "!app/src/devices/builtin/rooms-lib.js",
+      "!app/src/devices/builtin/series.js",
       "!app/src/devices/builtin/wavetables.js",
       // Shipped as it is, inside an SSM command (deploy/relay/deploy.sh): the payload is held under 60 KB and the
       // formatter's line breaks alone take it over.

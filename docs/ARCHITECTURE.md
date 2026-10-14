@@ -451,7 +451,7 @@ Ids are forever; display names are not. The built-ins are named after studio obj
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
-core.multiband Gaffer Tape; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
+core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
 with the vendored pedals' (`tools/guitar-test.js` checks).
 A def the studio ships may carry `describe(params)` (one line of text for `get_project`, in place of the params' JSON:
 core/project.js `summarize`), and a param `hidden` (not on the face or in the generic window), `auto: false` (no lane)
@@ -468,9 +468,11 @@ is a literal in the kernel's source, packed so the kernel stays under its 256 KB
 Param `role` (for agents and semantic controls): `tone level drive mix time feedback rate depth size decay attack
 release pitch shape width gate sens` (or omit). `unit`: `Hz dB ms s % st note x`.
 
-**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 52 built-ins, fourteen
+**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 53 built-ins, fourteen
 of them sampled: Virtuosity Kit, Parlour Upright, Rusty Brushes, Hand Crate, Full Stick, Rosin, Damper Bar, Roundwound,
-Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data), `devices/guitar/` (the
+Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data; eighteen play
+kernel data in all: those fourteen, Half Stack, Iso Cab and Y Cable on the cab bank, and Echo Chamber on measured
+rooms), `devices/guitar/` (the
 Guitar Studio's 101 pedals and 27 amps, with 16 cabinets and 5 mics inside the amps, and its 156 rigs as device chains)
 and `devices/library/` (the house shelf: ten kernels Claude wrote, `claude.*`, `source: 'library'`, each with its
 `request`; also loaded by the Node renderer). `devices/showcase.js` holds the three devices the demo song carries as
@@ -1926,17 +1928,23 @@ most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has
 - **A toggle never changes a song.** Nothing under `core/`, `audio/`, `kernel/` or `devices/registry.js` imports
   `toggles.js` (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
   data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-  menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
-  Browser, Find and `list_devices`, a `toggle` on a device definition read only where adding is offered, is
-  `device.rooms`'s work, built on its branch.)
+  menus, Browser and Find entries, doors, and the agent tools offered.
+- **Devices.** A built-in's definition may carry `toggle: '<id>'`. `offered(def)` (`toggles.js`) is false while that
+  toggle is off, and every place that offers a device for adding asks it: the device pickers and the empty chain's
+  chips (`ui/rack.js`), the Browser, the instrument menus, Find's Sound rows, `list_devices`, and the cloud agent's
+  free moves. The registry doesn't read it: `getDevice`, `get_device`, a song's inserts, `insert.add` by id, the
+  engine and the renders treat the device as always, so a saved or shared song that uses it loads and plays. A song's
+  own device (source `project`) can't hide itself with the field.
 - **Agent tools.** The catalog is static (`server/relay-catalog.json` doesn't move). A tool may carry `toggle: '<id>'`:
   `runTool` checks it before the required fields, the recording block and `run`, and while it's off the call answers
   `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
   goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
   through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
 - **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-  Find, `app.flip`'s pick and flip, `get_guide "workflows"`) and `stems.local` (the local stems runner, read by
-  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed). The tempo map neither hides.
+  Find, `app.flip`'s pick and flip, `get_guide "workflows"`), `stems.local` (the local stems runner, read by
+  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed) and `device.rooms` (Echo Chamber,
+  `core.rooms`: every device offer above, and its half of `get_guide "devices"`'s reverb paragraph, `GUIDE_REVERBS`).
+  The tempo map neither hides.
 - **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
   (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
 

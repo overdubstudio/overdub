@@ -127,7 +127,7 @@ try {
     const B = await import('/app/src/devices/builtin/index.js');
     return B.BUILTINS.map((d) => d.id);
   });
-  t.ok(ids.length === 52, `builtin/index.js registers ${ids.length} devices`);
+  t.ok(ids.length === 53, `builtin/index.js registers ${ids.length} devices`);
   // a sampled device whose samples haven't been fetched plays nothing: skipped here (tools/drumkit-test.js says so)
   const unfetched = SAMPLED.filter((d) => Object.values(d.data || {}).some((h) => !fs.existsSync(dataPath(h)))).map((d) => d.id);
   for (const id of unfetched) t.note(`${id}: skipped, its samples haven't been fetched (node tools/fetch-kits.js)`);
@@ -148,6 +148,8 @@ try {
     if (unfetched.includes(id)) continue;
     const res = await page.evaluate(async ({ id, quick }) => {
       const { getDevice } = await import('/app/src/devices/registry.js');
+      // (a page opened afresh may not have registered the built-ins yet: the studio's boot races this evaluate)
+      await import('/app/src/devices/builtin/index.js');
       const { checkDevice } = await import('/app/src/kernel/check.js');
       const { kernelInstance, ensureKernelWorklet } = await import('/app/src/kernel/host.js');
       const T = await import('/app/src/audio/testsignals.js');

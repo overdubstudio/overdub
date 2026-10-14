@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 130 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 131 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -468,7 +468,7 @@ stops a disposed node's processor); the vendored pedals' are <code>WORKLETS</cod
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
-core.multiband Gaffer Tape; core.drumroom Studio A, a room), and a rename only touches <code>name</code>. Names must not collide
+core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches <code>name</code>. Names must not collide
 with the vendored pedals' (<code>tools/guitar-test.js</code> checks).
 A def the studio ships may carry <code>describe(params)</code> (one line of text for <code>get_project</code>, in place of the params' JSON:
 core/project.js <code>summarize</code>), and a param <code>hidden</code> (not on the face or in the generic window), <code>auto: false</code> (no lane)
@@ -481,9 +481,11 @@ function to draw them, so the editor shows exactly what plays. The bank (<code>a
 is a literal in the kernel's source, packed so the kernel stays under its 256 KB. Its design note, with the param map its editor works from, is
 <code>docs/research/LIGHT-TABLE.md</code>.</p>
 <p>Param <code>role</code> (for agents and semantic controls): <code>tone level drive mix time feedback rate depth size decay attack release pitch shape width gate sens</code> (or omit). <code>unit</code>: <code>Hz dB ms s % st note x</code>.</p>
-<p><strong>Where devices come from.</strong> <code>main.js</code> imports three libraries at boot: <code>devices/builtin/</code> (the 52 built-ins, fourteen
+<p><strong>Where devices come from.</strong> <code>main.js</code> imports three libraries at boot: <code>devices/builtin/</code> (the 53 built-ins, fourteen
 of them sampled: Virtuosity Kit, Parlour Upright, Rusty Brushes, Hand Crate, Full Stick, Rosin, Damper Bar, Roundwound,
-Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data), <code>devices/guitar/</code> (the
+Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data; eighteen play
+kernel data in all: those fourteen, Half Stack, Iso Cab and Y Cable on the cab bank, and Echo Chamber on measured
+rooms), <code>devices/guitar/</code> (the
 Guitar Studio's 101 pedals and 27 amps, with 16 cabinets and 5 mics inside the amps, and its 156 rigs as device chains)
 and <code>devices/library/</code> (the house shelf: ten kernels Claude wrote, <code>claude.*</code>, <code>source: 'library'</code>, each with its
 <code>request</code>; also loaded by the Node renderer). <code>devices/showcase.js</code> holds the three devices the demo song carries as
@@ -1802,17 +1804,23 @@ the live config names a toggle the live registry doesn't know, or when a <code>d
 <li><strong>A toggle never changes a song.</strong> Nothing under <code>core/</code>, <code>audio/</code>, <code>kernel/</code> or <code>devices/registry.js</code> imports
 <code>toggles.js</code> (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
 data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
-Browser, Find and <code>list_devices</code>, a <code>toggle</code> on a device definition read only where adding is offered, is
-<code>device.rooms</code>'s work, built on its branch.)</li>
+menus, Browser and Find entries, doors, and the agent tools offered.</li>
+<li><strong>Devices.</strong> A built-in's definition may carry <code>toggle: '&lt;id&gt;'</code>. <code>offered(def)</code> (<code>toggles.js</code>) is false while that
+toggle is off, and every place that offers a device for adding asks it: the device pickers and the empty chain's
+chips (<code>ui/rack.js</code>), the Browser, the instrument menus, Find's Sound rows, <code>list_devices</code>, and the cloud agent's
+free moves. The registry doesn't read it: <code>getDevice</code>, <code>get_device</code>, a song's inserts, <code>insert.add</code> by id, the
+engine and the renders treat the device as always, so a saved or shared song that uses it loads and plays. A song's
+own device (source <code>project</code>) can't hide itself with the field.</li>
 <li><strong>Agent tools.</strong> The catalog is static (<code>server/relay-catalog.json</code> doesn't move). A tool may carry <code>toggle: '&lt;id&gt;'</code>:
 <code>runTool</code> checks it before the required fields, the recording block and <code>run</code>, and while it's off the call answers
 <code>{ error: &quot;&lt;name&gt; isn't on in this studio.&quot; }</code> (<code>offLine(id)</code>) and changes nothing. A <code>get_guide</code> topic a feature owns
 goes in <code>GUIDE_TOGGLES</code> (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
 through <code>guidePart(id, text)</code>, which is empty while off. The in-app system prompt doesn't vary with toggles.</li>
 <li><strong>In use.</strong> <code>workflow.flip</code> (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-Find, <code>app.flip</code>'s pick and flip, <code>get_guide &quot;workflows&quot;</code>) and <code>stems.local</code> (the local stems runner, read by
-<code>jobs/index.js</code> <code>pageJobs</code> beside the site config's stems entry: both are needed). The tempo map neither hides.</li>
+Find, <code>app.flip</code>'s pick and flip, <code>get_guide &quot;workflows&quot;</code>), <code>stems.local</code> (the local stems runner, read by
+<code>jobs/index.js</code> <code>pageJobs</code> beside the site config's stems entry: both are needed) and <code>device.rooms</code> (Echo Chamber,
+<code>core.rooms</code>: every device offer above, and its half of <code>get_guide &quot;devices&quot;</code>'s reverb paragraph, <code>GUIDE_REVERBS</code>).
+The tempo map neither hides.</li>
 <li><strong>Not moved yet.</strong> <code>community</code> and <code>community.try</code> are registered, but <code>COMMUNITY_LIVE</code> and <code>TRY_ON</code>
 (<code>ui/community.js</code>, and the gallery page's own copy) still decide until the shelf's follow-up reads <code>on()</code> for them.</li>
 </ul>

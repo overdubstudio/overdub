@@ -21,6 +21,9 @@
 //   inst:core.metalkit#<12 hex>:trigger   Rusty Sticks with its trigger up and its room off: the synthesized layers
 //   fx:core.stack, fx:core.cab, fx:core.bassrig   the amps (tools/amp-scenes.js builds them): Half Stack on its filter
 //               cab, and each on the cab bank as fx:<id>[:cab]#<12 hex>, only when the bank has been fetched
+//   fx:core.rooms#<12 hex>, fx:core.rooms:<room>#<12 hex>   Echo Chamber at its defaults (AULA) and on each other room
+//               (aula-far, lecture, stairs, office, meeting), the hex the aachen bank's: only when the bank has been
+//               fetched. `exact: true`: Node and Chromium must agree bit for bit, not within -90 dB (spec 0006 R34)
 //
 // `browser: true` marks the kernel-only scenes tools/golden-test.js also renders in Chromium's OfflineAudioContext.
 import fs from 'node:fs';
@@ -30,6 +33,7 @@ import { SHOWCASE } from '../app/src/devices/showcase.js';
 import { demoProject, demoById } from '../app/src/core/demo.js';
 import { createProject } from '../app/src/core/project.js';
 import { ampScenes } from './amp-scenes.js';
+import { ROOMS_HASH, ROOM_LABELS } from '../app/src/devices/builtin/rooms-lib.js';
 import { phrase, drumPhrase, diStrum, PHRASE_BPM, PHRASE_BEATS, DRUM_PHRASE_BEATS } from '../app/src/audio/testsignals.js';
 
 const STAMP = '2026-09-30T00:00:00.000Z';
@@ -208,6 +212,29 @@ function sampledScenes() {
 // the scenes skipped because their kernel data hasn't been fetched
 const AMPS = new Set(['core.stack', 'core.cab', 'core.bassrig']);
 const ampHere = () => ampScenes().map((s) => [s, Object.values(s.data || {}).every((h) => fs.existsSync(dataPath(h)))]);
+// Echo Chamber's six rooms on the DI strum (AULA, the default, unnamed), each pinned with the bank's hash: a new bank
+// is a new scene. Exact: browser and Node bit-identical, the whole scene (its coefficients come from the series, never
+// Math.exp/sin). The strum starts 4 ms in (192 frames of silence ahead of it), after the clip's 3 ms fade-in: Chrome's
+// linearRampToValueAtTime and render.js's clipVoice round some of that ramp's frames differently in the last bit (41
+// of its 144 on the plain strum, measured, every audio-clip scene alike), and the room spreads those into its whole
+// tail. That is the house's -90 dB rounding, not the device's; past the fade the song path is exact, so R34 holds
+// the whole scene bit for bit (tools/golden-test.js)
+const PAD = 192;
+let PADDED = null;
+function roomScenes() {
+  const def = EFFECTS.find((d) => d.id === 'core.rooms');
+  if (!def) return [];
+  const tag = '#' + ROOMS_HASH.slice(7, 19), here = fs.existsSync(dataPath(ROOMS_HASH));
+  return ROOM_LABELS.map((label, i) => {
+    const s = effectScene(def);
+    if (!PADDED) { const x = s.assets.a_distrm.channels[0]; PADDED = new Float32Array(x.length + PAD); PADDED.set(x, PAD); }
+    s.assets.a_distrm = { sr: 48000, channels: [PADDED] };
+    s.project.assets.a_distrm = { ...s.project.assets.a_distrm, name: 'DI strum, 4 ms in', duration: PADDED.length / 48000 };
+    s.name = 'fx:core.rooms' + (i ? ':' + label.toLowerCase().replace(/ /g, '-') : '') + tag;
+    if (i) s.project.tracks[0].inserts[0].params = { room: i };
+    return [{ ...s, exact: true, data: { aachen: ROOMS_HASH } }, here];
+  });
+}
 // the shelf's scenes: [scene, the kernel data its devices play is here] (Boiler Room plays Rusty Sticks and the cabs)
 function shelfScenes() {
   return SHELF_SCENES.map((id) => {
@@ -218,7 +245,7 @@ function shelfScenes() {
     return [{ name: 'demo:' + id, browser: false, opts: { from: 0, to: p.loop.end, tail: 2 }, assets: {}, project: p }, hashes.every((h) => fs.existsSync(dataPath(h)))];
   });
 }
-export const missingScenes = () => [...sampledScenes(), ...ampHere(), ...shelfScenes()].filter(([, here]) => !here).map(([s]) => s.name);
+export const missingScenes = () => [...sampledScenes(), ...ampHere(), ...roomScenes(), ...shelfScenes()].filter(([, here]) => !here).map(([s]) => s.name);
 
 export function scenes() {
   const out = [];
@@ -237,8 +264,9 @@ export function scenes() {
   // Rusty Sticks with its trigger up and its room off: the synthesized layers pinned on their own
   const mk = SAMPLED.find((d) => d.id === 'core.metalkit');
   if (mk && Object.values(mk.data).every((h) => fs.existsSync(dataPath(h)))) out.push({ ...instrumentScene(mk, {}, { click: 0, sub: 0, trig_vel: 0, room: -40 }, '#' + mk.data.kit.slice(7, 19) + ':trigger'), data: { ...mk.data } });
-  for (const d of EFFECTS) if (!AMPS.has(d.id)) out.push(effectScene(d));
+  for (const d of EFFECTS) if (!AMPS.has(d.id) && d.id !== 'core.rooms') out.push(effectScene(d));
   for (const [s, here] of ampHere()) if (here) out.push(s);
+  for (const [s, here] of roomScenes()) if (here) out.push(s);
   for (const d of showcase('effect')) out.push(effectScene(d, asDevices([d])));
   const demo = fixedDemo();
   out.push({ name: 'demo', browser: false, opts: { from: 0, to: 32, tail: 2 }, assets: {}, project: demo });

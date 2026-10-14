@@ -35,7 +35,9 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   });
   T.ok(boot.a != null && boot.c != null && boot.c < boot.arrEnd + 5, `the last module (analytics.js) is requested before the second (arranger.js) has arrived: all at once (${Math.round(boot.c - boot.a)} ms after transport.js; arranger.js done at +${Math.round(boot.arrEnd - boot.a)} ms)`);
   T.ok(boot.loading === 0, 'the "Setting up the room…" placeholders are gone once the studio is ready');
-  T.ok(await E(() => overdub.ui.keys.list().findIndex((k) => k.key === 'KeyZ' && k.mod === 'mod') < overdub.ui.keys.list().findIndex((k) => k.key === 'Space')), '⌘Z is registered before the panels load');
+  // (a key added with first: true goes to the front of the list whenever it's added: Start a song's Space on its hum
+  // step is one, so the order that says when a key was registered is the rest of them)
+  T.ok(await E(() => { const ks = overdub.ui.keys.list().filter((k) => !k.first); return ks.findIndex((k) => k.key === 'KeyZ' && k.mod === 'mod') < ks.findIndex((k) => k.key === 'Space'); }), '⌘Z is registered before the panels load');
 
   /* -------- Enter and Space press the focused button, never the transport (issue: the key handler took them first) */
   await stopAll();

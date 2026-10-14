@@ -3,6 +3,8 @@
 //
 //   top     transport bar            left    browser (tabs)        center  arranger
 //   bottom  detail (tabs)            right   agent (tabs)
+//   ui.dock the strip's slot at the foot of the arranger, over the bottom pane (ui/coach-strip.js docks there)
+//   ui.point(el, { ms = 2000 }) -> { el, remove() } | null: grease-pencil crop marks on a control the studio names
 //
 // Rules for panels: state lives in the store (the song) or ui.state (the session), never in the DOM; no
 // requestAnimationFrame of your own (use frame(now), called only while you're visible); mount is cheap and
@@ -96,6 +98,10 @@ export function createShell(root, app) {
   const splitV = h('div.ew-split.ew-split-v', { title: 'Drag to resize' }, grip);
   const splitL = h('div.ew-split.ew-split-l');
   const splitR = h('div.ew-split.ew-split-r');
+  // the dock: a slot at the foot of the arranger, between it and the bottom pane, across the centre column (empty, it
+  // takes no room). Start a song's coach strip docks here (ui/coach-strip.js)
+  ui.dock = h('div.ew-dock');
+  center.box.append(ui.dock);
   const main = h('div.ew-main', center.box, splitV, bottom.box);
   const body = h('div.ew-body', left.box, splitL, main, splitR, right.box);
   const toasts = h('div.ew-toasts', { role: 'status', 'aria-live': 'polite' });
@@ -641,6 +647,25 @@ export function createShell(root, app) {
   };
 
   let annT = 0;
+  // ui.point(el, { ms }): grease-pencil crop marks on a real control the studio is talking about (the coach strip's
+  // "Studio A ↗ opens it big."): four corner marks, 2 px, 10 px long, 3 px outside its box, as arrange-kit.js
+  // drawCrop marks a crop on canvas. Unsigned: no label (the house is unsigned). Gone after ms; a short fade in, none
+  // under reduced motion. They follow the control while the frame resizes.
+  ui.point = (el, { ms = 2000 } = {}) => {
+    if (!el || !el.isConnected) return null;
+    const mk = h('div.ui-point', { 'aria-hidden': 'true' }, h('i.ui-pt-tl'), h('i.ui-pt-tr'), h('i.ui-pt-bl'), h('i.ui-pt-br'));
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      Object.assign(mk.style, { left: `${Math.round(r.left) - 3}px`, top: `${Math.round(r.top) - 3}px`, width: `${Math.round(r.width) + 6}px`, height: `${Math.round(r.height) + 6}px` });
+    };
+    place();
+    document.body.append(mk);
+    let off = null, timer = 0;
+    const remove = () => { clearTimeout(timer); off?.(); off = null; mk.remove(); };
+    off = ui.on('resize', place);
+    timer = setTimeout(remove, ms);
+    return { el: mk, remove };
+  };
   ui.announce = (text) => {
     clearTimeout(annT);
     announcer.textContent = '';   // cleared first, so the same line twice is still read twice
@@ -695,6 +720,17 @@ button { font: inherit; color: inherit; }
 .ew-body { display: grid; grid-template-columns: var(--left-w) 4px 1fr 4px var(--right-w); min-height: 0; }
 .ew-closed-left .ew-split-l, .ew-closed-right .ew-split-r { pointer-events: none; }
 .ew-main { display: grid; grid-template-rows: 1fr 4px var(--bottom-h); min-width: 0; min-height: 0; }
+.ew-dock { flex: none; min-width: 0; }
+.ew-dock:empty { display: none; }
+/* ui.point: crop marks in grease pencil, the corners only (a mark, never a box or a glow) */
+.ui-point { position: fixed; z-index: 1100; pointer-events: none; animation: ui-point-in .18s var(--ease, ease) both; }
+.ui-point > i { position: absolute; width: 10px; height: 10px; border: 0 solid var(--accent-2); }
+.ui-pt-tl { left: 0; top: 0; border-left-width: 2px !important; border-top-width: 2px !important; }
+.ui-pt-tr { right: 0; top: 0; border-right-width: 2px !important; border-top-width: 2px !important; }
+.ui-pt-bl { left: 0; bottom: 0; border-left-width: 2px !important; border-bottom-width: 2px !important; }
+.ui-pt-br { right: 0; bottom: 0; border-right-width: 2px !important; border-bottom-width: 2px !important; }
+@keyframes ui-point-in { from { opacity: 0; transform: scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .ui-point { animation: none; } }
 .ew-closed-bottom .ew-split-v { pointer-events: none; }
 .ew-region { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
 /* two grounds: the room (the arranger, the browser, the dock) and the second plane (the agent and History) */

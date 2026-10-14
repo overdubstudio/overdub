@@ -39,13 +39,16 @@
 //   recorder.ownTrack(stacked?) -> dispatch result   a take that muted what played under it, onto a track of its own
 //                                         with the same instrument, what it muted playing again: one undo step
 //   recorder.took(kind, track)            a take of that kind went onto track (capture's Keep says so too)
-//   recorder.modeFor(track) / setMode(track, 'layer' | 'take')   each loop pass layers into one clip (drum tracks) or
-//                                         stacks a new take (everything else, audio always); a choice sticks per track
+//   recorder.modeFor(track) / setMode(track, 'fold' | 'layer' | 'take')   each loop pass layers into one clip (drum
+//                                         tracks' default), is a round folded into one clip (Fold, picked in Sketch: what
+//                                         you played most often stays, input/rounds.js foldRounds), or stacks a new take
+//                                         (everything else, audio always); a choice sticks per track
 //   recorder.countIn / setCountIn(bars)   0, 1 (default) or 2 bars (localStorage overdub:record)
-//   recorder.record({ countIn?, audio?, quantize? }) -> Promise<take | null>   stopped: the count-in from the playhead;
+//   recorder.record({ countIn?, audio?, quantize?, join? }) -> Promise<take | null>   stopped: the count-in from the playhead;
 //                                         playing: recording starts at a bar line with a whole bar to come in on (a loop
 //                                         of 2 bars or less: its top; quantize: false, now), the wait counted ('count',
-//                                         live().counting); before the loop, at its start
+//                                         live().counting); before the loop, at its start. join: a transaction (by you)
+//                                         the take's commit is one undo step with, while it is still the newest
 //   recorder.stop({ keepPlaying?, why?, at? }) -> Promise<commit | null>  the take into the song (R punches out and
 //                                         keeps playing; Space stops; the killswitch, a seek or a hidden tab commit too;
 //                                         a seek ends the take where it was, not where the playhead jumped: at)
@@ -72,6 +75,11 @@
 // already going when R starts (H, then R) becomes the take's too, so whatever it draws lands on the stop.
 //
 // Pure (Node too): planTake(project, take) -> { ops, label, summary, parts }: the commit as ordinary ops (core/ops.js).
+// Fold (picked per track; a drum track's default is Layer) records exactly as Layer does, every pass heard on the next; at the stop the passes
+// are rounds of the loop (part.loop) and are folded (foldRounds, with what each pass really covered): per drum and
+// sixteenth, a hit is kept when it is in the only round that played that drum there, in both of two, or in at least
+// half of three or more, so a miss in one round is left out (in capture with its pass) and never added on top. One pass
+// folds to itself: it goes in as Layer puts it. parts[].kept / .left count it ("Kept 12; left out 2.").
 // Layer adds into the clip under each note (notes.add; a hit on one already there is merged, and counted as such) and
 // makes new clips only where there is none. New take is one take folder over the beats the passes recorded
 // (core/arrangement.js planTakeFolder): what played there is muted under it, never past it, and the last complete
@@ -99,6 +107,7 @@ import { ROW } from './tap.js';
 import { createAutorec } from './autorec.js';
 import { snapGentle, tightness, blend, leanOf, placeTake } from './timing.js';
 import { newPartFor } from '../core/sounds.js';
+import { foldRounds } from './rounds.js';
 
 const SAVE = 'overdub:record';
 const EPS = 1e-6, MIN_CLIP = 0.25, MIN_NOTE = 1 / 64;
@@ -230,7 +239,8 @@ export function pickActive(passes) {
   return { n: pick.n, natural: natural.n };
 }
 
-// take: { id: 'tk_…', parts: [{ track, kind: 'notes' | 'audio', mode: 'layer' | 'take', name?, drums?, newTrack?,
+// take: { id: 'tk_…', parts: [{ track, kind: 'notes' | 'audio', mode: 'fold' | 'layer' | 'take', name?, drums?, newTrack?,
+//   loop?: { start, end } (the loop the passes went round: Fold's rounds),
 //   span: { start, end } (where a new Layer clip may go), passes: [{ n, clip: { start, end }, notes?: [{ p, t, d, v }]
 //   (song beats), audio?: { asset, offset (s), start, length (beats) } }] }] }
 // part.newTrack: { name, device } adds the track first (no track to record onto: never a dead end).
@@ -253,10 +263,12 @@ export function planTake(p, take) {
     const kind = part.kind === 'audio' ? 'audio' : 'notes';
     const live = t.clips.filter((c) => c.kind === kind && !c.mute);
     const info = { track: tid, name: t.name, bpb, mode: part.mode, drums: !!part.drums, notes: 0, played: 0, there: 0, passes: passes.length, from: Infinity, to: -Infinity, takes: 0, under: 0, into: [], refs: [], sung: [], kinds: part.kinds || [] };
-    if (part.mode === 'layer' && kind === 'notes') {
-      // every pass's notes in one set (two hits of one note on one step: the louder stays)
+    const folded = part.mode === 'fold' && kind === 'notes' ? foldPasses(passes, part.loop) : null;
+    if (folded) { info.kept = folded.kept; info.left = folded.left; info.rounds = folded.rounds; }
+    if ((part.mode === 'layer' || part.mode === 'fold') && kind === 'notes') {
+      // every pass's notes in one set (two hits of one note on one step: the louder stays); Fold: what the rounds kept
       const seen = new Map();
-      for (const ps of passes) for (const n of ps.notes) {
+      for (const ps of folded ? [{ notes: folded.notes }] : passes) for (const n of ps.notes) {
         const k = n.p + '@' + r4(n.t);
         if (!seen.has(k) || seen.get(k).v < n.v) seen.set(k, n);
       }
@@ -359,8 +371,42 @@ export function planTake(p, take) {
     parts.push(info);
   }
   const names = [...new Set(parts.map((x) => x.name))];
-  const label = !parts.length ? '' : parts.every((x) => x.mode === 'layer') ? `record ${names.join(' and ')}` : `record take ${Math.max(...parts.map((x) => x.takes || 1))} on ${names.join(' and ')}`;
+  const label = !parts.length ? '' : parts.every((x) => x.mode === 'layer' || x.mode === 'fold') ? `record ${names.join(' and ')}` : `record take ${Math.max(...parts.map((x) => x.takes || 1))} on ${names.join(' and ')}`;
   return { ops, parts, label, summary: parts.map((x) => summaryOf(x)).join(' ') };
+}
+// Fold's rounds: each pass a round of the loop, folded by input/rounds.js foldRounds over what each pass really covered
+// (the first can start at a bar inside the loop, the last stops where you stopped). The note kept for a cell is one you
+// played there (the middle one by where it was placed, at the rounds' median velocity), so the recorder's own grid
+// stays. -> { notes (song beats), kept, left (hits left out), rounds } | null (one pass, or no loop: nothing to fold)
+function foldPasses(passes, loop) {
+  if (!loop || !(loop.end > loop.start) || passes.length < 2) return null;
+  const L = loop.end - loop.start, CELL = 0.25, C = Math.round(L / CELL);
+  const n0 = Math.min(...passes.map((ps, i) => (Number.isInteger(ps.n) ? ps.n : i)));
+  const kOf = (ps, i) => (Number.isInteger(ps.n) ? ps.n : i) - n0;
+  const nR = Math.max(...passes.map(kOf)) + 1;
+  const reach = Array.from({ length: nR }, () => [0, 0]);
+  const flat = [], at = new Map();
+  passes.forEach((ps, i) => {
+    const k = kOf(ps, i);
+    const a = Number.isFinite(ps.clip?.from) ? ps.clip.from : loop.start, b = Number.isFinite(ps.clip?.to) ? ps.clip.to : loop.end;
+    reach[k] = [Math.max(0, r4(a - loop.start)), Math.min(L, r4(b - loop.start))];
+    for (const x of ps.notes) {
+      let kk = k, c = Math.round((x.t - loop.start) / CELL);
+      if (c >= C) { kk++; c -= C; }
+      flat.push({ p: x.p, t: r4(kk * L + c * CELL), v: x.v ?? 0.8, raw: r4(kk * L + x.t - loop.start) });
+      const key = x.p + '@' + c;
+      if (!at.has(key)) at.set(key, []);
+      at.get(key).push(x);
+    }
+  });
+  const f = foldRounds(flat, { bars: L / 4, length: L, rounds: Array.from({ length: nR }, (_, k) => [k * L, (k + 1) * L]) }, { reach });
+  const med = (xs) => { const s = xs.slice().sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const notes = f.notes.map((n) => {
+    const xs = (at.get(n.p + '@' + Math.round(n.t / CELL)) || []).slice().sort((a, b) => a.t - b.t);
+    const x = xs[(xs.length - 1) >> 1];
+    return x ? { ...x, v: r4(med(xs.map((y) => y.v ?? 0.8))) } : { p: n.p, t: r4(loop.start + n.t), d: CELL, v: n.v };
+  });
+  return { notes, kept: f.notes.length, left: f.strays.reduce((a, s) => a + (s.n || 1), 0), rounds: nR };
 }
 const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 function span(info, a, b) { info.from = Math.min(info.from, a); info.to = Math.max(info.to, b); }
@@ -377,7 +423,11 @@ function inRecordedOrder(tf, n) {
   if (k >= 0) tf.active = { ...tf.active, num: base + k + 1, name: name.get(tf.active.ref) };
 }
 function summaryOf(x) {
-  if (x.mode === 'layer') {
+  // Fold, more than once round: what was kept and what was left out, counted
+  if (x.mode === 'fold' && Number.isFinite(x.kept)) {
+    return `Your beat is in: ${x.bars} on ${x.name}, ${x.rounds === 2 ? 'twice' : `${x.rounds} times`} round. ${x.left ? `Kept ${x.kept}; left out ${x.left}.` : `Kept all ${x.kept}.`}`;
+  }
+  if (x.mode === 'layer' || x.mode === 'fold') {
     // what you played, counted: a hit on one already there is merged, and said so
     const there = x.there ? ` (${x.there === x.played ? (x.played === 1 ? 'it was' : 'all were') : x.there} already there)` : '';
     return x.drums || /drum|beat/i.test(x.name) ? `Your beat is in: ${x.bars}, ${plural(x.played, 'hit')} on ${x.name}${there}.` : `${plural(x.played, 'note')} layered into ${x.name}, ${x.bars}${there}.`;
@@ -403,7 +453,7 @@ export function createRecorder(app, input, opts = {}) {
   const emit = (t, d) => { for (const fn of fns.get(t) || []) { try { fn(d); } catch (e) { console.error('recorder listener', t, e); } } if (t === 'state') input.emit('record', d); };
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(SAVE) || '{}') || {}; } catch { saved = {}; }
-  const modes = new Map();   // track id -> 'layer' | 'take' (this song, while it's open)
+  const modes = new Map();   // track id -> 'fold' | 'layer' | 'take' (this song, while it's open)
   let R = null;              // the take in progress
   let last = null;
 
@@ -575,6 +625,7 @@ export function createRecorder(app, input, opts = {}) {
     return store.track(id);
   }
   const modeFor = (tr) => { const t = typeof tr === 'string' ? store.track(tr) : tr; if (!t) return 'take'; if (t.kind === 'audio') return 'take'; return modes.get(t.id) || (isDrumTrack(t) ? 'layer' : 'take'); };
+  const layered = (m) => m === 'layer' || m === 'fold';   // (Fold records as Layer does; only the stop folds)
 
   /* ---- time: every event on the transport's unwrapped grid (engine.gridBeat: what is heard now) */
   const fin = (x) => typeof x === 'number' && Number.isFinite(x);
@@ -679,7 +730,7 @@ export function createRecorder(app, input, opts = {}) {
     const ps = passIn(pt, w.pass);
     ps.notes.push(note);
     pt.srcs.add(src);
-    if (pt.mode === 'layer') note.pv = preview(r, pt, note);
+    if (layered(pt.mode)) note.pv = preview(r, pt, note);
     emit('note', { track: pt.track, pass: w.pass, note });
     return note;
   }
@@ -708,7 +759,7 @@ export function createRecorder(app, input, opts = {}) {
   }
   // a part's previews again, from its notes as they are now (previews are a stack: they go back last first, all of them)
   function repreview(r, pt) {
-    if (pt.mode !== 'layer') return;
+    if (!layered(pt.mode)) return;
     for (const pv of pt.previews.splice(0).reverse()) { try { pv.release(); } catch { /* the commit puts it right */ } }
     for (const ps of [...pt.passes.values()].sort((a, b) => a.n - b.n)) for (const n of ps.notes) n.pv = preview(r, pt, n);
   }
@@ -983,7 +1034,7 @@ export function createRecorder(app, input, opts = {}) {
     const h = store.history, lastTx = h[h.length - 1], t = store.track(m.track);
     if (lastTx && lastTx.id === m.txn && t && !t.clips.length) { try { store.undo({ id: m.txn, redo: false }); } catch { /* ok */ } }
   }
-  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null } = {}) {
+  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null } = {}) {
     if (R) return R;
     const au = audio ? store.track(audio) : targetFor('audio');
     // A sound on trial on a track this take records onto is kept first, said before it happens (the instrument change
@@ -1020,6 +1071,9 @@ export function createRecorder(app, input, opts = {}) {
       const aimed = tid && [targetFor('pads'), targetFor('keys'), hum ? targetFor('hum') : null].some((x) => x && x.id === tid);
       if (lastTx && lastTx.by === 'you' && lastTx.ops.length === 1 && lastTx.ops[0].type === 'track.add' && tr && !tr.clips.length && aimed) made = { track: tid, txn: lastTx.id, name: tr.name };
     }
+    // (join: a change made for this take just before it, by the caller: Start a song's beat to hum over. The take is
+    // one undo step with it, as with a track made for the take, while it is still the newest change)
+    if (!made && join) made = { track: null, txn: join, name: null };
     const isFree = free ?? (capture && !rec.captureClick && !engine.playing && silentSong());
     if (isFree) return recordFree({ hum, made });
     const p = P();
@@ -1275,7 +1329,7 @@ export function createRecorder(app, input, opts = {}) {
       // played past it; a stop a hair into a bar with nothing played there doesn't add that bar)
       const lastOn = Math.max(...own.flatMap((ps) => ps.notes.map((x) => x.t)));
       const end = r.span.loop ? sp.end : Math.max(Math.ceil((lastOn + MIN_NOTE) / bpb - 1e-9) * bpb, Math.floor(sp.end / bpb + 1e-9) * bpb, sp.start + bpb);
-      take.parts.push({ track: pt.track, kind: 'notes', mode: pt.mode, name: pt.name || undefined, drums: pt.drums, newTrack: pt.newTrack, kinds: kindsOf(pt), span: { start: sp.start, end }, passes, active: pick.n, natural: pick.natural, joins });
+      take.parts.push({ track: pt.track, kind: 'notes', mode: pt.mode, name: pt.name || undefined, drums: pt.drums, newTrack: pt.newTrack, kinds: kindsOf(pt), span: { start: sp.start, end }, loop: r.span.loop ? { start: r.span.loop.start, end: r.span.loop.end } : null, passes, active: pick.n, natural: pick.natural, joins });
     }
     if (audioRes) {
       const t = store.track(r.audioTrack) || targetFor('audio');
@@ -1355,14 +1409,16 @@ export function createRecorder(app, input, opts = {}) {
       const active = st.clips[st.clips.length - 1];
       res.stacked = { track: st.track, clip: active, kind: (st.kinds || [])[0] || 'keys', names: st.stacked.names, unmute: st.stacked.unmute.map((u) => d.created[u] || u).filter(Boolean) };
     }
-    const text = why === 'silence' ? `Silenced. ${made.map((x) => (x.mode === 'layer' ? `${x.name} kept (${x.bars}).` : `Take ${x.takes} kept on ${x.name} (${x.bars}).`)).join(' ')}` : `${plan.summary} Undo takes it back.`;
+    const text = why === 'silence' ? `Silenced. ${made.map((x) => (x.mode === 'layer' || x.mode === 'fold' ? `${x.name} kept (${x.bars}).` : `Take ${x.takes} kept on ${x.name} (${x.bars}).`)).join(' ')}` : `${plan.summary} Undo takes it back.`;
     // (a short song: "Make it 8 bars" beside it, ui/sketch.js app.song.offer)
     const more = why === 'silence' ? null : app.song?.offer?.({ bars: 8 }) || null;
     const own = res.stacked && why !== 'silence' ? ownOffer(res.stacked) : null;
+    // Fold left hits out: "Show them" opens Takes, where every pass is kept as played (input/capture.js)
+    const shown = why !== 'silence' && made.some((x) => x.mode === 'fold' && x.left > 0) ? showOffer() : null;
     // the sound card's line ("What should it sound like? Sounds"), when ui/sounds.js has one for this take
     let line = null;
     try { line = app.sounds?.toastLine?.(res) || null; } catch { line = null; }
-    const parts = [text, more ? ' ' : null, more, own ? ' ' : null, own, line ? ' ' : null, line].filter(Boolean);
+    const parts = [text, shown ? ' ' : null, shown, more ? ' ' : null, more, own ? ' ' : null, own, line ? ' ' : null, line].filter(Boolean);
     app.ui?.toast?.(parts.length > 1 ? parts : text, { kind: 'ok', ms: 6000, action: { label: 'Undo', run: () => store.undo({ by: 'you' }) } });
     return res;
   }
@@ -1388,6 +1444,17 @@ export function createRecorder(app, input, opts = {}) {
     const text = `${c.name || 'The take'} is on ${np.name} now, and ${andList(s.names || ['what it covered'])} ${(s.names || []).length > 1 ? 'play' : 'plays'} again on ${t.name}.`;
     app.ui?.toast?.(text, { kind: 'ok', action: { label: 'Undo', run: () => store.undo({ by: 'you' }) } });
     return { ...d, track: id, clip: c.id, text };
+  }
+  function showOffer() {
+    try {
+      if (typeof document === 'undefined') return null;
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'btn btn-txt ew-toast-act rec-show';
+      b.textContent = 'Show them';
+      b.title = 'Every time round is in Takes, as you played it';
+      b.addEventListener('click', () => { try { app.ui?.show?.('sketch'); } catch { /* ok */ } });
+      return b;
+    } catch { return null; }
   }
   function ownOffer(s) {
     try {
@@ -1536,7 +1603,7 @@ export function createRecorder(app, input, opts = {}) {
     view: () => viewOf(),
     // a select made for the person (a take kept, a track made): the selection follows it, and it isn't their act
     select: (x) => ownSelect(x),
-    setMode(track, mode) { const t = typeof track === 'string' ? store.track(track) : track; if (t && (mode === 'layer' || mode === 'take')) modes.set(t.id, mode); return t ? modeFor(t) : null; },
+    setMode(track, mode) { const t = typeof track === 'string' ? store.track(track) : track; if (t && (mode === 'fold' || mode === 'layer' || mode === 'take')) modes.set(t.id, mode); return t ? modeFor(t) : null; },
     // the tracks a take in progress records onto
     get tracks() { return R ? [...new Set([...[...R.parts.values()].map((x) => x.track), R.audioTrack].filter(Boolean))] : []; },
     record: (o) => record(o),
@@ -1608,7 +1675,7 @@ export function createRecorder(app, input, opts = {}) {
         if (!ps) continue;
         k += ps.notes.length;
         pt.passes.delete(n);
-        if (pt.mode === 'layer') {
+        if (layered(pt.mode)) {
           // its previews come out too: release all, then hear the passes that stay
           releasePreviews({ parts: new Map([[0, pt]]) });
           for (const q of pt.passes.values()) for (const x of q.notes) preview(r, pt, x);

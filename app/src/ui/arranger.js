@@ -3074,7 +3074,8 @@ function mountArranger(el, app) {
         const passes = live.passes.filter((ps) => ps.track === id);
         // what played here before is set back under the band, so what you play reads as it lands: a new take
         // replaces it (the room over it, nearly opaque); layered hits sit on top of it (half the room over it)
-        const layer = passes.length ? passes.every((ps) => ps.mode === 'layer') : (recorder()?.modeFor?.(id) || (isDrumTrack(app, t) ? 'layer' : 'take')) === 'layer';
+        const lay = (m) => m === 'layer' || m === 'fold';   // (Fold records as Layer does)
+        const layer = passes.length ? passes.every((ps) => lay(ps.mode)) : lay(recorder()?.modeFor?.(id) || (isDrumTrack(app, t) ? 'layer' : 'take'));
         g.fillStyle = rgba(pal.bg, layer ? 0.55 : 0.86); g.fillRect(x0, y, x1 - x0, hh);
         g.fillStyle = rgba(pal.rec, 0.1); g.fillRect(x0, y, x1 - x0, hh);
         g.fillStyle = pal.rec; g.fillRect(x0, y, x1 - x0, 1); g.fillRect(x0, y + hh - 1, x1 - x0, 1);

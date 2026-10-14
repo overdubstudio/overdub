@@ -545,6 +545,15 @@ for (const width of [1440, 390]) {
   t.ok(other.statusCode === 301 && other.headers.location.value === 'https://overdubstudio.com/community/' && ev('/app', 'www.overdubstudio.com').headers.location.value === 'https://overdubstudio.com/app',
     `path-rewrite.js: another host still redirects to the same path on overdubstudio.com (${other.headers?.location?.value})`);
   t.ok(/^var HOME = 'overdubstudio\.com';$/m.test(fs.readFileSync(path.join(ROOT, 'deploy/path-rewrite.js'), 'utf8')), "path-rewrite.js still starts its home as var HOME = 'overdubstudio.com'; (deploy/next/setup.sh seds that line)");
+  // CLOUDFRONT_NAME: false in git (a cloudfront.net name redirects home); infra/live publishes it true before the
+  // cutover, and then the distribution's cloudfront.net name is served as itself
+  const src = fs.readFileSync(path.join(ROOT, 'deploy/path-rewrite.js'), 'utf8'), CF = 'd111111abcdef8.cloudfront.net';
+  const pre = {};
+  vm.runInNewContext(src.replace(/^var CLOUDFRONT_NAME = false;$/m, 'var CLOUDFRONT_NAME = true;'), pre);
+  const evPre = (uri, host) => pre.handler({ request: { uri, querystring: {}, headers: { host: { value: host } } } });
+  t.ok(/^var CLOUDFRONT_NAME = false;$/m.test(src) && ev('/app/', CF).statusCode === 301 && evPre('/app/', CF).uri === '/app/index.html' && evPre('/app/', 'www.overdubstudio.com').statusCode === 301
+    && evPre('/app/', 'overdub.example').statusCode === 301,
+    "path-rewrite.js: var CLOUDFRONT_NAME = false; in git, so a cloudfront.net name redirects home; true (infra/live, before the cutover) serves it, and other hosts still redirect");
 }
 
 // ---- claims: what the public copy, the deck and the launch drafts say is still true of the product

@@ -316,10 +316,14 @@ try {
     const envLine = out.split('\n').find((l) => l.includes('/etc/overdub-relay.env') && l.includes('printf')) || '';
     t.ok(/aws ssm get-parameter [^\n]*--name \/overdub\/relay\/origin-secret[^\n]*--with-decryption/.test(out) && /"RELAY_ORIGIN_SECRET=\$SECRET"/.test(envLine) && !/dryrun-secret/.test(out),
       `the deploy command carries no origin secret: the instance reads it from Parameter Store (/overdub/relay/origin-secret) as the command runs (${envLine.trim().slice(0, 110)})`);
-    const setup = read('deploy/relay/setup.sh'), down = read('deploy/relay/teardown.sh');
-    const syntax = ['setup', 'deploy', 'teardown'].filter((n) => spawnSync('bash', ['-n', path.join(ROOT, `deploy/relay/${n}.sh`)]).status !== 0);
-    t.ok(!syntax.length && /put-parameter/.test(setup) && /SecureString/.test(setup) && /ssm:GetParameter/.test(setup) && /delete-parameter/.test(down) && /delete-role-policy/.test(down),
-      `setup.sh keeps the secret as a SecureString the instance may read, teardown.sh deletes it (and the role's inline policy); the scripts parse${syntax.length ? ' (not: ' + syntax.join(', ') + ')' : ''}`);
+    // its AWS is Terraform's (infra/live/relay.tf): the secret a SecureString only the instance's role may read, CloudFront's
+    // header from the same value, and the name the studio talks to
+    const tf = read('infra/live/relay.tf'), vars = read('infra/live/variables.tf');
+    const relayName = /variable "relay_domain"[\s\S]*?default\s*=\s*"([^"]+)"/.exec(vars)?.[1];
+    t.ok(/type\s*=\s*"SecureString"/.test(tf) && /Action = "ssm:GetParameter", Resource = aws_ssm_parameter\.origin_secret\.arn/.test(tf)
+      && /name\s*=\s*"x-overdub-origin"\s*\n\s*value\s*=\s*random_password\.origin_secret\.result/.test(tf) && /"\/overdub\/relay\/origin-secret"/.test(tf)
+      && `https://${relayName}` === RELAY && spawnSync('bash', ['-n', path.join(ROOT, 'deploy/relay/deploy.sh')]).status === 0,
+      `infra/live/relay.tf keeps the secret as a SecureString the instance may read and gives CloudFront the same value; its relay_domain is RELAY (${relayName})`);
 
     // the relay's own helpers
     const { addressKey, inRanges, redact, tokenFor } = relayMod;
@@ -767,7 +771,7 @@ try {
     // the live site, played by a made-up origin served from the local server (nothing leaves this machine). Its
     // app/site-config.json is the one given, or the local server's when none is
     const PUB = 'https://overdub.example';
-    const HOSTED = ['https://overdub-relay.ajsmithhq.com', 'https://relay.overdubstudio.com'], API = 'https://api.overdubstudio.com';
+    const HOSTED = ['https://mcp.overdubstudio.com', 'https://overdub-relay.ajsmithhq.com', 'https://relay.overdubstudio.com'], API = 'https://api.overdubstudio.com';
     const pubContext = async (config) => {
       const c = await s.browser.newContext();
       await c.route('**/*', async (rt) => {
@@ -789,7 +793,7 @@ try {
     await pub.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
     await sleep(1500);
     const live = await pub.evaluate(() => ({ relay: window.overdub.remote?.relay || null }));
-    t.ok(live.relay === 'https://overdub-relay.ajsmithhq.com' && !sent.length, `on the live site a link's ?relay= is ignored: Connect points at the hosted relay (${live.relay}), and with Connect on nothing goes to that port (${sent.length} requests)`);
+    t.ok(live.relay === 'https://mcp.overdubstudio.com' && !sent.length, `on the live site a link's ?relay= is ignored: Connect points at the hosted relay (${live.relay}), and with Connect on nothing goes to that port (${sent.length} requests)`);
     await ctx.close();
     // what the live site sees, by its site-config.json: each look is a fresh browser, counting requests to the hosted
     // relays and the account service from the first one
@@ -813,9 +817,9 @@ try {
     // every studio: Connect for everyone, the hosted relay, off until Turn on, the private link only (no account
     // service named), and nothing sent before Turn on
     const plain = await look({});
-    t.ok(plain.tab && plain.relay === 'https://overdub-relay.ajsmithhq.com' && plain.state === 'off' && !plain.hosted,
+    t.ok(plain.tab && plain.relay === 'https://mcp.overdubstudio.com' && plain.state === 'off' && !plain.hosted,
       `{} on the live site: Connect shows, for the hosted relay only (${plain.relay}), off until Turn on (state ${plain.state}; ${plain.hosted} requests to a relay)`);
-    t.ok(plain.mode === 'link' && !plain.account && /^https:\/\/overdub-relay\.ajsmithhq\.com\/s\/[A-Za-z0-9_-]{22}\/mcp$/.test(plain.url) && !plain.api,
+    t.ok(plain.mode === 'link' && !plain.account && /^https:\/\/mcp\.overdubstudio\.com\/s\/[A-Za-z0-9_-]{22}\/mcp$/.test(plain.url) && !plain.api,
       `with no account service in the site config: the private link only (${plain.mode}), and ${plain.api} requests to api.overdubstudio.com`);
     // the retired ?connect=1 turns nothing on (or writes its old key)
     const asked = await look({}, '&connect=1');

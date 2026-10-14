@@ -1,5 +1,5 @@
 # CloudFront in front of the bucket: an origin access control, the viewer-request path rewrite, AWS's managed
-# CachingOptimized, and a response headers policy that adds noindex to the usual security headers.
+# CachingOptimized, and a response headers policy: the live site's (infra/live/cdn.tf, no framing) plus noindex.
 
 data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
@@ -37,16 +37,21 @@ resource "aws_cloudfront_function" "path_rewrite" {
 
 resource "aws_cloudfront_response_headers_policy" "next" {
   name    = "overdub-next-headers"
-  comment = "${var.domain}: security headers plus noindex"
+  comment = "${var.domain}: security headers, no framing, noindex"
 
-  # the managed SecurityHeadersPolicy's set
+  # the managed SecurityHeadersPolicy's set, with X-Frame-Options DENY and CSP frame-ancestors 'none' (both overriding),
+  # as the live site: no other page frames the studio, its trust prompt or the gallery (was deploy/headers.sh --next)
   security_headers_config {
     content_type_options {
       override = true
     }
     frame_options {
-      frame_option = "SAMEORIGIN"
-      override     = false
+      frame_option = "DENY"
+      override     = true
+    }
+    content_security_policy {
+      content_security_policy = "frame-ancestors 'none'"
+      override                = true
     }
     referrer_policy {
       referrer_policy = "strict-origin-when-cross-origin"

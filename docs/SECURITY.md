@@ -181,7 +181,7 @@ AJ's calls:
    (the ask names such a device "Claude for Sam", so the listener knows whose link it came in).
 3. **The full policy as a CloudFront header**, with violation reports (it must carry the library's and gallery's
    script hashes). `frame-ancestors 'none'` is sent now, with `X-Frame-Options: DENY`: by the local server, and on the
-   site by the response headers policy `deploy/headers.sh` sets (AJ runs it). The rest of the header policy is still
+   site by the response headers policies in Terraform (`infra/live/cdn.tf`, `infra/next/cdn.tf`). The rest of the header policy is still
    his call.
 4. **How long CloudFront's logs keep IPs.**
 

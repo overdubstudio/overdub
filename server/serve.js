@@ -77,7 +77,7 @@ function siteConfig(res) {
   res.end(JSON.stringify(body));
 }
 
-// Sent on every response, as CloudFront's policy sends them on the live site (deploy/headers.sh): no other page may
+// Sent on every response, as CloudFront's policy sends them on the live site (infra/live/cdn.tf): no other page may
 // frame this one (the trust prompt and the Browser are clicks worth stealing), and no file is read as another type.
 export const FRAME_HEADERS = {
   'content-security-policy': "frame-ancestors 'none'",

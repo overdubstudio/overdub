@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# Deploy Overdub to https://overdubstudio.com (the bucket keeps its first name): the landing page (site/), the studio (app/) and the public docs.
+# Deploy Overdub to https://overdubstudio.com: the landing page (site/), the studio (app/) and the public docs.
 # Text files revalidate every time (no-cache + ETag, so a deploy is live at once); media caches for a day.
 # Sampled kits (app/kits/<sha256>.odk, gitignored: node tools/fetch-kits.js builds them) go up from the working tree,
 # each checked against its name, gzipped, and cached for good (a file named by its hash never changes), with its packed
 # twin (<sha256>.odkz, which the studio fetches first and unpacks back to the .odk; the .odk stays as the fallback).
 # Every kit the shipped code names must be here, or nothing is deployed; they go up before the code that names them.
-# Run deploy/setup.sh once first. Usage:
-#   deploy/deploy.sh [--skip-tests]                  the live site, from REF (default HEAD)
-#   deploy/deploy.sh [--skip-tests] --next [REF]     the preview, https://next.overdubstudio.com (its AWS is
-#                                                    infra/next's), from REF (default HEAD): any committed ref; one
+# Both sites' AWS is Terraform's (infra/live, infra/next; infra/README.md), in the Overdub account. Usage:
+#   deploy/deploy.sh [--skip-tests] [REF]           the live site, s3://overdubstudio.com, from REF (default HEAD). Only
+#                                                    from GitHub Actions (.github/workflows/deploy-live.yml, approved);
+#                                                    LOCAL_LIVE_DEPLOY=1 is the emergency hatch for a laptop
+#   deploy/deploy.sh [--skip-tests] --next [REF]     the preview, https://next.overdubstudio.com, from REF (default
+#                                                    HEAD): any committed ref; one
 #                                                    older than the ribbon (app/src/ui/preview.js) ships without it
-#   DRY_RUN=1 deploy/deploy.sh ...                   stage the files and print the plan; no AWS calls
+#   DRY_RUN=1 deploy/deploy.sh ...                   stage the files and print the plan; no AWS calls (anywhere)
+# The live distribution: LIVE_DISTRIBUTION, else deploy/.distribution-id (terraform -chdir=infra/live output -raw
+# distribution_id), else the one whose alias is overdubstudio.com.
 # app/site-config.json, the deploy's switches, is never committed: this script is its one writer, for both sites. It
-# starts from deploy/site-config.json (gitignored; SITE_CONFIG=<file> reads another), else {}. The preview's copy adds
+# starts from REF's deploy/live-config.json (committed: the live site's config), else {}; SITE_CONFIG=<file> reads
+# another instead (a developer's local override; the old gitignored deploy/site-config.json is read only that way). The preview's copy adds
 # "env": "preview", "preview": true and the commit, so the studio wears the Preview ribbon (app/src/ui/preview.js); every
 # other key is kept as it is. With no "preview" key a studio is the live site. There are no feature toggles: what is
 # merged to main ships on the next live deploy, and unfinished work waits on its branch.
@@ -23,7 +28,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --skip-tests) TESTS= ;;
     --next) TARGET=next; if [ $# -gt 1 ] && [ "${2#--}" = "$2" ]; then REF=$2; shift; fi ;;
-    *) echo "deploy.sh: unknown argument $1 (usage: deploy/deploy.sh [--skip-tests] [--next [REF]])"; exit 2 ;;
+    --*|"") echo "deploy.sh: unknown argument $1 (usage: deploy/deploy.sh [--skip-tests] [--next] [REF])"; exit 2 ;;
+    *) if [ -n "${REF:-}" ]; then echo "deploy.sh: one REF only ($REF, then $1)"; exit 2; fi; REF=$1 ;;
   esac
   shift
 done
@@ -31,9 +37,16 @@ DRY=${DRY_RUN:-}
 if [ "$TARGET" = next ]; then
   BUCKET=next.overdubstudio.com HOST=next.overdubstudio.com IDFILE="$ROOT/deploy/.next-distribution-id" SETUP="terraform in infra/next (infra/README.md)"
 else
-  BUCKET=overdub.ajsmithhq.com HOST=overdubstudio.com IDFILE="$ROOT/deploy/.distribution-id" SETUP=deploy/setup.sh
+  BUCKET=overdubstudio.com HOST=overdubstudio.com IDFILE="$ROOT/deploy/.distribution-id" SETUP="terraform in infra/live (infra/README.md)"
+  # the live site ships from the approved workflow; a laptop needs the hatch (and the Overdub account's credentials)
+  if [ -z "$DRY" ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${LOCAL_LIVE_DEPLOY:-}" != 1 ]; then
+    echo "not deploying: the live site deploys from GitHub Actions (Actions > deploy-live > Run workflow, then approve)."
+    echo "LOCAL_LIVE_DEPLOY=1 deploy/deploy.sh ... is the emergency hatch (AWS_PROFILE=overdub); DRY_RUN=1 prints the plan."
+    exit 1
+  fi
 fi
 if [ -n "$DRY" ]; then DIST=EDRYRUN
+elif [ "$TARGET" = live ] && [ -n "${LIVE_DISTRIBUTION:-}" ]; then DIST=$LIVE_DISTRIBUTION
 elif [ -f "$IDFILE" ]; then DIST=$(cat "$IDFILE")
 else
   DIST=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items && contains(Aliases.Items, '$HOST')].Id | [0]" --output text)
@@ -57,11 +70,17 @@ for f in AGENTS ARCHITECTURE DEVICES UX-RESEARCH VISION BRAND REMOTE-MCP GUIDE B
 done
 git archive "$REF" site app $DOCS | tar -x -C "$STAGE"
 SHORT=$(git rev-parse --short "$REF^{commit}")
-# The deploy's switches (app/src/ui/preview.js reads env, preview and ref; other modules may read other keys), never
-# committed: deploy/site-config.json when there is one, else {}. The preview's copy adds its three keys and keeps the rest.
-SITE_CONFIG=${SITE_CONFIG:-$ROOT/deploy/site-config.json}
-if [ -f "$SITE_CONFIG" ]; then cp "$SITE_CONFIG" "$STAGE/app/site-config.json"; else echo '{}' > "$STAGE/app/site-config.json"; fi
-BASE_NAME=${SITE_CONFIG#"$ROOT"/}; [ -f "$SITE_CONFIG" ] || BASE_NAME="the site config ({})"
+# The deploy's switches (app/src/ui/preview.js reads env, preview and ref; other modules may read other keys): REF's
+# deploy/live-config.json (git show, like the files), else {}; SITE_CONFIG=<file> reads that file instead. The
+# preview's copy adds its three keys and keeps the rest.
+if [ -n "${SITE_CONFIG:-}" ]; then
+  if [ -f "$SITE_CONFIG" ]; then cp "$SITE_CONFIG" "$STAGE/app/site-config.json"; else echo '{}' > "$STAGE/app/site-config.json"; fi
+  BASE_NAME=${SITE_CONFIG#"$ROOT"/}; [ -f "$SITE_CONFIG" ] || BASE_NAME="the site config ({})"
+elif git show "$REF:deploy/live-config.json" > "$STAGE/app/site-config.json" 2>/dev/null; then
+  BASE_NAME="$REF:deploy/live-config.json"
+else
+  echo '{}' > "$STAGE/app/site-config.json"; BASE_NAME="the site config ({}: $REF has no deploy/live-config.json)"
+fi
 if [ "$TARGET" = next ]; then
   node -e 'const fs = require("fs"), [file, ref] = process.argv.slice(1);
     const c = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -86,7 +105,9 @@ fi
 # deploy/.cache/ (gitignored), checked against their SHA-256, never committed. Then the shipped stems entry is checked
 # the way the studio will (site-config.js stemsConfig, the runner's same-origin rule): one that would be off for being
 # on another site stops a live deploy, and is a warning on --next.
-if ! STEMS_SAID=$(node "$ROOT/deploy/stage-stems.js" "$STAGE/app/site-config.json" "$STAGE" "$ROOT/deploy/.cache"); then
+# (on --next what can't be staged is a warning, and the preview ships with stems off: --warn)
+STEMS_WARN=; [ "$TARGET" = next ] && STEMS_WARN=--warn
+if ! STEMS_SAID=$(node "$ROOT/deploy/stage-stems.js" "$STAGE/app/site-config.json" "$STAGE" "$ROOT/deploy/.cache" ${STEMS_WARN:+"$STEMS_WARN"}); then
   echo "$STEMS_SAID"; exit 1
 fi
 if [ -f "$STAGE/app/src/jobs/stems/runner.js" ] && ! STEMS_CHECK=$(node --input-type=module -e 'import fs from "node:fs"; import { pathToFileURL } from "node:url";

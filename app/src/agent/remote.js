@@ -43,8 +43,8 @@ import { installPresence } from './presence.js';
 import { installTools } from './tools.js';
 import { createAccount } from './account.js';
 
-export const RELAY = 'https://overdub-relay.ajsmithhq.com';
-// The hosted relay is live (deploy/relay/setup.sh, docs/REMOTE-MCP.md; tools/relay-test.js): every studio has the
+export const RELAY = 'https://mcp.overdubstudio.com';   // the hosted relay for the private link (infra/live/relay.tf); ACCOUNT_RELAY below is the account relay
+// The hosted relay is live (infra/live/relay.tf, docs/REMOTE-MCP.md; tools/relay-test.js): every studio has the
 // Connect tab; a local studio with ?relay=<a local relay> (node server/relay.js) talks to that one instead. The page's
 // policy allows RELAY in connect-src (app/index.html).
 // Sign in with Overdub: built and tested (tools/relay-test.js), not deployed. Account mode needs the site config to name

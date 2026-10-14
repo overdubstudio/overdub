@@ -1,63 +1,36 @@
 #!/usr/bin/env bash
-# One-time setup for Overdub's counts (app/src/analytics.js, site/assets/analytics.js): a private log bucket that
-# forgets after 90 days, CloudFront standard logging on the overdub.ajsmithhq.com distribution into it, and the Athena
-# database, table and view that tools/stats.sh reads. Safe to re-run: it skips or re-applies what exists.
+# One-time setup for Overdub's counts (app/src/analytics.js, site/assets/analytics.js): the Athena database, table and
+# view that tools/stats.sh reads, over CloudFront's access logs. Safe to re-run (IF NOT EXISTS / OR REPLACE).
 #
-#   deploy/analytics/setup.sh            (needs AWS credentials: `aws login`; region us-east-1)
+# The logs themselves are Terraform's (infra/live): the private bucket overdub-logs-<account>, which forgets after 90
+# days, and standard logging on the live distribution into it (var.access_logs). Run terraform first; this script only
+# makes the Athena side, which isn't a Terraform resource here.
 #
-# Costs: S3 for a few MB of gzipped logs a month, Athena at $5/TB scanned (each stats.sh run scans the logs once per
-# query, a few MB). No servers. CloudFront logs every request, as any web server would, including the client address
-# and user agent; the lifecycle rule deletes them after 90 days, and the Athena view used by stats.sh never selects them.
+#   AWS_PROFILE=overdub deploy/analytics/setup.sh    (region us-east-1)
+#   DRY_RUN=1 deploy/analytics/setup.sh              prints the statements, calls nothing
+#
+# Costs: Athena at $5/TB scanned (each stats.sh run scans the logs once per query, a few MB). No servers. CloudFront logs
+# every request, as any web server would, including the client address and user agent; the lifecycle rule deletes them
+# after 90 days, and the Athena view used by stats.sh never selects them. It refuses AJ's personal account (165604225334).
 set -euo pipefail
-export AWS_DEFAULT_REGION=us-east-1
+export AWS_DEFAULT_REGION=us-east-1 AWS_REGION=us-east-1 AWS_PAGER=""
 HERE=$(cd "$(dirname "$0")" && pwd)
-DIST=$(cat "$HERE/../.distribution-id")   # written by deploy/setup.sh
-ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+PERSONAL=165604225334
+DRY=${DRY_RUN:-}
+[ -n "$DRY" ] && echo "dry run: no AWS calls; these are the statements a first run sends"
+ACCOUNT=$( [ -n "$DRY" ] && echo 000000000000 || aws sts get-caller-identity --query Account --output text)
+[ "$ACCOUNT" != "$PERSONAL" ] || { echo "refusing: these credentials are AJ's personal account ($PERSONAL). The logs live in the Overdub account: AWS_PROFILE=overdub"; exit 1; }
 BUCKET="overdub-logs-$ACCOUNT"
 LOGS="s3://$BUCKET"
-AWSLOGS=c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0   # CloudFront's log-delivery account (awslogsdelivery)
+if [ -z "$DRY" ] && ! aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+  echo "no $BUCKET: terraform apply in infra/live first (infra/README.md)"; exit 1
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# ---- the bucket: private, encrypted, ACLs on (CloudFront's standard logging writes with an ACL grant), 90-day expiry
-if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-  aws s3api create-bucket --bucket "$BUCKET" >/dev/null
-  echo "bucket: created $BUCKET"
-else
-  echo "bucket: $BUCKET exists"
-fi
-aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
-  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-aws s3api put-bucket-encryption --bucket "$BUCKET" --server-side-encryption-configuration \
-  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-aws s3api put-bucket-ownership-controls --bucket "$BUCKET" --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerPreferred}]'
-OWNER=$(aws s3api list-buckets --query Owner.ID --output text)
-aws s3api put-bucket-acl --bucket "$BUCKET" --grant-full-control "id=$OWNER,id=$AWSLOGS"
-cat > "$TMP/lifecycle.json" <<'JSON'
-{ "Rules": [
-  { "ID": "forget-after-90-days", "Filter": { "Prefix": "" }, "Status": "Enabled",
-    "Expiration": { "Days": 90 }, "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 } },
-  { "ID": "athena-results-7-days", "Filter": { "Prefix": "athena-results/" }, "Status": "Enabled",
-    "Expiration": { "Days": 7 } } ] }
-JSON
-aws s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" --lifecycle-configuration "file://$TMP/lifecycle.json"
-echo "bucket: private, encrypted, logs expire after 90 days (query results after 7)"
-
-# ---- CloudFront standard logging on the distribution, no cookies, under cf-logs/
-aws cloudfront get-distribution-config --id "$DIST" > "$TMP/dist.json"
-ETAG=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ETag"])' "$TMP/dist.json")
-python3 - "$TMP/dist.json" "$BUCKET" > "$TMP/config.json" <<'PY'
-import json, sys
-cfg = json.load(open(sys.argv[1]))["DistributionConfig"]
-cfg["Logging"] = {"Enabled": True, "IncludeCookies": False, "Bucket": sys.argv[2] + ".s3.amazonaws.com", "Prefix": "cf-logs/"}
-print(json.dumps(cfg))
-PY
-aws cloudfront update-distribution --id "$DIST" --if-match "$ETAG" --distribution-config "file://$TMP/config.json" \
-  --query 'Distribution.DistributionConfig.Logging' --output text
-echo "cloudfront: $DIST logs to $LOGS/cf-logs/ (the first files land within the hour)"
-
 # ---- Athena: the database, the table over the logs and the events view (deploy/analytics/athena.sql)
 run() {
+  if [ -n "$DRY" ]; then echo "+ aws athena start-query-execution --work-group primary --query-string \"${1:0:100}…\""; return 0; fi
   local id st
   id=$(aws athena start-query-execution --query-string "$1" --work-group primary \
     --result-configuration "OutputLocation=$LOGS/athena-results/" --query QueryExecutionId --output text)

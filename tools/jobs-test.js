@@ -310,6 +310,46 @@ function harness({ sha = MODEL_SHA, bytes = MODEL.length, gpu = true, failGpu = 
     ok(refused.every(([s, re]) => { try { planStems(s); return false; } catch (e) { return re.test(e.message); } }) && planStems({ model: 'x', sha256: pin }) === null,
       `and ${refused.length} wrong ones are refused with a sentence (plain http, no pin, a partial pin, a model with no hash); a config that names its own paths stages nothing`);
     ok(checkRuntime(Object.fromEntries(RUNTIME_FILES.map((f) => [f, Buffer.from(f)])), Object.fromEntries(RUNTIME_FILES.map((f) => [f, hex(Buffer.from(f))]))) === null, 'checkRuntime: matching per-file hashes pass');
+    // the model from a private bucket (deploy/live-config.json): s3://<bucket>/<key>, copied by aws s3 cp (faked here),
+    // checked against the pin like an https: one, and cached; a dry run copies nothing and stages a stand-in
+    const model = Buffer.from('a stand-in model'), mpin = hex(model), S3 = 's3://overdub-models-000000000000/m.onnx', copied = [];
+    const s3 = (u, file) => { copied.push(u); fs.writeFileSync(file, u === S3 ? model : Buffer.from('another file')); };
+    const runModel = async (stems, opts = {}) => {
+      const stage = path.join(tmp, 'stage-' + runs++), cfgFile = path.join(stage, 'app/site-config.json');
+      fs.mkdirSync(path.dirname(cfgFile), { recursive: true });
+      fs.writeFileSync(cfgFile, JSON.stringify({ stems }));
+      let e = null, lines = null;
+      try { lines = await stageStems({ configFile: cfgFile, stage, cacheDir: path.join(tmp, 'cache-s3'), fetch: fake, s3, ...opts }); } catch (x) { e = x; }
+      return { e, lines, stage, cfg: JSON.parse(fs.readFileSync(cfgFile, 'utf8')) };
+    };
+    const dryM = await runModel({ sha256: mpin, modelFrom: S3 }, { dry: true });
+    ok(!dryM.e && !copied.length && dryM.cfg.stems.model === `vendor/models/${mpin}.onnx` && fs.statSync(path.join(dryM.stage, 'app', dryM.cfg.stems.model)).size === 0 && /dry run: .*aws s3 cp/.test(dryM.lines?.[0]),
+      `deploy, dry: an s3:// model isn't copied; an empty stand-in is staged and the line says a deploy would copy it ("${dryM.lines?.[0]}")`);
+    const s3M = await runModel({ sha256: mpin, modelFrom: S3 });
+    ok(!s3M.e && copied.join() === S3 && Buffer.compare(fs.readFileSync(path.join(s3M.stage, 'app', s3M.cfg.stems.model)), model) === 0 && !('modelFrom' in s3M.cfg.stems) && s3M.cfg.stems.bytes === model.length,
+      `deploy: modelFrom s3://<bucket>/<key> is copied with aws s3 cp, checked against stems.sha256 and staged at app/vendor/models/ ("${s3M.lines?.[0]}")`);
+    const s3Bad = await runModel({ sha256: hex(Buffer.from('nope')), modelFrom: 's3://overdub-models-000000000000/other.onnx' });
+    ok(s3Bad.e && /is [0-9a-f]{64}, not the pinned/.test(s3Bad.e.message) && !fs.existsSync(path.join(tmp, 'cache-s3/models', `${hex(Buffer.from('nope'))}.onnx`)),
+      'an s3:// model whose SHA-256 isn\'t the pin stops the deploy, and isn\'t kept in the cache');
+    ok([['s3:///m.onnx'], ['s3://bucket/'], ['ftp://bucket/m.onnx']].every(([u]) => { try { planStems({ modelFrom: u, sha256: mpin }); return false; } catch (e) { return /https: URL or s3:/.test(e.message); } }),
+      'a model source that is neither https: nor s3://<bucket>/<key> is refused');
+    // the CLI as deploy.sh runs it: a copy that fails stops a live deploy; on --next (--warn) it's a warning, and the
+    // preview ships with no stems entry
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'aws'), '#!/bin/sh\necho "no credentials" >&2\nexit 255\n', { mode: 0o755 });
+    const cli = (...extra) => {
+      const stage = path.join(tmp, 'stage-' + runs++), cfgFile = path.join(stage, 'app/site-config.json');
+      fs.mkdirSync(path.dirname(cfgFile), { recursive: true });
+      fs.writeFileSync(cfgFile, JSON.stringify({ other: 1, stems: { sha256: hex(Buffer.from('elsewhere')), modelFrom: 's3://overdub-models-000000000000/x.onnx' } }));
+      const r = spawnSync(process.execPath, [path.join(ROOT, 'deploy/stage-stems.js'), cfgFile, stage, path.join(tmp, 'cache-cli'), ...extra],
+        { encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, DRY_RUN: '' } });
+      return { status: r.status, out: r.stdout + r.stderr, cfg: JSON.parse(fs.readFileSync(cfgFile, 'utf8')) };
+    };
+    const hard = cli(), soft = cli('--warn');
+    ok(hard.status === 1 && /^not deploying: s3:\/\/overdub-models-000000000000\/x\.onnx: aws s3 cp failed \(no credentials\)/m.test(hard.out)
+      && soft.status === 0 && /^warning: .*aws s3 cp failed.*\(a live deploy would stop\); stems: off on this site/m.test(soft.out) && JSON.stringify(soft.cfg) === '{"other":1}',
+      `stage-stems.js: a model it can't copy stops a live deploy (exit ${hard.status}); with --warn (the preview) it's a warning and the stems entry is dropped (${JSON.stringify(soft.cfg)})`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 }
 

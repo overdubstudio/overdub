@@ -15,7 +15,8 @@ deploy/.distribution-id
 # The preview site's distribution id (terraform -chdir=infra/next output -raw distribution_id; ci.yml writes it)
 deploy/.next-distribution-id
 
-# The deploy's switches (deploy/deploy.sh writes app/site-config.json from deploy/site-config.json, else {}), never committed
+# The deploy's switches: deploy/deploy.sh writes app/site-config.json from REF's deploy/live-config.json (committed);
+# deploy/site-config.json was the old local base, read now only as SITE_CONFIG=deploy/site-config.json
 app/site-config.json
 deploy/site-config.json
 

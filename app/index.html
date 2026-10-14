@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://overdub-relay.ajsmithhq.com http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://mcp.overdubstudio.com http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta charset="utf-8">
   <!-- The policy comes first, so it covers everything the page loads. The page keeps no API key (a self-hoster's key
        stays on their local server: server/local-claude.js), but it holds the person's songs and devices and drives
@@ -16,7 +16,7 @@
          policy, and the page parses kernel source the same way (it never runs it).
        - worker-src blob: the engine's timer Worker (src/engine/engine.js, ticker) is made from a blob: URL.
        - style-src 'unsafe-inline': the panels inject their own <style> elements.
-       - connect-src https://overdub-relay.ajsmithhq.com : the hosted relay behind Connect to Claude (RELAY in
+       - connect-src https://mcp.overdubstudio.com : the hosted relay behind Connect to Claude (RELAY in
          src/agent/remote.js; docs/REMOTE-MCP.md). The tab talks to it only while Connect is on, and its own key travels
          in a request header, never in a URL. (The relay is live: every studio shows Connect.)
        - connect-src http://localhost:* http://127.0.0.1:* : a relay on this machine (?relay=, which the studio honours

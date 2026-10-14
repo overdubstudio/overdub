@@ -32,7 +32,8 @@ resource "aws_iam_role" "deploy" {
   })
 }
 
-# Exactly what deploy/deploy.sh --next calls, on the preview's bucket and distribution only.
+# Exactly what deploy/deploy.sh --next calls: the preview's bucket and distribution, and reading the stems model the
+# committed deploy/live-config.json names (infra/live's models bucket; without it the preview ships with stems off).
 resource "aws_iam_role_policy" "deploy" {
   name = "deploy-preview"
   role = aws_iam_role.deploy.id
@@ -50,6 +51,12 @@ resource "aws_iam_role_policy" "deploy" {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = "${aws_s3_bucket.site.arn}/*"
+      },
+      {
+        Sid      = "ReadModels"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:ListBucket"]
+        Resource = ["arn:aws:s3:::overdub-models-800849967977", "arn:aws:s3:::overdub-models-800849967977/*"]
       },
       {
         Sid      = "InvalidatePreview"

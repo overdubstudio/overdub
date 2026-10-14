@@ -7,3 +7,8 @@ node = "24"
 shellcheck = "0.11.0"
 actionlint = "1.7.12"
 "aqua:zizmorcore/zizmor" = "1.30.1"
+# Terraform for the AWS the preview runs on (infra/: infra/README.md), and its checks: tflint (with its AWS ruleset,
+# pinned in infra/.tflint.hcl) and trivy's config scan. All three run in npm run check.
+"aqua:hashicorp/terraform" = "1.16.4"
+"aqua:terraform-linters/tflint" = "0.64.0"
+"aqua:aquasecurity/trivy" = "0.74.0"

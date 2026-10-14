@@ -181,7 +181,9 @@ are covered by <code>tools/compat-test.js</code>.</li>
   tools/                 pw.js (browser harness, fixed), &lt;area&gt;-test.js checks, run-all.js, render.js, bench/
   integrations/          the Claude Code plugin and skill, configs for other MCP clients, check.js
   deploy/                setup.sh (one time), deploy.sh (ships the committed tree; --next REF ships it to the preview,
-                         next.overdubstudio.com, set up once by next/setup.sh), relay/, analytics/; README.md
+                         next.overdubstudio.com, whose AWS is infra/next), relay/, analytics/; README.md
+  infra/                 Terraform: bootstrap/ (the account's state bucket), next/ (the preview's AWS and the
+                         account-wide pieces: GitHub's OIDC provider, the deploy role, the budget); README.md
   docs/                  ARCHITECTURE.md (this), DEVICES.md, AGENTS.md, GUIDE.md, BENCH.md, REMOTE-MCP.md, BRAND.md,
                          VISION.md, UX-RESEARCH.md, SECURITY.md, research/</code></pre></div>
 <p>Only touch files your area owns. If you need something from another area that doesn't exist yet, code against the

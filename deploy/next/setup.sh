@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# SUPERSEDED: infra/next (Terraform) is the source of truth for the preview's AWS; run terraform there, not this. Kept
+# because tools/analytics-test.js still runs it dry; it no longer matches the account (the preview has its own
+# delegated zone, next.overdubstudio.com, where this looks for overdubstudio.com's).
+#
 # One-time AWS setup for the preview site, https://next.overdubstudio.com (safe to re-run: it skips what exists).
 # The same shape as the live site (deploy/setup.sh): a private bucket -> CloudFront (OAC, the path-rewrite function
 # with its home set to next.overdubstudio.com) -> a Route53 alias. Two differences: its own ACM certificate, validated

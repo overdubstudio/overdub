@@ -12,7 +12,7 @@ tools/.out/
 deploy/.env
 deploy/.distribution-id
 
-# The preview site's distribution id (deploy/next/setup.sh writes it)
+# The preview site's distribution id (terraform -chdir=infra/next output -raw distribution_id; ci.yml writes it)
 deploy/.next-distribution-id
 
 # The deploy's switches (deploy/deploy.sh writes app/site-config.json from deploy/site-config.json, else {}), never committed
@@ -39,3 +39,12 @@ onnxruntime-web/
 app/vendor/ort/
 app/vendor/models/
 deploy/.cache/
+
+# Terraform (infra/): provider caches, state, plans and crash logs are never committed; .terraform.lock.hcl is
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+*.auto.tfvars

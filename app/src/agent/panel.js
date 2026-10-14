@@ -5,6 +5,8 @@
 //
 // ui events it listens to:  'agent:compose' { text, send?, context? } prefill (and maybe send) the input
 //                           'agent:tool' / 'agent:say' / 'agent:request' / 'presence:agents' / 'bridge:state'
+// While Start a song's stage is on a play step (app.start.busy) a message waits in the box ("Sends when your take is
+// in.") and goes when the stage reaches 'in' or closes.
 // keys: '/' focuses the input; Esc stops the agent while it works; ⌘Z / ⇧⌘Z in the empty input are the song's undo / redo.
 
 import { h, css, icon, esc, byline, rawHtml } from '../ui/dom.js';
@@ -670,8 +672,9 @@ function mountPanel(el, app) {
     const sugs = busy || !agent.provider ? [] : suggestions();
     sugRow.replaceChildren(...(sugs.length ? [h('span.t3', 'Try ')] : []), ...sugs.map((s) => h('button.btn.btn-txt.ag-sug', { type: 'button', onclick: () => { if (s.endsWith('…')) { input.value = s.slice(0, -1) + ' '; input.focus(); grow(); } else send(s); } }, s)));
     const mcpStatus = bridge.agents.filter((a) => a.status).map((a) => `${a.name}: ${a.status}`)[0];
-    const s = agent.status || mcpStatus || '';
-    statusEl.replaceChildren(...(s ? [h('span.ag-lamp'), h('span', s)] : []));
+    const s = waiting ? 'Sends when your take is in.' : agent.status || mcpStatus || '';
+    statusEl.replaceChildren(...(s ? [waiting ? null : h('span.ag-lamp'), h('span', s)].filter(Boolean) : []));
+    statusEl.classList.toggle('ag-waits', !!waiting);
     statusEl.classList.toggle('on', !!s);
     renderHeld();
     cu.update();
@@ -728,6 +731,9 @@ function mountPanel(el, app) {
       held = true; renderHeld(); input.focus();
       return;
     }
+    // Start a song's stage on its play steps (app.start.busy): the message waits in the box and goes when the take is
+    // in (the stage reaches 'in') or the stage closes; the agent never answers into a take being played
+    if (app.start?.busy) { wait(text); return; }
     // Claude on Overdub credits: a free move runs here; otherwise sign in first, and the price is on screen before it goes
     if (agent.provider === 'cloud' && cu.gate(text) !== 'go') return;
     const scope = contextOff ? '' : scopeLabel(app);
@@ -739,6 +745,19 @@ function mountPanel(el, app) {
     cu.sent();
     await going;
   }
+  // a message held while a take is played on Start a song's stage: it stays in the box (yours to change), the composer
+  // says when it goes, and it goes as the box has it then
+  let waiting = null;
+  function wait(text) {
+    if (input.value.trim() !== text) { input.value = text; grow(); }
+    if (!waiting) {
+      const go = () => { if (!waiting || app.start?.busy) return; letGo(); const typed = input.value.trim(); if (typed) send(typed); };
+      const offs = [app.start.on?.('step', (st) => { if (st === 'in') go(); }), app.start.on?.('close', () => setTimeout(go, 0))];
+      waiting = { offs };
+    }
+    renderComposer();
+  }
+  function letGo() { if (!waiting) return; for (const off of waiting.offs) { try { off?.(); } catch { /* ok */ } } waiting = null; renderComposer(); }
   // until the agent's turn is over (or ms pass)
   function idle(ms) {
     return new Promise((res) => {

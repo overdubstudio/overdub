@@ -11,14 +11,10 @@
 //   ?kind=instrument|effect  ?cat=<cat>  ?q=<words>   the filters, kept in the address so a view can be linked
 //
 // Shipped with the site (deploy/deploy.sh), but no page links here yet.
-// On any host but localhost / 127.0.0.1 the page reads nothing (COMMUNITY_LIVE below, as the studio's is).
 import { renderFace } from '/app/src/ui/faces.js';
 import { DEVICE_CATS } from '/app/src/devices/registry.js';
-import { readIndex, resolveUrl, filterEntries as sharedFilter, ASKED_MAX } from '/app/src/devices/community.js';
+import { readIndex, resolveUrl, sourceLink, filterEntries as sharedFilter, ASKED_MAX } from '/app/src/devices/community.js';
 
-// Keep in step with COMMUNITY_LIVE in app/src/ui/community.js (tools/pages-test.js checks they agree once it exists).
-// The page doesn't import that module: it's the studio's UI, and this page wants only its switch.
-export const COMMUNITY_LIVE = false;
 
 export const DEFAULT_INDEX = '/app/community/community-index.json';
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
@@ -39,7 +35,6 @@ export function filterEntries(entries, { kind = 'all', cat = 'all', q = '', tier
 
 /* ------------------------------------------------------------------------------------------------ where the index is */
 export const localPage = (host = location.hostname) => host === 'localhost' || host === '127.0.0.1';
-export const shelfOn = () => COMMUNITY_LIVE || localPage();
 
 // -> { url, bundled } or { error }. A path on this site, or http://localhost:* / 127.0.0.1:* while this page is local.
 export function indexSource(param = new URLSearchParams(location.search).get('community')) {
@@ -47,7 +42,7 @@ export function indexSource(param = new URLSearchParams(location.search).get('co
   let u;
   try { u = new URL(param, location.href); } catch { return { error: 'bad' }; }
   const local = /^http:$/.test(u.protocol) && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
-  const ok = u.origin === location.origin ? /^https?:$/.test(u.protocol) : !COMMUNITY_LIVE && localPage() && local;
+  const ok = u.origin === location.origin ? /^https?:$/.test(u.protocol) : localPage() && local;
   if (!ok || u.username || u.password) return { error: 'host' };
   return { url: u.href, bundled: u.origin === location.origin && u.pathname === DEFAULT_INDEX };
 }
@@ -305,13 +300,12 @@ export async function boot(root = document) {
     $('#filters').hidden = true;
   };
 
-  if (!shelfOn()) { empty('The community shelf isn’t on here yet.'); return done({ off: true }); }
   const src = indexSource();
   if (src.error) { empty('This page can read a shelf from this site or from localhost only.'); return done({ refused: true }); }
   const idx = await loadIndex(src);
   const where = src.bundled ? null : new URL(src.url).host === location.host ? new URL(src.url).pathname : new URL(src.url).host;
   if (idx.missing || idx.unreadable || idx.tooBig) {
-    empty(src.bundled ? 'No shelf here.' : `No shelf at ${where}.`, src.bundled ? 'Build one with node tools/index.js --out ../overdub/app/community in overdub-devices.' : idx.tooBig ? 'Its index is over 2 MB.' : null);
+    empty(src.bundled ? 'No shelf here.' : `No shelf at ${where}.`, src.bundled ? 'Fill it with node tools/community-pull.js in the studio repo (it reads the pinned commit from ../overdub-devices).' : idx.tooBig ? 'Its index is over 2 MB.' : null);
     return done({ missing: true });
   }
   if (idx.newer) { empty('This shelf was built for a newer studio.'); return done({ newer: true }); }
@@ -323,9 +317,9 @@ export async function boot(root = document) {
   } else {
     lede.textContent = `Instruments and effects people asked their agents for, as the shelf at ${where} lists them. What it says about each one is that shelf’s word, not the studio’s.`;
   }
-  // the licence explainer links to the repo's LICENSING.md once the repo has a public URL (https on an allowed host)
-  // biome-ignore lint/correctness/noUndeclaredVariables: BUG, linkable is defined nowhere: a shelf index with a repo throws here
-  const lic = idx.repo && linkable(idx.repo.replace(/\/+$/, '') + '/blob/HEAD/LICENSING.md', idx.repo);
+  // the licence explainer links to the repo's LICENSING.md once the repo has a public URL (https on github.com or the
+  // repo's own host, the reader's rule for source links)
+  const lic = idx.repo && sourceLink(idx.repo.replace(/\/+$/, '') + '/blob/HEAD/LICENSING.md', idx.repo);
   if (lic) $('#licence-note')?.append(' ', h('a', { href: lic, rel: 'noopener noreferrer' }, 'Who owns what, in plain English.'));
   const built = idx.built?.at ? `, built ${shortDate(idx.built.at)}` : '';
   const left = [idx.skipped ? `${idx.skipped} more need a newer studio.` : '', idx.refused ? `${idx.refused} more were left out.` : ''].filter(Boolean).join(' ');

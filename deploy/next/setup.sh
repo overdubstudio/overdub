@@ -6,8 +6,8 @@
 # One-time AWS setup for the preview site, https://next.overdubstudio.com (safe to re-run: it skips what exists).
 # The same shape as the live site (deploy/setup.sh): a private bucket -> CloudFront (OAC, the path-rewrite function
 # with its home set to next.overdubstudio.com) -> a Route53 alias. Two differences: its own ACM certificate, validated
-# by DNS in the overdubstudio.com zone, and a response headers policy that adds X-Robots-Tag: noindex, nofollow to the
-# managed security headers, so no search engine lists the preview.
+# by DNS in the overdubstudio.com zone, and a response headers policy (deploy/headers.sh --next) that adds
+# X-Robots-Tag: noindex, nofollow to the live site's headers, so no search engine lists the preview.
 #
 #   deploy/next/setup.sh                 needs AWS credentials (us-east-1); creates what is missing
 #   DRY_RUN=1 deploy/next/setup.sh       prints the plan, calls nothing (every lookup reads as "not there yet")
@@ -28,7 +28,6 @@ APEX=overdubstudio.com
 DOMAIN=next.$APEX
 BUCKET=$DOMAIN
 FN=overdub-next-path-rewrite
-HEADERS=overdub-next-headers
 CACHE=658327ea-f89d-4fab-a63d-7e88639e58f6      # managed CachingOptimized (an AWS constant, the same in every account)
 CF_ZONE=Z2FDTNDATAQYW2                          # CloudFront's alias hosted zone (an AWS constant)
 DRY=${DRY_RUN:-}
@@ -119,30 +118,14 @@ x aws cloudfront publish-function --name "$FN" --if-match "$ETAG" >/dev/null
 FN_ARN=$( [ -n "$DRY" ] && echo "arn:aws:cloudfront::$ACCOUNT:function/$FN" || aws cloudfront describe-function --name "$FN" --stage LIVE --query FunctionSummary.FunctionMetadata.FunctionARN --output text)
 say function "$FN_ARN"
 
-# ---- the response headers: the managed SecurityHeadersPolicy's set, plus noindex (one policy per behaviour)
-cat > "$TMP/headers.json" <<JSON
-{ "Name": "$HEADERS", "Comment": "$DOMAIN: security headers plus noindex",
-  "SecurityHeadersConfig": {
-    "XSSProtection": { "Override": false, "Protection": true, "ModeBlock": true },
-    "FrameOptions": { "Override": false, "FrameOption": "SAMEORIGIN" },
-    "ReferrerPolicy": { "Override": false, "ReferrerPolicy": "strict-origin-when-cross-origin" },
-    "ContentTypeOptions": { "Override": true },
-    "StrictTransportSecurity": { "Override": false, "IncludeSubdomains": false, "Preload": false, "AccessControlMaxAgeSec": 31536000 } },
-  "CustomHeadersConfig": { "Quantity": 1, "Items": [{ "Header": "X-Robots-Tag", "Value": "noindex, nofollow", "Override": true }] } }
-JSON
-RHP=$(look aws cloudfront list-response-headers-policies --type custom --query "ResponseHeadersPolicyList.Items[?ResponseHeadersPolicy.ResponseHeadersPolicyConfig.Name=='$HEADERS'].ResponseHeadersPolicy.Id | [0]" --output text)
-if [ "$RHP" = "None" ] || [ -z "$RHP" ]; then
-  RHP=$(mk RHPDRYRUN aws cloudfront create-response-headers-policy --response-headers-policy-config "file://$TMP/headers.json" --query ResponseHeadersPolicy.Id --output text)
-  say headers "created $RHP"
-else
-  RETAG=$(aws cloudfront get-response-headers-policy --id "$RHP" --query ETag --output text)
-  aws cloudfront update-response-headers-policy --id "$RHP" --if-match "$RETAG" --response-headers-policy-config "file://$TMP/headers.json" >/dev/null
-fi
-say headers "$RHP (X-Robots-Tag: noindex, nofollow)"
-
 # ---- the distribution
 DIST=$(look aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items && contains(Aliases.Items, '$DOMAIN')].Id | [0]" --output text)
 if [ "$DIST" = "None" ] || [ -z "$DIST" ]; then
+  # the response headers (deploy/headers.sh --next, policy overdub-next-headers): the managed security headers with
+  # X-Frame-Options DENY and CSP frame-ancestors 'none', plus X-Robots-Tag: noindex, nofollow, so no search engine
+  # lists the preview
+  RHP=$("$HERE/../headers.sh" --next --policy-only)
+  say headers "$RHP (X-Robots-Tag: noindex, nofollow; no framing)"
   cat > "$TMP/dist.json" <<JSON
 {
   "CallerReference": "overdub-next-$(date +%s)",
@@ -165,6 +148,9 @@ if [ "$DIST" = "None" ] || [ -z "$DIST" ]; then
 JSON
   DIST=$(mk EDRYRUN aws cloudfront create-distribution --distribution-config "file://$TMP/dist.json" --query Distribution.Id --output text)
   say distribution "created $DIST"
+else
+  # already there: its policy is brought up to date and set on it, if it isn't
+  DIST="$DIST" "$HERE/../headers.sh" --next
 fi
 DIST_DOMAIN=$( [ -n "$DRY" ] && echo dryrun.cloudfront.net || aws cloudfront get-distribution --id "$DIST" --query Distribution.DomainName --output text)
 say distribution "$DIST ($DIST_DOMAIN)"

@@ -17,7 +17,6 @@
 // with or without it. installWorkspace(ui, app, decision) is called by main.js straight after createShell.
 
 import { h, css, byline, authorOf } from './dom.js';
-import { on as toggleOn } from '../toggles.js';
 import { kitHashes, kitState, kitLine, prefetchKit } from './kitload.js';
 import { WORKSPACE_KEY, VIEWS, readSaved } from './workspace-view.js';
 
@@ -39,6 +38,7 @@ export const FEATURES = [
   { id: 'position', group: 'Song', title: 'Where you are', purpose: 'Bar and beat of the playhead, and the beat lights.', panels: [], where: 'the top bar, beside Play', aliases: ['position', 'counter', 'bar', 'beat'] },
   { id: 'song-settings', group: 'Song', title: 'Song settings', purpose: 'Beats per bar, tap the tempo, the click.', panels: [], where: 'the top bar, beside the tempo', aliases: ['meter', 'time signature', 'tap tempo', 'click', 'metronome'] },
   { id: 'tracks', group: 'Song', title: 'Track tools', purpose: 'Add tracks, snap, zoom, and colours.', panels: [], where: 'the bar over the tracks', aliases: ['add track', 'snap', 'zoom', 'fit', 'follow', 'colour', 'sections'] },
+  { id: 'start', group: 'Song', title: 'Start a song', purpose: 'Play one idea at any speed; the studio keeps time.', panels: [], where: 'the Song menu, under New song', aliases: ['start', 'new idea', 'tap a beat', 'hum a tune', 'first take'] },
   { id: 'redo', group: 'Song', title: 'Redo', purpose: 'Put back what Undo took away.', panels: [], where: 'the top bar, beside Undo', aliases: ['redo'] },
   { id: 'record-options', group: 'Recording', title: 'Recording options', purpose: 'Count-in, layering takes and timing.', panels: [], where: 'Sketch, and each track’s header', aliases: ['count-in', 'arm', 'layer', 'quantise', 'timing'] },
   { id: 'history', group: 'Agent', title: 'History', purpose: 'Everything that changed, who changed it, and how to take it back.', panels: ['history'], region: 'right', where: 'the History tab, beside the agent', aliases: ['history', 'changes', 'revert', 'log'] },
@@ -333,9 +333,7 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
     }
     app.browser?.search?.(it.def.name);
   }
-  // Help: the guide's headings, read once from the site's guide page (no page, no Help rows); a feature's own heading
-  // (its id on the page) only while its toggle is on
-  const HELP_TOGGLES = { 'flip-a-song': 'workflow.flip' };
+  // Help: the guide's headings, read once from the site's guide page (no page, no Help rows)
   let helpRows = null, helpAsked = false;
   function loadHelp() {
     if (helpAsked) return;
@@ -344,8 +342,8 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
     fetch(url, { credentials: 'same-origin' }).then((r) => (r.ok ? r.text() : '')).then((txt) => {
       if (!txt) { helpRows = []; return; }
       const doc = new DOMParser().parseFromString(txt, 'text/html');
-      // (a heading for a feature that's off here isn't offered: HELP_TOGGLES)
-      helpRows = [...doc.querySelectorAll('h2[id], h3[id]')].filter((el) => !HELP_TOGGLES[el.id] || toggleOn(HELP_TOGGLES[el.id])).map((el) => ({ kind: 'help', id: 'help:' + el.id, title: el.textContent.trim(), purpose: 'the guide', aliases: [], href: `${url.pathname}#${el.id}` }));
+      helpRows = [...doc.querySelectorAll('h2[id], h3[id]')].map(
+(el) => ({ kind: 'help', id: 'help:' + el.id, title: el.textContent.trim(), purpose: 'the guide', aliases: [], href: `${url.pathname}#${el.id}` }));
       if (findOpen) renderFind();
     }).catch(() => { helpRows = []; });
   }
@@ -365,6 +363,8 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
   function run(it) {
     const q = findOpen?.find.value.trim() || '';
     if (it.kind === 'ask') { closeFind({ refocus: false }); ui.emit('agent:compose', { text: q, send: true }); return; }
+    // (Start a song is a way in, not a place: Enter does what the Song menu's row does)
+    if (it.kind === 'go' && it.f.id === 'start') { closeFind({ refocus: false }); app.exporter?.startSong?.(); return; }
     if (it.kind === 'go') { closeFind({ refocus: false }); go(it.f.id, { by: 'you', query: q }); return; }
     if (it.kind === 'do') { closeFind(); it.run(); return; }
     if (it.kind === 'sound') { closeFind({ refocus: false }); trySound(it); return; }

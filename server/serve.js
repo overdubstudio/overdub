@@ -5,7 +5,6 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deployDefaults } from '../app/src/toggles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -31,6 +30,7 @@ export function resolvePath(urlPath) {
   let p = decodeURIComponent(urlPath.split('?')[0]);
   if (p === '/' || p === '') p = '/site/index.html';
   else if (p === '/llms.txt') p = '/site/llms.txt';
+  else if (p === '/community/') p = '/site/community/index.html';   // the gallery's public path (deploy/path-rewrite.js too)
   else if (p === '/app' || p === '/app/') p = '/app/index.html';
   else if (!path.extname(p) && !p.endsWith('/')) {
     // /site/foo -> /site/foo/index.html when it is a directory
@@ -57,28 +57,33 @@ export function byteRange(header, size) {
   return [start, end];
 }
 
-// The deploy's switches (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
-// deploy/deploy.sh would ship with no base: the registry's deploy: 'on' toggles (app/src/toggles.js: relay), so a local
-// studio shows Connect as the live one does. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
+// The deploy's configuration (app/src/site-config.js). With no app/site-config.json in the checkout, this answers what
+// deploy/deploy.sh would ship with no base: {}. The hosted agent stays off unless OVERDUB_CLOUD_ORIGIN names a service to
 // try it against (a local overdub-cloud, say): `OVERDUB_CLOUD_ORIGIN=http://localhost:8787 node server/serve.js` adds
-// its cloud.api and turns cloud.agent on. The stems runner stays off unless OVERDUB_STEMS_MODEL and OVERDUB_STEMS_SHA256
+// its cloud.api. The stems runner stays off unless OVERDUB_STEMS_MODEL and OVERDUB_STEMS_SHA256
 // name a model you exported (a URL on this machine, or a path on this site), for trying it locally: that adds the
-// stems entry and turns stems.local on. Its runtime is OVERDUB_STEMS_RUNTIME when set, else the default
+// stems entry. Its runtime is OVERDUB_STEMS_RUNTIME when set, else the default
 // vendor/ort/ort.webgpu.min.mjs, which this server answers from OVERDUB_STEMS_RUNTIME_DIR (an onnxruntime-web dist
 // directory on this machine) or app/vendor/ort/ (gitignored). Nothing in the repo holds either. Read on each request,
 // so a test can set them.
 const env = (k) => String(process.env[k] || '').trim();
 function siteConfig(res) {
   const api = env('OVERDUB_CLOUD_ORIGIN');
-  const toggles = { ...deployDefaults(), ...(api ? { 'cloud.agent': 'on' } : {}) };
-  const body = api ? { cloud: { api }, toggles } : { toggles };
+  const body = api ? { cloud: { api } } : {};
   if (env('OVERDUB_STEMS_MODEL')) {
     body.stems = { model: env('OVERDUB_STEMS_MODEL'), sha256: env('OVERDUB_STEMS_SHA256'), ...(env('OVERDUB_STEMS_RUNTIME') ? { runtime: env('OVERDUB_STEMS_RUNTIME') } : {}) };
-    toggles['stems.local'] = 'on';
   }
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
 }
+
+// Sent on every response, as CloudFront's policy sends them on the live site (deploy/headers.sh): no other page may
+// frame this one (the trust prompt and the Browser are clicks worth stealing), and no file is read as another type.
+export const FRAME_HEADERS = {
+  'content-security-policy': "frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+};
 
 // /app/vendor/ort/<file> from OVERDUB_STEMS_RUNTIME_DIR when it's set: the stems runtime, same-origin as the studio's
 // CSP requires, without copying it into the checkout. One plain file name, nothing below it; null when it isn't set.
@@ -94,12 +99,15 @@ export function stemsRuntimeFile(urlPath) {
 export function startServer({ port = Number(process.env.PORT) || 3279, host = '127.0.0.1', quiet = false } = {}) {
   const server = http.createServer(async (req, res) => {
     try {
+      for (const [k, v] of Object.entries(FRAME_HEADERS)) res.setHeader(k, v);
       if (!ADDRESS.test(String(req.headers.host || ''))) {
         res.writeHead(403, { 'content-type': 'text/plain' });
         return res.end('forbidden: ask for localhost');
       }
       const url = new URL(req.url, 'http://localhost');
       for (const r of routes) if (url.pathname.startsWith(r.prefix) && (await r.handler(req, res, url))) return;
+      // /community answers as CloudFront's no-dot rule does: a permanent redirect to the slash, the query kept
+      if (url.pathname === '/community') { res.writeHead(301, { location: '/community/' + url.search, 'cache-control': 'no-store' }); return res.end(); }
       if (url.pathname === '/app/site-config.json' && !fs.existsSync(path.join(ROOT, 'app/site-config.json'))) return siteConfig(res);
       const ort = stemsRuntimeFile(url.pathname);
       const abs = ort === null ? resolvePath(url.pathname) : ort || null;

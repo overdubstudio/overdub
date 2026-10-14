@@ -504,15 +504,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 {
   const tools = await import('../app/src/agent/tools.js');
   const { FLIP_FENCED } = await import('../app/src/agent/workflows.js');
-  const T = await import('../app/src/toggles.js');
   const gg = tools.TOOLS.find((x) => x.name === 'get_guide');
-  // behind workflow.flip: off (the default), the topic answers the off line; the ops guide's tempo.map is core and stays
-  T.applyToggles({}, { search: '', host: 'localhost' });
-  const offFlip = await gg.run({ topic: 'workflows', section: 'flip' });
-  const offOps = await gg.run({ topic: 'ops' });
-  t.ok(offFlip.error === "Flip a song isn't on in this studio." && !offFlip.guide && /type: 'tempo\.map'/.test(offOps.guide) && tools.GUIDE_TOGGLES.workflows === 'workflow.flip',
-    `node: with workflow.flip off, get_guide "workflows" answers "${offFlip.error}"; the ops guide still has tempo.map (the map is core song format)`);
-  T.applyToggles({}, { search: '?on=workflow.flip', host: 'localhost' });
   const flip = await gg.run({ topic: 'workflows', section: 'flip' });
   const all = await gg.run({ topic: 'workflows' });
   const none = await gg.run({ topic: 'workflows', section: 'drop' });
@@ -534,7 +526,6 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     tracks: [{ id: 't_o', name: 'Original', kind: 'audio', mute: true, clips: [{ id: 'c_o', kind: 'audio', name: 'Original', start: 1.5, length: 30, asset: 'a_o', offset: 0 }] }],
     tempoMap: { anchors, clip: 'c_o', clipStart: 1.5 } });
   const text = summarize(p, { detail: 'summary' }).split('\n');
-  T.applyToggles(null, {});
   t.ok(/^Grid follows Original: 96 BPM nominal, [\d.]+–[\d.]+, 1 free span \(beats 12–24\); key D minor/.test(text[1]) && /Bridge \[12–28\] \(s_b\) key F major/.test(text.join('\n')) && !/off its grid/.test(text[1]), `node: get_project says the map in one line ("${text[1].slice(0, 90)}…") and each section's key`);
   p.tracks[0].clips[0].start = 2;
   t.ok(/Original is off its grid by 313 ms/.test(summarize(p, { detail: 'summary' })), 'node: a move that left the recording behind its grid is said, in ms');
@@ -580,73 +571,26 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(tools.schemas().every((x) => x.annotations && x.annotations.title), 'node: app.tools.schemas() carries each static tool\'s annotations');
 }
 
-/* ------------------------------------------------------------------ 0b1t. an off feature's tool and guide topic (Node) */
-// Feature toggles (app/src/toggles.js; intent 0015 R20, R21): a tool carrying toggle: '<id>' stays in every catalog and,
-// while its toggle is off, answers the toggle's off line before anything else and changes nothing. A get_guide topic
-// mapped to an off toggle does the same. Nothing real is behind a toggle yet, so the real guides and the catalog don't move.
+/* ------------------------------------------------------------------ 0b1t. every guide topic answers (Node) */
+// Every get_guide topic answers its guide (nothing is behind a switch: what is merged ships), the prompt's own text for
+// etiquette and ops, and the devices guide names both reverbs.
 {
   const { createStore } = await import('../app/src/core/store.js');
   const tools = await import('../app/src/agent/tools.js');
-  const T = await import('../app/src/toggles.js');
   const { ETIQUETTE, OPS_CHEATSHEET, NOTES_FORMAT } = await import('../app/src/agent/prompt.js');
   const getDevice = (id) => ({ id, name: id, kind: 'instrument', params: [] });
   const store = createStore(null, { getDevice });
-  store.dispatch({ type: 'track.add', track: { name: 'Bass', instrument: { device: 'core.bass' } } }, { by: 'you' });
   const app = { store, devices: { getDevice }, ui: { emit() {}, toast() {} } };
   tools.installTools(app);
   const catalog = async () => JSON.stringify(await tools.catalogSchemas());
   const cat0 = await catalog();
-  const local = (search) => T.applyToggles({}, { search, host: 'localhost' });
-  local('');
-  let ran = 0;
-  app.tools.register({
-    name: 'flip_probe', toggle: 'workflow.flip', description: 'a throwaway tool behind workflow.flip',
-    annotations: { title: 'Flip probe', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    input_schema: { type: 'object', properties: { gain: { type: 'number' } }, required: ['gain'], additionalProperties: false },
-    run(input, { app: a }) { ran++; a.store.dispatch({ type: 'track.set', track: a.store.get().tracks[0].id, patch: { gain: input.gain } }, { by: 'claude' }); return { ok: true }; },
-  });
-  const listed = tools.schemas().find((x) => x.name === 'flip_probe');
-  const song0 = JSON.stringify(store.get()), h0 = store.history.length;
-  const offR = await app.tools.run('flip_probe', {}, { by: 'mcp:probe' });   // gain missing too: the toggle answers first
-  const offR2 = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
-  t.ok(offR.error === "Flip a song isn't on in this studio." && !offR.hint && JSON.stringify(offR2) === JSON.stringify(offR) && ran === 0 && JSON.stringify(store.get()) === song0 && store.history.length === h0
-    && listed && !('toggle' in listed),
-    `node: a tool behind an off toggle stays listed (its schema has no toggle field) and answers "${offR.error}" before the missing-field check, without running (${ran} runs, ${store.history.length - h0} history entries)`);
-  T.applyToggles({}, { search: '?on=workflow.flip', host: 'overdubstudio.com' });
-  const pub = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
-  t.ok(pub.error === offR.error && ran === 0, `node: ?on=workflow.flip does nothing on the live host: "${pub.error}"`);
-  local('?on=workflow.flip');
-  const onR = await app.tools.run('flip_probe', { gain: -6 }, { by: 'mcp:probe' });
-  t.ok(onR.ok && ran === 1 && store.get().tracks[0].gain === -6 && store.history.length === h0 + 1,
-    `node: with ?on=workflow.flip on a local studio the same call runs (gain ${store.get().tracks[0].gain}, ${ran} run)`);
-  tools.TOOLS.splice(tools.TOOLS.findIndex((x) => x.name === 'flip_probe'), 1);
-
-  // get_guide: every real topic, byte for byte, with every toggle off and every toggle on, and the prompt's own text
   const topics = tools.TOOLS.find((x) => x.name === 'get_guide').input_schema.properties.topic.enum;
-  const guides = async () => { const o = {}; for (const topic of topics) o[topic] = JSON.stringify(await app.tools.run('get_guide', { topic }, { by: 'mcp:probe' })); return o; };
-  local('');
-  const offG = await guides();
-  local('?on=all');
-  const allG = await guides();
-  const owned = Object.keys(tools.GUIDE_TOGGLES);
-  const differ = topics.filter((x) => !owned.includes(x) && (offG[x] !== allG[x] || /isn't on in this studio/.test(offG[x])));
-  const ownedOk = owned.every((x) => JSON.parse(offG[x]).error === T.offLine(tools.GUIDE_TOGGLES[x]) && JSON.parse(allG[x]).guide);
-  t.ok(!differ.length && ownedOk && JSON.parse(offG.etiquette).guide === ETIQUETTE && JSON.parse(offG.ops).guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && owned.join() === 'workflows',
-    `node: every real guide topic but a feature's own (${owned.join(', ')}: its off line while off, its guide on) is byte-identical with every toggle off and with ?on=all (${topics.join(', ')})${differ.length ? '; differ: ' + differ.join(', ') : ''}`);
-  // a topic the test maps to an off toggle answers its off line; on, it is the same guide again
-  tools.GUIDE_TOGGLES.ops = 'workflow.flip';
-  local('');
-  const gOff = await app.tools.run('get_guide', { topic: 'ops' }, { by: 'mcp:probe' });
-  local('?on=workflow.flip');
-  const gOn = JSON.stringify(await app.tools.run('get_guide', { topic: 'ops' }, { by: 'mcp:probe' }));
-  delete tools.GUIDE_TOGGLES.ops;
-  local('');
-  const part = [tools.guidePart('workflow.flip', 'flip text')];
-  local('?on=workflow.flip');
-  part.push(tools.guidePart('workflow.flip', 'flip text'));
-  T.applyToggles(null, {});
-  t.ok(gOff.error === "Flip a song isn't on in this studio." && gOn === offG.ops && part[0] === '' && part[1] === 'flip text',
-    `node: a guide topic mapped to an off toggle answers "${gOff.error}", and on it's the guide again; guidePart is '' while off ("${part[0]}", "${part[1]}")`);
+  const G = {};
+  for (const topic of topics) G[topic] = await app.tools.run('get_guide', { topic }, { by: 'mcp:probe' });
+  const missing = topics.filter((x) => typeof G[x].guide !== 'string' || !G[x].guide.length);
+  const { GUIDE_REVERBS } = await import('../app/src/kernel/guide.js');
+  t.ok(!missing.length && G.etiquette.guide === ETIQUETTE && G.ops.guide === OPS_CHEATSHEET + '\n\n' + NOTES_FORMAT && G.devices.guide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(G.devices.guide),
+    `node: every guide topic answers its guide (${topics.join(', ')})${missing.length ? '; no guide: ' + missing.join(', ') : ''}, and "devices" names Stairwell and Echo Chamber`);
   // the catalog the relay lists is the same bytes, and server/relay-catalog.json is still current
   const { spawnSync } = await import('node:child_process');
   const chk = spawnSync(process.execPath, [path.join(HERE, 'relay-catalog.js'), '--check'], { encoding: 'utf8' });
@@ -884,6 +828,52 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       && ip.a_table === LT.params.find((q) => q.key === 'a_table').opts.indexOf('AKWF VOICE') && ip.a_pos === 0.25 && noLib.error && /Human voice/.test(noLib.hint || ''),
     `node: get_device lists Light Table's AKWF library (${fams.families?.length} families; "human voice" gives ${voice.waves?.length} waves), and a wave's params play it (${pickA && pickA.name}: table ${ip.a_table}, POS ${ip.a_pos})`);
     await run(app, 'apply_ops', { label: 'back', ops: [{ type: 'instrument.set', track: 'Arp', params: { a_table: 'BASIC', a_pos: 0.62 } }] });
+    // Echo Chamber (intent 0006, R30-R32): no new tool. insert.add takes ROOM's label, get_device lists the six rooms
+    // through the library field, get_project says it in one line, list_devices finds it by its words, and adjust's
+    // space move turns the room that's there instead of adding Stairwell. A saved song that has it keeps it,
+    // get_project says it and get_device reads it.
+    {
+      const { GUIDE_REVERBS } = await import('../app/src/kernel/guide.js');
+      const words = ['reverb', 'room', 'church', 'hall', 'convolution'];
+      const listed = async () => { const out = []; for (const w of words) { const r = await run(app, 'list_devices', { query: w, detail: 'brief' }); if (/core\.rooms/.test(JSON.stringify(r))) out.push(w); } return out; };
+      // (a saved song that has it: loaded as a file or a link is)
+      const saved = JSON.parse(JSON.stringify(app.store.get()));
+      saved.tracks.find((x) => x.name === 'Arp').inserts.push({ id: 'fx_room01', device: 'core.rooms', on: true, params: { room: 5, mix: 0.3 }, by: 'you' });
+      const before = JSON.parse(JSON.stringify(app.store.get()));
+      app.store.load(saved);
+      const kept = app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
+      const gpOff = await run(app, 'get_project', { track: 'Arp' }), devOff = await run(app, 'get_device', { id: 'core.rooms' });
+      app.store.load(before);
+      t.ok(kept && kept.params.room === 5 && /Echo Chamber/.test(gpOff.song || '') && /Meeting room/.test(gpOff.song || '') && devOff.id === 'core.rooms' && !devOff.error,
+        `node: a saved song that has Echo Chamber keeps it (MEETING, mix ${kept?.params?.mix}), get_project says it and get_device reads it`);
+      const onGuide = (await run(app, 'get_guide', { topic: 'devices' })).guide || '';
+      t.ok(onGuide.includes(GUIDE_REVERBS) && /Echo Chamber \(core\.rooms\)/.test(onGuide), 'node: get_guide "devices" names both reverbs');
+      const n0 = (await tools.catalogSchemas()).length;
+      const add = await run(app, 'apply_ops', { label: 'a room', ops: [{ type: 'insert.add', track: 'Arp', insert: { device: 'core.rooms', params: { room: 'LECTURE', mix: 0.18 } } }] });
+      const ins = () => app.store.get().tracks.find((x) => x.name === 'Arp').inserts.find((x) => x.device === 'core.rooms');
+      const room = ins()?.params?.room;
+      const lib = await run(app, 'get_device', { id: 'core.rooms', library: '' }), stairs = await run(app, 'get_device', { id: 'core.rooms', library: 'stairs' }), dev = await run(app, 'get_device', { id: 'core.rooms' });
+      const want = ['label', 'id', 'name', 'place', 'what', 'distance', 't30', 'edt', 'tx', 'credit', 'params'];
+      const items = lib.items || [];
+      t.ok(add.ok && room === 2 && items.length === 6 && items.map((x) => x.label).join() === 'AULA,AULA FAR,LECTURE,STAIRS,OFFICE,MEETING'
+        && items.every((x) => want.every((k) => k in x) && x.params.room === x.label && x.credit === 'Rooms measured by RWTH Aachen University (AIR 1.4, MIT).' && x.t30['1k'] > 0)
+        && items[0].name === 'Aula Carolina' && items[0].distance === 3 && /^Aachen \(AIR 1\.4\): AULA, AULA FAR, LECTURE/.test(lib.families?.[0] || '') && /insert\.set/.test(lib.hint || '')
+        && stairs.waves?.length === 1 && stairs.waves[0].params.room === 'STAIRS' && /library/.test(dev.library_hint || ''),
+      `node: insert.add with room "LECTURE" sets index ${room}; get_device library "" lists ${items.length} rooms (${items.map((x) => x.label).join(', ')}), each with its header fields and params; "stairs" gives ${stairs.waves?.length}`);
+      const gp = await run(app, 'get_project', { track: 'Arp' });
+      const rl = (gp.song || '').split('\n').find((l) => /Echo Chamber/.test(l)) || '';
+      const def = reg.getDevice('core.rooms');
+      t.ok(def.describe({}) === 'Aula Carolina (a former church, 3 m), pre 0 ms, decay ×1.0, mix 0.22' && /Lecture room \(a lecture room, 5\.6 m\), pre 0 ms, decay ×1\.0, mix 0\.18/.test(rl),
+        `node: describe gives get_project one line ("${rl.trim()}"; at defaults "${def.describe({})}")`);
+      const found = await listed();
+      t.ok(found.length === words.length, `node: list_devices finds Echo Chamber under ${found.map((w) => `"${w}"`).join(', ')} (of ${words.join(', ')})`);
+      const mix0 = ins().params.mix;
+      const adj = await run(app, 'adjust', { axis: 'space', direction: 'more', target: { track: 'Arp' } });
+      const arp = app.store.get().tracks.find((x) => x.name === 'Arp');
+      t.ok(adj.ok !== false && ins().params.mix > mix0 && !arp.inserts.some((x) => x.device === 'core.verb') && (await tools.catalogSchemas()).length === n0 && n0 === 40,
+        `node: adjust space turns Echo Chamber's mix (${mix0} -> ${ins().params.mix}) and adds no Stairwell; still ${n0} tools`);
+      await run(app, 'apply_ops', { label: 'no room', ops: [{ type: 'insert.remove', track: 'Arp', insert: ins().id }] });
+    }
     const synth = await run(app, 'list_devices', { cat: 'synth' }), one = await run(app, 'list_devices', { query: 'wavetable' }), gtr = await run(app, 'list_devices', { cat: 'guitar' }), none = await run(app, 'list_devices', { query: 'zzqx' });
     t.ok(JSON.stringify(synth).length < 8000 && /core\.wavetable "Light Table"/.test(synth.devices) && /get_device gives one device's params/.test(synth.hint || '') && JSON.stringify(one).length < 12000 && /\[also m\{2-8\}_src/.test(one.devices)
       && /core\.guitar "DI Box"/.test(gtr.devices || '') && /no device is filed under "guitar"; these mention it\. The categories: instrument synth: \d+/.test(gtr.note || '') && none.devices === 'none match' && /instrument synth/.test(none.categories || ''),
@@ -909,9 +899,9 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     // device guide, every op's fields, the lexicon); a cap so it can't regrow unnoticed
     const sys = await prompt.buildSystemPrompt();
     const tg = await run(app, 'get_guide', { topic: 'transforms' }), dg = await run(app, 'get_guide', { topic: 'devices' });
-    t.ok(sys.length < 9500 && sys.includes(prompt.ETIQUETTE) && sys.includes(prompt.NOTES_BRIEF) && !sys.includes(prompt.OPS_CHEATSHEET) && !sys.includes((dg.guide || 'x').slice(0, 400)) && /get_guide "devices"/.test(sys) && /get_guide "ops"/.test(sys)
+    t.ok(sys.length < 9750 && sys.includes(prompt.ETIQUETTE) && sys.includes(prompt.NOTES_BRIEF) && !sys.includes(prompt.OPS_CHEATSHEET) && !sys.includes((dg.guide || 'x').slice(0, 400)) && /get_guide "devices"/.test(sys) && /get_guide "ops"/.test(sys)
       && /humanize: .*amount=0\.35/.test(tg.guide || '') && /get_guide "transforms"/.test(cat.find((x) => x.name === 'transform').description) && /etiquette is in your system prompt/.test(tools.IN_APP_DESCRIPTIONS.get_guide),
-      `node: the system prompt is ${sys.length} chars (under 9,500; 29,509 before the prompt diet), with the etiquette and without the ops sheet or the device guide, which get_guide serves; get_guide "transforms" has every transform's params`);
+      `node: the system prompt is ${sys.length} chars (under 9,750: 9,500 until Start a song's lines; 29,509 before the prompt diet), with the etiquette and without the ops sheet or the device guide, which get_guide serves; get_guide "transforms" has every transform's params`);
     // Claude Code cuts an MCP tool's description at 2,048 characters (measured: a 3,000- and a 6,000-char description cost
     // the same tokens as a 2,048 one), so what an agent must say or refuse sits before that, in every tool
     const MCP_CUT = 2048, long = cat.filter((x) => x.description.length > MCP_CUT).map((x) => x.name);
@@ -2857,6 +2847,92 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await close();
 }
 
+/* ------------------------------------------------------------------ 3b. Start a song (R28, R29) */
+// docs/AGENTS.md: get_selection.start says where a Start a song run is (null with no stage open); a message sent while
+// the take is played waits in the box ("Sends when your take is in.") and goes when the stage reaches 'in'; the demo
+// agent's "loosen it" / "tighten it" / "tidy the timing" re-plan the selected clip and count the change they made.
+{
+  const { perform } = await import('./sloppy.js');
+  const { page, errors, close, shot } = await open('/app/', { query: 'new&agent=mock&fast' });
+  await ready(page);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { const o = window.overdub; o.ui.setOpen('right', true); o.ui.show('agent'); });
+  await page.waitForFunction(() => window.overdub.agent.provider === 'mock', null, { timeout: 5000 }).catch(() => {});
+  const startOf = async () => (await run(page, 'get_selection', {})).start;
+  const shut = await startOf();
+  await page.evaluate(() => window.overdub.start.open({ kind: 'tap' }));
+  await page.waitForTimeout(300);
+  const K = 36, S = 38, H = 42, ROW = { [K]: 'kick', [S]: 'snare', [H]: 'hat' };
+  const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 8 }, (_, i) => [i / 2, H])];
+  const hits = perform(ROCK, { bpm: 96, bars: 3, jitter: 0.03, drift: 0.04, seed: 3, start: 0 });
+  const t0 = await page.evaluate(() => performance.now() + 40);
+  await page.evaluate(([hs]) => { for (const x of hs) window.overdub.start.tap(x.row, x.ms); }, [hits.map((x) => ({ row: ROW[x.p], ms: t0 + x.t * 1000 }))]);
+  await page.waitForTimeout(200);
+  const playing = await startOf();
+  const keys = playing ? Object.keys(playing).join() : '';
+  t.ok(shut === null && playing?.step === 'play' && playing.kind === 'tap' && playing.landed === null && keys === 'step,kind,tempo,sure,rounds,landed' && (playing.tempo === null || Number.isInteger(playing.tempo)),
+    `get_selection.start: null with no stage open, then { step: 'play', kind: 'tap', landed: null } while the beat is played (${JSON.stringify(playing)})`);
+  // a message while the take is played: it waits in the box, and the composer says when it goes
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'loosen it', send: true }));
+  await page.waitForTimeout(250);
+  const waits = await page.evaluate(() => ({ box: document.querySelector('.ag-input').value, status: document.querySelector('.ag-status')?.textContent || '', users: document.querySelectorAll('.ag-user').length, busy: window.overdub.agent.busy, lamp: !!document.querySelector('.ag-status .ag-lamp') }));
+  t.ok(waits.box === 'loosen it' && waits.status === 'Sends when your take is in.' && waits.users === 0 && !waits.busy && !waits.lamp,
+    `a message sent while the take is played waits in the box: "${waits.status}" (${JSON.stringify(waits)})`);
+  await shot('agent-start-waits');
+  // Done: the take is in; the message goes, and the demo loosens the beat it landed
+  await page.evaluate(() => { const o = window.overdub; o.start.on('land', (l) => { const c = o.store.findClip(l.clip).clip; window.__landedNotes = c.notes.map((n) => ({ id: n.id, t: n.t })); }); o.start.done(); });
+  await page.waitForFunction(() => window.overdub.start.step === 'in', null, { timeout: 5000 }).catch(() => {});
+  const inStep = await startOf();
+  const landed = await page.evaluate(() => window.overdub.start.landed());
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 1 && !window.overdub.agent.busy && /Undo takes it back|already|loosen/.test([...document.querySelectorAll('.ag-agent .ag-text')].map((x) => x.textContent).join(' ')), null, { timeout: 20000 }).catch(() => {});
+  t.ok(inStep?.step === 'in' && inStep.kind === 'tap' && Number.isInteger(inStep.tempo) && Math.abs(inStep.tempo - 96) <= 6 && typeof inStep.sure === 'boolean' && inStep.rounds === 3 && inStep.landed?.clip === landed?.clip && inStep.landed?.track === landed?.track,
+    `on 'in' it says the take: ${JSON.stringify(inStep)}`);
+  const said = async () => page.evaluate(() => ({ users: [...document.querySelectorAll('.ag-user .ag-text')].map((x) => x.textContent.trim()), reply: (() => { const ms = [...document.querySelectorAll('.ag-agent')]; const last = ms[ms.length - 1]; return last ? [...last.querySelectorAll('.ag-text')].map((x) => x.textContent).join(' ').replace(/\s+/g, ' ') : ''; })(), status: document.querySelector('.ag-status')?.textContent || '', box: document.querySelector('.ag-input').value }));
+  const moves = (clip, was) => page.evaluate(([c, w]) => { const o = window.overdub, f = o.store.findClip(c), tempo = o.store.get().tempo; const now = new Map(f.clip.notes.map((n) => [n.id, n.t])); const d = w.map((n) => Math.abs((now.get(n.id) ?? n.t) - n.t)).filter((x) => x > 1e-4); return { n: d.length, m: f.clip.notes.length, ms: d.length ? Math.round((d.reduce((a, b) => a + b, 0) / d.length) * 60000 / tempo) : 0, last: o.store.history.at(-1), notes: f.clip.notes.map((n) => ({ id: n.id, t: n.t })) }; }, [clip, was]);
+  const before = await page.evaluate(() => window.__landedNotes);
+  const loose = await moves(landed?.clip, before || []);
+  const s1 = await said();
+  const m1 = /^Loosened your beat: (\d+) of (\d+) hits moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s1.reply.trim());
+  t.ok(s1.users.join() === 'loosen it' && s1.box === '' && !/Sends when/.test(s1.status) && m1 && +m1[1] === loose.n && +m1[2] === loose.m && +m1[3] === loose.ms && loose.n > 0 && loose.last?.by === 'claude' && loose.last?.label === 'timing: loose',
+    `it went when the take was in, and the demo loosened the beat from what was played: "${s1.reply.trim()}" (measured ${loose.n} of ${loose.m}, ${loose.ms} ms; History "${loose.last?.label}" by ${loose.last?.by})`);
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'tighten it', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 2 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const tight = await moves(landed?.clip, loose.notes);
+  const s2 = await said();
+  const m2 = /^Tidied your beat: (\d+) of (\d+) hits moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s2.reply.trim());
+  const backTight = (before || []).every((n) => tight.notes.find((x) => x.id === n.id)?.t === n.t);
+  t.ok(m2 && +m2[1] === tight.n && +m2[2] === tight.m && +m2[3] === tight.ms && tight.n === loose.n && backTight && tight.last?.label === 'timing: tight',
+    `"tighten it" puts each hit back where Tight had it: "${s2.reply.trim()}" (measured ${tight.n} of ${tight.m}, ${tight.ms} ms; back as landed: ${backTight})`);
+  await page.evaluate(() => window.overdub.start.close({ to: 'song' }));
+  await page.waitForTimeout(200);
+  const after = await startOf();
+  t.ok(after === null, `closed, get_selection.start is null again (${JSON.stringify(after)})`);
+  // a clip with no take behind it: Tight is a Quantize, and Loose can't be done
+  const keys2 = await page.evaluate(() => {
+    const o = window.overdub;
+    const r = o.store.dispatch([{ type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$k', ref: 'c', clip: { start: 0, length: 4, notes: 'C4@0.06:0.5 E4@1:0.5 G4@1.94:0.5 C5@3.1:0.5' } }], { by: 'you' });
+    o.ui.select({ track: r.created.k, clip: r.created.c, notes: [] });
+    const c = o.store.findClip(r.created.c).clip;
+    return { clip: r.created.c, notes: c.notes.map((n) => ({ id: n.id, t: n.t })), hist: o.store.history.length };
+  });
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'loosen it', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 3 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const s3 = await said();
+  const hist3 = await page.evaluate(() => window.overdub.store.history.length);
+  await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'tidy the timing', send: true }));
+  await page.waitForFunction(() => document.querySelectorAll('.ag-user').length === 4 && !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(150);
+  const q = await moves(keys2.clip, keys2.notes);
+  const s4 = await said();
+  const m4 = /^Tidied your tune: (\d+) of (\d+) notes moved, (\d+) ms on average\. Undo takes it back\.$/.exec(s4.reply.trim());
+  t.ok(/From here it can only go tighter\./.test(s3.reply) && hist3 === keys2.hist && m4 && +m4[1] === q.n && q.n === 3 && +m4[2] === 4 && +m4[3] === q.ms && q.last?.by === 'claude' && q.last?.label === 'timing: tight',
+    `with no take behind the clip, "loosen it" changes nothing ("${s3.reply.trim().slice(0, 70)}") and "tidy the timing" quantizes it: "${s4.reply.trim()}"`);
+  t.ok(realErrors(errors).length === 0, 'Start a song with the agent: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
 /* ------------------------------------------------------------------ 4. phone width */
 {
   const { page, errors, close, shot } = await open('/app/', { query: 'demo&agent=mock&fast', width: 390, height: 844 });
@@ -2872,6 +2948,65 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await shot('agent-phone');
   t.ok(realErrors(errors).length === 0, 'no page errors at 390 px' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
+}
+
+/* ------------------------------------------------------------------ 5. the community shelf on the live site */
+// the studio served as overdub.test (tools/community-live.js), with the fixture shelf
+// as the studio's own copy: find_community_device as the live site will answer it (R20), and
+// define_device's side door with the Browser never opened (R21)
+{
+  const { openLive, LIVE_HOST } = await import('./community-live.js');
+  const FIX = path.join(HERE, 'fixtures/community-fake');
+  const P = await openLive('/app/', { bundled: FIX, query: 'agent=mock&fast' });
+  const { page, errors } = P;
+  await ready(page);
+  await page.evaluate(() => window.overdub.community.ready());
+  // R21 first, before anything could open the Browser
+  const sd = await page.evaluate(async () => {
+    const app = window.overdub;
+    const st = app.community.state().entries.find((e) => e.id === 'tester.fails-check');
+    const k = (await (await fetch(st.device)).json()).device.kernel;
+    const params = [{ key: 'mix', label: 'MIX', min: 0, max: 100, def: 50 }];
+    const a = await app.tools.run('define_device', { device: { id: 'copy-a', name: 'Copy', kind: 'effect', params, kernel: k } }, { by: 'claude' });
+    const b = await app.tools.run('define_device', { device: { id: 'copy-b', name: 'Copy', kind: 'effect', params, kernel: k.replace('return {', 'return  {').replace(/\n/g, '\n  ') } }, { by: 'mcp:probe' });
+    return { a, b, defined: Object.keys(app.store.get().devices).filter((x) => /copy/.test(x)), detail: !!document.querySelector('.cs-detail') };
+  });
+  t.ok(sd.a.refused && /from the community shelf/.test(sd.a.error || '') && sd.b.refused && !sd.defined.length && !sd.detail,
+    `live shelf (R21): define_device refuses a shelf kernel and one with its spacing changed, with the Browser never opened ("${(sd.a.error || '').slice(0, 70)}…")`);
+  const r = await page.evaluate(async () => {
+    const app = window.overdub;
+    const a = await app.tools.run('find_community_device', { limit: 20 }, { by: 'claude' });
+    const d = await app.tools.run('find_community_device', { query: 'echo', detail: true }, { by: 'claude' });
+    const m = await app.tools.run('find_community_device', { limit: 20 }, { by: 'mcp:probe' });
+    return { a, d, m, origin: location.origin };
+  });
+  const under = `${r.origin}/app/community/`;
+  const clips = (r.a.results || []).flatMap((x) => [x.preview.wet, x.preview.dry]).filter(Boolean);
+  const echo = (r.a.results || []).find((x) => x.id === 'tester.soft-echo');
+  t.ok(r.origin === `http://${LIVE_HOST}` && r.a.shelf?.vouched === true && r.a.shelf.source === `${under}community-index.json` && echo?.vouched === true && !/unconfirmed/.test(r.a.about || ''),
+    `live shelf (R20): results come from the studio's own copy, vouched, with shelf.source ${r.a.shelf?.source}`);
+  t.ok(clips.length >= 5 && clips.every((u) => u.startsWith(`${under}clips/`)), `live shelf (R20): preview.wet and dry are absolute URLs under ${under}clips/ (${clips.length}, e.g. ${clips[0]})`);
+  t.ok(r.a.results.every((x) => !('untrusted_text' in x)) && !!r.d.results[0]?.untrusted_text && !/"kernel"/.test(JSON.stringify(r.a)), 'live shelf (R20): request and requester come back only with detail: true, as untrusted_text');
+  t.ok(r.a.results.every((x) => 'trusted' in x) && r.m.results.length === r.a.results.length && r.m.results.every((x) => !('trusted' in x)), 'live shelf (R20): `trusted` goes to the in-page agent only, never over MCP');
+  // one card per song, and three No thanks
+  const cards = await page.evaluate(async () => {
+    const app = window.overdub, h0 = app.store.history.length;
+    const one = await app.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'claude' });
+    const two = await app.tools.run('find_community_device', { put_on: { id: 'tester.tiny-keys' } }, { by: 'claude' });
+    const first = await app.tools.run('get_variation_result', { id: one.id }, { by: 'claude' });
+    app.ui.show('agent'); app.ui.setOpen('right', true);
+    return { one, two, first, pending: [...app.tools.requests.values()].filter((x) => x.kind === 'shelf' && x.status === 'pending').length, same: app.store.history.length === h0 };
+  });
+  t.ok(cards.one.offered && cards.two.offered && cards.first.kept === false && cards.pending === 1 && cards.same, `live shelf (R20): put_on raises one card per song (a second replaces the first; ${cards.pending} pending, nothing changed)`);
+  for (let i = 0; i < 3; i++) {
+    if (i) await page.evaluate(() => window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.tiny-keys' } }, { by: 'claude' }));
+    await page.waitForSelector('.cs-card .cs-card-no', { timeout: 10000 });
+    await page.click('.cs-card .cs-card-no');
+  }
+  const fourth = await page.evaluate(() => window.overdub.tools.run('find_community_device', { put_on: { id: 'tester.soft-echo' } }, { by: 'claude' }));
+  t.ok(!fourth.offered && fourth.error === 'the person has said no to these for now', `live shelf (R20): after three No thanks: "${fourth.error}"`);
+  t.ok(realErrors(errors).length === 0, 'live shelf: no page errors' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await P.close();
 }
 
 t.done();

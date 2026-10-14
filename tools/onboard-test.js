@@ -411,8 +411,8 @@ try {
   /* ================================================================ one studio: a first visit is the full studio
      A person's first visit (navigator.webdriver hidden, so the coach's own first-visit rule runs) opens the full studio,
      the simple view's hide-by-default gone: the welcome is up and the tour waits for it. ?view=simple (a URL only, for
-     one release) still opens the simple view on the blank sheet, where ?coach starts the tour and Tap a beat (the first
-     minute) still runs. */
+     one release) still opens the simple view on the blank sheet, where ?coach starts the tour and Tap a beat opens Start a
+     song's stage. */
   {
     const hide = () => { Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false, configurable: true }); };
     const ctx = await s.browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['microphone'] });
@@ -428,14 +428,12 @@ try {
     T.ok(forced.coach && forced.view === 'simple', `?coach still starts the tour in the simple view (${JSON.stringify(forced)})`);
     await pg.evaluate(() => window.overdub.onboard.stop());
     await boot('/app/?view=simple');
-    // (Tap a beat opens Start a song's stage; its "Play to a click instead" is the first minute)
+    // (Tap a beat opens Start a song's stage, ui/start.js)
     await pg.evaluate(() => [...document.querySelectorAll('.ar-empty-actions button')].find((b) => b.textContent.trim() === 'Tap a beat')?.click());
-    await sleep(300);
-    await pg.evaluate(() => [...document.querySelectorAll('.st-stage button')].find((b) => b.textContent.trim() === 'Play to a click instead')?.click());
-    await sleep(900);
-    const door = await pg.evaluate(() => { const o = window.overdub; return { minute: !!o.onboard?.minute, tracks: o.store.get().tracks.map((t) => t.name) }; });
-    T.ok(door.minute && door.tracks.includes('Drums'), `Tap a beat on the blank sheet, then Play to a click instead, starts the first minute (${JSON.stringify(door)})`);
-    await pg.evaluate(() => { const o = window.overdub; o.engine.stop?.(); o.onboard?.stop?.(); });
+    await sleep(600);
+    const door = await pg.evaluate(() => { const o = window.overdub; return { step: o.start?.step || null, stage: !!document.querySelector('.st-stage') }; });
+    T.ok(door.step === 'play' && door.stage, `Tap a beat on the blank sheet opens Start a song's stage (${JSON.stringify(door)})`);
+    await pg.evaluate(() => { const o = window.overdub; o.start?.close?.(); o.engine.stop?.(); });
     await ctx.close();
   }
 

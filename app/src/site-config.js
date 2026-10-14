@@ -1,30 +1,31 @@
-// The deploy's own switches: app/site-config.json, which is not in the repo (it's gitignored). It holds the origin of
-// the hosted agent's service ("Claude on Overdub credits"), the feature toggles (app/src/toggles.js reads them), where
-// the stems runner's model and runtime live (spec 0014 R21; jobs/stems/runner.js) and, on the preview, which site this
-// is (ui/preview.js reads env, preview and ref):
+// The deploy's own configuration: app/site-config.json, which is not in the repo (it's gitignored). It holds the
+// origin of the hosted agent's service ("Claude on Overdub credits"), the account service's ("Sign in with Overdub",
+// agent/remote.js), where the stems runner's model and runtime live (spec 0014 R21; jobs/stems/runner.js) and, on the
+// preview, which site this is (ui/preview.js reads env, preview and ref). It switches nothing a merge didn't ship: a
+// dormant service is absent until the file names it.
 //
-//   { "cloud": { "api": "https://api.example.com" }, "toggles": { "relay": "on" },
+//   { "cloud": { "api": "https://api.example.com" }, "accounts": { "api": "https://api.example.com" },
 //     "stems": { "model": "vendor/models/htdemucs.onnx", "sha256": "<64 hex>", "runtime"?: "vendor/ort/ort.webgpu.min.mjs",
 //                "id"?: "htdemucs", "bytes"?: 88700000 } }
 //
 // No file (a fork, a self-hosted copy), an unreadable one or a bad origin means cloud off: no row in the Agent panel
-// and no request to any cloud origin. The same for stems: no entry, a bad URL or no pinned SHA-256 means the runner is
-// off and nothing is fetched (it also needs the stems.local toggle). The stems URLs resolve against this file, so a
+// and no request to any cloud origin; the same for accounts (no account mode in Connect). The same for stems: no entry,
+// a bad URL or no pinned SHA-256 means the runner is off and nothing is fetched. The stems URLs resolve against this file, so a
 // path is on this site; the runtime defaults to vendor/ort/ort.webgpu.min.mjs and must be on this site (the studio's
 // CSP runs scripts from 'self' only: the runner refuses another origin, deploy.sh stages it there from runtimeFrom).
 // The local server answers the deploy's defaults when there's no file (server/serve.js, with OVERDUB_CLOUD_ORIGIN and
-// OVERDUB_STEMS_*); deploy/deploy.sh ships deploy/site-config.json, or {}, plus the registry's deploy: 'on' toggles.
+// OVERDUB_STEMS_*); deploy/deploy.sh ships deploy/site-config.json, or {}.
 //
 // ?cloud=<origin> points a local studio at a local service, for development and tests: only when the studio itself is
 // on this machine and the origin is on this machine too, so a link can never send someone's song to another server.
 //
-//   loadSiteConfig({ fetch, search, host, url }) -> Promise<{ cloud: { api } | null, stems: {...} | null, toggles, raw, read }>
+//   loadSiteConfig({ fetch, search, host, url }) -> Promise<{ cloud: { api } | null, accounts: { api } | null,
+//                                                              stems: {...} | null, raw, read }>
 //       fetched once per page load (main.js starts it at the top of boot); url is app/site-config.json, resolved from
 //       this module, so a page outside /app/ reads the same file. ?cloud= replaces the file's cloud origin, and the
-//       file is read either way. toggles is the file's raw "toggles" value (toggles.js judges it); raw is the whole
-//       parsed file, or null. read is 'ok' (a JSON answer), 'absent' (a 404 or 410: there is no file, so the deploy
-//       turns nothing on) or 'failed' (the network, a 5xx, an HTML error page, JSON that doesn't parse: there may well
-//       be a file, this load just couldn't see it; toggles.js bootConfig gives the deploy's defaults then).
+//       file is read either way. accounts.api is held to cloudOrigin's rule too. raw is the whole parsed file, or null.
+//       read is 'ok' (a JSON answer), 'absent' (a 404 or 410: there is no file) or 'failed' (the network, a 5xx, an
+//       HTML error page, JSON that doesn't parse: there may well be a file, this load just couldn't see it).
 //   cloudOrigin(value) -> origin | null       https:, or http: on a loopback name; anything else is refused
 //   stemsConfig(value, base = CONFIG_URL) -> { model, runtime, sha256, id, bytes? } | null   both URLs resolved
 //                                             against base (a path is on this site; runtime defaults to STEMS_RUNTIME),
@@ -87,7 +88,9 @@ export function loadSiteConfig({ fetch: f = globalThis.fetch, search, host, url 
       else if (r.ok && (r.headers.get('content-type') || '').includes('json')) { j = await r.json(); read = 'ok'; }
     } catch { j = null; read = 'failed'; }
     const api = cloudOverride(search, host) || cloudOrigin(j?.cloud?.api);
-    return { cloud: api ? { api } : null, stems: stemsConfig(j?.stems, url), toggles: j?.toggles ?? null, raw: j ?? null, read };
+    const accounts = cloudOrigin(j?.accounts?.api);
+    return { cloud: api ? { api } : null, accounts: accounts ? { api: accounts } : null, stems: stemsConfig(j?.stems, url), raw: j ?? null, read };
+
   })();
   return loaded;
 }

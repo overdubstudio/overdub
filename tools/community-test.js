@@ -1,11 +1,11 @@
 // The community shelf [community] (docs/COMMUNITY-SHELF.md): the index reader, the Browser's From the community
-// section, previews, Try and its trust prompt, the agent's find_community_device and its card, and the shelf being off
-// anywhere but a local host. Against the small fake index in tools/fixtures/community-fake/ (make.js builds it; no real
+// section, previews, Try and its trust prompt, the agent's find_community_device and its card, and the shelf as the
+// live site reads it. Against the small fake index in tools/fixtures/community-fake/ (make.js builds it; no real
 // community device is committed to the studio).
 //   - node: the reader keeps what it knows and skips the rest (unknown fields, kinds, tiers, cats; reserved ids and
 //     handles; House from another origin; URLs outside policy; hostile params and looks; clip types; a newer major;
 //     caps); the URL policy; search by category words, never by the agent; revoked only from the bundled copy
-//   - off-host: served under another name, ?community= draws nothing, More has no shelf words, the tool says it's off
+//   - on: every studio reads the shelf, draws its section, adds its words to More and answers the tool (no switch)
 //   - the section: community entries only, bylines in warm and cool ink, kind words, search, ▶ plays a blob: clip with
 //     no device file fetched and nothing registered; a clip of the wrong type isn't played
 //   - Try: the prompt (focus on Not now, Play it held 600 ms, no "read it" line for another origin), Not now changes
@@ -18,13 +18,28 @@
 //     that changes nothing, one card per song, three No thanks and it stops, the card's Try lands signed by the agent
 //     and kept by you; define_device refuses a shelf kernel (and one with a space changed); the demo agent's ask
 //   - the catalog lists it with annotations under 2,048 characters; the Simple view's More finds the shelf
+//   - forced live (tools/community-live.js: served as overdub.test): the shelf
+//     reads the bundled index only, and ?community=http://localhost:… is refused, never fetched; a load with the Browser
+//     never opened forgets a revoked hash; code allowed from now on and then revoked is held, and Try refuses it with
+//     the reason; the prompt word for word (focus, the 600 ms hold, Esc, the box unticked, no "API key")
+//   - the deploy, dry (a stub aws, a fixture overdub-devices repo: tools/fixtures/community-repo.js): the pinned shelf is
+//     staged with the index and device files no-cache and the MP3s audio/mpeg no-cache, no WAV; a pin that doesn't
+//     match deploys nothing; every deploy ships it; no checkout stops a live deploy, and --next goes on without it;
+//     a retired "toggles" key is dropped from the shipped site config
+//   - the frame headers: the local server sends frame-ancestors 'none', X-Frame-Options DENY and nosniff on /app/, the
+//     gallery at both its paths and the rest; deploy/headers.sh's policy, dry (live and --next), and against a fake aws
+//     (tools/fixtures/fake-aws.js): made, set on the distribution, a second run changes nothing, a hand edit is undone
 //   - brand: no pills or coloured edges in the new CSS; no "safe", "secure", "sandboxed", "verified", "marketplace",
 //     "buy", "price" or "free trial" in the new copy
 //   node tools/community-test.js      (screenshots: tools/.out/community-*.png)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { open, tally } from './pw.js';
+import { openLive, LIVE_HOST } from './community-live.js';
+import { makeDevicesRepo } from './fixtures/community-repo.js';
 import { readIndex, filterEntries, resolveUrl, indexUrlAllowed, LIMITS } from '../app/src/devices/community.js';
 
 const T = tally('community');
@@ -89,13 +104,14 @@ await section('brand', async () => {
 
 /* ======================================================================== the browser */
 const errorsOf = (P) => P.errors.filter((e) => !ignorable(e));
-async function studio(query, { tryOn = true, width = 1440, height = 900, init = null, routes = null } = {}) {
-  const P = await open('/app/', { width, height, query });
+// a local studio, ready once its shelf is read
+async function studio(query, { width = 1440, height = 900, init = null, routes = null } = {}) {
+  const P = await open('/app/', { width, height, query: query || '' });
   try {
     if (routes) await routes(P.page);
-    if (tryOn || init || routes) {
+    if (init || routes) {
       await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
-      await P.page.evaluate(({ tryOn, init }) => { localStorage.clear(); if (tryOn) localStorage.setItem('overdub:community-try', '1'); if (init) for (const [k, v] of Object.entries(init)) localStorage.setItem(k, v); }, { tryOn, init });
+      await P.page.evaluate(({ init }) => { localStorage.clear(); if (init) for (const [k, v] of Object.entries(init)) localStorage.setItem(k, v); }, { init });
       await P.page.goto(P.url, { waitUntil: 'load' });
     }
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
@@ -105,30 +121,23 @@ async function studio(query, { tryOn = true, width = 1440, height = 900, init = 
 const E = (P, fn, arg) => P.page.evaluate(fn, arg);
 const FIXQ = `community=${FIXURL}community-index.json`;
 
-// off anywhere but a local host
-await section('off-host', async () => {
-  const P = await open('/app/');
+// on in every studio (no switch: what is merged ships): the section, the shelf words in More and the tool, with nothing
+// in the address but the index to read
+await section('on', async () => {
+  const L = await open('/app/', { query: FIXQ });
   try {
-    const local = new URL(P.url).origin;
-    await P.page.route('http://overdub.test/**', async (route) => {
-      const u = new URL(route.request().url());
-      const res = await route.fetch({ url: local + u.pathname + u.search });
-      await route.fulfill({ response: res });
-    });
-    await P.page.goto(`http://overdub.test/app/?${FIXQ}&community-device=tester.soft-echo`, { waitUntil: 'load' });
-    await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
-    await P.page.waitForTimeout(400);
-    const r = await E(P, async () => {
+    await L.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community, null, { timeout: 45000 });
+    const r = await E(L, async () => {
       const app = window.overdub;
-      app.ui.show('browser');
+      await app.community.ready();
+      app.ui.show('browser'); app.ui.setOpen('left', true); app.browser.render();
       const f = app.ui.workspace?.FEATURES?.find((x) => x.id === 'browser');
       const tool = await app.tools.run('find_community_device', { query: 'echo' }, { by: 'claude' });
-      return { on: app.community.on(), section: !!document.querySelector('.cs-group'), words: f ? f.aliases.filter((a) => /shelf|community/.test(a)) : [], tool, url: location.search };
+      return { status: app.community.state().status, section: !!document.querySelector('.cs-group'), words: f ? f.aliases.filter((a) => /shelf|community/.test(a)) : [], tool };
     });
-    T.ok(!r.on && !r.section && !r.words.length, `off-host: no section, no shelf words in More (${r.words.join(', ') || 'none'})`);
-    T.ok(/isn't on in this studio/.test(r.tool.error || '') && !r.tool.results.length, `off-host: the tool says the shelf isn't on: "${r.tool.error}"`);
-    T.ok(!/community/.test(r.url), `off-host: the shelf's parameters leave the address (${r.url || 'none'})`);
-  } finally { await P.close(); }
+    T.ok(r.status === 'ready' && r.section && r.words.length && !r.tool.error && r.tool.results.length, `on: the shelf is read (${r.status}), its section drawn, its words in More (${r.words.join(', ') || 'none'}) and the tool answers (${r.tool.results?.length} results)`);
+    T.ok(!errorsOf(L).length, `on: no page errors (${errorsOf(L).slice(0, 2).join(' | ')})`);
+  } finally { await L.close(); }
 });
 
 // (the fixture's Soft Echo file says other words than its entry, and its requester is a note; Tiny Keys' is a name:
@@ -323,17 +332,6 @@ await section('link', async () => {
   } finally { await P.close(); }
 });
 
-// held back (TRY_ON off, no developer flag): no Try or Keep to press, a plain line instead; hearing and reading stay
-await section('held-back', async () => {
-  const P = await studio(FIXQ, { tryOn: false, init: { 'overdub:community-try': '0' } });
-  try {
-    await E(P, () => window.overdub.community.reach('tester.soft-echo', 'you'));
-    await P.page.waitForSelector('.cs-detail[data-community="tester.soft-echo"]');
-    const d = await E(P, () => { const el = document.querySelector('.cs-detail'); return { tryBtn: !!el.querySelector('.cs-try'), keep: !!el.querySelector('.cs-keep'), read: !!el.querySelector('.cs-read'), play: !!el.querySelector('.cs-play'), held: el.querySelector('.cs-held')?.textContent || '' }; });
-    T.ok(!d.tryBtn && !d.keep && d.read && d.play && /isn’t open yet/.test(d.held) && !/SECURITY|audio thread/.test(d.held), `held back: no Try or Keep, ▶ and Read the code stay, and the line says so plainly ("${d.held}")`);
-  } finally { await P.close(); }
-});
-
 // the studio's own copy: deny list, held lines, vouched
 await section('bundled', async () => {
   const P = await open('/app/');
@@ -351,7 +349,7 @@ await section('bundled', async () => {
       await route.fulfill({ status: 200, contentType: /\.wav$/.test(p) ? 'audio/wav' : 'application/json', body });
     });
     const revoked = read('revoked-kernel.txt');
-    await P.page.evaluate((k) => { localStorage.clear(); localStorage.setItem('overdub:community-try', '1'); const app = window.overdub; app.trust.allow([k]); }, revoked);
+    await P.page.evaluate((k) => { localStorage.clear(); const app = window.overdub; app.trust.allow([k]); }, revoked);
     const stored = await E(P, (k) => window.overdub.trust.trusts(k), revoked);
     await P.page.reload({ waitUntil: 'load' });
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
@@ -506,6 +504,202 @@ await section('find', async () => {
     T.ok(sz.length === 5 && sz.every(([w, h]) => w >= 40 && h >= 40), `at 390 px each row's ▶ is at least 40 × 40 (${sz.map((x) => x.join('×')).join(', ')})`);
     await P.shot('community-phone');
   } finally { await P.close(); }
+});
+
+// forced live (R1): a host that isn't local; the only index read is the studio's own
+await section('forced-live', async () => {
+  const P = await openLive('/app/', { query: (local) => `community=${encodeURIComponent(`http://localhost:${new URL(local).port}${FIXURL}community-index.json`)}`, bundled: FIX });
+  try {
+    await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
+    await E(P, () => window.overdub.community.ready());
+    const r = await E(P, () => { const s = window.overdub.community.state(); return { bundled: s.bundled, source: s.source, n: s.entries.length, host: location.host }; });
+    const indexes = P.requests.filter((u) => new URL(u).pathname.endsWith('community-index.json'));
+    T.ok(r.host === LIVE_HOST, `forced live: served as ${r.host}`);
+    T.ok(r.bundled && r.source === 'bundled' && r.n === 5, `forced live: ?community=http://localhost:… is refused and the shelf is the studio's own copy (${r.source}, ${r.n} entries)`);
+    T.ok(indexes.length >= 1 && indexes.every((u) => u === `http://${LIVE_HOST}/app/community/community-index.json`), `forced live: the only index fetched is /app/community/ (${[...new Set(indexes)].join(', ')})`);
+    T.ok(!errorsOf(P).length, `forced live: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
+  } finally { await P.close(); }
+});
+
+// on the live site (forced live), the shelf read on every load with the Browser never opened (R12); a device trusted
+// from now on, then revoked: held, and Try refuses with the reason (R11); the prompt as it ships (R18). The bundled
+// copy is a copy of the fixture's, in a temp directory, so the revoke can land between two loads.
+await section('live-revoke', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'community-live-'));
+  fs.cpSync(FIX, dir, { recursive: true });
+  const REASON = 'It hid a second effect in its code.';
+  const P = await openLive('/app/', { bundled: dir });
+  const loaded = () => P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
+  try {
+    await loaded();
+    await E(P, () => window.overdub.community.ready());
+    const gone = read('revoked-kernel.txt');
+    // a song with Soft Echo in it, its code allowed from now on, and the deny list's kernel allowed from now on too
+    const before = await E(P, async (k) => {
+      const app = window.overdub, e = app.community.state().entries.find((x) => x.id === 'tester.soft-echo');
+      const j = await (await fetch(e.device)).json();
+      app.trust.allow([j.device.kernel, k]);
+      app.store.dispatch([{ type: 'device.define', device: { ...j.device, by: 'you' } }], { by: 'you' });
+      return { kernel: j.device.kernel, name: j.device.name, sha: e.sha256, trusted: app.trust.trusts(j.device.kernel) && app.trust.trusts(k), gone: app.trust.trusts(k) };
+    }, gone);
+    await sleep(900);
+    const j = JSON.parse(fs.readFileSync(path.join(dir, 'bundled-index.json'), 'utf8'));
+    j.revoked.push({ sha256: before.sha, reason: REASON, at: '2026-10-10' });
+    fs.writeFileSync(path.join(dir, 'bundled-index.json'), JSON.stringify(j, null, 2));
+    P.requests.length = 0;
+    await P.page.reload({ waitUntil: 'load' });
+    await loaded();
+    await E(P, () => window.overdub.community.ready());
+    // nothing here opens the Browser: the load alone reads the index and applies its deny list
+    const r = await E(P, async ({ kernel, gone }) => {
+      const app = window.overdub;
+      return { echo: app.trust.trusts(kernel), gone: app.trust.trusts(gone), held: app.devices.heldDevices().map((d) => d.id), listed: app.community.state().entries.some((e) => e.id === 'tester.soft-echo'), reached: !!document.querySelector('.cs-detail') };
+    }, { kernel: before.kernel, gone });
+    const indexes = P.requests.filter((u) => /community-index\.json$/.test(u)), files = P.requests.filter((u) => /overdub-device\.json/.test(u));
+    T.ok(before.trusted && !r.gone && indexes.length >= 1 && !files.length && !r.reached, `R12: on a load with the Browser never opened, the bundled index is read (${indexes.length} request${indexes.length === 1 ? '' : 's'}, no device file) and a revoked hash is forgotten`);
+    await P.page.waitForFunction(() => /taken off the shelf/.test(document.querySelector('.sh-held-shelf')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
+    const line = await E(P, () => document.querySelector('.sh-held-shelf')?.textContent || '');
+    T.ok(!r.echo && r.held.includes('tester.soft-echo') && !r.listed && line.includes(`${before.name} was taken off the shelf: ${REASON}`), `R11: code allowed from now on and then revoked is forgotten, held in the song and off the list; the held strip says "${line.trim()}" (the song's name for it: the revoke carries none)`);
+    const tr = await E(P, async ({ text, reason }) => {
+      const app = window.overdub;
+      const { readIndex } = await import('/app/src/devices/community.js');
+      // the entry as an earlier load (or an agent's card) had it
+      const e = readIndex(text, { base: new URL('/app/community/community-index.json', location.href).href, bundled: true }).entries.find((x) => x.id === 'tester.soft-echo');
+      const h0 = app.store.history.length;
+      const out = await app.community.tryEntry(e);
+      const toast = [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | ');
+      return { out, prompt: !!document.querySelector('.cs-prompt'), same: app.store.history.length === h0, trusted: app.trust.trusts((await (await fetch(e.device)).json()).device.kernel), toast, want: `Soft Echo was taken off the shelf: ${reason}` };
+    }, { text: read('bundled-index.json'), reason: REASON });
+    T.ok(!tr.out.ok && tr.out.error === tr.want && !tr.prompt && tr.same && !tr.trusted && tr.toast.includes(tr.want), `R11: Try refuses a revoked device, asks nothing and changes nothing: "${tr.out.error}"`);
+
+    // R18: the prompt for the studio's own copy, word for word
+    await E(P, () => window.overdub.community.reach('tester.spinner', 'you'));
+    await P.page.waitForSelector('.cs-detail[data-community="tester.spinner"] .cs-try');
+    const e = await E(P, () => { const app = window.overdub, x = app.community.state().entries.find((y) => y.id === 'tester.spinner'); return { sha: x.sha256, on: app.community.targetFor(x).name, agent: x.agent }; });
+    await P.page.click('.cs-detail .cs-try');
+    await P.page.waitForSelector('.cs-prompt');
+    const q = () => E(P, () => { const el = document.querySelector('.cs-prompt'); const t = (s) => el.querySelector(s)?.textContent.replace(/\s+/g, ' ').trim(); return { p1: t('.cs-p1'), p2: t('.cs-p2'), fp: t('.cs-fp'), box: t('.cs-remember'), ticked: el.querySelector('#cs-remember').checked, go: t('.cs-go'), no: t('.cs-no'), alt: !!el.querySelector('.cs-alt'), focus: document.activeElement?.textContent, held: el.querySelector('.cs-go').disabled, all: el.textContent }; });
+    const p0 = await q();
+    await sleep(300);
+    const p300 = await q();
+    T.ok(p0.p1 === `Spinner is code. tester asked for it, ${e.agent} wrote it. A person read it before it went on the shelf.`, `R18: "${p0.p1}"`);
+    T.ok(p0.p2 === 'It runs on the studio’s audio thread, in this browser tab, beside your songs. It can’t reach the network or your files from there, but it can change how other devices sound. The check catches mistakes, not malice. The clip is a recording, not a promise.', `R18: "${p0.p2}"`);
+    T.ok(p0.fp === `Fingerprint ${e.sha.slice(0, 12)} · Read the code` && p0.box === 'Run it in any song from now on' && !p0.ticked && p0.go === `Play it on ${e.on}` && p0.no === 'Not now' && !p0.alt, `R18: "${p0.fp}", "${p0.box}" unticked, [${p0.go}] ${p0.no}`);
+    T.ok(p0.focus === 'Not now' && p0.held && p300.held && p300.focus === 'Not now', 'R18: focus on Not now, and Play it is still held 300 ms in');
+    await sleep(400);
+    T.ok(await E(P, () => !document.querySelector('.cs-prompt .cs-go').disabled), 'R18: Play it is pressable after 600 ms');
+    await P.shot('community-prompt-live');
+    const h1 = await E(P, () => ({ hist: window.overdub.store.history.length, trust: window.overdub.trust.size() }));
+    await P.page.keyboard.press('Escape');
+    await P.page.waitForTimeout(200);
+    const h2 = await E(P, () => ({ prompt: !!document.querySelector('.cs-prompt'), hist: window.overdub.store.history.length, trust: window.overdub.trust.size() }));
+    T.ok(!h2.prompt && h2.hist === h1.hist && h2.trust === h1.trust, 'R18: Esc is Not now: nothing changed, nothing trusted');
+    const src = fs.readFileSync(path.join(HERE, '../app/src/ui/community.js'), 'utf8');
+    T.ok(!/api.?key/i.test(p0.all) && !/api.?key|keyHere/i.test(src), 'R18: no "API key" in the prompt or in ui/community.js');
+    T.ok(!errorsOf(P).length, `live-revoke: no page errors (${errorsOf(P).slice(0, 2).join(' | ')})`);
+  } finally { await P.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// the deploy, dry (R3): the pinned shelf in the stage, with a stub aws first on PATH and no credentials
+await section('deploy', async () => {
+  const ROOT = path.join(HERE, '..');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'community-deploy-'));
+  try {
+    const repo = makeDevicesRepo(path.join(tmp, 'overdub-devices'));
+    const stub = path.join(tmp, 'bin');
+    fs.mkdirSync(stub);
+    fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    const pin = (name, sha) => { const f = path.join(tmp, `${name}.json`); fs.writeFileSync(f, JSON.stringify({ repo: 'overdubstudio/overdub-devices', commit: repo.c2, index_sha256: sha })); return f; };
+    const good = pin('good', repo.sha('index/community-index.json'));
+    const run = (env, args = []) => {
+      const r = spawnSync(path.join(ROOT, 'deploy/deploy.sh'), ['--skip-tests', ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', SITE_CONFIG: '/dev/null', OVERDUB_DEVICES_DIR: repo.dir, ...env } });
+      return { status: r.status, out: (r.stdout || '') + (r.stderr || '') };
+    };
+    const ship = run({ COMMUNITY_PIN: good });
+    const lines = ship.out.split('\n');
+    T.ok(ship.status === 0 && !/aws was called/.test(ship.out), `deploy, dry, shelf shipped: runs without calling AWS (exit ${ship.status})${ship.status ? ': ' + ship.out.slice(-300) : ''}`);
+    T.ok(lines.some((l) => /^ {2}app\/community\/community-index\.json {2}application\/json; charset=utf-8 {2}no-cache$/.test(l)) && lines.some((l) => /^ {2}app\/community\/devices\/tester\.echo\.overdub-device\.json .* no-cache$/.test(l)), 'deploy: the plan lists app/community/community-index.json and the device files as no-cache');
+    T.ok(lines.filter((l) => /^ {2}app\/community\/clips\/.*\.mp3 {2}audio\/mpeg {2}no-cache$/.test(l)).length === 3 && !/app\/community\/\S*\.(wav|txt)/.test(ship.out), 'deploy: the MP3 clips go up as audio/mpeg, no-cache, and no WAV or other file is staged');
+    T.ok(/\+ aws s3 sync \S+ s3:\/\/\S+ --only-show-errors --exclude \* --include app\/community\/\*\.mp3 --content-type audio\/mpeg --cache-control no-cache/.test(ship.out), 'deploy: the upload rule for the clips');
+    T.ok(/^app\/community: \d+ files, as pinned$/m.test(ship.out), 'deploy: every deploy ships the pinned shelf, with no switch in the site config');
+    const bad = run({ COMMUNITY_PIN: pin('bad', '0'.repeat(64)) });
+    T.ok(bad.status !== 0 && /not deploying: tools\/community-pull\.js/.test(bad.out) && !/\+ aws s3/.test(bad.out), `deploy: a pin whose index doesn't match deploys nothing (exit ${bad.status})`);
+    const none = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere') });
+    T.ok(none.status !== 0 && /not deploying: no checkout/.test(none.out) && !/\+ aws s3/.test(none.out), `deploy: live with no overdub-devices checkout deploys nothing (exit ${none.status})`);
+    const nextNone = run({ COMMUNITY_PIN: good, OVERDUB_DEVICES_DIR: path.join(tmp, 'nowhere') }, ['--next']);
+    T.ok(nextNone.status === 0 && /app\/community: none on this preview: no checkout/.test(nextNone.out) && !/^ {2}app\/community\//m.test(nextNone.out), `deploy: --next with no checkout goes on without the shelf and says so (CI's preview) (exit ${nextNone.status})`);
+    // a leftover "toggles" in the base config is dropped from the copy that ships
+    const old = path.join(tmp, 'cfg-old.json');
+    fs.writeFileSync(old, JSON.stringify({ toggles: { community: 'on' } }));
+    const dropped = run({ COMMUNITY_PIN: good, SITE_CONFIG: old });
+    T.ok(dropped.status === 0 && /dropped .*"toggles"/.test(dropped.out) && /^app\/site-config\.json: \{\}$/m.test(dropped.out), `deploy: a retired "toggles" key is dropped from the shipped site config (${(/^app\/site-config\.json: .*$/m.exec(dropped.out) || ['none'])[0]})`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+// the frame headers (R9, R10): the local server sends them on every path; deploy/headers.sh plans the CloudFront
+// policy dry, and against a fake aws (tools/fixtures/fake-aws.js) makes it, sets it on the distribution, and on a second
+// run changes nothing
+await section('headers', async () => {
+  const ROOT = path.join(HERE, '..');
+  const { startServer } = await import('../server/serve.js');
+  const srv = await startServer({ port: 0, quiet: true });
+  try {
+    const want = { 'content-security-policy': "frame-ancestors 'none'", 'x-frame-options': 'DENY', 'x-content-type-options': 'nosniff' };
+    for (const u of ['/app/', '/site/community/', '/community/', '/', '/app/src/main.js', '/nowhere.txt']) {
+      const r = await fetch(srv.url + u);
+      const got = Object.keys(want).filter((k) => r.headers.get(k) !== want[k]);
+      T.ok(!got.length, `local ${u} (${r.status}): frame-ancestors 'none', X-Frame-Options DENY and nosniff${got.length ? ' (wrong: ' + got.map((k) => `${k}=${r.headers.get(k)}`).join(', ') + ')' : ''}`);
+    }
+  } finally { await srv.close(); }
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'community-headers-'));
+  try {
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    const base = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null' };
+    for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'DIST', 'DRY_RUN']) delete base[k];
+    const run = (args, env) => { const r = spawnSync('bash', [path.join(ROOT, 'deploy/headers.sh'), ...args], { cwd: ROOT, encoding: 'utf8', env: { ...base, ...env } }); return { status: r.status, out: (r.stdout || '') + (r.stderr || ''), stdout: r.stdout || '' }; };
+    // dry: a stub that fails if called
+    fs.writeFileSync(path.join(bin, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    const live = run([], { DRY_RUN: '1' }), next = run(['--next'], { DRY_RUN: '1' }), only = run(['--policy-only'], { DRY_RUN: '1' });
+    const policyOf = (out) => { const m = /\n((?: {4}.*\n)+)/.exec(out); try { return JSON.parse(m[1]); } catch { return null; } };
+    const lp = policyOf(live.out), np = policyOf(next.out);
+    const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
+    T.ok(clean(live) && clean(next) && clean(only), `headers.sh, dry: live, --next and --policy-only run without calling AWS (exit ${live.status}, ${next.status}, ${only.status})`);
+    const sec = lp && lp.SecurityHeadersConfig;
+    T.ok(lp && lp.Name === 'overdub-headers' && sec.StrictTransportSecurity.AccessControlMaxAgeSec === 31536000 && sec.ContentTypeOptions.Override === true
+      && sec.ReferrerPolicy.ReferrerPolicy === 'strict-origin-when-cross-origin' && sec.XSSProtection.Protection && sec.XSSProtection.ModeBlock,
+      'headers.sh: the live policy keeps the managed set (HSTS a year, nosniff, strict-origin-when-cross-origin, XSS protection with mode block)');
+    T.ok(lp && sec.FrameOptions.FrameOption === 'DENY' && sec.FrameOptions.Override === true && sec.ContentSecurityPolicy.ContentSecurityPolicy === "frame-ancestors 'none'" && sec.ContentSecurityPolicy.Override === true && lp.CustomHeadersConfig.Quantity === 0,
+      'headers.sh: X-Frame-Options DENY and CSP frame-ancestors \'none\', both with override, and no custom header on the live site');
+    T.ok(np && np.Name === 'overdub-next-headers' && JSON.stringify(np.SecurityHeadersConfig) === JSON.stringify(sec) && np.CustomHeadersConfig.Items.some((h) => h.Header === 'X-Robots-Tag' && h.Value === 'noindex, nofollow'),
+      'headers.sh --next: the same security headers, plus X-Robots-Tag: noindex, nofollow');
+    T.ok(only.stdout.trim() === 'RHPDRYRUN' && /update-distribution --id EDRYRUN/.test(live.out) && !/update-distribution/.test(only.out), `headers.sh --policy-only prints only the policy id and touches no distribution (${only.stdout.trim()})`);
+
+    // against a fake aws: the distribution on the managed policy, one more behaviour on it and one on its own policy
+    const MANAGED = '67f7725c-6f97-4210-82d7-5512b31e9d03';
+    fs.writeFileSync(path.join(bin, 'aws'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(HERE, 'fixtures/fake-aws.js')}" "$@"\n`, { mode: 0o755 });
+    const state = path.join(tmp, 'state.json'), log = path.join(tmp, 'log');
+    fs.writeFileSync(state, JSON.stringify({ dists: { E1: { etag: 'D0', config: { Comment: 'live', DefaultCacheBehavior: { TargetOriginId: 's3', ResponseHeadersPolicyId: MANAGED },
+      CacheBehaviors: { Quantity: 2, Items: [{ PathPattern: '/relay/*', ResponseHeadersPolicyId: MANAGED }, { PathPattern: '/api/*', ResponseHeadersPolicyId: 'CORSPOLICY' }] } } } } }));
+    const fake = (args) => { fs.writeFileSync(log, ''); const r = run(args, { DIST: 'E1', FAKE_AWS_STATE: state, FAKE_AWS_LOG: log }); return { ...r, calls: fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)[1]) }; };
+    const first = fake([]);
+    const st1 = JSON.parse(fs.readFileSync(state, 'utf8'));
+    const d1 = st1.dists.E1.config;
+    T.ok(first.status === 0 && first.calls.includes('create-response-headers-policy') && first.calls.includes('update-distribution') && st1.policies.RHP1?.config.Name === 'overdub-headers',
+      `headers.sh, first run: makes overdub-headers and updates the distribution (exit ${first.status}; ${first.calls.join(', ')})${first.status ? ': ' + first.out.slice(-300) : ''}`);
+    T.ok(d1.DefaultCacheBehavior.ResponseHeadersPolicyId === 'RHP1' && d1.CacheBehaviors.Items[0].ResponseHeadersPolicyId === 'RHP1' && d1.CacheBehaviors.Items[1].ResponseHeadersPolicyId === 'CORSPOLICY' && d1.Comment === 'live' && d1.DefaultCacheBehavior.TargetOriginId === 's3',
+      'headers.sh: the default behaviour and any on the managed policy move to it; a behaviour with its own policy and the rest of the config are kept');
+    const second = fake([]);
+    T.ok(second.status === 0 && !second.calls.some((c) => /^(create|update)-/.test(c)) && /up to date/.test(second.out) && /already sends/.test(second.out),
+      `headers.sh, second run: changes nothing (${second.calls.join(', ')})`);
+    st1.policies.RHP1.config.SecurityHeadersConfig.FrameOptions.FrameOption = 'SAMEORIGIN';
+    fs.writeFileSync(state, JSON.stringify(st1));
+    const drift = fake([]);
+    const st2 = JSON.parse(fs.readFileSync(state, 'utf8'));
+    T.ok(drift.status === 0 && drift.calls.includes('update-response-headers-policy') && !drift.calls.includes('update-distribution') && st2.policies.RHP1.config.SecurityHeadersConfig.FrameOptions.FrameOption === 'DENY',
+      `headers.sh: a policy changed by hand is put back with If-Match, and the distribution left alone (${drift.calls.join(', ')})`);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
 T.done();

@@ -33,9 +33,11 @@ overdub/
   server/relay.js        the hosted relay for claude.ai (REMOTE-MCP.md; live)                         [agent layer]
                          relay-catalog.json: the tools it lists, generated (tools/relay-catalog.js)
   site/                  landing page, press/, docs/ (built by tools/docs-build.js), llms.txt         [brand]
-                         community/ (the community shelf's gallery; deployed, unlinked, reads nothing off localhost)
-  app/community/         the community shelf's bundled snapshot: gitignored, built by overdub-devices'
-                         tools/index.js --out (docs/COMMUNITY-SHELF.md)                              [shelf]
+                         community/ (the community shelf's gallery, public at /community/)
+  app/community/         the community shelf's bundled snapshot: gitignored, filled from overdub-devices
+                         at deploy/community-pin.json's commit by tools/community-pull.js: the index,
+                         devices/ (one device file per entry) and clips/ (MP3 only); every deploy ships it
+                         no-cache                                                                     [shelf]
   app/index.html         the studio page; app/library.html the device shelf; app/gallery.html          [core]
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/<family>/: each woff2 and its licence)         [brand]
@@ -97,11 +99,12 @@ overdub/
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
                          export.js (the Song menu, files out), provenance.js, share.js, onboard.js, reference.js,
-                         start.js (Start a song: the blank song's door and its stage, app.start),
+                         start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
+                         (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
+                         coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
-                         community.js (From the community in the Browser: previews, Try and its prompt; off
-                         unless on localhost, COMMUNITY_LIVE)                                           [shelf]
+                         community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
                          the Notes panel's Tab view)                                                    [jam]
@@ -112,7 +115,7 @@ overdub/
                          lexicon.js + lexicon-personal.js, panel.js (chat UI), history.js, presence.js, diff.js,
                          keep.js (a song from a link: what waits for Keep), bridge.js (page side of MCP),
                          remote.js (page side of the relay), cloud.js, cloud-kind.js, cloud-panel.js (Claude
-                         on Overdub credits; off unless the cloud.agent toggle and cloud.api are set),
+                         on Overdub credits; off unless the site config names cloud.api),
                          community-tool.js (find_community_device)                                     [agent layer]
   tools/                 pw.js (browser harness, fixed), <area>-test.js checks, run-all.js, render.js, bench/
   integrations/          the Claude Code plugin and skill, configs for other MCP clients, check.js
@@ -453,7 +456,7 @@ Ids are forever; display names are not. The built-ins are named after studio obj
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
-core.multiband Gaffer Tape; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
+core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
 with the vendored pedals' (`tools/guitar-test.js` checks).
 A def the studio ships may carry `describe(params)` (one line of text for `get_project`, in place of the params' JSON:
 core/project.js `summarize`), and a param `hidden` (not on the face or in the generic window), `auto: false` (no lane)
@@ -470,9 +473,11 @@ is a literal in the kernel's source, packed so the kernel stays under its 256 KB
 Param `role` (for agents and semantic controls): `tone level drive mix time feedback rate depth size decay attack
 release pitch shape width gate sens` (or omit). `unit`: `Hz dB ms s % st note x`.
 
-**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 52 built-ins, fourteen
+**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 53 built-ins, fourteen
 of them sampled: Virtuosity Kit, Parlour Upright, Rusty Brushes, Hand Crate, Full Stick, Rosin, Damper Bar, Roundwound,
-Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data), `devices/guitar/` (the
+Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data; eighteen play
+kernel data in all: those fourteen, Half Stack, Iso Cab and Y Cable on the cab bank, and Echo Chamber on measured
+rooms), `devices/guitar/` (the
 Guitar Studio's 101 pedals and 27 amps, with 16 cabinets and 5 mics inside the amps, and its 156 rigs as device chains)
 and `devices/library/` (the house shelf: ten kernels Claude wrote, `claude.*`, `source: 'library'`, each with its
 `request`; also loaded by the Node renderer). `devices/showcase.js` holds the three devices the demo song carries as
@@ -550,12 +555,22 @@ until the person allows it.
 
 Instruments and effects people asked their agents for, from the community repo (`overdub-devices`), in the Browser
 under **From the community**. Nothing is sold, priced or rated. The spec is [COMMUNITY-SHELF.md](COMMUNITY-SHELF.md);
-SECURITY.md says what runs when. Off on the live site (`COMMUNITY_LIVE`); Try is held (`TRY_ON`) until the worklet's
-prototypes are frozen, and a developer on localhost turns it on with localStorage `overdub:community-try` = `1`.
+SECURITY.md says what runs when. It is in every studio and on the gallery, Try included (the worklet's realm is
+frozen). Taking a device down is a pin change (a revoked entry in the studio's own copy), live at the next deploy.
+
+- **Where the shelf comes from.** The live studio reads one index, its own `/app/community/community-index.json`,
+  deployed with it (`indexUrlAllowed` refuses any other origin on a page that isn't on localhost). That copy
+  is pinned, not committed: `deploy/community-pin.json` (`{ repo, commit, index_sha256 }`, keys forever) names an
+  overdub-devices commit, and `tools/community-pull.js` fills the gitignored `app/community/` from it with
+  `git archive`, refusing on a wrong hash or a device file whose kernel isn't its entry's. Local development runs the
+  same pull. Every deploy ships it (deploy.sh). `tools/prod-check.js` holds the live copy to the pin.
+- **Revocation.** The bundled index is read on every load, Browser open or not, and each `revoked` fingerprint goes
+  through `trust.forget`: the code is held in every song, and the held strip says *"{Name} was taken off the shelf:
+  {reason}"*. A takedown is a pin that revokes the device, merged and deployed.
 
 - `devices/community.js` is the one reader of an index (`overdub-community-index/1`): the studio, the agent tool and the
   site gallery all read through it. `ASKED_MAX` is how long a requester line can be and still be drawn.
-- `app.community = { on(), ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
+- `app.community = { ready(), state(), section(opts), reach(id?, by), offer(entry, opts), targetFor(entry, track),
   tryEntry(entry, opts), matchKernel(source), heldLines(held), stop(), nowPlaying() }`. `targetFor` says where a Try
   lands (`already: true` when it's on that track now: Try doesn't stack a second copy). On a new track a Try brings a
   two-bar part to hear the device on, in the same step.
@@ -598,7 +613,15 @@ checks), gets `dsp` (the stdlib, `kernel/dsp.js`) and nothing else: no DOM, no f
 share link, a device file or any agent, and the shadowed names are not a boundary: `[].constructor.constructor` still
 reaches the realm's `Function`. What makes it safe is where it runs: the AudioWorkletGlobalScope has no DOM, no
 localStorage (the person's songs and settings), no cookies and no network. It isn't isolated: a kernel shares the realm
-with every other device (SECURITY.md, "Still open"). On the main thread, `host.compileKernel(src)` is a
+with every other device in its audio context. Before any kernel runs the processor freezes that scope
+(`freezeRealm` in `worklet.js`): the global object (its bindings fixed, no new ones), every object reachable from it
+through properties and prototypes, and the intrinsics no global names (the iterator prototypes); the functions'
+`constructor` throws; and each node gets its own dsp stdlib (`kernelCore` takes a function that makes one), so its
+classes' prototypes aren't shared. One kernel can't patch what another uses. `kernel/processor.js` imports
+`devices/worklets/end.js` first, so END has wrapped `registerProcessor` before the freeze for the graph worklets that
+load later. The processor also stamps each node's messages with the def's id (`processorOptions.device`), so
+a kernel can't report as another device. Still open (SECURITY.md): reading the realm (an indirect `eval` reaches it),
+and a kernel data file two devices name, which is one writable decoded copy per context. The Node renderer doesn't freeze. On the main thread, `host.compileKernel(src)` is a
 parse only (`new Function` is built and never called) for a fast syntax error with its line; every other refusal
 (no `create()`, a bad `poly`, `Math.random` at compile time) comes back from the worklet as a compile-stage error.
 Never call `kernelCompiler(...).compile()` on the page. The Node renderer (`tools/render.js`) has no such scope: a
@@ -924,11 +947,11 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   SHA-256 (its rate and every channel as 32-bit floats), the model's id and its version; in memory where IndexedDB is
   refused. A second run of the same input never reaches the runner; a cancelled job (an `AbortSignal`) rejects with
   `AbortError` and leaves nothing behind.
-- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless both the `stems.local`
-  toggle is on and `app/site-config.json` has `stems: { model, sha256, runtime?, id?, bytes? }` (`site-config.js`
+- **The local runner** (`stems/runner.js`) is htdemucs v4 run in the browser, **off** unless
+  `app/site-config.json` has `stems: { model, sha256, runtime?, id?, bytes? }` (`site-config.js`
   `stemsConfig`: each URL resolved against the config file, so a path is on this site, then https:, or http: on this
-  machine, as for `cloud`; `runtime` defaults to `vendor/ort/ort.webgpu.min.mjs`). With either missing nothing is
-  fetched or imported. With both, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
+  machine, as for `cloud`; `runtime` defaults to `vendor/ort/ort.webgpu.min.mjs`). Without it nothing is
+  fetched or imported. With it, the model is fetched, checked against the pinned SHA-256 before anything uses it (a
   mismatch is refused and the runtime never loaded), and kept in Cache Storage (`overdub-models`); ONNX Runtime Web is
   loaded by a dynamic `import()` of `stems.runtime`. No weights and no runtime are in this repo (`.gitignore`, and
   `tools/jobs-test.js` fails on a tracked one). WebGPU first, then WebAssembly on one thread (the studio isn't
@@ -950,8 +973,8 @@ await jobs.run({ kind: 'stems', input: { sr, channels }, model? }, { onProgress,
   uploads `.mjs` as JavaScript and `.wasm` as `application/wasm`. `node deploy/stage-stems.js --manifest <dist>` prints
   the manifest and its hash to pin. Locally, `server/serve.js` answers `/app/vendor/ort/` from
   `OVERDUB_STEMS_RUNTIME_DIR` (a dist directory on this machine; else `app/vendor/ort/`, gitignored), and with no
-  `app/site-config.json` answers the stems entry from `OVERDUB_STEMS_MODEL`, `_SHA256` and (optional) `_RUNTIME`, with
-  `stems.local` on.
+  `app/site-config.json` answers the stems entry from `OVERDUB_STEMS_MODEL`, `_SHA256` and (optional) `_RUNTIME`.
+
 - **The DSP** (`stems/dsp.js`) is demucs' own around the network: the normalised STFT (4,096 / hop 1,024, the
   periodic Hann window) as `_spec` and `_ispec` do it, two real channels through one complex FFT, segments of 7.8 s
   with 25% overlap and a triangular crossfade (`apply_model`, shifts 0), and `separate.py`'s whole-song normalising.
@@ -983,6 +1006,8 @@ right   Agent, Connect, History (tabs)
 ```js
 ui.panel({ id, region, title, icon?, order?, mount(el, ctx) { return { update(evt), frame(now), unmount() } } })
 ui.show(panelId, { save?, by? }) ; ui.state ; ui.select(sel) ; ui.on(type, fn) ; ui.emit(type, detail) ; ui.toast(text, { kind, action })
+ui.dock                           // a slot at the foot of the arranger, over the bottom pane: no room until something docks (the coach strip)
+ui.point(el, { ms = 2000 })       // grease-pencil crop marks on a control the studio names; unsigned, gone after ms, still under reduced motion
 ui.announce(text)                 // a screen-reader-only status line (agent edits and messages while the Agent tab is hidden)
 ui.keys.add({ key: 'Space' | 'KeyZ' | ..., mod: 'mod' | 'shift' | 'alt' | 'mod+shift' | null, run(e), when?(), label, group, global?, feature? })
 ui.state = { selection: { track, clip, notes: Set<noteId>, range: { from, to } | null, insert }, zoom: { pxPerBeat, trackH },
@@ -1100,21 +1125,59 @@ the only round, in both of two, in half or more of three or more; the rest stray
 snares on 2 and 4) and `readingsOf` (the other 1, the tempo halved or doubled within 60 to 180). **Done** dispatches
 `core/start.js` `planStart` once, by `'you'`: on a blank song the rounded tempo and a loop over the take, a new track
 named by `newPartFor`, one clip. The Timing words (`atLevel`) and the readings are `notes.replace` (and `clip.set`,
-`project.set`) dispatched with `join` on that transaction, so one undo takes the lot. **Hum a tune** previews a groove
-(`agent/grooves-tool.js` `putGroove` dry run) at a chosen speed; **Hum** dispatches it with the tempo and loop, then
-`app.onboard.humOver()` and `recorder.record()`. While the stage is on its play steps, `app.start.busy` is true and
-`agent/tools.js` refuses song-changing tools with `recording`. Its keys are `ui.keys` declarations with `first: true`,
-and while it's open the studio's single keys are held under it. `app.start = { open({ kind: 'tap' | 'hum' }), close(),
-step ('play' | 'hum' | 'in' | 'readings' | null), kind, busy, tap(row, perfMs), done(), again(), setLevel(level),
-readings(), useReading(i), humNow(), humFree(), leave(), landed(), take(), on('step' | 'land' | 'close', fn),
-choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i), back() }), pickChoice(i) }`. `choose` is the
-readings step for another flow (step `'choose'`): its rows, picking one calls `pick` (it plays), Use this one `use`,
-and Back, Esc or any other way out `back`.
+`project.set`) dispatched with `join` on that transaction, so one undo takes the lot. The take goes to capture with the
+clip's id, what was played as played (`raw`) and the rounds, so `capture.ofClip(clip)` can re-plan it later (the demo
+agent's "tidy the timing" does).
 
-**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014),
-behind the `workflow.flip` toggle (off: no door row, no Song ▸ Export ▸ Release, no Flip a song in Find's Help rows,
-`app.flip.pick()` and `flip()` answer the off line, and `get_guide "workflows"` too; the tempo map is core song
-format, so a song that has one loads, plays and renders the same either way): the door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
+**Play to a click instead** stays on the stage (`S.view` `'click'`): `ui/beatwindow.js` `mountBeatWindow` draws two
+bars (160 px a bar or more) with a ball driven by `engine.beat` (a reverse-print cell instead under reduced motion), a
+bar of count-in from a stopped transport, **Speed** and **Tap it** as `store.preview`s, and the rounds folded at each
+wrap (`foldRounds`) and played at Tight on the preview track. **Done** lands the fold through `planStart`, at the
+click's tempo. The hum steps are `ui/start-hum.js`: over a beat (H puts the beat in and records in `'take'` mode onto a
+new Melody track with one bar of count-in; the beat and the tune are one undo step through the recorder's `join`; the
+steadiest round is kept) and free (the pitch trace and the notes as they form, `humReadingsOf` for the readings, a
+side-stick tick on a preview track while they're heard). On `'in'` the stage hosts the sound card (`app.sounds.setHost`,
+`offer({ track, from: 'take', take })`; its Keep is a `.btn`, its own undo step) and its primary is the run's next part
+(`app.coach.after`).
+
+Over the song, `open({ kind, over: { track, clip } })` reopens the stage with the song as the guide: the loop over the
+clip's bars (a hum's made 4 bars, `longerPlan`, one undo step with the take), Speed and Beat hidden, the tempo never
+changed. A hum or the keys go onto a new track (`'take'` mode, the steadiest round kept); taps go over the click view
+and fold into the Drums clip (`notes.add`).
+
+While the stage is on its play steps (`'play'`, `'hum'`), `app.start.busy` is true: `agent/tools.js` refuses
+song-changing tools with `recording`, and the Agent tab holds a message until the stage reaches `'in'` or closes.
+`get_selection.start` (`agent/tools.js` `startInfo`) is `{ step, kind, tempo, sure, rounds, landed: { track, clip } |
+null }` while it's open, else `null`. Its keys are `ui.keys` declarations with `first: true`, and while it's open the
+studio's single keys are held under it.
+
+```
+app.start = { open({ kind: 'tap' | 'hum' | 'keys', view: 'free' | 'click', free, over }), close({ to, quiet }),
+  step ('play' | 'hum' | 'in' | 'readings' | null), kind, view, busy, tap(row, perfMs), done(), again(), leave(),
+  setView(view), setSpeed(bpm), tapTempo(perfMs), click(), window(), setLevel(level), readings(), useReading(i),
+  humNow(), humFree(), hum(), setTune(on), againOverBeat(), tick(), landed(), take(), tempoShown(),
+  on('step' | 'land' | 'close', fn) -> off, choose({ run, title, sub, items: [{ main, what }], at, pick(i), use(i),
+  back() }), pickChoice(i) }
+```
+
+`choose` is the readings step for another flow (step `'choose'`, Flip a song's grids): its rows, picking one calls `pick`
+(it plays), Use this one `use`, and Back, Esc or any other way out `back`.
+
+The top bar's tempo reads "~" (`aria-valuetext` "finding the tempo") while `tempoShown()` is null on `'play'`.
+
+**The coach strip** (`ui/coach-strip.js`, `app.coach`, mounted after `start.js`) docks in `ui.dock` when the stage closes
+to the song after a landing, or on the first part of a door that doesn't use the stage (Draw a beat, Pick a groove, Play
+the keys, Ask: `app.coach.expect(door)`). Its run sheet (Beat, Tune, Band) is words, the current one over a 2 px cream
+rule; each step has one `.btn-go`, up to two text buttons and ×. Its state is `ui.state.coach` (`{ run, step, done }`),
+never stored: a reload ends the run. **Put a beat under it** opens Grooves at the song's tempo (`app.grooves.fit({ bpm,
+bar, bars })`, whose Put reads **Use it**). **Build a band around it** lists the `STYLES` rows: ↓/↑ hear one through
+`agent/arrange-tool.js` `buildBand(..., { preview: true })` (`store.preview`, nothing in History); **Keep the band** is
+one measured dispatch signed `'overdub'` (the house: unsigned on the lanes). It points at the controls it names with
+`ui.point`. `app.coach = { expect(door), after(landing), dock(door, clips?), go(step), band(), preview(i), keep(),
+notThis(), end(), state(), beatUnder() }`.
+
+**Flip a song** (`ui/flip.js`, `app.flip`; the pure parts `core/flip.js`, `audio/analyze/`, `jobs/`; spec 0014): the
+door's fourth row opens the file picker (`importers.pickFlip`, one file or several, the formats Import audio takes;
 local files only, nothing is ever fetched from a link). `importers.importFlip` decodes and labels them
 (`core/flip.js` `labelFiles`: a lone file is the original; several are stems by their names, vocal / acapella /
 voice, drums / perc, bass, other / inst, and the one matching none the original). The import is one step by `'you'`,
@@ -1514,7 +1577,9 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
     the track's Input from the Inspector, else Sketch's picker; one asset per take, each pass a clip at its offset,
     the measured round trip taken off).
   - **Commit**: `planTake(project, take)` (pure) builds the ops; one `store.dispatch` by `'you'` (one undo step).
-    Layer (drum tracks; `recorder.setMode(track, 'layer' | 'take')` changes it, Sketch's **Each pass**) adds every
+    Fold (`'fold'`, picked per track; a drum track's default is Layer) keeps what was played in most passes and leaves out the rest at the stop
+    (`input/rounds.js` `foldRounds`; the toast reads "Kept {k}; left out {s}." with **Show them**). Layer
+    (`recorder.setMode(track, 'fold' | 'layer' | 'take')` changes it, Sketch's **Fold**, **Layer**, **New take**) adds every
     pass's notes into the clip under them (`notes.add`; a hit on one already there is merged, and the summary says
     how many were) and makes clips only where there are none; while it records, each hit is previewed
     (`store.preview`) so the next pass plays it. A miss is replaced, not added: when a pass closes, a hit an earlier
@@ -1785,12 +1850,12 @@ from the shell), adds it and the API version to the page's Messages API request,
 old in-browser key, is deleted on load and noted once (`overdub:agent:key-retired`). The public site has no `/local/`.
 
 **Claude on Overdub credits** (provider `'cloud'`; built, not switched on): Claude run by Overdub's own service and
-paid for with credits, for people without a Claude of their own. It's off unless the deploy both turns the
-`cloud.agent` toggle on and names the service in `app/site-config.json` (gitignored; `app/src/site-config.js` reads it
-once per load, `server/serve.js` answers both from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh`
-ships `deploy/site-config.json` or `{}`, plus the `deploy: 'on'` toggles; its other switch is the stems runner, "Jobs
-and the stems runner" above); a `cloud.api` alone turns nothing on.
-`?cloud=` points a local studio at a local service only, and counts as the toggle there. No prices live here: the rate card, plans and packs come from the
+paid for with credits, for people without a Claude of their own. It's off unless the deploy names the
+service in `app/site-config.json` (`"cloud": { "api" }`; gitignored; `app/src/site-config.js` reads it once per load,
+`server/serve.js` answers it from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships
+`deploy/site-config.json` or `{}`; its other entries are the account service, `"accounts": { "api" }` (agent/remote.js),
+and the stems runner, "Jobs and the stems runner" above). With no configuration it stays absent.
+`?cloud=` points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.
 
 - `agent/cloud.js` (`app.agent.cloud`) is the account: the sign-in (Continue with Google opens
@@ -1827,8 +1892,8 @@ over `/s/<token>/{hello,events,result}`. The tab side takes the tab's secret in 
 one-way hash of it, so the connector URL alone can't pose as the tab), and `tools/list` is the relay's own catalog
 (`server/relay-catalog.json`), never the tab's. `agent/remote.js` (`app.remote`, the right-region "Connect" tab) is
 the page side; its calls run with `by: 'claude.ai'` (`kind: 'agent'`, added with `store.addAuthor`). It is live at
-overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`; the `relay` toggle (`on('relay')`) is on, so every
-studio shows the Connect tab (off, there is no tab and no `app.remote`, except on a local studio with `?relay=`).
+overdub-relay.ajsmithhq.com and tested by `tools/relay-test.js`. Every studio shows the Connect tab (a local studio with `?relay=` talks to a
+local relay instead).
 
 ## Songs in and out
 
@@ -1884,70 +1949,24 @@ of this version trusts the kept songs' devices, once), decodes a share link if t
 (the link's song, `?new`, `?demo`, the saved song, or the demo), the engine (a silent stand-in if it fails), the
 shell, then starts each module in `MODULES` (each `export default function (app)`) in order; one failing never stops
 the rest. Audio starts on the first gesture. URL switches: `?new`, `?demo=<id>`, `?device=<id>`, `?agent=mock`,
-`?coach`, `?autostart`, `?view=simple|full`, `?on=<toggle>,…` (a local studio only; Toggles, below), `#s=…`. Straight after the shell,
+`?coach`, `?autostart`, `?view=simple|full`, `#s=…`. Straight after the shell,
 `installWorkspace(ui, app)` gives it `ui.workspace`, before any module mounts a panel.
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,
-analytics, plugin, jam, site, toggles }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
-`browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.toggles` is
-`{ on(id), list() }` (Toggles, below).
+analytics, plugin, jam, site, siteConfig }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
+`browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.siteConfig` is
+`loadSiteConfig`'s answer as boot read it (main.js waits for it, at most 4 s, `CONFIG_WAIT_MS`, before the first
+module starts), or null when this load couldn't see it.
 
-## Toggles
+## How features ship
 
-Every feature a person would notice ships off and is turned on by the deploy, never by a code change.
-`app/src/toggles.js` is the one registry: each entry has an `id` (forever while it lives, never reused), a `name` (the
-off line uses it), a one-line `about`, its intent, and is off unless the config says `"on"`. Toggles are temporary: at
-most 15 at once (`MAX_TOGGLES`, held by the unit test), each retired once it has been on for a while.
-
-- **The config.** The deploy's `app/site-config.json` carries `"toggles": { "<id>": "on" | "off" }`. Only the exact
-  string `"on"` turns one on; no file (a 404 or 410), `{}`, no key or a non-object means all off. An id the
-  registry doesn't know is ignored with one console warning.
-- **Boot.** `main.js` starts the read at the top of boot, beside the device imports, and waits for it (at most 4 s,
-  `CONFIG_WAIT_MS`) before the first module starts, so `on()` is final and synchronous everywhere. A config this load
-  couldn't see (a network error, a 5xx or an HTML error page, JSON that doesn't parse, or past the cap) is not a file
-  that turns everything off: the `deploy: 'on'` defaults stand in for that load (`bootConfig`), so a blip never takes
-  Connect away from someone whose agent is driving their studio. A late answer changes nothing.
-- **`on(id)`.** Code asks `on(id)` and never reads a constant or the config itself. An id the registry doesn't have
-  throws (`no toggle "relays"`), so a typo fails loudly; the unit test scans `app/` and `site/` for every `on('…')`
-  literal. In Node, or before boot's read, it answers off. `app.toggles.on(id)` and `app.toggles.list()` (`[{ id, name,
-  on, by: 'site' | 'url' | 'off' }]`) are the same for the console and the tests.
-- **`?on=a,b` and `?on=all`.** On a local studio only (`localhost`, `127.0.0.1`, `[::1]`): those toggles are on for that
-  page load. Anywhere else `?on=` does nothing, so a link can never switch anyone's studio. The developer doors count
-  as their toggle there too: `?relay=<origin>` is `relay`, `?relay=` with `?cloud=` is `accounts`, `?cloud=<local
-  origin>` is `cloud.agent`.
-- **The deploy's defaults.** An entry marked `deploy: 'on'` was on live before the registry existed: deploy.sh writes
-  it `"on"` for both sites unless `deploy/site-config.json` names it (an explicit `"off"` is kept). Only `relay` has
-  it. `server/serve.js` with no `app/site-config.json` answers the same defaults (plus `cloud.agent` with
-  `OVERDUB_CLOUD_ORIGIN`), so a local studio shows what the live one does.
-- **What refuses.** deploy.sh checks the final config against REF's own registry (`auditToggles`): a `toggles` that
-  isn't an object, a value other than `"on"` or `"off"`, or an id REF doesn't register stops a live deploy; on `--next`
-  it is one warning line. It prints `toggles on: …`. `tools/prod-check.js` prints `toggles on live: …` and fails when
-  the live config names a toggle the live registry doesn't know, or when a `deploy: 'on'` toggle is off (relay: no
-  `app.remote` or no Connect tab fails too).
-- **A toggle never changes a song.** Nothing under `core/`, `audio/`, `kernel/` or `devices/registry.js` imports
-  `toggles.js` (the unit test scans for it), and golden-test doesn't move with any toggle. An off feature's devices and
-  data in a song load, play, render and undo exactly as they do with it on. A toggle hides only the ways to add more:
-  menus, Browser and Find entries, doors, and the agent tools offered. (Hiding an off feature's devices from the
-  Browser, Find and `list_devices`, a `toggle` on a device definition read only where adding is offered, is
-  `device.rooms`'s work, built on its branch.)
-- **Agent tools.** The catalog is static (`server/relay-catalog.json` doesn't move). A tool may carry `toggle: '<id>'`:
-  `runTool` checks it before the required fields, the recording block and `run`, and while it's off the call answers
-  `{ error: "<name> isn't on in this studio." }` (`offLine(id)`) and changes nothing. A `get_guide` topic a feature owns
-  goes in `GUIDE_TOGGLES` (topic to id) and answers the same line while off; text a feature adds to a shared topic goes
-  through `guidePart(id, text)`, which is empty while off. The in-app system prompt doesn't vary with toggles.
-- **In use.** `workflow.flip` (Flip a song: the door's row, Song ▸ Export ▸ Release, the guide's Flip a song heading in
-  Find, `app.flip`'s pick and flip, `get_guide "workflows"`) and `stems.local` (the local stems runner, read by
-  `jobs/index.js` `pageJobs` beside the site config's stems entry: both are needed). The tempo map neither hides.
-- **Not moved yet.** `community` and `community.try` are registered, but `COMMUNITY_LIVE` and `TRY_ON`
-  (`ui/community.js`, and the gallery page's own copy) still decide until the shelf's follow-up reads `on()` for them.
-
-**Add one:** one entry in `TOGGLES`, off (the unit test checks the shape and the count), and `on('<id>')` at each way in
-(a menu item, a Browser row, a door, `toggle:` on a tool); then its entry in `overdub-intents`'s `toggles/TOGGLES.md`
-and the backlog items that decide when it goes on. **Turn one on live:** `"<id>": "on"` in `deploy/site-config.json`,
-deploy, then `node tools/prod-check.js` to see it in `toggles on live`. **Retire one:** make the code unconditional,
-delete the entry and every `on('<id>')`, and take the id out of `deploy/site-config.json` before the next deploy
-(deploy.sh refuses the leftover id). The id is never used again.
+There are no feature toggles (retired 2026-10-14). What is merged to `main` is shipped at the next live deploy;
+unfinished work waits on its branch until it's ready to merge. A dormant service (Claude on Overdub credits, Sign in
+with Overdub, the stems runner's model) is present only when the deploy's `app/site-config.json` names it
+(`"cloud"`, `"accounts"`, `"stems"`), so with no configuration it stays absent; that file holds configuration, never
+on/off switches (deploy.sh drops a leftover `"toggles"` key). The localhost developer doors (`?relay=`, `?cloud=`)
+point a local studio at local services and do nothing on any other host.
 
 ## Testing
 

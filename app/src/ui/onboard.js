@@ -150,7 +150,7 @@ export default function (app) {
     // 2. take one: anything lands in the capture log (a hum, a tapped beat, a phrase on the keys or a MIDI keyboard)
     if (app.input?.on) offs.push(app.input.on('capture', ({ what, phrase } = {}) => {
       if (what !== 'add' || !phrase || phrase.kind === 'audio') return;   // (a recording is kept as audio: the tour is about notes)
-      if (phrase.rec) return;                                             // a take recorded with R is in the song already
+      if (phrase.rec || phrase.clip) return;                              // a take recorded with R, or landed by Start a song, is in the song already
       if (idx >= 0 && idx <= 2) { take.phrase = phrase; if (step() === 'keep') paint(); else advance('keep'); }
     }));
     // 3. keep it: a clip of yours with notes in it lands on a track (Keep in Sketch, or drawn in the piano roll)
@@ -234,7 +234,7 @@ export default function (app) {
     const pt = last.parts?.[0];
     if (!pt) return null;
     const tr = store.track(pt.track);
-    const drums = pt.mode === 'layer' && (!!tr && isDrumTrack(tr));
+    const drums = (pt.mode === 'layer' || pt.mode === 'fold') && (!!tr && isDrumTrack(tr));
     // (a steady lean taken out: the card says so, with the number, so "in the song" is never said over a take that came
     // out wrong without a word; input/recorder.js leanWords)
     const lean = last.lean ? leanWords({ lean: last.lean.beats, ms: last.lean.ms, opening: last.lean.opening, kind: drums ? 'hit' : 'note' }) : '';

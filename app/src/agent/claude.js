@@ -16,7 +16,7 @@
 //   agent.reset()                            a fresh conversation for this song
 //   agent.on(type, fn) -> off   types: busy, user, start, text, update, end, error, status, reset, provider, cloud,
 //                                       quote, settled, creditback
-//   agent.cloud -> the hosted agent's account (agent/cloud.js) | null    only with cloud.agent on and its origin named
+//   agent.cloud -> the hosted agent's account (agent/cloud.js) | null    only when the site config names its origin
 //   agent.quote(text, { hint, moreTime }) -> { text, kind, label, credits, moreTime, alternatives } | null
 //   agent.shown(quote)                       the panel showed this price on this exact text (the send gate, below)
 //
@@ -30,9 +30,9 @@
 // back. The page keeps no key: the in-browser key field is gone, and a key saved by an older version is deleted on
 // load (RETIRED_KEY below).
 //
-// Claude on Overdub credits ('cloud'): the hosted agent (agent/cloud.js), off unless the deploy both turns the
-// 'cloud.agent' toggle on (app/src/toggles.js) and names its service (app/src/site-config.js; a local ?cloud= counts as
-// both), and used only when the person chose it: a Claude of their own (Claude Code, a server key)
+// Claude on Overdub credits ('cloud'): the hosted agent (agent/cloud.js), off unless the deploy's site config names its
+// service ("cloud": { "api" }, app/src/site-config.js; a local ?cloud= counts), and used only when the person chose
+// it: a Claude of their own (Claude Code, a server key)
 // always comes first. The service owns the model, the system prompt and the tools (by prompt version); the page sends
 // the ask and its tool results, runs the tools here, signed 'claude' like every in-app Claude, and settles each ask.
 // The send gate: an ask opens only once the panel has shown its price on that exact text (agent.shown); otherwise
@@ -50,7 +50,6 @@ import { runTool, schemas, cancelRequest, IN_APP_DESCRIPTIONS } from './tools.js
 import { runMock } from './mock.js';
 import { isLocalHost } from './bridge.js';
 import { loadSiteConfig } from '../site-config.js';
-import { on as toggleOn } from '../toggles.js';
 import { createCloud, canonicalBundle, bundleVersion, newKey, HOSTED_NAME } from './cloud.js';
 import { classify } from './cloud-kind.js';
 
@@ -165,10 +164,10 @@ export function createAgent(app) {
       .catch(() => ({ available: false }))
       .then((j) => { local = { available: !!j.available, version: j.version || '', key: !!j.key }; const was = provider; decide(); if (was === provider) emit('provider', provider); });
   }
-  // Claude on Overdub credits: only when the deploy turns it on and names its service (forks and self-hosted copies never
-  // ask one); a cloud.api without the toggle asks nothing
+  // Claude on Overdub credits: only when the deploy names its service (forks and self-hosted copies never ask one)
   loadSiteConfig().then((cfg) => {
-    if (!cfg.cloud || !toggleOn('cloud.agent')) return;
+    if (!cfg.cloud) return;
+
     cloud = createCloud({ api: cfg.cloud.api });
     for (const ev of ['state', 'me', 'config']) cloud.on(ev, () => emit('cloud', { type: ev }));
     decide(); emit('provider', provider); emit('cloud', { type: 'on' });

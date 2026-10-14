@@ -93,5 +93,6 @@ song owes it anything. Pin its source and add it to [`docs/SOUNDS.md`](docs/SOUN
 ## Pull requests
 
 Keep one change per pull request, with its checks passing, and copy that follows [`docs/BRAND.md`](docs/BRAND.md):
-calm, quick, a little dry. By contributing you agree your work is released under the MIT licence in
+calm, quick, a little dry. There are no feature toggles: what is merged to `main` ships at the next live deploy, so
+merge only what's ready to be live, and keep unfinished work on its branch. By contributing you agree your work is released under the MIT licence in
 [LICENSE](LICENSE).

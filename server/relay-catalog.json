@@ -65,7 +65,7 @@
  },
  {
   "name": "get_selection",
-  "description": "What the human is looking at right now: the selected track, clip (with its notes in the text format), the selected notes, the time range (beats and bars), the selected insert (with params), and the playhead. Act on THIS by default. Empty fields mean nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they're hearing a sound on a track before keeping it (the song still has the old one), else null.",
+  "description": "What the human is looking at now: the selected track, clip (its notes in the text format), notes, time range (beats and bars), insert (with params), and the playhead. Act on THIS by default. Empty fields: nothing of that kind is selected. studio.hidden: features put away on their screen. trying: { track, device } while they try a sound on a track (the song keeps the old one), else null. start: { step, kind, tempo, sure, rounds, landed } on Start a song's stage (play, hum: wait), else null.",
   "input_schema": {
    "type": "object",
    "properties": {},
@@ -210,7 +210,7 @@
     },
     "library": {
      "type": "string",
-     "description": "a device with a library (Light Table's AKWF waves): \"\" lists its families, a family or part of a wave's name lists those waves, each with the params that play it"
+     "description": "a device's library (Light Table's waves, Echo Chamber's rooms): \"\" lists its families (a small one whole); a family or part of a name lists those, with params"
     }
    },
    "required": [
@@ -818,7 +818,7 @@
  },
  {
   "name": "get_recording",
-  "description": "Is the human recording? state: \"idle\", \"count\" (the count-in) or \"rec\"; the tracks the take goes onto (each with its mode: \"layer\", every loop pass adds into one clip, or \"take\", every pass a new take), where it started, the loop it records in and the pass it is on, and the notes in so far. While they record, edits to those tracks (named by track, clip or insert, or the selection when a tool defaults to it), to the timeline (tempo, meter, loop, sections, inserting or removing bars) or to any track's arm, and an undo or revert that would touch them, are refused with error \"recording\"; other tracks are fine. wait_seconds (max 120) waits for the take to end; then get_project shows it (a take's clips share a take group, the earlier passes muted) and get_capture has every pass.",
+  "description": "Is the human recording? state: \"idle\", \"count\" (the count-in) or \"rec\"; the tracks the take goes onto (each with its mode: \"fold\" (drums: what most passes played), \"layer\" (passes add into one clip) or \"take\" (a new take each pass)), where it started, its loop and pass, and the notes in so far. While they record, edits to those tracks (named by track, clip, insert or a tool's default selection), to the timeline (tempo, meter, loop, sections, bars) or to any track's arm, and an undo or revert that would touch them, are refused with error \"recording\"; other tracks are fine. wait_seconds (max 120) waits for the take to end; then get_project shows it (a take's clips share a take group, the earlier passes muted) and get_capture has every pass.",
   "input_schema": {
    "type": "object",
    "properties": {

@@ -14,8 +14,8 @@
 # app/site-config.json, the deploy's switches, is never committed: this script is its one writer, for both sites. It
 # starts from deploy/site-config.json (gitignored; SITE_CONFIG=<file> reads another), else {}. The preview's copy adds
 # "env": "preview", "preview": true and the commit, so the studio wears the Preview ribbon (app/src/ui/preview.js); every
-# other key is kept as it is. With no "preview" key a studio is the live site. Both copies gain the registry's
-# deploy: 'on' toggles the base doesn't name, and a toggle REF doesn't register stops a live deploy (see below).
+# other key is kept as it is. With no "preview" key a studio is the live site. There are no feature toggles: what is
+# merged to main ships on the next live deploy, and unfinished work waits on its branch.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TARGET=live TESTS=1
@@ -68,34 +68,18 @@ if [ "$TARGET" = next ]; then
     if (!c || typeof c !== "object" || Array.isArray(c)) throw new Error(file + " is not a JSON object");
     fs.writeFileSync(file, JSON.stringify({ ...c, env: "preview", preview: true, ref }, null, 2) + "\n");' "$STAGE/app/site-config.json" "$SHORT"
 fi
-# The feature toggles (app/src/toggles.js, REF's own registry; docs/ARCHITECTURE.md, "Toggles"), for both sites:
-# every deploy: 'on' entry the base doesn't name is written on (relay: on live before the registry existed, so a deploy
-# with no deploy/site-config.json keeps it on; an explicit "off" in the base is kept). Then the config is checked
-# against that registry: a "toggles" that isn't an object, a value other than "on" or "off", or an id REF doesn't
-# register stops a live deploy, and is one warning on --next (an older ref sent to the preview is a normal thing).
-# A REF with no registry gets nothing added, and says so.
-if ! TOGGLES_SAID=$(node --input-type=module -e 'import fs from "node:fs"; import { pathToFileURL } from "node:url";
-    const [file, reg, target, ref, label] = process.argv.slice(1);
+# The config must be a JSON object. A "toggles" key (the feature toggles, retired 2026-10-14: merged means shipped) is
+# dropped from the copy that ships, with a line, so an old deploy/site-config.json can't leave one on the site.
+if ! CONFIG_SAID=$(node -e 'const fs = require("fs"), [file, label] = process.argv.slice(1);
     let c;
     try { c = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { console.log(`not deploying: ${label} is not JSON (${e.message})`); process.exit(1); }
     if (!c || typeof c !== "object" || Array.isArray(c)) { console.log(`not deploying: ${label} is not a JSON object`); process.exit(1); }
-    if (!fs.existsSync(reg)) { console.log(`toggles: ${ref} has no registry (app/src/toggles.js), so none are added or checked`); process.exit(0); }
-    const m = await import(pathToFileURL(reg).href);
-    const t = c.toggles === undefined ? {} : c.toggles;
-    if (t && typeof t === "object" && !Array.isArray(t)) {
-      const add = m.TOGGLES.filter((x) => x.deploy === "on" && !Object.hasOwn(t, x.id));
-      if (add.length) {
-        c.toggles = { ...t, ...Object.fromEntries(add.map((x) => [x.id, "on"])) };
-        fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
-      }
-    }
-    const a = m.auditToggles(c, m.TOGGLES, { registryName: ref });
-    for (const e of a.errors) console.log(target === "live" ? `not deploying: ${label} ${e}` : `warning: ${label} ${e} (a live deploy would stop)`);
-    if (a.errors.length && target === "live") process.exit(1);
-    console.log(`toggles on: ${a.on.length ? a.on.join(", ") : "none"}`);
-    for (const d of a.deployOff) console.log(`toggles: ${d.id} is off on this site (${d.why})`);' \
-  "$STAGE/app/site-config.json" "$STAGE/app/src/toggles.js" "$TARGET" "$REF" "$BASE_NAME"); then
-  echo "$TOGGLES_SAID"; exit 1
+    if (Object.hasOwn(c, "toggles")) {
+      delete c.toggles;
+      fs.writeFileSync(file, JSON.stringify(c, null, 2) + "\n");
+      console.log(`site config: dropped ${label}'"'"'s "toggles" (retired: merged means shipped)`);
+    }' "$STAGE/app/site-config.json" "$BASE_NAME"); then
+  echo "$CONFIG_SAID"; exit 1
 fi
 # The stems runner's runtime (and its model, when the base names modelFrom), staged on this site: the studio's CSP runs
 # scripts and fetches only from its own origin (deploy/stage-stems.js says how they're pinned). Fetched once into
@@ -124,13 +108,55 @@ if [ -f "$STAGE/app/src/jobs/stems/runner.js" ] && ! STEMS_CHECK=$(node --input-
   echo "$STEMS_CHECK"; exit 1
 fi
 # Paths committed but held back from both sites until AJ decides (empty now: the community gallery, site/community/,
-# ships since 2026-10-06; docs/COMMUNITY-SHELF.md, "Where it's on"). The studio's built snapshot, app/community/, is
-# gitignored, so it never ships. The sync below runs with --delete, so taking a path off this list is what puts it live.
+# ships since 2026-10-06; docs/COMMUNITY-SHELF.md, "Where it's on"). The sync below runs with --delete, so taking a
+# path off this list is what puts it live.
 HELD_BACK=()
 for p in ${HELD_BACK[@]+"${HELD_BACK[@]}"}; do rm -rf "${STAGE:?}/$p"; done
+
+# The community shelf, app/community/ (gitignored): pulled from overdub-devices at the commit REF's
+# deploy/community-pin.json names, by tools/community-pull.js, which checks it by hash and refuses a wrong one (then
+# nothing is deployed). Every deploy ships it; a REF with no pin ships no shelf. The studio reads this copy on every
+# load and applies its deny list (revoked), so a device taken off the shelf goes out with the next deploy. No checkout
+# with the pinned commit stops a live deploy; --next goes on without the shelf and says so (CI's preview deploy has no
+# overdub-devices). A refused pull stops either. The checkout: OVERDUB_DEVICES_DIR, else ../overdub-devices. A dry run may
+# read another pin from COMMUNITY_PIN (tools/community-test.js); a real deploy reads REF's only.
+if [ -n "${COMMUNITY_PIN:-}" ] && [ -z "$DRY" ]; then echo "COMMUNITY_PIN is for dry runs: a deploy reads the pin at $REF"; exit 2; fi
+PIN=$(mktemp)
+trap 'rm -rf "$STAGE" "$PIN"' EXIT
+if [ -n "${COMMUNITY_PIN:-}" ]; then cp "$COMMUNITY_PIN" "$PIN"; else git show "$REF:deploy/community-pin.json" > "$PIN" 2>/dev/null || : > "$PIN"; fi
+if [ ! -s "$PIN" ]; then
+  echo "app/community: none ($REF has no deploy/community-pin.json)"
+else
+  DEVICES_DIR=${OVERDUB_DEVICES_DIR:-$ROOT/../overdub-devices}
+  set +e
+  node "$ROOT/tools/community-pull.js" --pin-file "$PIN" --from "$DEVICES_DIR" --out "$STAGE/app/community"
+  PULLED=$?
+  set -e
+  if [ "$PULLED" = 3 ] && [ "$TARGET" = live ]; then
+    echo "not deploying: no checkout with the pinned shelf's commit at $DEVICES_DIR (OVERDUB_DEVICES_DIR names another)"; exit 1
+  elif [ "$PULLED" = 3 ]; then
+    rm -rf "${STAGE:?}/app/community"
+    echo "app/community: none on this preview: no checkout with the pinned commit at $DEVICES_DIR"
+  elif [ "$PULLED" != 0 ]; then
+    echo "not deploying: tools/community-pull.js didn't pull the pinned shelf (exit $PULLED)"; exit 1
+  else
+    echo "app/community: $(find "$STAGE/app/community" -type f | wc -l | tr -d ' ') files, as pinned"
+  fi
+  # a dry run lists each with the type and caching its upload rule below gives it
+  if [ -n "$DRY" ] && [ -d "$STAGE/app/community" ]; then
+
+    (cd "$STAGE" && find app/community -type f | sort) | while read -r f; do
+      case "$f" in
+        *.json) echo "  $f  application/json; charset=utf-8  no-cache" ;;
+        *.mp3) echo "  $f  audio/mpeg  no-cache" ;;
+        *) echo "  $f  (the catch-all sync)" ;;
+      esac
+    done
+  fi
+fi
 echo "$TARGET: $SHORT ($REF): $(find "$STAGE" -type f | wc -l | tr -d ' ') files -> s3://$BUCKET, distribution $DIST"
 echo "app/site-config.json: $(tr -d '\n ' < "$STAGE/app/site-config.json")"
-echo "$TOGGLES_SAID"
+if [ -n "$CONFIG_SAID" ]; then echo "$CONFIG_SAID"; fi
 echo "$STEMS_SAID"
 if [ -n "${STEMS_CHECK:-}" ]; then echo "$STEMS_CHECK"; fi
 
@@ -157,7 +183,7 @@ done
 
 # the kits first, so no page names one that isn't up yet (uploaded once each: a file named by its hash never changes)
 KITTMP=$(mktemp -d)
-trap 'rm -rf "$STAGE" "$KITTMP"' EXIT
+trap 'rm -rf "$STAGE" "$PIN" "$KITTMP"' EXIT
 for name in $HAVE; do
   for ext in odkz odk; do
     if [ -z "$DRY" ] && aws s3api head-object --bucket "$BUCKET" --key "app/kits/$name.$ext" >/dev/null 2>&1; then echo "kit $name.$ext: already up"; continue; fi
@@ -185,6 +211,9 @@ up --include '*.gif' --content-type 'image/gif' --cache-control "$MEDIA"
 up --include '*.mp4' --content-type 'video/mp4' --cache-control "$MEDIA"
 up --include '*.woff2' --content-type 'font/woff2' --cache-control "$MEDIA"
 up --include '*.wav' --content-type 'audio/wav' --cache-control "$MEDIA"
+# the shelf's clips revalidate like its index and device files (*.json, above), so a rebuild or a takedown is live at the
+# next load
+up --include 'app/community/*.mp3' --content-type 'audio/mpeg' --cache-control "$TEXT"
 # the stems runtime and model, when staged (a module script must be served as JavaScript, WebAssembly as application/wasm)
 up --include 'app/vendor/ort/*.mjs' --content-type 'text/javascript; charset=utf-8' --cache-control "$MEDIA"
 up --include 'app/vendor/ort/*.wasm' --content-type 'application/wasm' --cache-control "$MEDIA"

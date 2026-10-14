@@ -239,6 +239,7 @@ export default async function (app) {
         const match = (d) => !s || (d.id + ' ' + d.name + ' ' + (d.blurb || '') + ' ' + (d.nod || '') + ' ' + (d.kindLabel || '') + ' ' + catName(d.cat)).toLowerCase().includes(s);
         const proj = store.get().devices || {};
         const all = devices.listDevices();
+
         const held = (devices.heldDevices?.() || []).filter((d) => match(d));
         const heldIds = new Set(held.map((d) => d.id));
         const mine = all.filter((d) => (d.source === 'project' || proj[d.id]) && !heldIds.has(d.id) && match(d));

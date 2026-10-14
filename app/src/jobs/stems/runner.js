@@ -1,5 +1,6 @@
 // The local stems runner (spec 0014 R21, R22): htdemucs v4 on this computer, in the open core and switched off unless
-// the site config names a model (and the stems.local toggle is on: jobs/index.js pageJobs). The network runs in ONNX
+// the site config names a model (jobs/index.js pageJobs). The network runs in ONNX
+
 // Runtime Web, loaded at run time by a dynamic import from the config's `stems.runtime` (never a file in this repo),
 // which must be on the page's own origin: the studio's CSP (app/index.html) runs scripts from 'self' only, so a runtime
 // on a CDN would fail as "Failed to fetch dynamically imported module". deploy.sh stages it under app/vendor/ort/ from

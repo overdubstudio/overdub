@@ -68,7 +68,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">The guide</a></h1>
-    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 58 min to read</p>
+    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 59 min to read</p>
     <article class="prose">
 <p>Overdub is a studio for you and your agents. You lay down a take, your agent plays over it, you play over that, and
 every take is signed: warm for you, cool for it. This page gets you from the door to a kept take in five minutes,
@@ -129,8 +129,13 @@ the pads sound straight away. After six hits or so the BPM shows; after two bars
 your hits; once you've played the same thing twice it counts the rounds. What you play most often is what's kept: a
 hit you played in one round of three is left out, one you played in both of two rounds stays. <strong>Done</strong> (<code>Space</code>) puts
 it in the song at once: the tempo, a Drums track, the clip and a loop over it, one undo step, signed by you.
-<strong>Start again</strong> (<code>⌫</code>) clears it (the take stays in <strong>Takes</strong>). <strong>Play to a click instead</strong> is the older way: a Drums
-track, two bars looping with the click, <code>R</code> to record.</p>
+<strong>Start again</strong> (<code>⌫</code>) clears it (the take stays in <strong>Takes</strong>). While the BPM isn't showing yet, the top bar's tempo
+reads &quot;~&quot;.</p>
+<p><strong>Play to a click instead</strong> keeps you on the stage with two bars and a ball that bounces on each beat. Pick a
+<strong>Speed</strong> (Slow 80, Easy 100, Upbeat 120) or <strong>Tap it</strong> (<code>T</code>, four times; <code>←</code> <code>→</code> step the speed), and a bar of count-in
+(4 3 2 1, <em>Come in on 1.</em>) brings you in. Keep going round: at each wrap the rounds fold, what you played most often
+stays and plays back tight, and one-off misses drop out. <strong>Done</strong> puts it in the song at the click's tempo.
+<strong>Free time instead</strong> goes back.</p>
 <p>Then it loops while you decide:</p>
 <ul>
 <li><strong>Timing</strong>: <strong>Tight</strong> puts each hit where you meant it (an eighth when you're near one), <strong>Loose</strong> half way, <strong>As
@@ -139,16 +144,28 @@ by how much, and it's all still one undo step with the take.</li>
 <li><strong>Not quite?</strong> If the studio isn't sure where the 1 is, it says so. The other ways your beat could go (the bar
 starting on another kick, or twice as slow) are listed, and picking one plays it at once. <strong>Use this one</strong> keeps it;
 <code>Esc</code> puts back what was there.</li>
-<li><strong>Hum over it</strong> (<code>Enter</code>) is the next part: the stage folds away, the beat keeps looping and Sketch is on Hum.
-<strong>Back to the song</strong> (<code>Esc</code>) just folds it away.</li>
+<li><strong>The sound</strong>: the sound card sits beside your take. <code>↓</code> tries the next sound, <strong>Keep</strong> keeps it (its own undo
+step), and the line says what the track plays now.</li>
+<li><strong>Hum over it</strong> (<code>Enter</code>) is the next part, on the stage over your beat. <strong>Back to the song</strong> (<code>Esc</code>) folds it away.</li>
 </ul>
 <p><strong>Hum a tune</strong> starts a simple beat looping at 100 BPM so you have something to hum against. <strong>Speed</strong> (Slow 80, Easy
 100, Upbeat 120) and <strong>Beat</strong> (Simple, Rock, Lo-fi) change what you hear, not the song. <strong>Hum</strong> (<code>H</code>) puts the beat in
-the song and records your hum over it from the next bar line; <code>Space</code> stops, and the tune lands on a new Melody track.
-<strong>No beat; I'll hum freely</strong> is Sketch's Hum in your own time. Headphones keep the beat out of your hum.</p>
+the song and counts you in for a bar; hum as many times round as you like, and <code>Space</code> stops. The steadiest round
+lands on a new Melody track, the others kept muted under it, and the beat and the tune are one undo step. <strong>In tune</strong>
+on the Timing line puts it in the key's scale, or leaves it as you sang it. <strong>No beat; I'll hum freely</strong> stays on the
+stage: hum at any speed, the notes appear as you sing, and <strong>Done</strong> finds the beat in your hum. If the hum didn't settle
+on a steady beat it says so, and you can hear the other ways it could go (each with a soft tick on every beat) or
+<strong>hum it again over a beat</strong>. Headphones keep the beat out of your hum.</p>
+<p><strong>The next parts.</strong> Once your take is in, a strip under the song walks the rest: <strong>Beat</strong>, <strong>Tune</strong>, <strong>Band</strong> (each word
+takes you to that step). <strong>Hum over it</strong>, <strong>Play keys over it</strong> and <strong>Tap more on the drums</strong> reopen the stage over
+your song at its tempo. <strong>Put a beat under it</strong> opens Grooves at your song's tempo (<strong>Use it</strong> puts one in). <strong>Build a
+band around it</strong>: <code>↓</code> <code>↑</code> hear each style on the loop, nothing kept until <strong>Keep the band</strong> (one undo step); <strong>Not
+this one</strong> goes back to the styles. At the end the strip counts your song, offers <strong>Make it longer</strong> and <strong>Share</strong>, and
+goes. <code>×</code> ends it at any step.</p>
 <p><code>Esc</code> before you've played anything closes the stage; after, it asks once (<em>Leave without keeping this take? It stays
 in Takes.</em>). <strong>Skip to the studio</strong> is always top right. While you play on the stage, an agent's changes to the song
-wait until it's in.</p>
+wait until it's in, and a message you send it waits too (<em>Sends when your take is in.</em>). Ask the demo agent to
+<em>tidy the timing</em>, <em>tighten it</em> or <em>loosen it</em> on a clip you started, and it says how many hits it moved.</p>
 <h2 id="flip-a-song"><a class="h-link" href="#flip-a-song">Flip a song</a></h2>
 <p><em>Not on in every studio yet: where it's off, the door has three ways in.</em></p>
 <p><strong>Flip a song</strong> on the door brings in a song you own and gets it ready for you to make the drop over it. Pick one file
@@ -703,7 +720,7 @@ spent unasked. When Claude Code is on (or the demo agent), that answers instead.
 only: put it on a public address and anyone who reaches it spends your key.</p>
 <p>Hosting a copy of the site? The studio has a hosted agent built in, Claude on Overdub credits, but it's Overdub's own
 service and it's off in your copy: it only turns on when the site has an <code>app/site-config.json</code> that names a service
-and turns its toggle on (<code>&quot;cloud&quot;: { &quot;api&quot;: … }</code> and <code>&quot;toggles&quot;: { &quot;cloud.agent&quot;: &quot;on&quot; }</code>), and the repo has none.
+(<code>&quot;cloud&quot;: { &quot;api&quot;: … }</code>), and the repo has none.
 Without one, the studio shows nothing of it and connects to no one. (Pointing it at a service of your own also means
 adding that service to the page's <code>connect-src</code>, in <code>app/index.html</code>.)</p>
 <h2 id="build-a-device"><a class="h-link" href="#build-a-device">Build a device</a></h2>
@@ -719,7 +736,7 @@ drags, takes the arrow keys and resets on a double-click.</li>
 <code>.overdub-device.json</code> file. In another song, <strong>Import a device…</strong> in the Song menu (<code>⌘⇧I</code>) brings it in. It is
 checked again on the way in, and refused, with the report, if it fails.</li>
 </ul>
-<p>The <a href="/app/library.html">device library</a> has 65 devices: the 52 built-in instruments and effects, and 13 Claude
+<p>The <a href="/app/library.html">device library</a> has 66 devices: the 53 built-in instruments and effects, and 13 Claude
 wrote, each from one request, and the request is on the card. Play any of them on the page. The Guitar Studio's 101
 pedals and 27 amps aren't on that shelf; find them in the studio's browser. To write one by hand, see
 <a href="devices.html">Writing devices</a>.</p>
@@ -773,11 +790,10 @@ a new one. <strong>Import audio…</strong> in the Song menu puts it at the play
 to sit near. It is measured once and kept beside your song, never in the mix or a render. <strong>Measure the mix</strong> shows
 your mix's numbers beside it, and <strong>A</strong> and <strong>B</strong> switch between your mix and the reference, played at your mix's
 loudness. Ask the agent how yours compares and it measures both (<code>compare_to_reference</code>).</p></li>
-<li><p><strong>A device from the community shelf</strong> (a studio on your own computer only, for now). Open <strong>Instruments and
-effects</strong> (or Find anything, then type <em>community</em>) and scroll to <strong>From the community</strong>. ▶ on a row plays a
-recording of the device; nothing of it runs. Tap the row for what it does, who made it, and its code to read. <strong>Try</strong>
-isn't open yet. When it is, <strong>Try on Vocals</strong> (or whichever track is selected) asks whether to run code someone else
-wrote before anything plays; a new track comes with two bars to hear the device on, and Undo takes it all back.</p></li>
+<li><p><strong>A device from the community shelf.</strong> Open <strong>Instruments and effects</strong> (or Find anything, then type <em>community</em>)
+and scroll to <strong>From the community</strong>. ▶ on a row plays a recording of the device; nothing of it runs. Tap the row
+for what it does, who made it, and its code to read. <strong>Try on Vocals</strong> (or whichever track is selected) asks whether
+to run code someone else wrote before anything plays; a new track comes with two bars to hear the device on, and Undo takes it all back.</p></li>
 </ul>
 <h2 id="take-it-elsewhere"><a class="h-link" href="#take-it-elsewhere">Take it elsewhere</a></h2>
 <p>The Song menu's <strong>Export</strong> section:</p>

@@ -4,6 +4,9 @@
 //   - an agent: the `arrange_around` tool -> one undo step signed by that agent, or two styles as takes for
 //     propose_variations (mode "propose")
 //   - code: app.band.build({ track, clip, style, parts, seed, by }) -> Promise<{ ok, txn, plan, levels } | { error, hint }>
+//   - a preview (Start a song's coach strip, ↓/↑ on its style rows): buildBand(app, { ..., preview: true }) plans with
+//     measure: false and hands the ops to store.preview -> { ok, preview (the handle: .release()), plan, ids, clips }:
+//     heard, never in History. Keep is a build without it (measured, one dispatch)
 // Levels are measured, not guessed: before anything lands, the seed and each new part are rendered offline (in a
 // scratch copy of the song, through engine/render.js, the same graph the person hears) and every new fader is set so
 // that part sits under the seed by its style's margin. Where nothing can render (no Web Audio), the style's
@@ -95,14 +98,20 @@ export async function planBand(app, { track, clip, style = 'pop', parts, seed = 
 }
 
 /* ------------------------------------------------------------------------------------------------ building */
-export async function buildBand(app, { track, clip, style = 'pop', parts, seed = 1, by = 'overdub', label, reason, measure: doMeasure = true } = {}) {
+export async function buildBand(app, { track, clip, style = 'pop', parts, seed = 1, by = 'overdub', label, reason, measure: doMeasure = true, preview = false } = {}) {
   const sid = findStyle(style);
   if (!sid) return err(`no style "${style}"`, `styles: ${STYLE_IDS.join(', ')}`);
   const tgt = resolveSeed(app, { track, clip });
   if (tgt.error) return tgt;
-  const plan = await planBand(app, { track: tgt.track.id, clip: tgt.clip.id, style: sid, parts, seed, measure: doMeasure });
+  const plan = await planBand(app, { track: tgt.track.id, clip: tgt.clip.id, style: sid, parts, seed, measure: preview ? false : doMeasure });
   if (plan.error) return plan;
   if (!plan.ops.length) return err('nothing to add', plan.skipped.length ? plan.skipped.map((s) => `${s.part}: ${s.why}`).join('; ') : 'pick at least one part');
+  if (preview) {
+    // (heard on the loop, not in History: the caller releases it, before a Keep or another style)
+    const pv = app.store.preview(plan.ops, { by });
+    if (!pv.ok) return err(pv.error, 'the song changed under it; try again');
+    return { ok: true, preview: pv, plan, ids: Object.fromEntries(plan.tracks.map((t) => [t.part, pv.created?.[t.ref]])), clips: Object.fromEntries(plan.tracks.map((t) => [t.part, pv.created?.[t.ref + '_clip']])) };
+  }
   // the song may have moved while it measured: the seed must still be there, as it was
   const now = app.store.findClip(tgt.clip.id);
   if (!now) return err('the clip went away while the band was being measured', 'try again');

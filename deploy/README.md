@@ -9,7 +9,7 @@ function in `path-rewrite.js`, no-cache text and day-cached media), and both shi
 | Address | https://overdubstudio.com | https://next.overdubstudio.com |
 | AWS setup | `deploy/setup.sh` (once) | Terraform: `infra/next` ([`infra/README.md`](../infra/README.md)) |
 | Ship | `deploy/deploy.sh` (HEAD, or `REF=…`) | `deploy/deploy.sh --next [REF]` (any committed ref; HEAD by default) |
-| `app/site-config.json` (never committed) | written by the deploy: `deploy/site-config.json`, else `{}`, plus REF's `deploy: 'on'` toggles (relay, which `on('relay')` reads; accounts and the hosted agent are `on('accounts')` and `on('cloud.agent')`) | the same, plus `preview` and the commit |
+| `app/site-config.json` (never committed) | written by the deploy: `deploy/site-config.json`, else `{}` (configuration only: the hosted agent's `cloud`, the account service's `accounts`, `stems`) | the same, plus `preview` and the commit |
 | Search engines | indexed | `X-Robots-Tag: noindex, nofollow` on every response |
 | Counts (`app/src/analytics.js`) | on | off (they count on `overdubstudio.com` only) |
 
@@ -17,6 +17,77 @@ function in `path-rewrite.js`, no-cache text and day-cached media), and both shi
 `DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`. `tools/analytics-test.js` runs it dry with a stub `aws` and
 checks the plan (and runs the old `deploy/next/setup.sh` dry too: it is kept for that check, and no longer matches the
 account).
+
+## The community shelf (`app/community/`)
+
+The studio's shelf is pinned, not committed: `deploy/community-pin.json` names an overdub-devices commit and the
+SHA-256 of its `index/community-index.json`. `deploy.sh` reads the pin **at REF**
+(`git show REF:deploy/community-pin.json`, never the working tree) and runs `tools/community-pull.js` into its stage
+after `git archive`. The pull reads that commit with `git archive <commit> index/` from the overdub-devices checkout
+(`OVERDUB_DEVICES_DIR`, else `../overdub-devices`), checks the index's hash and every device file's kernel against its
+entry, and copies the index, the device files and the MP3 clips. If it refuses, nothing is deployed. The index and device files go up as JSON and
+the clips as `audio/mpeg`, all `no-cache`, so a rebuild or a takedown is live at the next load.
+
+| At REF | What the deploy does with the shelf |
+|---|---|
+| no `deploy/community-pin.json` (any ref before the pin existed) | nothing: no shelf, as before |
+| a pin | pulls, checks and ships it; a refused pull stops the deploy. With no checkout to pull from, a live deploy stops; `--next` goes on without the shelf and says so ("app/community: none on this preview"), so CI's preview deploy works without overdub-devices |
+
+`COMMUNITY_PIN=<file>` reads another pin, in a dry run only.
+`tools/community-test.js` runs the deploy dry against a fixture overdub-devices repo and checks the plan.
+
+Moving the shelf forward is a pull request that changes only `deploy/community-pin.json`:
+`node tools/community-pull.js --pin <overdub-devices commit>` checks that commit, writes the pin, fills
+`app/community/` and prints what's added, changed and taken down since the last pin, for the PR body
+(`.github/PULL_REQUEST_TEMPLATE/community-pin.md`). Adding needs the second person to accept the PR; a takedown pin
+merges at once and is reviewed after (overdub-devices' `docs/TAKEDOWN.md`).
+
+Taking a device down is a pin that revokes it: the studio reads `app/community/community-index.json` on every load and
+applies its `revoked` list, so the next deploy takes it back in every browser.
+
+Once the shelf is on, `node tools/prod-check.js` checks the live copy against the pin: the live index's SHA-256 is the
+pin's, its `built.from` is the pinned index's (read from `app/community/` when that's the pinned copy, else from the
+pin's commit in `OVERDUB_DEVICES_DIR` or `../overdub-devices`), no revoked fingerprint is listed, and a clip answers
+`audio/mpeg`. Run it after every pin move.
+
+Putting it live, in order (COMMUNITY-SHELF.md, "Where it's on", has the why):
+
+1. The headers: `DRY_RUN=1 deploy/headers.sh`, then `deploy/headers.sh` and `deploy/headers.sh --next` (below).
+2. `deploy/setup.sh` and `deploy/next/setup.sh` again, so CloudFront runs the current `path-rewrite.js` (the
+   `/community/` path).
+3. `node tools/prod-check.js`: the frame headers on `/`, `/app/`, `/site/community/` and `/community/`, and
+   `/community` a 301.
+4. The pin moved to overdub-devices master's merge commit (`node tools/community-pull.js --pin <sha>`), in its own
+   pull request.
+5. The commit that links the gallery (the **Community** word in the site's top nav, the `llms.txt` line, GUIDE.md's
+   line), merged. Then `deploy/deploy.sh`, which ships `app/community/`, then `node tools/prod-check.js` again for the
+   shelf checks.
+
+## The response headers (`deploy/headers.sh`)
+
+Both distributions send a custom response headers policy in place of CloudFront's managed SecurityHeadersPolicy:
+`overdub-headers` on the live site, `overdub-next-headers` on the preview. It keeps the managed policy's values (HSTS
+for a year, `nosniff`, `strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`) with two changes, both
+with override on and on every path: `X-Frame-Options: DENY` (not SAMEORIGIN) and
+`Content-Security-Policy: frame-ancestors 'none'`. Nothing on the site is framed by another page, and the community
+shelf's trust prompt mustn't be. A header CSP holding only `frame-ancestors` adds to the pages' `<meta>` CSPs; it doesn't
+loosen them. The preview's copy adds `X-Robots-Tag: noindex, nofollow`. `server/serve.js` sends the same frame headers
+and `nosniff` locally.
+
+`deploy/headers.sh` makes the policy or brings it up to date (If-Match), then sets it on the distribution's default
+behaviour, and on any behaviour still on the managed policy, only when one differs; a second run changes nothing.
+`setup.sh` and `next/setup.sh` call it. For a distribution that already exists:
+
+```sh
+DRY_RUN=1 deploy/headers.sh            # the plan, no AWS calls (--next for the preview)
+deploy/headers.sh                      # live: deploy/.distribution-id, else the overdubstudio.com alias (DIST=<id> to name it)
+deploy/headers.sh --next               # the preview
+```
+
+CloudFront takes a few minutes to roll the change out. Then
+`curl -sI https://overdubstudio.com/app/ | grep -iE 'frame|content-security'` shows both headers.
+`aws cloudfront get-response-headers-policy --id 67f7725c-6f97-4210-82d7-5512b31e9d03` shows the managed values it
+copies.
 
 ## How the preview works
 
@@ -31,7 +102,7 @@ distribution id from `deploy/.next-distribution-id` (gitignored; `terraform -chd
 distribution_id`), or looks the distribution up by its alias.
 
 `deploy.sh --next REF` ships the same files the live site gets, with one difference in `app/site-config.json`, the
-deploy's switches. That file is never committed and `deploy.sh` is its one writer: for both sites it starts from the
+deploy's configuration. That file is never committed and `deploy.sh` is its one writer: for both sites it starts from the
 gitignored `deploy/site-config.json` (`SITE_CONFIG=<file>` reads another), else `{}`, and the preview's copy adds
 `"env": "preview", "preview": true, "ref": "<commit>"`, keeping every other key as it is. The studio reads it at boot
 (`app/src/ui/preview.js`, `app.site`) and puts a paper slip in the top-left corner, "Preview · <commit>", and starts
@@ -39,14 +110,11 @@ the tab's title with "Preview ·". The live site's copy has no `preview` key, so
 before the ribbon existed (no `app/src/ui/preview.js`) deploys without the slip or the title; the noindex header still
 applies, since it comes from the distribution.
 
-Both copies also carry the feature toggles (`"toggles": { "<id>": "on" | "off" }`, read by `app/src/toggles.js`).
-`deploy.sh` imports REF's own registry and adds `"<id>": "on"` for each `deploy: 'on'` entry the base doesn't name
-(only relay, which was on live before the registry existed; an explicit `"relay": "off"` is kept), then prints
-`toggles on: …` under the config line. A `toggles` that isn't an object, a value other than `"on"` or `"off"`, or an
-id REF doesn't register stops a live deploy; on `--next` it's one warning line. A REF with no registry gets no toggles,
-and the deploy says so. After a live deploy, `node tools/prod-check.js` prints `toggles on live: …` and fails when a
-`deploy: 'on'` toggle is off (saying whether the file said `"off"` or left it out), when the live file names a toggle
-the live registry doesn't have, or when the studio has no Connect tab or `app.remote`.
+There are no feature toggles: what is merged to `main` ships at the next live deploy, and unfinished work waits on its
+branch. The site config holds configuration only (a dormant service is absent until it names one); a `"toggles"` key
+left in the base is dropped from the copy that ships, and the deploy says so. A base that isn't a JSON object stops a
+live deploy. After a live deploy, `node tools/prod-check.js` fails when `site-config.json` isn't served or doesn't
+parse, or when the studio has no Connect tab or `app.remote`.
 
 ## The preview from GitHub Actions
 

@@ -148,6 +148,7 @@ export default function (app) {
 
       function trackSection(t) {
         const insts = devices.listDevices({ kind: 'instrument' });
+
         const kids = [
           text('Name', () => store.track(t.id)?.name || '', (v) => v && dispatch({ type: 'track.set', track: t.id, patch: { name: v } }, 'rename track')),
           row('Colour', h('div.in-colors', TRACK_COLORS.map((c, i) => h('button.in-color' + (t.color === c ? '.on' : ''), { style: { background: c }, title: `Colour ${i + 1}`, 'aria-label': `Colour ${i + 1}`, onclick: () => dispatch({ type: 'track.set', track: t.id, patch: { color: c } }, 'track colour') })))),

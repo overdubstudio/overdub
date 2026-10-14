@@ -5,6 +5,8 @@
 //
 //   capture.noteOn(src, p, v, { track }) / noteOff(src, p)     the performance stream (midi.js, qwerty.js)
 //   capture.add(entry) -> phrase                                 a finished take (hum.js, tap.js, audioin.js)
+//   capture.ofClip(clipId) -> phrase | null                      the newest take that landed as that clip (Start a song:
+//                                                                Timing and the readings re-plan from it after the stage)
 //   capture.update(id, patch) ; capture.hide(id) (still kept)    capture.get(id)
 //   capture.latest({ kind?, src? }) ; capture.list({ since?, all? })   newest first; list() is the last 30 minutes
 //   capture.phraseNotes(id, { grid? }) -> { notes, text, grid?, tempo, tempoGuess, bars, beat, kind, src }
@@ -20,7 +22,8 @@
 // A phrase: { id, src: 'midi'|'qwerty'|'hum'|'tap'|'beatbox'|'rec', kind: 'notes'|'drums'|'audio', at (epoch ms),
 //   label, notes: [{ p, t, d, v }] (beats from the phrase's start), tempo (the song's when captured), tempoGuess,
 //   beat (the song beat it starts on when played along with the song, else null), track, audio (asset id), key,
-//   moved, low, grid, kept: [{ track, clip, at }] }; a pass of a take recorded with R (input/recorder.js) also has
+//   moved, low, grid, kept: [{ track, clip, at }] }; a take that landed as a clip (Start a song) also has { clip (its
+//   id), raw (what was played, as played: a tap's hits [{ t (s), p, v }], a hum's segs), rounds (times round) }; a pass of a take recorded with R (input/recorder.js) also has
 //   { take (its take group), pass (0-based), rec: true }: it is in the song already. A phrase from the performance stream
 //   whose every note went into a take recorded with R is that take's copy: { inTake, hidden: true } (kept, not listed).
 //
@@ -197,12 +200,19 @@ export function createCapture(app, input) {
       // isn't cut there into two)
       if ((entry.src === 'midi' || entry.src === 'qwerty') && !entry.rec) closeCur();
       const ph = { id: newId(), at: Date.now(), beat: null, track: null, ...entry };
+      // (a take that landed as a clip: its id, what was played as played, and how many times round)
+      if (entry.clip != null) { ph.clip = String(entry.clip); ph.rounds = Number.isFinite(entry.rounds) ? entry.rounds : 1; }
       ph.notes = (ph.notes || []).map((n) => ({ ...n, t: r4(n.t), d: r4(n.d) }));
       return finish(ph);
     },
     update(id, patch) { const ph = capture.get(id); if (!ph) return null; Object.assign(ph, patch); persist(ph); emit('update', ph); return ph; },
     hide(id) { return capture.update(id, { hidden: true }); },
     get: (id) => phrases.find((p) => p.id === id) || null,
+    ofClip(clipId) {
+      if (clipId == null) return null;
+      for (let i = phrases.length - 1; i >= 0; i--) if (phrases[i].clip === clipId) return phrases[i];
+      return null;
+    },
     latest({ kind = null, src = null } = {}) {
       for (let i = phrases.length - 1; i >= 0; i--) { const p = phrases[i]; if (!p.hidden && (!kind || p.kind === kind) && (!src || p.src === src)) return capture.view(p); }
       return null;

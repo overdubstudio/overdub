@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { open, tally, OUTDIR } from './pw.js';
 import { allowed, optedOut, referrerHost, beaconUrl, exportKind, EVENTS, HOST } from '../app/src/analytics.js';
 
@@ -270,9 +270,11 @@ try {
     // the scripts, dry: a stub aws comes first on PATH and there are no credentials, so nothing here reaches AWS
     const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'next-dry-'));
     fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
-    const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null' };
+    const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
     // DEPLOY_ENV=/dev/null: setup.sh would otherwise read deploy/.env, which on a working checkout holds the real ids;
-    // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from deploy/site-config.json
+    // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from deploy/site-config.json;
+    // COMMUNITY_PIN=/dev/null (dry runs only): no shelf, so no overdub-devices checkout is needed (tools/community-test.js
+    // checks the shelf's part)
     for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF']) delete env[k];
     const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; const r = spawnSync('bash', [path.join(ROOT, script), ...args], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 120000 }); return { status: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
     const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
@@ -318,54 +320,26 @@ try {
     const tracked = spawnSync('git', ['ls-files', 'app/site-config.json', 'deploy/site-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
     const ignored = spawnSync('git', ['check-ignore', 'app/site-config.json', 'deploy/site-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim().split('\n').length === 2;
     t.ok(!tracked && ignored, `the site config is never committed: deploy.sh writes it (${tracked || 'untracked'}, ${ignored ? 'ignored' : 'not ignored'})`);
-    // the feature toggles (app/src/toggles.js): each site's config gains its REF's deploy: 'on' toggles (relay), or no
-    // toggles key at all when that REF has no registry (HEAD~1 right after the registry's own commit)
-    const defaultsAt = async (r) => {
-      if (spawnSync('git', ['cat-file', '-e', `${r}:app/src/toggles.js`], { cwd: ROOT }).status !== 0) return null;
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toggles-at-'));
-      try {
-        for (const f of ['toggles.js', 'site-config.js']) fs.writeFileSync(path.join(dir, f.replace(/\.js$/, '.mjs')), spawnSync('git', ['show', `${r}:app/src/${f}`], { cwd: ROOT, encoding: 'utf8' }).stdout.replace("'./site-config.js'", "'./site-config.mjs'"));
-        return (await import(pathToFileURL(path.join(dir, 'toggles.mjs')).href)).deployDefaults();
-      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-    };
-    const headDefaults = await defaultsAt('HEAD'), prevDefaults = await defaultsAt('HEAD~1');
-    const liveWant = headDefaults ? { toggles: headDefaults } : {};
-    t.ok(liveCfg && JSON.stringify(liveCfg) === JSON.stringify(liveWant), `with no base the live deploy ships ${JSON.stringify(liveWant)}: the registry's deploy defaults, so relay stays on (${JSON.stringify(liveCfg)})`);
-    t.ok(!headDefaults || (headDefaults.relay === 'on' && /^toggles on: relay$/m.test(live.out) && /^app\/site-config\.json: .*\ntoggles on: /m.test(live.out)),
-      `the live deploy says which toggles it turns on, under the config line (${(/^toggles on: .*$/m.exec(live.out) || ['none said'])[0]})`);
-    t.ok(nextCfg && nextCfg.preview === true && nextCfg.env === 'preview' && nextCfg.ref === ref
-      && JSON.stringify(nextCfg.toggles) === JSON.stringify(prevDefaults || undefined) && (prevDefaults || /^toggles: HEAD~1 has no registry/m.test(next.out)),
-      `the preview deploy adds its own keys, and HEAD~1's toggles (${JSON.stringify(nextCfg)})`);
-    // one base for both sites: a switch in deploy/site-config.json reaches both, and the preview keeps it
+    // no base: the live deploy ships {}, and the preview its own three keys
+    t.ok(liveCfg && JSON.stringify(liveCfg) === '{}', `with no base the live deploy ships {} (${JSON.stringify(liveCfg)})`);
+    t.ok(nextCfg && nextCfg.preview === true && nextCfg.env === 'preview' && nextCfg.ref === ref && Object.keys(nextCfg).length === 3,
+      `the preview deploy adds its own keys (${JSON.stringify(nextCfg)})`);
+    // one base for both sites: a key in deploy/site-config.json reaches both, and the preview keeps it
     const base = path.join(stub, 'site-config.json');
     fs.writeFileSync(base, JSON.stringify({ other: { api: 'https://switch.example' } }));
     const nextB = cfgOf(run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests', '--next', 'HEAD~1').out);
     const liveB = cfgOf(run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests').out);
-    t.ok(liveB && JSON.stringify(liveB) === JSON.stringify({ other: { api: 'https://switch.example' }, ...(headDefaults ? { toggles: headDefaults } : {}) }) && !('preview' in liveB)
+    t.ok(liveB && JSON.stringify(liveB) === JSON.stringify({ other: { api: 'https://switch.example' } }) && !('preview' in liveB)
       && nextB && nextB.other && nextB.other.api === 'https://switch.example' && nextB.preview === true && nextB.ref === ref,
-      `the base config reaches both sites; the preview adds to it and drops nothing, and both gain the deploy toggles (${JSON.stringify(liveB)}, ${JSON.stringify(nextB)})`);
-    if (headDefaults) {
-      // the same toggles on both sites from one base (both from HEAD, so both have the registry)
-      const nextH = cfgOf(run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests', '--next').out);
-      t.ok(nextH && liveB && JSON.stringify(nextH.toggles) === JSON.stringify(liveB.toggles) && nextH.preview === true,
-        `the preview's copy has the live copy's toggles, plus its three keys (${JSON.stringify(nextH)})`);
-      // an explicit off is kept: the base decides, the registry only fills in what it leaves out
-      fs.writeFileSync(base, JSON.stringify({ toggles: { relay: 'off' } }));
-      const offR = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'), off = cfgOf(offR.out);
-      t.ok(clean(offR) && off && off.toggles?.relay === 'off' && /^toggles on: none$/m.test(offR.out) && /^toggles: relay is off on this site \(the file says "off"\)$/m.test(offR.out),
-        `a base with "relay": "off" keeps it off, and says so (${JSON.stringify(off)})`);
-      // a toggle REF doesn't register stops a live deploy, and is a warning on --next
-      fs.writeFileSync(base, JSON.stringify({ toggles: { nope: 'on' } }));
-      const badLive = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'), badNext = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests', '--next');
-      const why = `names toggle "nope", which HEAD doesn't register`;
-      t.ok(badLive.status !== 0 && badLive.out.includes(`not deploying: ${base} ${why}`) && !/aws (s3|cloudfront)/.test(badLive.out) && !/aws was called/.test(badLive.out),
-        `an unknown toggle stops a live deploy before anything is planned (exit ${badLive.status}: ${(/^not deploying: .*$/m.exec(badLive.out) || [''])[0]})`);
-      t.ok(clean(badNext) && badNext.out.includes(`warning: ${base} ${why} (a live deploy would stop)`) && cfgOf(badNext.out)?.toggles?.relay === 'on',
-        `on --next the same toggle is one warning, and the deploy goes on (exit ${badNext.status})`);
-      fs.writeFileSync(base, JSON.stringify({ toggles: { relay: 'yes' } }));
-      const badVal = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests');
-      t.ok(badVal.status !== 0 && badVal.out.includes(`not deploying: ${base} toggle "relay" is "yes", not "on" or "off"`), `a value other than "on" or "off" stops a live deploy (exit ${badVal.status})`);
-    }
+      `the base config reaches both sites; the preview adds to it and drops nothing (${JSON.stringify(liveB)}, ${JSON.stringify(nextB)})`);
+    // the feature toggles are retired (merged means shipped): a "toggles" left in the base is dropped, with a line
+    fs.writeFileSync(base, JSON.stringify({ toggles: { relay: 'on' }, other: 1 }));
+    const oldR = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'), old = cfgOf(oldR.out);
+    t.ok(clean(oldR) && old && !('toggles' in old) && old.other === 1 && /dropped .*"toggles"/.test(oldR.out), `a base with "toggles" ships without it, and says so (${JSON.stringify(old)})`);
+    // a base that isn't a JSON object stops a live deploy before anything is planned
+    fs.writeFileSync(base, '[1]');
+    const badLive = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests');
+    t.ok(badLive.status !== 0 && /not deploying: .* is not a JSON object/.test(badLive.out) && !/aws (s3|cloudfront)/.test(badLive.out), `a base that isn't a JSON object stops a live deploy (exit ${badLive.status})`);
     t.ok(!allowed({ hostname: 'next.overdubstudio.com', protocol: 'https:' }, {}, {}), 'analytics: not on next.overdubstudio.com');
     fs.rmSync(stub, { recursive: true, force: true });
 

@@ -5,6 +5,9 @@
 //   app.sounds = {
 //     setHost(fn)            Sketch registers fn({ track, take }) -> an element to hold the card (its stage, its phone
 //                            sheet) or null. Asked when a take offers the card; null puts it under the track's header.
+//                            Returns the host it replaces (Start a song's stage holds the card on its step `in`, then
+//                            gives the host back). In a host, Keep is a plain .btn when the host's panel or region
+//                            (role=region) shows another .btn-go: one primary a region
 //     offer({ track, from: 'take' | 'header' | 'window' | 'browser' | 'find' | 'agent', anchor?, take?, focus? }) -> { ok }
 //                            open the card. take: { kind: 'notes' | 'drums', src?: 'hum' | ..., notes?, start, end,
 //                            committed?, tune?: { on, set(on) } }; a take not committed (Sketch before Keep) with no
@@ -571,7 +574,8 @@ function installSounds(app, S) {
       : null;
     c.status.textContent = c.statusText || '';
     // the decision: Keep (the region's one primary, unless the take's own Keep is there) and Back; Done outside a trial
-    const otherGo = c.mode === 'host' && [...(c.host.closest('[data-panel]') || c.host).querySelectorAll('.btn-go')].some((b) => !c.el.contains(b) && b.getClientRects().length);
+    // (the host's region: its panel, or a region of its own such as Start a song's stage)
+    const otherGo = c.mode === 'host' && [...(c.host.closest('[data-panel], [role="region"]') || c.host).querySelectorAll('.btn-go')].some((b) => !c.el.contains(b) && b.getClientRects().length);
     const b1 = h('div.snd-b1');
     // a take not kept yet, on a floating card (Sketch's own Keep is out of reach of it): its Keep keeps the take, onto
     // a new track playing what is heard (app.sketch.keepTake, the take line's Keep)
@@ -880,7 +884,7 @@ function installSounds(app, S) {
   }
 
   const api = {
-    setHost(fn) { hostFn = typeof fn === 'function' ? fn : null; },
+    setHost(fn) { const was = hostFn; hostFn = typeof fn === 'function' ? fn : null; return was; },
     offer,
     try: (track, sound, o) => tryOn(track, sound || {}, o || {}),
     tryNew: (take, sound, o) => tryNew(take, sound || {}, o || {}),

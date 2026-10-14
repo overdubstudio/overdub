@@ -1,15 +1,18 @@
 // @ts-check
 // Rounds: play it as many times round as you like, and what you played most often is kept. Pure (Node and the
 // browser): nothing here touches the song. Built on input/timing.js (the pulse, the gentle snap, the three timing
-// words), which it never changes. Start a song (ui/start.js) uses it on a beat tapped in free time.
+// words), which it never changes. Start a song (ui/start.js) uses it on a beat tapped in free time and on a hum.
 //
 //   loopOf(notes, { bpb = 4 }) -> { bars: 1 | 2 | 4 | null, length (beats), rounds: [[start, end]], agree }
 //       notes: [{ p, t (beats, tidied), raw?, v? }] from timing.js fitHits, beat 0 the first hit. The loop is the
 //       smallest of 1, 2 or 4 bars at which one round and the next agree (the cells each sound was played in, over the
 //       cells both rounds reached) at 0.6 or more; a larger loop wins only when it agrees far better. No repeat: bars
 //       null, one round over the whole take (up to 8 bars).
-//   foldRounds(notes, loop, { bpb = 4 }) -> { notes (kept), strays, rounds, rows: { [p]: rounds that row was played in },
-//       beyond }
+//   foldRounds(notes, loop, { bpb = 4, reach }) -> { notes (kept), strays, rounds, rows: { [p]: rounds that row was
+//       played in }, beyond }
+//       reach (optional): [[from, to]] per round, the beats inside the round it really covered (a round over the click
+//       is whole; the recorder's first pass can start at a bar line inside the loop, its last stops where you stopped).
+//       Without it every round but the last is whole and the last reaches its last hit.
 //       Per row (one drum sound) and cell: of the rounds that played that row at all and reached that cell, a hit is
 //       kept when it is in the only one, in both of two, or in at least half of three or more. A kept hit's raw offset
 //       and velocity are the medians over the rounds that have it. Everything else is a stray: never added on top of a
@@ -24,14 +27,24 @@
 //   readingsOf({ notes, length, bpm }, { bpb = 4, lo = 60, hi = 180 }) -> [{ bpm, shift, notes, length, why }]
 //       1 to 3 readings, the first the current: the other place the 1 could be (when nearly as likely), and the tempo
 //       halved or doubled while it stays within lo..hi. why: 'kick' | 'snare' | 'first' | 'slower' | 'faster'.
+//   humReadingsOf({ segs, fit }, { bpb = 4, lo = 60, hi = 180 }) -> [{ bpm, shift, notes, length, why, fit }]
+//       A hum in free time (segs: input/hum.js's [{ t0, t1, midi }], fit: timing.js fitSegs of them, read here when
+//       not given): three readings whenever the hum has three notes, the first the current. Then the other strong count
+//       (fitSegs again with a slower tatum, 1.15 and 1.3 times the current one; the steadier of those that isn't the
+//       current tempo or its octave) or, when there is none, the other phase (bar 1 on the first note after the first
+//       that falls on a beat: the first is a pickup); and the tempo halved or doubled, the one nearer 100 BPM that
+//       stays within lo..hi. Short of three, the phase and then the other octave fill in. why: 'first' | 'count' |
+//       'pickup' | 'slower' | 'faster'. notes: [{ p, t, d, v, raw }], d as sung; fit: how steady that count is (0..1).
 //   atLevel(notes, level, { length }) -> notes   the Timing words: 'tight' where each hit was meant, 'loose' half way,
 //       'played' as played (timing.js blend), kept inside the loop; with no raw, as tight
 //   moved(notes, level, { bpm }) -> { n, ms }   how many hits the level moves from where they were played, and by how
 //       much on average (the line under the Timing words counts it)
-//   steadiest(rounds [{ notes: [{ t, raw }] }]) -> index   the round with the least mean |raw - t|, ties to the latest
+//   steadiest(rounds [{ notes: [{ t, raw }] }], { grid = 0 }) -> index   the round with the least mean |raw - t|, ties
+//       to the latest. grid (beats; a hum's is 0.5, it moves in eighths at the quickest): a note the snap put off the
+//       grid counts from the grid line nearest where it was sung, since |raw - t| hides how far off it was
 //   takeOf(hits, { bpb }) -> all of the above at once, for a beat tapped in free time (below)
 
-import { blend, tightness, fitHits } from './timing.js';
+import { blend, tightness, fitHits, fitSegs } from './timing.js';
 
 const r4 = (x) => Math.round(x * 10000) / 10000;
 const CELL = 0.25;                       // a sixteenth: the cells rounds are compared and folded in
@@ -87,7 +100,7 @@ export function loopOf(notes, { bpb = 4 } = {}) {
   return { bars: pick.bars, length: pick.L, rounds: Array.from({ length: pick.n }, (_, k) => [k * pick.L, (k + 1) * pick.L]), agree: pick.agree };
 }
 
-export function foldRounds(notes, loop, { bpb = 4 } = {}) {
+export function foldRounds(notes, loop, { bpb = 4, reach: span = null } = {}) {
   if (!loop || !loop.bars) {
     const L = (loop && loop.length) || 8 * bpb;
     const keep = notes.filter((n) => n.t < L - 1e-9).map((n) => ({ p: n.p, t: r4(n.t), d: n.d || CELL, v: n.v ?? 0.8, raw: n.raw ?? n.t }));
@@ -95,7 +108,10 @@ export function foldRounds(notes, loop, { bpb = 4 } = {}) {
   }
   const L = loop.length, n = loop.rounds.length, end = lastT(notes);
   const placed = placeIn(notes, L);
+  // (span: what each round really covered, [from, to) beats inside it; else every round but the last is whole and the
+  // last reaches as far as its last hit)
   const reach = (k) => (k < n - 1 ? Infinity : cellOf(end - k * L));
+  const within = span ? (k, c) => { const r = span[k]; return !!r && c * CELL >= r[0] - 1e-6 && c * CELL < r[1] - 1e-6; } : (k, c) => c <= reach(k);
   const played = new Map();               // p -> Set of rounds
   const at = new Map();                   // `${p}@${c}` -> Map(k -> note)
   for (const { n: x, k, c } of placed) {
@@ -109,7 +125,7 @@ export function foldRounds(notes, loop, { bpb = 4 } = {}) {
   const kept = [], strays = [];
   for (const [key, m] of at) {
     const [p, c] = key.split('@').map(Number);
-    const eligible = [...played.get(p)].filter((k) => c <= reach(k)).length;
+    const eligible = Math.max(1, [...played.get(p)].filter((k) => within(k, c)).length);
     const present = m.size;
     const need = eligible <= 1 ? 1 : eligible === 2 ? 2 : Math.ceil(eligible / 2);
     const hits = [...m.values()];
@@ -190,6 +206,47 @@ export function readingsOf({ notes, length, bpm }, { bpb = 4, lo = 60, hi = 180 
   return out;
 }
 
+// A hum in free time: the readings Not quite? lists (above). Each is the hum's notes on a count: where each note
+// starts on it (tidied), how long it was sung, and where it fell as sung (raw).
+const nearBpm = (a, b, tol = 0.04) => Math.abs(a / b - 1) <= tol;
+/** @param {{ segs: Array<{ t0: number, t1: number, midi?: number, p?: number, v?: number }>, fit?: any }} take */
+export function humReadingsOf({ segs, fit = null }, { bpb = 4, lo = 60, hi = 180 } = {}) {
+  if (!segs || !segs.length) return [];
+  const f = fit || fitSegs(segs, { lo, hi });
+  if (!f) return [];
+  const lengthOf = (ns) => Math.max(bpb, Math.ceil((ns.reduce((m, n) => Math.max(m, n.t + n.d), 0) - 1e-9) / bpb) * bpb);
+  const of = (x, why, shift = 0) => {
+    const notes = segs.map((s, i) => ({ p: s.p ?? Math.round(s.midi), t: r4(x.starts[i] + shift), d: r4(Math.max(CELL, x.ends[i] - x.starts[i])), v: s.v ?? 0.8, raw: r4(x.raws[i] + shift) }))
+      .sort((a, b) => a.t - b.t || a.p - b.p);
+    return { bpm: r4(x.bpm), shift, notes, length: lengthOf(notes), why, fit: x.fit };
+  };
+  const cur = of(f, 'first');
+  // the other strong counts: slower tatums' readings, the steadiest first, none this tempo or its octave
+  const tatum = 60 / (f.bpm * (f.sub || 1));
+  const counts = [];
+  for (const k of [1.15, 1.3, 1.5]) {
+    if (tatum * k > 1.2) break;   // (timing.js reads tatums up to 1.25 s)
+    const o = fitSegs(segs, { lo, hi, minTatum: tatum * k });
+    if (!o || o.bpm < lo || o.bpm > hi || [1, 2, 0.5].some((m) => nearBpm(o.bpm, f.bpm * m)) || counts.some((c) => nearBpm(c.bpm, o.bpm))) continue;
+    counts.push(o);
+  }
+  counts.sort((a, b) => b.fit - a.fit);
+  // the other phase: the first was a pickup, bar 1 is the next note on a beat
+  // (and, short of three, the one after that)
+  const ons = [...new Set(cur.notes.filter((n) => n.t > 1e-9 && n.t < bpb && Math.abs(n.t - Math.round(n.t)) < 1e-9).map((n) => n.t))];
+  const [pickup = null, pickup2 = null] = ons.slice(0, 2).map((t) => of(f, 'pickup', r4(bpb - t)));
+  const scaled = (k, why) => {
+    const b = r4(f.bpm * k);
+    if (b < lo || b > hi) return null;
+    const notes = cur.notes.map((n) => ({ ...n, t: r4(n.t * k), d: r4(Math.max(CELL, n.d * k)), raw: r4(n.raw * k) }));
+    return { bpm: b, shift: 0, notes, length: lengthOf(notes), why, fit: f.fit };
+  };
+  const octs = [scaled(0.5, 'slower'), scaled(2, 'faster')].filter(Boolean).sort((a, b) => Math.abs(Math.log2(a.bpm / 100)) - Math.abs(Math.log2(b.bpm / 100)));
+  const out = [cur];
+  for (const x of [counts[0] ? of(counts[0], 'count') : pickup, octs[0], pickup, counts[1] && of(counts[1], 'count'), octs[1], counts[2] && of(counts[2], 'count'), pickup2]) if (x && out.length < 3 && !out.includes(x)) out.push(x);
+  return out;
+}
+
 // A beat tapped in free time, from the hits to the loop: timing.js fitHits, then the tempo's octave (a beat read with
 // no step between its beats above 125 BPM is a beat in eighths at half that: the 8ths were read as the beats), the
 // loop, the fold, the 1 and the readings.
@@ -228,12 +285,18 @@ export function moved(notes, level = 'tight', { bpm = 120 } = {}) {
   return { n: offs.length, ms: offs.length ? Math.round(offs.reduce((a, b) => a + b, 0) / offs.length) : 0 };
 }
 
-export function steadiest(rounds) {
+export function steadiest(rounds, { grid = 0 } = {}) {
   let best = -1, bestE = Infinity;
+  // (with a grid, a note the snap put off it was sung further off than |raw - t| says: it counts from the grid line
+  // nearest where it was sung)
+  const off = (n) => {
+    if (!grid || Math.abs(n.t / grid - Math.round(n.t / grid)) < 1e-6) return Math.abs(n.raw - n.t);
+    return Math.abs(n.raw - Math.round(n.raw / grid) * grid);
+  };
   rounds.forEach((r, i) => {
     const ns = (r.notes || []).filter((n) => n.raw != null);
     if (!ns.length) return;
-    const e = ns.reduce((a, n) => a + Math.abs(n.raw - n.t), 0) / ns.length;
+    const e = ns.reduce((a, n) => a + off(n), 0) / ns.length;
     if (e <= bestE + 1e-9) { bestE = e; best = i; }
   });
   return best;

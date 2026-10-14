@@ -16,11 +16,9 @@ claude.ai (Anthropic's cloud)                     relay (server/relay.js)       
 
 ## For the human
 
-**Live.** The relay runs at `https://overdub-relay.ajsmithhq.com`, and every studio shows the Connect tab: the
-`relay` feature toggle (`on('relay')`, `app/src/toggles.js`) is on, and every deploy writes it on (`deploy: 'on'`;
-`tools/prod-check.js` fails if it's off). Turned off in `deploy/site-config.json`, the live site has no Connect tab, no
-`app.remote` and no request to the relay; only a local studio with `?relay=` shows it. The relay trial's `?connect=1`
-switch is retired: no link switches a studio on the live site.
+**Live.** The relay runs at `https://overdub-relay.ajsmithhq.com`, and every studio shows the Connect tab
+(`tools/prod-check.js` fails if the live studio has none). The relay trial's `?connect=1` switch is retired: no link
+switches a studio on the live site.
 
 1. Open the studio, then the **Connect** tab in the right pane (next to Agent and History), and press **Turn on**.
 2. Copy the **connector URL**, `https://overdub-relay.ajsmithhq.com/s/<token>/mcp`.
@@ -194,8 +192,7 @@ Sessions live for 24 hours idle.
 `RELAY = 'https://overdub-relay.ajsmithhq.com'`. `?relay=http://localhost:<port>` overrides it for tests and local
 work, and only when the studio itself runs on localhost (`relayOverride`): on the live site it is ignored, so a
 crafted link can't show the Connect tab or point someone's tab at another relay. The studio's Content Security
-Policy allows the hosted relay's origin in `connect-src`, and loopback for local work; the `relay` toggle (on) shows the
-Connect tab on the live site.
+Policy allows the hosted relay's origin in `connect-src`, and loopback for local work.
 
 ## Limits
 
@@ -456,7 +453,8 @@ Claude Code needs no checkout: `claude mcp add --transport http overdub <relay>/
 | `RELAY_OAUTH_DEV` | `1` allows `http://localhost` for the URLs above; never in a deploy |
 
 The browser's mode is kept in `overdub:remote-mode` from the first load, so a reload or a new tab stays in account
-mode. In the studio, account mode turns on with the `accounts` toggle (`on('accounts')`, `app/src/toggles.js`), or locally with both
+mode. In the studio, account mode is there when the deploy's site config names the account service
+(`"accounts": { "api": "https://api.overdubstudio.com" }`, `app/src/site-config.js`), or locally with both
 `?relay=http://localhost:<port>` and `?cloud=http://localhost:<port>`. `tools/relay-test.js` covers it with a fake
 account service.
 

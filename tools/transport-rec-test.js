@@ -396,10 +396,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(400);
     const blank = await E(() => { const c = document.querySelector('.ar-empty-card'); const b = c && [...c.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Tap a beat'); return { card: !!c && c.getClientRects().length > 0, primary: b?.classList.contains('btn-go') }; });
     T.ok(blank.card && blank.primary, `a blank song's first screen offers Tap a beat first (${JSON.stringify(blank)})`);
-    // (Tap a beat opens Start a song's stage, ui/start.js; its "Play to a click instead" is the first minute)
-    await E(() => [...document.querySelectorAll('.ar-empty-card button')].find((x) => x.textContent.trim() === 'Tap a beat')?.click());
-    await sleep(300);
-    await E(() => [...document.querySelectorAll('.st-stage button')].find((x) => x.textContent.trim() === 'Play to a click instead')?.click());
+    // (Tap a beat opens Start a song's stage, ui/start.js, which has a click view of its own; the first minute with a
+    // click is app.onboard.firstMinute, which the door uses when there's no stage)
+    await E(() => window.overdub.onboard.firstMinute('tap'));
     await sleep(900);
     const nb = await E(() => { const o = window.overdub, p = o.store.get(); return { tracks: p.tracks.map((t) => t.name), loop: p.loop, playing: o.engine.playing, click: o.engine.metronome, step: o.onboard.step, card: !!document.querySelector('.ob') }; });
     T.ok(nb.tracks.includes('Drums') && nb.loop.on && nb.loop.end - nb.loop.start === 8 && nb.playing && nb.click && nb.card && nb.step === 'take', `and, with a click, it starts the first minute on a new Drums track (${JSON.stringify(nb)})`);
@@ -529,6 +528,54 @@ for (const w of [1280, 1366, 1440]) {
     await E(() => window.overdub.input.recorder.cancel());
     const errs = errors.filter((e) => !ignorable(e));
     T.ok(!errs.length, `phone: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
+  } finally { await s.close(); }
+}
+
+/* ================================================================ R on a drum track set to Fold folds the passes */
+// Three times round a 1-bar loop on Drums with R: what's played in two of three rounds or more stays; a kick played in
+// one round only is left out (in Takes with its pass), and the toast says so with Show them. A drum track's default is
+// Layer (Q-F: AJ chose layer, 2026-10-11); Fold is picked for the track.
+{
+  const s = await open('/app/', { width: 1440, height: 900 });
+  const { page, errors } = s;
+  const E = (fn, a) => page.evaluate(fn, a);
+  try {
+    await E(() => { localStorage.setItem('overdub:welcomed', '1'); });
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+    const d = await E(async () => {
+      const o = window.overdub;
+      o.onboard?.stop?.();
+      await o.exporter.newSong();
+      await new Promise((r) => setTimeout(r, 300));
+      const id = o.store.dispatch([{ type: 'project.set', patch: { tempo: 120, loop: { on: true, start: 0, end: 4 } } }, { type: 'track.add', ref: 'd', track: { name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} } } }], { by: 'you', label: 'a loop and Drums' }).created.d;
+      o.ui.select({ track: id });
+      o.input.setMode('tap');
+      o.input.recorder.setCountIn(1);
+      o.engine.seek(0);
+      const dflt = o.input.recorder.modeFor(id);
+      return { id, dflt, mode: o.input.recorder.setMode(id, 'fold'), opts: null };
+    });
+    await sleep(300);
+    const until = async (b) => { for (let i = 0; i < 2000; i++) { const g = await E(() => window.overdub.engine.gridBeat ?? -1e9); if (g >= b - 0.015) return g; await sleep(Math.max(1, Math.min(200, (b - g) * 500 - 25))); } return null; };
+    const hit = async (k) => { await page.keyboard.down(k); await sleep(50); await page.keyboard.up(k); };
+    await E(() => window.overdub.transport.record());
+    // rounds: kick on 2 and snare on 3 every time; a kick on 4 in round 2 only
+    for (const [b, k] of [[1, 'KeyF'], [2, 'KeyJ'], [5, 'KeyF'], [6, 'KeyJ'], [7, 'KeyF'], [9, 'KeyF'], [10, 'KeyJ']]) { await until(b); await hit(k); }
+    await until(11.5);
+    await page.keyboard.press('Space');
+    for (let i = 0; i < 60 && (await E(() => window.overdub.input.recorder.state)) !== 'idle'; i++) await sleep(50);
+    await sleep(300);
+    const r = await E((id) => { const o = window.overdub, t = o.store.track(id); return { clips: t.clips.map((c) => c.notes.map((n) => `${n.p}@${n.t}`).join(' ')), part: o.input.recorder.last?.parts?.[0] && { mode: o.input.recorder.last.parts[0].mode, kept: o.input.recorder.last.parts[0].kept, left: o.input.recorder.last.parts[0].left }, toast: [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).pop() || '', hist: o.store.history.length }; }, d.id);
+    T.ok(d.dflt === 'layer', `a drum track's default is still Layer (${d.dflt})`);
+
+    T.ok(d.mode === 'fold' && r.part?.mode === 'fold' && r.clips.join(' | ') === '36@1 38@2' && r.part.kept === 2 && r.part.left === 1, `R on a drum track set to Fold folds: three passes, the kick played once is left out (${r.clips.join(' | ')}; ${JSON.stringify(r.part)})`);
+    T.ok(/Kept 2; left out 1\..*Show them/.test(r.toast), `the take's toast: "${r.toast.slice(0, 120)}"`);
+    // Layer is still there, under its id, and remembered for the track
+    const lay = await E((id) => { const o = window.overdub; o.input.recorder.setMode(id, 'layer'); return o.input.recorder.modeFor(id); }, d.id);
+    T.ok(lay === 'layer', `Layer is still a choice for a drum track (${lay})`);
+    const errs = errors.filter((e) => !ignorable(e));
+    T.ok(!errs.length, `fold: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await s.close(); }
 }
 

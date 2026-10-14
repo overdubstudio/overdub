@@ -72,7 +72,8 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
   let current = null;           // what the chip shows: a quote, or { free }
   function freeFor(text) {
     let devices = [];
-    try { devices = listDevices(); } catch { devices = []; }
+    try { devices = listDevices();
+ } catch { devices = []; }
     return freeMove(text, { devices, hasTrack: !!ui.state.selection?.track });
   }
   function update() {

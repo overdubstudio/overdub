@@ -655,6 +655,35 @@ try {
   t.ok(!errs.length, 'no page errors' + (errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''));
   await studio.close(); studio = null;
 
+  // ---- the community shelf on the live site (R20): the fixture shelf as the studio's own copy (tools/community-live.js). Over the relay the tool answers from it,
+  // without `trusted`; the catalog doesn't move (no schema change), and it's still 40 tools.
+  {
+    const { liveRoutes } = await import('./community-live.js');
+    const s = studio = await open('/app/', { query: 'new' });
+    const configs = [], lerrs = [];
+    // (the link this file already made: a new one would spend the relay's new-link allowance for this address)
+    await s.page.evaluate((k) => localStorage.setItem('overdub:remote-secret', k), secret2);
+    await liveRoutes(s.page, { origin: s.base, local: s.base, bundled: path.join(ROOT, 'tools/fixtures/community-fake'), errors: lerrs, configs });
+    await s.page.goto(`${s.base}/app/?demo&relay=${encodeURIComponent(base)}`, { waitUntil: 'load' });
+    await s.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+    await s.page.evaluate(() => window.overdub.community.ready());
+    await s.page.evaluate(() => window.overdub.remote.enable());
+    await s.page.waitForFunction(() => window.overdub.remote.state === 'on', null, { timeout: 15000 });
+    const tk = await s.page.evaluate(() => window.overdub.remote.token);
+    const ss = await session(base, tk);
+    const list = await listOf(base, tk, ss.sid);
+    const f = await call(base, tk, ss.sid, 'find_community_device', { limit: 20 });
+    const inPage = await s.page.evaluate(() => window.overdub.tools.run('find_community_device', { limit: 20 }, { by: 'claude' }));
+    const chk = spawnSync(process.execPath, [path.join(ROOT, 'tools/relay-catalog.js'), '--check'], { encoding: 'utf8' });
+    const shipped = JSON.parse(read('server/relay-catalog.json') || '[]');
+    t.ok(!f.res?.isError && f.data?.shelf?.vouched === true && f.data.results.length === inPage.results?.length && f.data.results.length >= 1
+      && f.data.results.every((x) => !('trusted' in x)) && inPage.results.every((x) => 'trusted' in x),
+      `shelf forced live: find_community_device through the relay answers from the studio's own copy (${f.data?.results?.length} results, vouched ${f.data?.shelf?.vouched}) with no \`trusted\`; the in-page agent gets it`);
+    t.ok(same(list, CATALOG) && list.length === 40 && shipped.length === 40 && chk.status === 0 && !lerrs.length && !realErrors(s.errors).length,
+      `shelf forced live: tools/list is still the catalog, server/relay-catalog.json is unchanged (relay-catalog.js --check: ${chk.status === 0 ? 'current' : 'stale'}), ${list.length} tools`);
+    await s.close(); studio = null;
+  }
+
   // ---- WebKit and Firefox: the tab reads its event stream with fetch (so the secret can go in a header), which every
   // engine has to stream; each turns Connect on and answers calls through the relay. (Skipped where not installed.)
   {
@@ -736,7 +765,7 @@ try {
     });
     t.ok(JSON.stringify(pure) === JSON.stringify(['http://127.0.0.1:8787', 'http://localhost:8787', 'https://relay.example', null, null, null, null]), `?relay= counts only on a local studio (localhost, 127.0.0.1): ${JSON.stringify(pure)}`);
     // the live site, played by a made-up origin served from the local server (nothing leaves this machine). Its
-    // app/site-config.json is the one given (the feature toggles, app/src/toggles.js), or the local server's when none is
+    // app/site-config.json is the one given, or the local server's when none is
     const PUB = 'https://overdub.example';
     const HOSTED = ['https://overdub-relay.ajsmithhq.com', 'https://relay.overdubstudio.com'], API = 'https://api.overdubstudio.com';
     const pubContext = async (config) => {
@@ -750,9 +779,8 @@ try {
       });
       return c;
     };
-    const RELAY_ON = { toggles: { relay: 'on' } };
     // for someone who had Connect on: a link with ?relay=<the relay above>
-    const ctx = await pubContext(RELAY_ON);
+    const ctx = await pubContext({});
     await ctx.addInitScript(() => { try { localStorage.setItem('overdub:remote-on', '1'); } catch { /* no storage */ } });
     const pub = await ctx.newPage();
     const sent = [];
@@ -776,29 +804,26 @@ try {
       const r = await pv.evaluate(() => {
         const R = window.overdub.remote;
         return { tab: !!document.querySelector('.ew-tab[title="Connect"]'), remote: R !== undefined, relay: R?.relay || null, state: R?.state || null, mode: R?.mode || null,
-          account: !!R?.account, url: R?.url || '', on: window.overdub.toggles.list().filter((x) => x.on).map((x) => `${x.id}:${x.by}`).join(','),
+          account: !!R?.account, url: R?.url || '',
           preview: localStorage.getItem('overdub:remote-preview') };
       });
       await c.close();
       return { ...r, hosted: hosted.length, api: api.length };
     };
-    // relay on (what every deploy writes): Connect for everyone, the hosted relay, off until Turn on, the private link
-    // only (accounts off), and nothing sent before Turn on
-    const plain = await look(RELAY_ON);
-    t.ok(plain.tab && plain.relay === 'https://overdub-relay.ajsmithhq.com' && plain.state === 'off' && plain.on === 'relay:site' && !plain.hosted,
-      `{"toggles":{"relay":"on"}} on the live site: Connect shows, for the hosted relay only (${plain.relay}), off until Turn on (state ${plain.state}; toggles ${plain.on}; ${plain.hosted} requests to a relay)`);
+    // every studio: Connect for everyone, the hosted relay, off until Turn on, the private link only (no account
+    // service named), and nothing sent before Turn on
+    const plain = await look({});
+    t.ok(plain.tab && plain.relay === 'https://overdub-relay.ajsmithhq.com' && plain.state === 'off' && !plain.hosted,
+      `{} on the live site: Connect shows, for the hosted relay only (${plain.relay}), off until Turn on (state ${plain.state}; ${plain.hosted} requests to a relay)`);
     t.ok(plain.mode === 'link' && !plain.account && /^https:\/\/overdub-relay\.ajsmithhq\.com\/s\/[A-Za-z0-9_-]{22}\/mcp$/.test(plain.url) && !plain.api,
-      `with relay on and accounts off: the private link only (${plain.mode}), and ${plain.api} requests to api.overdubstudio.com`);
-    // relay off ({}): nothing at all, and the retired ?connect=1 doesn't bring it back (or write its old key)
-    const none = await look({});
-    t.ok(!none.tab && !none.remote && !none.hosted && !none.api && none.on === '',
-      `{} on the live site: no Connect tab (${none.tab}), no app.remote (${none.remote}), ${none.hosted} requests to either relay, ${none.api} to the account service`);
+      `with no account service in the site config: the private link only (${plain.mode}), and ${plain.api} requests to api.overdubstudio.com`);
+    // the retired ?connect=1 turns nothing on (or writes its old key)
     const asked = await look({}, '&connect=1');
-    t.ok(!asked.tab && !asked.remote && !asked.hosted && asked.preview === null, `{} with ?connect=1 (retired): still no Connect tab (${asked.tab}), nothing stored (${asked.preview}), ${asked.hosted} requests`);
-    // ?on= is for a studio on this machine: on the live site it turns nothing on
-    const acc = await look(RELAY_ON, '&on=accounts');
-    t.ok(acc.tab && acc.mode === 'link' && !acc.account && acc.on === 'relay:site' && !acc.api,
-      `?on=accounts on the live site does nothing: no account mode (${acc.mode}, toggles ${acc.on}), ${acc.api} requests to api.overdubstudio.com`);
+    t.ok(asked.tab && asked.state === 'off' && !asked.hosted && asked.preview === null, `?connect=1 (retired): Connect stays off (${asked.state}), nothing stored (${asked.preview}), ${asked.hosted} requests`);
+    // Sign in with Overdub is configuration only: a site config naming the account service gives account mode
+    const acc = await look({ accounts: { api: API } });
+    t.ok(acc.tab && acc.account && acc.mode === 'account' && acc.url === 'https://relay.overdubstudio.com/mcp',
+      `{"accounts":{"api":"${API}"}} on the live site: account mode (${acc.mode}, ${acc.url})`);
     await s.close(); studio = null;
   }
 

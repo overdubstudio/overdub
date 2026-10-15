@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://mcp.overdubstudio.com http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://mcp.overdubstudio.com https://api.next.overdubstudio.com http://localhost:* http://127.0.0.1:*; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta charset="utf-8">
   <!-- The policy comes first, so it covers everything the page loads. The page keeps no API key (a self-hoster's key
        stays on their local server: server/local-claude.js), but it holds the person's songs and devices and drives
@@ -22,11 +22,15 @@
        - connect-src http://localhost:* http://127.0.0.1:* : a relay on this machine (?relay=, which the studio honours
          only when it is itself on localhost; tools/relay-test.js, node server/relay.js). A meta policy can't depend on
          the host, so the live site carries these two as well, but nothing there connects to them.
-       - Not here yet: a deploy that switches on Claude on Overdub credits (cloud.api in app/site-config.json;
-         src/site-config.js) adds its service's origin to connect-src, and only
-         there: signing in is a popup window on the service's own origin (Google, then its done page), which this
-         policy doesn't govern, so there is no frame-src. Without it the studio asks no cloud origin anything; on a
-         local studio the loopback entries above already let it reach a local service.
+       - connect-src https://api.next.overdubstudio.com : the staging cloud service (overdub-cloud), Claude on Overdub
+         credits and its sign-in with Google (src/agent/cloud.js, cloud-panel.js, account.js). The studio asks it
+         anything only when app/site-config.json's cloud.api names it, and only the preview's copy does
+         (deploy/next-config.json; deploy/README.md, "The site config"). A meta policy can't depend on the host, so the
+         live site carries this origin too, but its config names no cloud (there is no production service yet), so it
+         never connects; the API's CORS answers only https://next.overdubstudio.com anyway. A production service gets
+         its own origin here, in the change that names it in deploy/live-config.json. Signing in is a popup window on
+         the service's own origin (Google, then its done page), which this policy doesn't govern, so there is no
+         frame-src. On a local studio the loopback entries above already let it reach a local service.
        tools/compat-test.js checks that a session raises no violation in each browser, and tools/relay-test.js that
        connect-src names RELAY. -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">

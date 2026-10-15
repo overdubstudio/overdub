@@ -8,7 +8,8 @@
 //      infra/live promises, read from its HCL (the cutover variable, the production-only role, the private buckets);
 //      deploy/analytics/setup.sh and deploy/deploy.sh (live and --next) plan the right things with DRY_RUN=1 (a stub aws
 //      on PATH, no credentials); a live deploy off GitHub Actions is refused, and the live site's config is the committed
-//      deploy/live-config.json; the config the deploy writes puts up the Preview ribbon on the preview (desktop and
+//      deploy/live-config.json, which names no cloud; the preview's lays deploy/next-config.json over it (the staging cloud
+//      API, which the studio's connect-src allows); the config the deploy writes puts up the Preview ribbon on the preview (desktop and
 //      phone), and nothing is counted there; the live site has no ribbon
 import fs from 'node:fs';
 import os from 'node:os';
@@ -272,9 +273,10 @@ try {
     // the scripts, dry: a stub aws comes first on PATH and there are no credentials, so nothing here reaches AWS
     const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'next-dry-'));
     fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
-    const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
+    const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', NEXT_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
     // DEPLOY_ENV=/dev/null: the scripts would otherwise read deploy/.env;
     // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from REF's deploy/live-config.json;
+    // NEXT_CONFIG=/dev/null: and lay REF's deploy/next-config.json over it on --next (checked below without it);
     // COMMUNITY_PIN=/dev/null (dry runs only): no shelf, so no overdub-devices checkout is needed (tools/community-test.js
     // checks the shelf's part)
     for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF',
@@ -359,6 +361,33 @@ try {
     t.ok(liveB && JSON.stringify(liveB) === JSON.stringify({ other: { api: 'https://switch.example' } }) && !('preview' in liveB)
       && nextB && nextB.other && nextB.other.api === 'https://switch.example' && nextB.preview === true && nextB.ref === ref,
       `the base config reaches both sites; the preview adds to it and drops nothing (${JSON.stringify(liveB)}, ${JSON.stringify(nextB)})`);
+    // the preview's overlay: REF's deploy/next-config.json goes over the base on --next only, so the preview names the
+    // staging cloud API and the live site names none (there is no production service yet)
+    const show = (f) => { try { return JSON.parse(spawnSync('git', ['show', `HEAD:${f}`], { cwd: ROOT, encoding: 'utf8' }).stdout); } catch { return null; } };
+    const nextJson = show('deploy/next-config.json');
+    const nextO = run('deploy/deploy.sh', { NEXT_CONFIG: '' }, '--skip-tests', '--next', 'HEAD'), nextOCfg = cfgOf(nextO.out);
+    t.ok(clean(nextO) && nextJson?.cloud?.api === 'https://api.next.overdubstudio.com' && nextOCfg?.cloud?.api === nextJson.cloud.api
+      && nextOCfg.preview === true && /^site config: HEAD:deploy\/next-config\.json over the base \(cloud\)$/m.test(nextO.out),
+      `--next ships cloud.api from REF's deploy/next-config.json (${JSON.stringify(nextOCfg?.cloud)})`);
+    t.ok(comCfg && !('cloud' in comCfg) && !('accounts' in comCfg) && !/next-config/.test(comOut) && liveJson && !('cloud' in liveJson) && !('accounts' in liveJson),
+      `a live deploy ships no cloud or accounts key and never reads next-config.json (${JSON.stringify(Object.keys(comCfg || {}))})`);
+    // shallow, per top-level key: an overlay entry replaces the base's whole entry; the rest of the base stays
+    const overlay = path.join(stub, 'next-config.json');
+    fs.writeFileSync(base, JSON.stringify({ stems: { id: 'a', keep: 1 }, other: 1 }));
+    fs.writeFileSync(overlay, JSON.stringify({ stems: { id: 'b' }, cloud: { api: 'https://api.example' }, preview: false }));
+    const merged = cfgOf(run('deploy/deploy.sh', { SITE_CONFIG: base, NEXT_CONFIG: overlay }, '--skip-tests', '--next', 'HEAD~1').out);
+    t.ok(merged && merged.other === 1 && merged.cloud?.api === 'https://api.example' && merged.stems?.id === 'b' && !('keep' in merged.stems) && merged.preview === true && merged.ref === ref,
+      `the overlay goes over the base one top-level key at a time, and the preview's own keys win (${JSON.stringify(merged)})`);
+    fs.writeFileSync(overlay, '[1]');
+    const badO = run('deploy/deploy.sh', { NEXT_CONFIG: overlay }, '--skip-tests', '--next', 'HEAD~1');
+    t.ok(badO.status !== 0 && /not deploying: .*next-config\.json is not a JSON object/.test(badO.out) && !/aws (s3|cloudfront)/.test(badO.out), `an overlay that isn't a JSON object stops a preview deploy (exit ${badO.status})`);
+    // the studio's policy lets it reach every cloud origin a committed config names, and the comment says why
+    const page = fs.readFileSync(path.join(ROOT, 'app/index.html'), 'utf8');
+    const connect = (/connect-src ([^;]*)/.exec(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(page)?.[1] || '')?.[1] || '').split(/\s+/);
+    const named = [nextJson, liveJson].flatMap((c) => [c?.cloud?.api, c?.accounts?.api]).filter(Boolean);
+    const comment = (/<!--([\s\S]*?)-->/.exec(page)?.[1] || '').replace(/\s+/g, ' ');
+    t.ok(named.length && named.every((o) => connect.includes(new URL(o).origin) && comment.includes(`connect-src ${new URL(o).origin}`)),
+      `app/index.html's connect-src names every cloud origin the committed configs name (${named.join(', ')}), and its comment says why`);
     // the feature toggles are retired (merged means shipped): a "toggles" left in the base is dropped, with a line
     fs.writeFileSync(base, JSON.stringify({ toggles: { relay: 'on' }, other: 1 }));
     const oldR = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'), old = cfgOf(oldR.out);

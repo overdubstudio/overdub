@@ -14,7 +14,8 @@
 // path is on this site; the runtime defaults to vendor/ort/ort.webgpu.min.mjs and must be on this site (the studio's
 // CSP runs scripts from 'self' only: the runner refuses another origin, deploy.sh stages it there from runtimeFrom).
 // The local server answers the deploy's defaults when there's no file (server/serve.js, with OVERDUB_CLOUD_ORIGIN and
-// OVERDUB_STEMS_*); deploy/deploy.sh ships REF's deploy/live-config.json, or {}.
+// OVERDUB_STEMS_*); deploy/deploy.sh ships REF's deploy/live-config.json, or {}, and on the preview REF's
+// deploy/next-config.json over it (today cloud.api, the staging service; the live site names no cloud).
 //
 // ?cloud=<origin> points a local studio at a local service, for development and tests: only when the studio itself is
 // on this machine and the origin is on this machine too, so a link can never send someone's song to another server.

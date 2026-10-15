@@ -16,7 +16,7 @@ committed (`git archive`), never the working tree. Their AWS is **Terraform's** 
 | Runs | `deploy/deploy.sh --skip-tests <sha>`, then `node tools/prod-check.js` | `deploy/deploy.sh --skip-tests --next <sha>` |
 | AWS role | `overdub-live-deploy-github`, only for a job in the `production` environment | `overdub-next-deploy-github`, only for runs on main |
 | Repository variables | `LIVE_DEPLOY_ROLE`, `LIVE_DISTRIBUTION` | `NEXT_DEPLOY_ROLE`, `NEXT_DISTRIBUTION` |
-| `app/site-config.json` (never committed) | REF's `deploy/live-config.json` (committed: today only the `stems` entry) | the same, plus `preview` and the commit |
+| `app/site-config.json` (never committed) | REF's `deploy/live-config.json` (committed: today only the `stems` entry; no cloud) | the same, with REF's `deploy/next-config.json` over it (the staging cloud API), plus `preview` and the commit |
 | Search engines | indexed | `X-Robots-Tag: noindex, nofollow` on every response |
 | Counts (`app/src/analytics.js`) | on (`infra/live` logs; `deploy/analytics/setup.sh`, `tools/stats.sh`) | off (they count on `overdubstudio.com` only) |
 
@@ -68,8 +68,23 @@ Today the file holds the stems runner's entry: the model (`modelFrom`, `s3://ove
 with `aws s3 cp` under the deploy's own credentials and checked against `sha256`) and the onnxruntime-web runtime
 (`runtimeFrom`, a pinned jsDelivr directory, checked against `runtimeSha256`), both staged beside the studio
 (`deploy/stage-stems.js`). Both deploy roles may read the models bucket. One that can't be staged stops a live deploy;
-on `--next` it's a warning and the preview ships with no stems entry (stems off there). The preview's copy adds
-`"env": "preview", "preview": true, "ref": "<commit>"`, keeping every other key as it is.
+on `--next` it's a warning and the preview ships with no stems entry (stems off there).
+
+The preview's copy then lays **REF's `deploy/next-config.json`** over that base (a live deploy never reads it), and adds
+`"env": "preview", "preview": true, "ref": "<commit>"`, keeping every other key as it is. The overlay is shallow, one
+top-level key at a time: a key in `next-config.json` replaces the base's whole entry (to change one field of `stems`
+there, restate all of `stems`), and the three preview keys win over both. Today it names only the staging cloud API,
+`{ "cloud": { "api": "https://api.next.overdubstudio.com" } }` (overdub-cloud, deployed by its own repo; its CORS
+answers only https://next.overdubstudio.com), so Claude on Overdub credits and its sign-in with Google can be tried on
+the preview. It doesn't name `accounts.api`: Sign in with Overdub for Connect also needs the account relay
+(`ACCOUNT_RELAY`, relay.overdubstudio.com) and overdub-cloud's OAuth side (`OAUTH_ENABLED`), and neither is deployed.
+The live config names no cloud, as there is no production service yet. The studio's CSP (`app/index.html`) allows the
+staging origin in `connect-src` on both sites, since a `<meta>` policy can't vary by host; the live studio never
+connects to it because its config doesn't name it. A production service is a change to `deploy/live-config.json` and
+that `connect-src` together. `NEXT_CONFIG=<file>` reads another overlay instead of REF's (no file, or one that can't be
+read, is `{}`); like `SITE_CONFIG`, it's for a developer's experiment and the dry-run checks. An overlay that isn't a
+JSON object stops the preview deploy. `tools/analytics-test.js` checks that `--next` ships `cloud.api` from it, that a
+live deploy ships no cloud key, and that every cloud origin a committed config names is in the studio's `connect-src`.
 
 ## The community shelf (`app/community/`)
 

@@ -1849,11 +1849,12 @@ from the shell), adds it and the API version to the page's Messages API request,
 `/local/status` says `key: true` when one is set, never the key. The page keeps no key: `overdub:anthropic-key`, the
 old in-browser key, is deleted on load and noted once (`overdub:agent:key-retired`). The public site has no `/local/`.
 
-**Claude on Overdub credits** (provider `'cloud'`; built, not switched on): Claude run by Overdub's own service and
+**Claude on Overdub credits** (provider `'cloud'`; on the preview only, against the staging service; not on the live site): Claude run by Overdub's own service and
 paid for with credits, for people without a Claude of their own. It's off unless the deploy names the
 service in `app/site-config.json` (`"cloud": { "api" }`; gitignored; `app/src/site-config.js` reads it once per load,
 `server/serve.js` answers it from `OVERDUB_CLOUD_ORIGIN` when there's no file, `deploy/deploy.sh` ships
-REF's `deploy/live-config.json` (or `SITE_CONFIG=<file>`) or `{}`; its other entries are the account service, `"accounts": { "api" }` (agent/remote.js),
+REF's `deploy/live-config.json` (or `SITE_CONFIG=<file>`) or `{}`, and on the preview REF's `deploy/next-config.json` over it,
+which names the staging service, `https://api.next.overdubstudio.com`; its other entries are the account service, `"accounts": { "api" }` (agent/remote.js),
 and the stems runner, "Jobs and the stems runner" above). With no configuration it stays absent.
 `?cloud=` points a local studio at a local service only. No prices live here: the rate card, plans and packs come from the
 service's `GET /v1/config`.

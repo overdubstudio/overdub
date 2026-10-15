@@ -286,9 +286,10 @@ try {
     // (tools/check.sh validates it; the plan itself needs credentials)
     const hcl = (f) => fs.readFileSync(path.join(ROOT, 'infra/live', f), 'utf8');
     const cdn = hcl('cdn.tf'), dns = hcl('dns.tf'), gh = hcl('github.tf'), bucket = hcl('bucket.tf'), vars = hcl('variables.tf');
-    t.ok(/variable "serve_names"[\s\S]*?default\s*=\s*false/.test(vars) && /aliases\s*=\s*var\.serve_names \? \[var\.domain, "www\.\$\{var\.domain\}"\] : \[\]/.test(cdn)
+    // on by default since the cutover (2026-10-14, #30); false still restores the pre-cutover shape
+    t.ok(/variable "serve_names"[\s\S]*?default\s*=\s*true/.test(vars) && /aliases\s*=\s*var\.serve_names \? \[var\.domain, "www\.\$\{var\.domain\}"\] : \[\]/.test(cdn)
       && /cloudfront_default_certificate = !var\.serve_names/.test(cdn) && /site_target = var\.serve_names \?/.test(dns) && /var\.old_distribution_domain/.test(dns),
-      'infra/live: the cutover is one variable: serve_names (false) gives the distribution no names and the default certificate, and keeps the apex and www records on the old distribution');
+      'infra/live: the cutover is one variable, serve_names, on by default since the cutover (false gives the distribution no names and the default certificate, and keeps the apex and www records on the old distribution)');
     t.ok(/"var CLOUDFRONT_NAME = \$\{var\.serve_names \? "false" : "true"\};"/.test(cdn) && /path-rewrite\.js/.test(cdn) && /name\s*=\s*"overdub-path-rewrite"/.test(cdn),
       'infra/live: until the cutover the path-rewrite function also serves the distribution\'s cloudfront.net name (CLOUDFRONT_NAME)');
     t.ok(/data "aws_iam_openid_connect_provider" "github"/.test(gh) && !/resource "aws_iam_openid_connect_provider"/.test(gh)

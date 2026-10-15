@@ -1,7 +1,10 @@
 // Checks for the kernel platform (app/src/kernel/*): the dsp stdlib, the worklet host, the device check, the
 // reference kernels and the agent guide. Runs in headless Chromium via tools/pw.js on tools/kernel-test.html.
 //   node tools/kernel-test.js            (QUICK=1 skips the slow full checks of the guide examples)
+import fs from 'node:fs';
 import { open, tally } from './pw.js';
+import { ROOMS_HASH } from '../app/src/devices/builtin/rooms-lib.js';
+import { dataPath } from '../app/src/engine/node/data.js';
 
 const T = tally('kernel');
 
@@ -656,9 +659,10 @@ try {
   // kernel 1.6-1.9x. The device check renders 4
   // s from a fresh instance, so it sees AULA's late partitions filling and create()'s warm-up: the steady state, 4 s
   // timed once AULA is full, is 5.1x Stairwell's in this page (5.5x in Node; tools/rooms-test.js holds that at 7x).
-  // Without the aachen bank it plays nothing and is skipped.
+  // Without the aachen bank it plays nothing and is skipped, decided here: asking the page for a bank that isn't
+  // there is a 404 in its console, which the page-errors check below would count.
   console.log('cpu: Echo Chamber against Stairwell');
-  const rc = await page.evaluate(async () => {
+  const rc = !fs.existsSync(dataPath(ROOMS_HASH)) ? { missing: true } : await page.evaluate(async () => {
     const { check } = window.K;
     const rooms = (await import('/app/src/devices/builtin/rooms.js')).default, verb = (await import('/app/src/devices/builtin/verb.js')).default;
     const { loadData } = await import('/app/src/kernel/data.js');

@@ -22,9 +22,11 @@ the agent asking before it takes anything out of a song from a link.
   key. A key that happens to be in the shell (`ANTHROPIC_API_KEY`) is never used, and is dropped from Claude Code's
   environment.
 - **The hosted agent, off in this repo.** Claude on Overdub credits (Claude run by Overdub's own service, paid for
-  with credits, for people without a Claude of their own) is built and not switched on. A deploy names the service in
-  `app/site-config.json`, which is never committed (`app/src/site-config.js`); with none, as here, in a fork and on
-  a self-hosted copy, the studio shows nothing of it and asks no cloud origin anything. Where it's on, it runs only
+  with credits, for people without a Claude of their own) is built, and on only on the preview
+  (next.overdubstudio.com), against the staging service (`deploy/next-config.json`); the live site's config names no
+  service. A deploy names the service in `app/site-config.json`, which is never committed (`app/src/site-config.js`);
+  with none, as here, in a fork, on a self-hosted copy and on the live site, the studio shows nothing of it and asks
+  no cloud origin anything. Where it's on, it runs only
   once the person chooses it and signs in, and a Claude of their own always comes first. While an ask runs, the
   person's words and what the agent's tools read from the song go to the service and on to Anthropic; the service
   holds the conversation in memory for that ask only, and keeps no prompts, songs or take ids, only what each ask

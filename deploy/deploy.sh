@@ -17,9 +17,12 @@
 # distribution_id), else the one whose alias is overdubstudio.com.
 # app/site-config.json, the deploy's switches, is never committed: this script is its one writer, for both sites. It
 # starts from REF's deploy/live-config.json (committed: the live site's config), else {}; SITE_CONFIG=<file> reads
-# another instead (a developer's local override; the old gitignored deploy/site-config.json is read only that way). The preview's copy adds
-# "env": "preview", "preview": true and the commit, so the studio wears the Preview ribbon (app/src/ui/preview.js); every
-# other key is kept as it is. With no "preview" key a studio is the live site. There are no feature toggles: what is
+# another instead (a developer's local override; the old gitignored deploy/site-config.json is read only that way). On
+# --next, REF's deploy/next-config.json (committed: what only the preview names, today the staging cloud API) goes over
+# that base, one top-level key at a time (an overlay key replaces the base's whole entry; NEXT_CONFIG=<file> reads
+# another overlay instead), and then "env": "preview", "preview": true and the commit, so the studio wears the Preview
+# ribbon (app/src/ui/preview.js); every other key is kept as it is. A live deploy never reads next-config.json. With no
+# "preview" key a studio is the live site. There are no feature toggles: what is
 # merged to main ships on the next live deploy, and unfinished work waits on its branch.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -72,7 +75,9 @@ git archive "$REF" site app $DOCS | tar -x -C "$STAGE"
 SHORT=$(git rev-parse --short "$REF^{commit}")
 # The deploy's switches (app/src/ui/preview.js reads env, preview and ref; other modules may read other keys): REF's
 # deploy/live-config.json (git show, like the files), else {}; SITE_CONFIG=<file> reads that file instead. The
-# preview's copy adds its three keys and keeps the rest.
+# preview's copy takes REF's deploy/next-config.json over it (NEXT_CONFIG=<file> reads that file instead; none, or an
+# unreadable file, is {}), shallow: each top-level key of the overlay replaces the base's, so the overlay must restate a
+# whole entry (all of "stems", say) to change one field of it. Then it adds its three keys and keeps the rest.
 if [ -n "${SITE_CONFIG:-}" ]; then
   if [ -f "$SITE_CONFIG" ]; then cp "$SITE_CONFIG" "$STAGE/app/site-config.json"; else echo '{}' > "$STAGE/app/site-config.json"; fi
   BASE_NAME=${SITE_CONFIG#"$ROOT"/}; [ -f "$SITE_CONFIG" ] || BASE_NAME="the site config ({})"
@@ -81,11 +86,27 @@ elif git show "$REF:deploy/live-config.json" > "$STAGE/app/site-config.json" 2>/
 else
   echo '{}' > "$STAGE/app/site-config.json"; BASE_NAME="the site config ({}: $REF has no deploy/live-config.json)"
 fi
+OVERLAY_SAID=
 if [ "$TARGET" = next ]; then
-  node -e 'const fs = require("fs"), [file, ref] = process.argv.slice(1);
+  OVERLAY='{}' OVERLAY_NAME=
+  if [ -n "${NEXT_CONFIG:-}" ]; then
+    if [ -f "$NEXT_CONFIG" ]; then OVERLAY=$(cat "$NEXT_CONFIG"); OVERLAY_NAME=${NEXT_CONFIG#"$ROOT"/}; fi
+  elif OVERLAY=$(git show "$REF:deploy/next-config.json" 2>/dev/null); then
+    OVERLAY_NAME="$REF:deploy/next-config.json"
+  else
+    OVERLAY='{}'
+  fi
+  if ! OVERLAY_SAID=$(node -e 'const fs = require("fs"), [file, ref, text, label] = process.argv.slice(1);
     const c = JSON.parse(fs.readFileSync(file, "utf8"));
     if (!c || typeof c !== "object" || Array.isArray(c)) throw new Error(file + " is not a JSON object");
-    fs.writeFileSync(file, JSON.stringify({ ...c, env: "preview", preview: true, ref }, null, 2) + "\n");' "$STAGE/app/site-config.json" "$SHORT"
+    let o;
+    try { o = JSON.parse(text); } catch (e) { console.log(`not deploying: ${label} is not JSON (${e.message})`); process.exit(1); }
+    if (!o || typeof o !== "object" || Array.isArray(o)) { console.log(`not deploying: ${label} is not a JSON object`); process.exit(1); }
+    fs.writeFileSync(file, JSON.stringify({ ...c, ...o, env: "preview", preview: true, ref }, null, 2) + "\n");
+    if (label && Object.keys(o).length) console.log(`site config: ${label} over the base (${Object.keys(o).join(", ")})`);' \
+    "$STAGE/app/site-config.json" "$SHORT" "$OVERLAY" "$OVERLAY_NAME"); then
+    echo "$OVERLAY_SAID"; exit 1
+  fi
 fi
 # The config must be a JSON object. A "toggles" key (the feature toggles, retired 2026-10-14: merged means shipped) is
 # dropped from the copy that ships, with a line, so an old deploy/site-config.json can't leave one on the site.
@@ -177,6 +198,7 @@ else
 fi
 echo "$TARGET: $SHORT ($REF): $(find "$STAGE" -type f | wc -l | tr -d ' ') files -> s3://$BUCKET, distribution $DIST"
 echo "app/site-config.json: $(tr -d '\n ' < "$STAGE/app/site-config.json")"
+if [ -n "$OVERLAY_SAID" ]; then echo "$OVERLAY_SAID"; fi
 if [ -n "$CONFIG_SAID" ]; then echo "$CONFIG_SAID"; fi
 echo "$STEMS_SAID"
 if [ -n "${STEMS_CHECK:-}" ]; then echo "$STEMS_CHECK"; fi

@@ -64,9 +64,17 @@ try {
       return null;
     }
     const fx = JSON.parse(JSON.stringify(store.get().tracks.find((t) => t.id === tid).inserts[0])), fxId = fx.id;
-    // one click first, unmeasured: the first after the interface opens can come out before the monitor's chain has
-    // settled (a null, or a block early); then five rounds, and the median of each
-    await clickOut();
+    // Unmeasured clicks first, until two in a row come out at the same sample (at most ten): the first after the
+    // interface opens can come out before the monitor's chain has settled (a null, or a block early), and an output
+    // device waking from idle (a Mac mini's own speakers, unlike a virtual device that never sleeps) keeps the input
+    // stream's buffering moving for a few clicks more. Then five rounds, and the median of each.
+    out.warmup = [];
+    for (let prev = null; out.warmup.length < 10; ) {
+      const d = await clickOut();
+      out.warmup.push(d);
+      if (d != null && d === prev) break;
+      prev = d;
+    }
     const withAmp = [], bypassed = [], without = [];
     for (let k = 0; k < 5; k++) {
       store.dispatch({ type: 'insert.set', track: tid, insert: fxId, patch: { on: true } }, { by: 'you' }); await engine.settled(); await w(300);
@@ -84,6 +92,7 @@ try {
   });
   T.ok(r.monitoring && r.auto && r.through === 'Guitar', `the interface opens and monitoring starts by itself, through the armed Guitar track (${r.through})`);
   T.ok(r.instLatency === 28 && r.trackLatency === 28, `Half Stack reports 28 samples (${(28 / r.sr * 1000).toFixed(2)} ms) and engine.latency puts the track at ${r.trackLatency}`);
+  T.note(`warm-up clicks until two agreed: ${r.warmup.map((x) => (x == null ? '-' : x)).join(', ')}`);
   const med = (a) => a.slice().sort((x, y) => x - y)[2];
   const dw = med(r.withAmp), db = med(r.bypassed), dn = med(r.without), extra = dw - dn;
   T.ok(r.withAmp.every((x) => x != null) && r.without.every((x) => x != null) && r.bypassed.every((x) => x != null) && extra >= 0 && extra * 1000 / r.sr <= 1,

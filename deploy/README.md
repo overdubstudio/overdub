@@ -175,11 +175,24 @@ browser storage).
 ## The live site from GitHub Actions
 
 `.github/workflows/deploy-live.yml` runs only by hand: Actions › deploy-live › Run workflow, on main, with `ref` (a
-SHA, a tag or `main`; empty is main's head). Its one job:
+SHA, a tag or `main`; empty is main's head). Two jobs.
+
+**e2e**, first, on Peter's self-hosted Mac mini (`ghastly`, labels `self-hosted, macOS, ARM64, overdub-e2e`): it
+resolves the ref the same way (a commit on main), then runs the whole end-to-end suite, `node tools/run-all.js` one
+suite at a time (`PAR=1`, so the real-time checks have the machine to themselves), the browsers, renders and real-time
+checks GitHub's shared macOS runners are too slow for. It sets itself up each run (Node from `mise.toml`, the kits with
+their downloads kept in `~/Library/Caches/overdub-kits`, playwright-core and its browsers), so the machine needs nothing
+but the runner. It holds no AWS role, no environment and no secret; a failed run keeps its screenshots as the `e2e-out`
+artifact. A self-hosted runner must never take a job an outsider can start: the repo is public, so a fork's pull request
+would run its code on that machine. `test/unit/workflows.test.js` fails any workflow that names a self-hosted runner and
+can be triggered by anything but `workflow_dispatch`, `push` or `schedule`.
+
+**deploy** needs e2e, so a reviewer is only asked once the suite passed, and it ships the commit e2e tested (an empty
+ref is main's head, which may have moved in between). It:
 
 1. waits in the `production` environment until a required reviewer (AJ or brvtl) approves; the environment's
    deployment branches are main only, so a run started from another branch never gets that far;
-2. refuses a `ref` that isn't a commit on main, then checks it out, and checks out overdub-devices (private) with the
+2. checks that commit is on main again, then checks it out, and checks out overdub-devices (private) with the
    environment's read-only deploy key, `OVERDUB_DEVICES_DEPLOY_KEY`, for the community shelf;
 3. builds the sampled kits (`node tools/fetch-kits.js`, with ci.yml's cache) and installs playwright-core and its
    headless Chromium for the check, before any AWS credentials exist in the job;
@@ -187,10 +200,10 @@ SHA, a tag or `main`; empty is main's head). Its one job:
 5. runs `node tools/prod-check.js` against https://overdubstudio.com, or the distribution's cloudfront.net name before
    the cutover.
 
-Runs never overlap (a concurrency group with no cancelling). Later a long end-to-end job on Peter's self-hosted Mac
-mini goes in front of it as a `needs:`; a self-hosted runner must never take a `pull_request` job, since the repo is
-public and a fork's pull request would run its code on that machine.
+Runs never overlap (a concurrency group with no cancelling).
 
 GitHub settings (by `gh api`, done once): the `production` environment with AJ and brvtl as required reviewers and
 deployment branches limited to main; the repository variables `LIVE_DEPLOY_ROLE` and `LIVE_DISTRIBUTION`
-(`terraform -chdir=infra/live output`); the environment secret `OVERDUB_DEVICES_DEPLOY_KEY`.
+(`terraform -chdir=infra/live output`); the environment secret `OVERDUB_DEVICES_DEPLOY_KEY`; and, under Actions >
+General, "Require approval for all external contributors" for fork pull requests, the second guard on the self-hosted
+runner. The runner itself is registered to this repository only (`~/actions-runner` on ghastly, a service).

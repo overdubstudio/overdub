@@ -1,0 +1,4 @@
+# The self-hosted runner's own label (Peter's Mac mini, ghastly; deploy-live.yml's e2e job), so actionlint knows it.
+self-hosted-runner:
+  labels:
+    - overdub-e2e

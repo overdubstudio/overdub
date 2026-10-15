@@ -15,10 +15,13 @@
 # the site it went to: https://overdubstudio.com once the distribution has that name (infra/live's serve_names, the
 # cutover), its cloudfront.net name before.
 #
-# Later: the long end-to-end suite (node tools/run-all.js) on Peter's self-hosted Mac mini, as a job this one needs
-# (see `needs:` below). A self-hosted runner must never take a pull_request job: this repo is public, so a pull request
-# from a fork would run its own code on that machine. Give that job its own label and run it only from
-# workflow_dispatch (this workflow) or a push to main, never from pull_request or pull_request_target.
+# Before any of that, the e2e job runs the whole end-to-end suite (node tools/run-all.js: the browsers, the renders,
+# the real-time checks GitHub's shared macOS runners are too slow for) on Peter's self-hosted Mac mini, ghastly
+# (labels self-hosted, macOS, ARM64, overdub-e2e). The deploy job needs it, so a reviewer is only asked once it passed,
+# and it ships the exact commit e2e resolved and tested (main can move in between). e2e holds no AWS role, no
+# environment and no secret. A self-hosted runner must never take a pull_request job: this repo is public, so a pull
+# request from a fork would run its own code on that machine. test/unit/workflows.test.js fails any workflow that puts
+# a self-hosted job within reach of pull_request, pull_request_target or another event an outsider can cause.
 # Actions are pinned to a commit; the comment names the release.
 name: deploy-live
 
@@ -39,10 +42,77 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  e2e:
+    # main only, like the deploy: the suite runs what is about to ship
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, macOS, ARM64, overdub-e2e]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+    env:
+      INPUT_REF: ${{ inputs.ref }}
+      # the suites' screenshots and logs, inside this job's workspace (the runner keeps its disk between jobs)
+      OUTDIR: ${{ github.workspace }}/e2e-out
+    steps:
+      # clean: true (the default) wipes what an earlier job left in the workspace
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The ref is a commit on main
+        id: ref
+        run: |
+          want=${INPUT_REF:-origin/main}
+          if ! sha=$(git rev-parse --verify --quiet "${want}^{commit}"); then
+            echo "::error::$want is not a commit in this repository"; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$want ($sha) is not on main: only a commit on main ships to the live site"; exit 1
+          fi
+          git checkout --quiet --detach "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "### End-to-end suite on $sha ($(hostname -s))" >> "$GITHUB_STEP_SUMMARY"
+
+      # Node from mise.toml: the runner's own PATH is the system's, so nothing on the machine is relied on
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: node
+
+      # The downloads (~660 MB) are kept on the machine, outside the workspace: checkout's clean (git clean -ffdx) would
+      # remove tools/.out/kits-cache with everything else ignored. Content-addressed, so a stale file can't be used.
+      - name: Build the sampled kits this commit names
+        run: KITS_CACHE="$HOME/Library/Caches/overdub-kits" node tools/fetch-kits.js
+
+      # the browsers tools/pw.js and compat-test drive; Playwright's cache (~/Library/Caches/ms-playwright) keeps them
+      - name: Install the browsers the suites drive
+        run: | # zizmor: ignore[adhoc-packages] (package.json has no dependencies by design; the version is pinned here)
+          npm install --no-save --no-package-lock --ignore-scripts playwright-core@1.62.0
+          npx --no-install playwright-core install chromium chromium-headless-shell webkit firefox
+
+      # One suite at a time: the real-time checks (stack-monitor's latency, the lamps that step with the song) miss their
+      # deadlines with three browser suites sharing the machine. Slower (about twice run-all's default), but the point
+      # of this machine is that those checks mean something.
+      - name: The end-to-end suite
+        env:
+          PAR: '1'
+        run: node tools/run-all.js | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the screenshots and logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-out
+          path: e2e-out
+          retention-days: 14
+
   deploy:
+    needs: [e2e]
     # the environment allows main only too; this says so before a reviewer is asked
     if: github.ref == 'refs/heads/main'
-    # needs: [e2e]   # later: the end-to-end suite on the self-hosted Mac mini (above); never on pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -54,7 +124,8 @@ jobs:
     env:
       AWS_ROLE: ${{ vars.LIVE_DEPLOY_ROLE }}
       LIVE_DISTRIBUTION: ${{ vars.LIVE_DISTRIBUTION }}
-      INPUT_REF: ${{ inputs.ref }}
+      # the commit e2e resolved and passed, not inputs.ref again: an empty ref means main's head, which may have moved
+      INPUT_REF: ${{ needs.e2e.outputs.sha }}
       # the community shelf's source (deploy/deploy.sh, tools/prod-check.js), checked out below
       OVERDUB_DEVICES_DIR: ${{ github.workspace }}/overdub-devices
       HAS_DEVICES_KEY: ${{ secrets.OVERDUB_DEVICES_DEPLOY_KEY != '' }}

@@ -57,6 +57,7 @@ function fakeCloud() {
   const script = [];              // what the next calls answer: SSE events, { status, error }, or { hang: true }
   const studio = /^http:\/\/localhost:\d+$/;   // the studio origins it answers (a local studio on any port)
   let paused = false;
+  let hosted = true;              // GET /v1/config hosted.enabled: the service's kill switch
   const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(/;\s*/).filter(Boolean).map((c) => [c.slice(0, c.indexOf('=')), c.slice(c.indexOf('=') + 1)]));
   const userOf = (req) => { const e = sessions.get(cookies(req)['od.session_token']); return e ? users.get(e) : null; };
   const balance = (u) => ({ total: u.balance, monthly: 0, trial: 0, packs: u.balance, other: 0, held: 0, debt: 0, nextExpiry: null });
@@ -84,7 +85,7 @@ function fakeCloud() {
     if (req.method === 'OPTIONS') { res.writeHead(204, allowed ? { 'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'content-type, idempotency-key' } : {}); return res.end(); }
     if (req.method !== 'GET' && !allowed && !url.pathname.startsWith('/dev/')) return err(res, 403, 'forbidden_origin', 'That came from a page Overdub doesn’t know.');
     const p = url.pathname;
-    if (p === '/v1/config') return send(res, 200, { rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: true } });
+    if (p === '/v1/config') return send(res, 200, { rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: hosted } });
     const signIn = (email) => { const tok = randomUUID(); if (!users.has(email)) users.set(email, { email, balance: 30 }); sessions.set(tok, email); return `od.session_token=${tok}; HttpOnly; SameSite=Lax; Path=/`; };
     // Google, the whole round trip in one page: the real service goes to Google, back to its callback, and ends on
     // /v1/auth/done, which sets the cookie, posts overdub:signed-in to the opener at each studio origin and closes
@@ -159,6 +160,7 @@ function fakeCloud() {
     resolve({
       origin, log, script, users, actions,
       pause(on) { paused = on; },
+      hosted(on) { hosted = on; },
       next(email) { next = email; },
       popup(o) { popup = { message: true, close: true, ...o }; },
       user(email) { return users.get(email); },
@@ -696,6 +698,50 @@ const fake = await fakeCloud();
   t.ok(cx.path === '/app/' && cx.search === '', `and plus=cancel leaves the address bar (${cx.path}${cx.search})`);
   await shot('cloud-cancelled');
   t.ok(realErrors(errors).length === 0, 'no page errors (back from a checkout)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+}
+
+/* ------------------------------------------------------------------ 7. the account sheet: a new account, and the service paused */
+{
+  const { page, errors, close, shot } = await studio(fake);
+  const sheetText = () => page.evaluate(() => ({
+    text: document.querySelector('.ag-cl-account')?.textContent || '',
+    credits: document.querySelector('.ag-cl-account .ag-cl-dl dd')?.textContent || '',
+    topUp: [...document.querySelectorAll('.ag-cl-account .btn')].some((b) => b.textContent === 'Top up'),
+    head: document.querySelector('.ag-who')?.textContent || '',
+  }));
+  // a brand-new account: nothing to spend and nothing spent, so no "about 0 asks" and no credits back yet
+  fake.grant('new@example.com', 0);
+  await chooseCloud(page);
+  await signInWithGoogle(page, fake, 'new@example.com');
+  await page.click('.ag-pill-cloud');
+  await page.waitForSelector('.ag-cl-account', { timeout: 5000 });
+  await until(() => page.evaluate(() => !/Reading…/.test(document.querySelector('.ag-cl-account')?.textContent || '')), 3000);
+  const fresh = await sheetText();
+  t.ok(fresh.credits === '0' && !/Credits back/.test(fresh.text) && fresh.topUp && !/paused/.test(fresh.text),
+    `a new account's sheet: "0" credits (no "about 0 asks"), no credits back until there's something to spend, Top up (${JSON.stringify(fresh.credits)})`);
+  await shot('cloud-account-new');
+  // credits in: the estimate in asks and the credits-back line come back, its period said once
+  fake.grant('new@example.com', 7);
+  await page.evaluate(() => window.overdub.agent.cloud.refresh());
+  await until(() => sheetText().then((s) => /^7/.test(s.credits)), 3000);
+  const funded = await sheetText();
+  t.ok(/^7, about 2 asks$/.test(funded.credits) && /Credits backUndo an ask soon after it runs and its credits come back: 9 of 9 left this month/.test(funded.text),
+    `with credits: "${funded.credits}" and the credits-back line in one sentence`);
+  // the kill switch: the sheet says paused, the head says paused, nothing to buy
+  fake.hosted(false);
+  await page.reload({ waitUntil: 'load' });
+  await ready(page);
+  await page.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-in' && window.overdub.agent.cloud.config?.hosted?.enabled === false, null, { timeout: 10000 });
+  await chooseCloud(page);
+  await page.click('.ag-pill-cloud');
+  await page.waitForSelector('.ag-cl-account', { timeout: 5000 });
+  const paused = await sheetText();
+  t.ok(/Claude on Overdub credits is paused right now\./.test(paused.text) && !paused.topUp && /on credits, paused/.test(paused.head),
+    `with the service paused: the sheet says so, no Top up, and the head says "on credits, paused" (${paused.head.trim()})`);
+  await shot('cloud-account-paused');
+  fake.hosted(true);
+  t.ok(realErrors(errors).length === 0, 'no page errors (the account sheet)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
 

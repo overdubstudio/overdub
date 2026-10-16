@@ -176,6 +176,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const me = c.me, b = me?.balance;
     const title = 'Claude, run by Overdub on your credits.';
     if (!me) return { words: 'on credits, not signed in', title };
+    if (c.config?.hosted?.enabled === false) return { words: 'on credits, paused', title };
     const n = Number(b?.total) || 0;
     const busy = agent.busy ? (app.presence?.waiting?.('claude') ? ', waiting for you' : ', working') : '';
     return { words: `on credits, ${n} left${busy}`, title };
@@ -277,17 +278,24 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const b = me.balance || {};
     const plan = me.plan;
     const tookSomething = (store.history || []).some((x) => x.by === 'you');
+    // the service's kill switch (GET /v1/config hosted.enabled false): nothing to spend credits on, so nothing to buy
+    const paused = c.config?.hosted?.enabled === false;
+    const n = Number(b.total) || 0;
+    // credits back only mean something once there's something to spend or something was spent
+    const spends = n > 0 || b.held > 0 || !!plan || !!activity?.length;
+    const cb = me.creditBack;
     const items = (activity || []).map((it) => h('li.ag-cl-row', h('span.ag-cl-row-t', h('b', it.label || it.kind), h('span.t3', `${day(it.at)}${takeWords(it.actionId)}`)), h('span.ag-cl-row-n', `${it.credits > 0 ? '+' : ''}${it.credits}`)));
     return h('div.ag-cl.ag-cl-account', sheetHead(HOSTED_NAME),
       h('div.ag-cl-who', h('p.ag-kc-p', 'Signed in as ', h('b', me.user?.email || '')), h('button.btn.btn-txt.ag-link', { type: 'button', onclick: async () => { try { await c.signOut(); } catch (e) { said = e.message; } view = null; cached.sig = ''; renderAll(); } }, 'Sign out')),
       h('dl.ag-cl-dl',
-        h('dt', 'Credits'), h('dd', h('span.mono', String(b.total ?? 0)), me.asksHint != null ? `, about ${me.asksHint} asks` : '', b.held ? ` (${b.held} on the ask that’s running)` : ''),
+        h('dt', 'Credits'), h('dd', h('span.mono', String(n)), n > 0 && me.asksHint ? `, about ${plural(me.asksHint, 'ask')}` : '', b.held ? ` (${b.held} on the ask that’s running)` : ''),
         b.nextExpiry?.credits ? [h('dt', 'Next to go'), h('dd', h('span.mono', String(b.nextExpiry.credits)), ` on ${day(b.nextExpiry.at)}`)] : null,
         plan ? [h('dt', 'Plan'), h('dd', `${plan.label}${plan.monthlyCredits ? `, ${plan.monthlyCredits} credits a month` : ''}${plan.endsAt ? `, ends ${day(plan.endsAt)}` : plan.renewsAt ? `, renews ${day(plan.renewsAt)}` : ''}`)] : null,
-        me.creditBack ? [h('dt', 'Credits back'), h('dd', `${me.creditBack.left} of ${me.creditBack.budget} left this month: undo all of an ask soon after, and its credits come back`)] : null),
-      me.trial?.eligible ? h('div.ag-cl-trial', h('p.ag-kc-small', tookSomething ? 'There’s a free trial on this account, once.' : 'There’s a free trial on this account, once. It unlocks after your first saved take.'),
+        cb && spends ? [h('dt', 'Credits back'), h('dd', `Undo an ask soon after it runs and its credits come back: ${cb.left} of ${cb.budget} left${cb.periodEnd ? ' this month' : ''}`)] : null),
+      paused ? h('p.ag-kc-p.ag-cl-paused-note', `${HOSTED_NAME} is paused right now. Your own Claude, Claude Code and the demo still work.`) : null,
+      !paused && me.trial?.eligible ? h('div.ag-cl-trial', h('p.ag-kc-small', tookSomething ? 'There’s a free trial on this account, once.' : 'There’s a free trial on this account, once. It unlocks after your first saved take.'),
         h('button.btn', { type: 'button', disabled: !tookSomething, onclick: async () => { try { await c.claimTrial(); said = 'The trial credits are in.'; } catch (e) { said = e.message; } cached.sig = ''; renderAll(); } }, 'Claim the trial')) : null,
-      h('div.ag-kc-acts', h('button.btn', { type: 'button', onclick: () => show('topup') }, 'Top up')),
+      paused ? null : h('div.ag-kc-acts', h('button.btn', { type: 'button', onclick: () => show('topup') }, 'Top up')),
       said ? h('p.ag-cl-status', { role: 'status' }, said) : null,
       h('div.ag-kc-label', 'Where your credits went'),
       activity == null ? h('p.ag-kc-small', 'Reading…') : items.length ? h('ul.ag-cl-list', items) : h('p.ag-kc-small', 'Nothing yet.'),

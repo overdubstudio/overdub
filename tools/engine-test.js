@@ -350,7 +350,13 @@ await page.evaluate(async () => {
     const b = engine.beat;
     ons.length = 0;
     const clipStartBeat = 0;
-    const at = Math.ceil((b + 0.06 - clipStartBeat) * 100) / 100; // ~60 ms ahead at 60 bpm
+    // ~60 ms ahead of the audio clock at 60 bpm, inside the 120 ms the scheduler has handed over. engine.beat is the
+    // beat being heard, which trails that clock by the output latency (27 ms here): aimed 60 ms past it, the note had
+    // about 30 ms in hand, and on a loaded machine the edit reached the engine after it was due, which the engine
+    // rightly lets go (0 played)
+    const lead = engine.ctx.outputLatency || engine.ctx.baseLatency || 0;
+    out.addedLead = lead;
+    const at = Math.ceil((b + lead + 0.06 - clipStartBeat) * 100) / 100;
     store.dispatch({ type: 'notes.add', track: 't_a', clip: 'c_t_a', notes: [{ p: 90, t: at, d: 0.1, v: 0.5 }] });
     const pitches = []; inst.noteOn = (p, v, t) => { pitches.push(p); ons.push(t); return on0(p, v, t); };
     await sleep(500);
@@ -398,7 +404,7 @@ await page.evaluate(async () => {
   T.ok(r.swapped && r.bAfterSwap > -60, `instrument swapped while playing keeps sounding (${r.bAfterSwap} dBFS)`);
   const g = r.gaps;
   T.ok(g.length >= 4 && g.includes(0.25) && g.includes(0.5) && g.every((x) => x >= 0.25 - 1e-3 && x <= 0.5 + 1e-3), `tempo 120 -> 60 while playing: eighth notes go from 0.25 s to 0.5 s apart (${g.join(' ')})`);
-  T.ok(r.addedPlayed === 1, `a note added inside the scheduled window plays exactly once (${r.addedPlayed})`);
+  T.ok(r.addedPlayed === 1, `a note added inside the scheduled window plays exactly once (${r.addedPlayed}; output latency ${Math.round(r.addedLead * 1000)} ms)`);
   T.ok(r.playing && r.afterSeek >= 8 && r.afterSeek < 8.5, `seek(8) while playing: beat ${r.afterSeek.toFixed(3)}`);
   T.ok(r.clicks >= 1 && r.clicks <= 3 && r.metEv, `metronome: ${r.clicks} clicks in 1.3 s at 60 bpm, 'transport' event on toggle`);
   T.ok(r.stopped < -90, `stop leaves silence (master ${r.stopped} dBFS)`);

@@ -12,7 +12,8 @@ instrument or effect; [`docs/AGENTS.md`](docs/AGENTS.md) is how an agent drives 
 ```sh
 node server/serve.js                 # http://localhost:3279/ (landing) and /app/ (the studio). No install, no build.
 node server/mcp.js                   # MCP stdio server: `claude mcp add overdub -- node "$PWD/server/mcp.js"`
-node tools/run-all.js                # every check, PAR=3 at a time (each tools/*-test.js prints ok/FAIL, exits 1 on failure)
+node tools/run-all.js --post         # every check, PAR=3 at a time (each tools/*-test.js prints ok/FAIL, exits 1 on
+                                     # failure); fetches missing kits first; --post puts the result on the PR's commit
 node --test "test/unit/*.test.js"    # unit tests, what CI runs (seconds)
 npm run check                        # the static checks, what CI runs too: Biome lint + format check, tsc on the
                                      # // @ts-check files, ShellCheck, actionlint, zizmor, and terraform fmt/validate,

@@ -100,6 +100,20 @@ export function keyText(k) {
 const LIMIT = { go: 6, do: 6, sound: 6, help: 4 };
 const KIND_ORDER = ['go', 'do', 'sound', 'help'];
 
+// Find's rows for a query out of every source: the best match first, then Go to, Do, Sound, Help, a few of each. Two
+// sounds that match as well are put in id order: the device list is in the order devices registered, which depends on
+// which of the built-ins and the vendored pedals finished loading first, and with only six Sound rows that decided
+// which reverbs a search for "reverb" showed. Go to, Do and Help keep their list's order, which is fixed.
+export function pickRows(items, query) {
+  const per = {};
+  return items.map((it, i) => ({ it, r: rank(it, query), i }))
+    .filter((x) => x.r != null)
+    .sort((a, b) => a.r - b.r || KIND_ORDER.indexOf(a.it.kind) - KIND_ORDER.indexOf(b.it.kind) ||
+      (a.it.kind === 'sound' ? (a.it.id < b.it.id ? -1 : a.it.id > b.it.id ? 1 : 0) : 0) || a.i - b.i)
+    .filter((x) => { per[x.it.kind] = (per[x.it.kind] || 0) + 1; return per[x.it.kind] <= LIMIT[x.it.kind]; })
+    .map((x) => x.it);
+}
+
 export function installWorkspace(ui, app, decision = { view: 'full' }) {
   const html = document.documentElement;
   let storage = null;
@@ -352,13 +366,7 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
     const q = String(query || '').trim();
     if (!q) return [];
     const goes = FEATURES.map((f) => ({ kind: 'go', id: 'go:' + f.id, title: f.title, purpose: f.purpose, aliases: f.aliases, f, key: null }));
-    const all = [...goes, ...doItems(), ...soundItems(), ...(helpRows || [])];
-    const per = {};
-    return all.map((it, i) => ({ it, r: rank(it, q), i }))
-      .filter((x) => x.r != null)
-      .sort((a, b) => a.r - b.r || KIND_ORDER.indexOf(a.it.kind) - KIND_ORDER.indexOf(b.it.kind) || a.i - b.i)
-      .filter((x) => { per[x.it.kind] = (per[x.it.kind] || 0) + 1; return per[x.it.kind] <= LIMIT[x.it.kind]; })
-      .map((x) => x.it);
+    return pickRows([...goes, ...doItems(), ...soundItems(), ...(helpRows || [])], q);
   }
   function run(it) {
     const q = findOpen?.find.value.trim() || '';

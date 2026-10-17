@@ -26,7 +26,8 @@ Thanks for wanting to help. Overdub is small on purpose: native ES modules, no d
 node server/serve.js                 # the site at http://localhost:3279/, the studio at /app/
 node tools/<area>-test.js            # one area's checks
 node --test "test/unit/*.test.js"    # the unit tests, what CI runs (seconds)
-node tools/run-all.js                # every check (a few minutes): run it before a pull request
+node tools/run-all.js --post         # every check (about 30 min, three at a time; it fetches any missing kit first):
+                                     # before merging, on the pushed commit, so the pull request shows "suites"
 npm run check                        # the static checks CI runs: lint, format, types, shell, workflows (seconds)
 npm run format                       # format the paths on the formatting ratchet (Biome)
 ```
@@ -37,6 +38,12 @@ The browser checks (most of `tools/*-test.js`) need playwright-core and a Chromi
 npm i --no-save playwright-core
 npx playwright-core install chromium-headless-shell
 ```
+
+CI runs only the unit tests and the static checks on a pull request. The browser and render suites run on your
+machine: `node tools/run-all.js --post` on a clean, pushed commit posts its result to that commit as the status
+`suites` (success or failure, with the counts), so whoever merges can see they ran on exactly what's being merged.
+A run that named suites, or ran with uncommitted edits, posts nothing. Production gets them again either way: the
+deploy-live workflow runs the whole suite on the Mac mini before it asks for approval.
 
 On macOS `tools/pw.js` finds that Chromium by itself. Elsewhere, point `CHROMIUM` at the binary it installed (under
 `~/.cache/ms-playwright/` on Linux), and `PLAYWRIGHT_CORE` at playwright-core if it lives somewhere else. Chrome is

@@ -63,7 +63,7 @@ const T = tally('kernel');
   for (const id of ['core.delay', 'claude.biscuit-tin']) {
     const r = await checkDeviceNode(getDevice(id)), b = REPORTS[id];
     const d = r.kind === 'effect' ? Math.abs(b.deltaLU - r.level.deltaLU) : Math.abs(b.lufs - r.level.lufs);
-    T.ok(r.ok && d <= 0.2 && Math.abs(b.truePeak - r.truePeak) <= 0.2 && r.deterministic && r.cpu.ms > 0, `${id} in a child process measures as in the browser (${r.kind === 'effect' ? r.level.deltaLU + ' LU' : r.level.lufs + ' LUFS'}, ${r.truePeak} dBTP; browser ${r.kind === 'effect' ? b.deltaLU + ' LU' : b.lufs + ' LUFS'}, ${b.truePeak} dBTP)`);
+    T.ok(r.ok && d <= 0.2 && Math.abs(b.truePeak - r.truePeak) <= 0.2 && r.deterministic && r.cpu.ms > 0, `${id} in a child process measures as in the browser (${r.kind === 'effect' ? r.level.deltaLU + ' LU' : r.level.lufs + ' LUFS'}, ${r.truePeak} dBTP; browser ${r.kind === 'effect' ? b.deltaLU + ' LU' : b.lufs + ' LUFS'}, ${b.truePeak} dBTP${r.ok && r.deterministic && r.cpu.ms > 0 ? '' : `; ok ${r.ok}, deterministic ${r.deterministic}, cpu ${r.cpu?.ms} ms: ${(r.errors || []).slice(0, 2).join(' | ')}`})`);
   }
 
   // `pre` runs in create() with the realm's own globals; then process() multiplies by 10 (about +20 dB: over +6 dBTP)

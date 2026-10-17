@@ -1149,12 +1149,15 @@ const boot = async (opts = {}) => {
       return Math.round(pk * 10) / 10;
     }, arg);
     const loud = await E((ids) => ids[0], ids.band);
-    const b0 = await peakWhile(['band', loud]), g0 = await peakWhile(['keys', ids.keys, ids.keys]);
+    // the guitar's level is one pluck read off the meters, and a slow page can read past its peak: the loudest of three
+    // plucks each side (one reading each way moved 1.4-1.8 dB on a loaded machine with nothing changed)
+    const pluckPeak = async () => { let pk = -120; for (let i = 0; i < 3; i++) pk = Math.max(pk, await peakWhile(['keys', ids.keys, ids.keys])); return pk; };
+    const b0 = await peakWhile(['band', loud]), g0 = await pluckPeak();
     const song0 = await E(() => ({ json: JSON.stringify(window.overdub.store.get()), h: window.overdub.store.history.length }));
     // the fader in the room, as a hand moves it
     await E(() => { const r = document.querySelector('.jm-band'); r.value = '-12'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); });
     await sleep(300);
-    const b1 = await peakWhile(['band', loud]), g1 = await peakWhile(['keys', ids.keys, ids.keys]);
+    const b1 = await peakWhile(['band', loud]), g1 = await pluckPeak();
     const lv = await E(() => window.overdub.engine.bandLevel);
     T.ok(lv.db === -12 && Math.abs(b0 - b1 - 12) <= 1.5 && Math.abs(g0 - g1) <= 1 && lv.keep.includes(ids.keys), `the Band fader turns the band down and leaves the guitars as they were, on the live meters: a band track ${b0} → ${b1} dBFS at −12 dB, the keys guitar ${g0} → ${g1}`);
     const shown = await E(() => ({ flag: document.querySelector('.jm-bandflag').hidden ? '' : document.querySelector('.jm-bandflag').textContent, val: document.querySelector('.jm-band-val').textContent, down: document.querySelector('.jm-band-field').classList.contains('jm-down'), note: document.querySelector('.jm-bandnote').textContent }));

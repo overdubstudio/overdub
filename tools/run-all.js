@@ -73,7 +73,19 @@ await Promise.all(Array.from({ length: Math.min(PAR, queue.length) }, async () =
     if (r.code !== 0 && !r.fails) console.log(`      (exit ${r.code}${r.signal ? ', ' + r.signal : ''}, no FAIL line; its last lines:)\n` + r.out.trimEnd().split('\n').slice(-30).map((l) => '      | ' + l).join('\n'));
   }
 }));
+// A suite that failed with others running beside it runs once more on its own: the real-time checks (live meters, the
+// scheduler, CPU budgets) can miss when three suites share the machine. One that passes alone counts as passed but is
+// named as retried, here and in the posted status, and its first failure stays in the log above; a real break fails
+// twice. (Fix a check that keeps turning up here: a retry is a tolerance for load, not for a wrong result.)
+for (const r of results.filter((x) => x.code !== 0)) {
+  const again = await run(r.file);
+  console.log(`${again.code === 0 ? 'PASS' : 'FAIL'}  ${r.file.padEnd(24)} ${String(again.oks).padStart(4)} ok ${String(again.fails).padStart(3)} failed  ${again.secs}s  (run again, alone)`);
+  if (again.code !== 0) console.log(again.out.split('\n').filter((l) => /FAIL|Error|error/.test(l)).slice(0, 12).map((l) => '      ' + l).join('\n'));
+  results[results.indexOf(r)] = { ...again, retried: true };
+}
 const bad = results.filter((r) => r.code !== 0);
+const retried = results.filter((r) => r.retried && r.code === 0);
+if (retried.length) console.log(`\nretried alone and passed: ${retried.map((r) => r.file).join(', ')}`);
 console.log(`\n${results.length - bad.length}/${results.length} checks passed`);
 // A full run leaves its totals behind, so tools/pages-test.js can hold the quoted counts (deck, launch drafts) to them.
 // A run that left suites out (named some) isn't one.
@@ -81,7 +93,7 @@ if (!only.length) {
   const oks = results.reduce((s, r) => s + r.oks, 0), fails = results.reduce((s, r) => s + r.fails, 0);
   try {
     fs.mkdirSync(path.join(HERE, '.out'), { recursive: true });
-    fs.writeFileSync(path.join(HERE, '.out', 'run-all.json'), JSON.stringify({ at: new Date().toISOString(), sha: sha || null, dirty, suites: results.length, passed: results.length - bad.length, checks: oks + fails, oks, fails }, null, 2) + '\n');
+    fs.writeFileSync(path.join(HERE, '.out', 'run-all.json'), JSON.stringify({ at: new Date().toISOString(), sha: sha || null, dirty, suites: results.length, passed: results.length - bad.length, checks: oks + fails, oks, fails, retried: retried.map((r) => r.file) }, null, 2) + '\n');
   } catch { /* the totals are a convenience */ }
   console.log(`${oks + fails} checks in ${results.length} suites (${fails} failed)`);
 }

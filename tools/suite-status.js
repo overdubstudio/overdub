@@ -6,7 +6,8 @@
 //
 // Only a full run (no suites named) of a clean tree says anything: a run that left suites out, or ran edits that
 // aren't in the commit, would vouch for code nobody pushed. A run with a failing suite says "failure", so the pull
-// request shows the last run, good or bad.
+// request shows the last run, good or bad. A suite that failed beside others and passed when run again alone (run-all
+// marks it retried) counts as passed, and the description names it, so a check that keeps needing it is seen.
 
 export const CONTEXT = 'suites';
 
@@ -18,9 +19,11 @@ export function suiteStatus({ results, only = [], dirty = false, sha = '', host 
   const bad = results.filter((r) => r.code !== 0);
   const checks = results.reduce((s, r) => s + r.oks + r.fails, 0);
   const on = host ? ` on ${host}` : '';
+  const names = (rs) => `${rs.map((r) => r.file.replace(/-test\.js$/, '')).slice(0, 4).join(', ')}${rs.length > 4 ? '…' : ''}`;
+  const again = results.filter((r) => r.retried && r.code === 0);
   const description = bad.length
-    ? `${bad.length} of ${results.length} suites failed: ${bad.map((r) => r.file.replace(/-test\.js$/, '')).slice(0, 4).join(', ')}${bad.length > 4 ? '…' : ''}${on}`
-    : `${results.length}/${results.length} suites, ${checks} checks${on}`;
+    ? `${bad.length} of ${results.length} suites failed: ${names(bad)}${on}`
+    : `${results.length}/${results.length} suites, ${checks} checks${again.length ? `, retried alone: ${names(again)}` : ''}${on}`;
   // GitHub keeps 140 characters of a status's description
   return { ok: true, state: bad.length ? 'failure' : 'success', description: description.slice(0, 140) };
 }

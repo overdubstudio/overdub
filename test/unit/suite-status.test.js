@@ -44,3 +44,19 @@ test('the description fits GitHub’s 140 characters, however many suites fail',
       st.description.startsWith('40 of 40 suites failed: a-very-long-suite-name-number-0, '),
   );
 });
+
+test('a suite that passed when run again alone counts, and is named', () => {
+  const st = suiteStatus({
+    results: [pass('studio-test.js'), { ...pass('jam-test.js', 168), retried: true }],
+    sha: SHA,
+    host: 'mbp',
+  });
+  assert.deepEqual(st, {
+    ok: true,
+    state: 'success',
+    description: '2/2 suites, 178 checks, retried alone: jam on mbp',
+  });
+  // one that failed again is a failure, retried or not
+  const twice = suiteStatus({ results: [pass('studio-test.js'), { ...fail('jam-test.js'), retried: true }], sha: SHA });
+  assert.deepEqual(twice, { ok: true, state: 'failure', description: '1 of 2 suites failed: jam' });
+});

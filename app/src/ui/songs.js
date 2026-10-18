@@ -8,10 +8,12 @@
 // browser they were made in ("2 recordings on this browser only"). Open, Earlier saves (open one as a copy) and Delete
 // (asked under the row, never a browser dialog).
 //
-// The link: localStorage overdub:cloud-song maps a project id to { songId, rev, savedAt } (agent/cloud-songs.js). A
-// linked song saves to the account 5 s after a change and when the tab is hidden, beside the local autosave, which
-// stays as it is. A song from a link isn't saved until it's made yours. A save the account turns down because it has a
-// newer one (409) saves nothing over it: a toast asks to open the newer one or keep yours as a new song. Opening a
+// The link: localStorage overdub:cloud-song maps an account's project id to { songId, rev, savedAt }, and each copy of
+// a song keeps the save it stands on (its base: agent/cloud-songs.js), so a copy put aside or open in another tab never
+// saves from a newer one's rev. A linked song saves to the account 5 s after a change and when the tab is hidden, beside
+// the local autosave, which stays as it is. A song from a link isn't saved until it's made yours. A save the account
+// turns down because it has a newer one (409), or a copy whose base isn't known, saves nothing over it: a toast asks to
+// open the newer one or keep that copy as a new song. Opening a
 // song from the account goes the way a song file does (app.exporter.openSong: Recent songs and Undo, the held
 // devices' ask, guardDevices), and its recordings missing from this browser are named.
 //
@@ -24,7 +26,7 @@
 import { h, css } from './dom.js';
 import { popover } from './rack.js';
 import { newId } from '../core/project.js';
-import { songLinks, songAssets, savedAgo, jsonBytes, createSaver } from '../agent/cloud-songs.js';
+import { songLinks, songBases, docStamp, songAssets, savedAgo, jsonBytes, createSaver, songNonce } from '../agent/cloud-songs.js';
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const mb = (n) => `${(n / 1e6).toFixed(1)} MB`;
@@ -36,6 +38,7 @@ export default function (app) {
   let storage = null;
   try { storage = window.localStorage; } catch { storage = null; }
   const links = songLinks(storage);
+  const bases = songBases(storage);
   let cloud = null;
   let list = null, listErr = '', listing = null, listFor = '';   // the account's songs (GET /v1/songs), for whom
   const here = new Map();       // songId -> { n, here }: its recordings, and how many are in this browser
@@ -46,26 +49,32 @@ export default function (app) {
   let offFind = null;
   let edits = 0;                // changes to the song on screen (a save made while it changed goes again)
 
+  let lastUid = '';              // the account last signed in here (a linked song says "signed out" while nobody is)
   const on = () => !!cloud?.enabled && !!cloud.songs;
   const listening = () => !!app.share?.listening;
   const pid = () => store.get().id;
-  const linked = () => links.get(pid());
+  const uid = () => (on() && cloud.me?.user?.id) || '';
+  const linked = () => links.get(uid() || lastUid, pid());
   const canSave = () => (typeof list?.canSave === 'boolean' ? list.canSave : typeof cloud?.me?.songs?.canSave === 'boolean' ? cloud.me.songs.canSave : null);
   const maxSongs = () => list?.max || cloud?.me?.songs?.max || cloud?.songs?.maxSongs || 0;
 
   const saver = createSaver({
-    cloud: { saveSong: (id, doc, baseRev) => cloud.saveSong(id, doc, baseRev) },
+    cloud: { saveSong: (id, doc, baseRev, saveId) => cloud.saveSong(id, doc, baseRev, saveId) },
     links,
-    getDoc: () => (on() && cloud.me && !listening() ? store.get() : null),
+    bases,
+    getDoc: () => (listening() ? null : store.get()),
+    user: uid,
     maxBytes: () => cloud?.songs?.maxBytes || 0,
     onState: (s) => {
-      if (s.status === 'conflict' && s.pid === pid()) conflictToast(s);
-      if (s.status === 'saved') touchList(s.pid);
+      if (s.status === 'conflict') conflictToast(s);
+      if (s.status === 'saved') touchList(s);
       // gone from the account (deleted in another tab, or with the account): this song is only in this browser now
-      if (s.status === 'blocked' && s.error?.code === 'song_not_found') { links.drop(s.pid); queueMicrotask(() => saver.clear(s.pid)); }
+      // (the saver let go of its link in that account)
+      if (s.status === 'blocked' && s.error?.code === 'song_not_found') queueMicrotask(() => saver.clear(s.pid));
       paint();
     },
   });
+  saver.loaded(store.get());
 
   /* ---------------------------------------------------------------- the account */
   function attach() {
@@ -74,6 +83,7 @@ export default function (app) {
     if (on() && !offFind) offFind = ui.workspace?.addFind?.({ title: 'My songs', purpose: 'Songs saved to your Overdub account', aliases: ['songs', 'cloud', 'account', 'saved', 'open a song'], run: () => open() }) || null;
     if (!on() && offFind) { offFind(); offFind = null; }
     const who = cloud?.me?.user?.id || '';
+    if (who) lastUid = who;
     if (on() && who && who !== listFor) { listFor = who; saver.clear(); refresh(); }
     if (!who && listFor) { listFor = ''; list = null; here.clear(); }
     paint();
@@ -93,11 +103,16 @@ export default function (app) {
     })();
     return listing;
   }
-  // a song just saved: its row in the list says so without asking the service again
-  function touchList(id) {
-    const l = links.get(id);
-    const r = l && list?.songs.find((x) => x.songId === l.songId);
-    if (r) { r.rev = l.rev; r.savedAt = l.savedAt; r.title = titleOf(store.get()); r.tracks = store.get().tracks.length; }
+  // a song just saved: its row in the list says so without asking the service again, from the row the service answered
+  // and the song that went (which may be one just put aside, not the song on screen)
+  function touchList(s) {
+    const r = list?.songs.find((x) => x.songId === (s.song?.songId || s.songId));
+    if (!r) return;
+    const song = s.song || {}, doc = s.doc || {};
+    if (Number.isFinite(Number(song.rev))) r.rev = Number(song.rev);
+    r.savedAt = Number(song.savedAt) || s.savedAt || r.savedAt;
+    r.title = typeof song.title === 'string' ? song.title : titleOf(doc);
+    r.tracks = Number.isFinite(song.tracks) ? song.tracks : Array.isArray(doc.tracks) ? doc.tracks.length : r.tracks;
   }
   const hasAsset = async (id) => {
     const a = app.engine?.assets;
@@ -123,12 +138,14 @@ export default function (app) {
   /* ---------------------------------------------------------------- saving */
   store.on('change', (e) => {
     if (e.kind === 'preview') return;
-    if (e.kind === 'load') { row = null; paint(); return; }
+    // (a song on screen: its base is the one kept with that copy, whether songs are on yet or not)
+    if (e.kind === 'load') { saver.loaded(store.get()); row = null; paint(); return; }
     edits++;
-    if (on()) saver.changed();
+    saver.changed();
   });
-  // a song about to be replaced (ui/export.js): what was waiting goes now, as the song was
-  ui.on('song:replacing', ({ song } = {}) => { if (on()) saver.flush(song); });
+  // a song about to be put aside (ui/export.js: Recent songs, overdub:previous, Undo): it keeps the base it had, and
+  // what was waiting goes now, as the song was
+  ui.on('song:replacing', ({ song } = {}) => { saver.replacing(song); });
   const flush = () => { if (on()) saver.flush(); };
   window.addEventListener('pagehide', flush);
   document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
@@ -142,11 +159,11 @@ export default function (app) {
     const max = cloud.songs?.maxBytes || 0, bytes = max ? jsonBytes(doc) : 0;
     if (max && bytes > max) { ui.toast(`“${titleOf(doc)}” is too big for a cloud save: ${mb(bytes)} of ${mb(max)}. Save the project file instead.`, { kind: 'bad', ms: 7000 }); return false; }
     busy = 'save'; paint();
-    const at = edits;
+    const at = edits, who = uid(), mark = saver.mark();
     try {
-      const song = await cloud.createSong(doc);
+      const song = await create(doc);
       if (!song?.songId) throw new Error('The service didn’t say where the song went. Try again.');
-      links.set(doc.id, { songId: song.songId, rev: Number(song.rev) || 1, savedAt: Number(song.savedAt) || Date.now() });
+      linkTo(who, mark, song);
       saver.clear(doc.id);
       busy = '';
       ui.toast(`“${titleOf(doc)}” is in your account. Changes save there as you work; its recordings stay in this browser.`, { kind: 'ok', ms: 6000 });
@@ -160,6 +177,26 @@ export default function (app) {
       return false;
     }
   }
+  // One createId per press, sent again when the answer is lost on the way (the network, a service that fell over), so
+  // a create that landed answers with its song instead of making a second one.
+  async function create(doc) {
+    const createId = songNonce();
+    for (let tries = 0; ; tries++) {
+      try { return await cloud.createSong(doc, createId); } catch (e) {
+        if (tries >= 2 || !(e.status === 0 || e.status >= 500)) throw e;
+        await new Promise((r) => setTimeout(r, 800 * (tries + 1)));
+      }
+    }
+  }
+  // a song gone from that account: no song here is linked to it there any more
+  const forget = (who, songId) => { links.dropSong(who, songId); bases.dropSong(who, songId); };
+  // that copy of a song is that song in the account now, at its first save
+  function linkTo(who, mark, song) {
+    const l = { songId: song.songId, rev: Number(song.rev) || 1, savedAt: Number(song.savedAt) || Date.now() };
+    // (a copy put aside meanwhile keeps the new base; the link moves only for the song on screen, or a song of its own)
+    if (mark.gen === saver.gen || mark.doc?.id !== pid()) links.set(who, mark.doc?.id, l);
+    saver.based(who, mark, l);
+  }
   function failToast(e, doc = store.get()) {
     if (e.code === 'songs_need_plus') { if (list) list.canSave = false; ui.toast('Cloud saves come with Plus. The songs already in your account still open.', { action: { label: 'See the plans', run: plans } }); return; }
     if (e.code === 'song_limit') { ui.toast(`Your account holds ${maxSongs() || 'its most'} songs. Delete one in My songs to save “${titleOf(doc)}”.`, { action: { label: 'My songs', run: () => open() } }); return; }
@@ -169,25 +206,34 @@ export default function (app) {
   }
   const plans = () => ui.emit('cloud:show', { view: 'topup' });
 
-  // Two saves of one song: the account's is newer than the one this page started from. Nothing is saved over it.
+  // Two saves of one song: the account's is newer than the one this copy stands on (or this copy's isn't known).
+  // Nothing is saved over it. s.doc is the copy that wasn't saved: the song on screen, or one just put aside.
   function conflictToast(s = saver.state) {
-    const l = links.get(s.pid);
-    if (!l) return;
+    const doc = s.doc || store.get();
+    const songId = s.songId || links.get(s.uid || uid(), doc.id)?.songId;
+    if (!songId) return;
     const cur = s.current || {};
-    const title = titleOf(store.get());
-    const keepBtn = h('button.btn.btn-txt.sg-toast-b', { type: 'button', onclick: () => { t.remove(); keepAsNew(); } }, 'Keep mine as a new song');
-    const t = ui.toast([`Not saved: your account has a newer save of “${title}”${cur.savedAt ? `, from ${savedAgo(cur.savedAt)}` : ''}, made in another tab or browser. Nothing was saved over it. `, keepBtn],
-      { kind: 'info', ms: 20000, action: { label: 'Open the newer one', run: () => openNewer(l.songId, cur.title || title) } });
+    const title = titleOf(doc);
+    const keepBtn = h('button.btn.btn-txt.sg-toast-b', { type: 'button', onclick: () => { t.remove(); keepAsNew(s); } }, 'Keep mine as a new song');
+    const why = s.current === null && s.error?.details?.unknown
+      ? `Not saved: this copy of “${title}” may be older than the save in your account. Nothing was saved over it. `
+      : `Not saved: your account has a newer save of “${title}”${cur.savedAt ? `, from ${savedAgo(cur.savedAt)}` : ''}, made in another tab or browser. Nothing was saved over it. `;
+    const t = ui.toast([why, keepBtn], { kind: 'info', ms: 20000, action: { label: 'Open the newer one', run: () => openNewer(songId, cur.title || title) } });
   }
   async function openNewer(songId, title) {
     const ok = await openSong({ songId, title });
     if (ok) saver.clear(pid());
   }
-  async function keepAsNew() {
-    const doc = store.get();
+  // the copy that wasn't saved becomes a song of its own in the account (the song on screen, as it is now, when the
+  // conflict was its own; a song just put aside, as it was, when the conflict was that copy's)
+  async function keepAsNew(s = saver.state) {
+    const live = !s.doc || s.gen === saver.gen;
+    const doc = live ? store.get() : s.doc;
+    const who = uid(), mark = live ? saver.mark() : { gen: s.gen, stamp: docStamp(doc), doc };
     try {
-      const song = await cloud.createSong(doc);
-      links.set(doc.id, { songId: song.songId, rev: Number(song.rev) || 1, savedAt: Number(song.savedAt) || Date.now() });
+      const song = await create(doc);
+      if (!song?.songId) throw new Error('The service didn’t say where the song went. Try again.');
+      linkTo(who, mark, song);
       saver.clear(doc.id);
       ui.toast(`Yours is a new song in your account, “${titleOf(doc)}”. The newer save is there too, in My songs.`, { kind: 'ok', ms: 6000 });
       refresh();
@@ -200,10 +246,11 @@ export default function (app) {
   async function openSong(s, { rev = null } = {}) {
     if (!app.exporter?.openSong) return false;
     busy = `open:${s.songId}`; paint();
+    const who = uid();
     let r;
     try { r = await cloud.getSong(s.songId, rev); } catch (e) {
       busy = ''; said = e.code === 'song_not_found' ? `“${titleOf(s)}” isn’t in your account any more.` : e.message; paint();
-      if (e.code === 'song_not_found') { links.dropSong(s.songId); refresh(); }
+      if (e.code === 'song_not_found' && who && who === uid()) { forget(who, s.songId); refresh(); }
       if (!pop) ui.toast(said, { kind: 'bad' });
       return false;
     }
@@ -216,7 +263,7 @@ export default function (app) {
     close();
     const what = copy ? `Opened save ${rev} of “${titleOf(r.song || s)}” as a song of its own.` : `Opened “${titleOf(doc)}” from your account.`;
     const ok = await app.exporter.openSong(doc, { from: 'cloud', name: titleOf(doc), said: what + missing });
-    if (ok && !copy && r.song) { links.set(store.get().id, { songId: r.song.songId || s.songId, rev: Number(r.song.rev) || 1, savedAt: Number(r.song.savedAt) || 0 }); saver.clear(store.get().id); }
+    if (ok && !copy && r.song) { linkTo(who, saver.mark(), { songId: r.song.songId || s.songId, rev: Number(r.song.rev) || 1, savedAt: Number(r.song.savedAt) || 0 }); saver.clear(store.get().id); }
     return !!ok;
   }
   // its recordings that aren't in this browser (a cloud save keeps the song, not its audio), by name
@@ -233,17 +280,18 @@ export default function (app) {
 
   async function remove(s) {
     busy = `delete:${s.songId}`; paint();
+    const who = uid();
     try {
       await cloud.deleteSong(s.songId);
-      const wasHere = links.get(pid())?.songId === s.songId;
-      links.dropSong(s.songId);
+      const wasHere = links.get(who, pid())?.songId === s.songId;
+      forget(who, s.songId);
       if (list) list.songs = list.songs.filter((x) => x.songId !== s.songId);
       row = null; busy = '';
       said = `“${titleOf(s)}” is deleted from your account.${wasHere ? ' The song on screen stays in this browser.' : ''}`;
       if (wasHere) saver.clear(pid());
     } catch (e) {
       busy = '';
-      if (e.code === 'song_not_found') { links.dropSong(s.songId); if (list) list.songs = list.songs.filter((x) => x.songId !== s.songId); row = null; said = `“${titleOf(s)}” was already gone from your account.`; }
+      if (e.code === 'song_not_found') { if (who === uid()) forget(who, s.songId); if (list) list.songs = list.songs.filter((x) => x.songId !== s.songId); row = null; said = `“${titleOf(s)}” was already gone from your account.`; }
       else said = e.message;
     }
     paint();
@@ -265,7 +313,8 @@ export default function (app) {
     const st = saver.state.pid === pid() ? saver.state : null;
     if (l && cloud.me) {
       const hold = saver.held(pid());
-      if (st?.status === 'conflict' || hold?.code === 'song_conflict') out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: a newer save is in your account', sub: 'open it, or keep yours as a new song', run: () => conflictToast(st?.status === 'conflict' ? st : { pid: pid(), current: hold?.details?.current }) });
+      const c = saver.conflict(pid());
+      if (st?.status === 'conflict' || hold?.code === 'song_conflict') out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: a newer save is in your account', sub: 'open it, or keep yours as a new song', run: () => conflictToast(st?.status === 'conflict' ? st : { ...c, pid: pid(), uid: uid(), current: hold.details?.current ?? null }) });
       else if (hold?.code === 'songs_need_plus') out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: cloud saves come with Plus', sub: 'see the plans', run: plans });
       else if (hold) out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved to your account', sub: hold.message || '', run: () => open() });
       else if (st?.status === 'saving' || st?.status === 'waiting') out.push({ cls: '.sm-cloud', label: 'Saving to your account…', sub: 'saves as you work', run: () => open() });
@@ -341,7 +390,7 @@ export default function (app) {
       h('p.sg-note', 'A window opens for Google. Overdub gets your email address from it, never your password. Your songs stay in this browser as well.')];
   }
   function songRow(s) {
-    const isHere = links.get(pid())?.songId === s.songId;
+    const isHere = links.get(uid(), pid())?.songId === s.songId;
     const bits = [s.savedAt ? `saved ${savedAgo(s.savedAt)}` : '', Number.isFinite(s.tracks) ? plural(s.tracks, 'track') : '', recordingsWords(s)].filter(Boolean);
     const asking = row?.songId === s.songId ? row : null;
     const id = s.songId;

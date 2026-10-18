@@ -4,7 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCloud, CloudError } from '../../app/src/agent/cloud.js';
-import { songLinks, songAssets, savedAgo, jsonBytes, createSaver } from '../../app/src/agent/cloud-songs.js';
+import {
+  songLinks,
+  songBases,
+  docStamp,
+  songAssets,
+  savedAgo,
+  jsonBytes,
+  createSaver,
+} from '../../app/src/agent/cloud-songs.js';
 
 const API = 'https://api.example.com';
 
@@ -111,7 +119,8 @@ test('createSong and saveSong carry their nonce in the body (createId, saveId), 
   const [create, save] = s.log;
   assert.deepEqual(create.body, { doc, createId: 'create_abc123' });
   assert.deepEqual(save.body, { doc, baseRev: 1, saveId: 'save_abc123' });
-  for (const r of s.log) assert.deepEqual(Object.keys(r.headers), ['content-type'], 'only content-type: CORS allows no other');
+  for (const r of s.log)
+    assert.deepEqual(Object.keys(r.headers), ['content-type'], 'only content-type: CORS allows no other');
 });
 
 test('a save over a newer one is a CloudError song_conflict carrying the newer row', async () => {
@@ -140,22 +149,54 @@ function memStorage(init = {}) {
 test('the link: a project id to a song in the account, kept in overdub:cloud-song', () => {
   const st = memStorage();
   const links = songLinks(st);
-  assert.equal(links.get('p_1'), null);
-  links.set('p_1', { songId: 'sng_1', rev: 2, savedAt: 5 });
-  links.set('p_2', { songId: 'sng_1', rev: 1, savedAt: 6 });
-  links.set('p_3', { songId: 'sng_2', rev: 1, savedAt: 7 });
-  assert.deepEqual(songLinks(st).get('p_1'), { songId: 'sng_1', rev: 2, savedAt: 5 }, 'another reader sees it');
-  assert.equal(links.dropSong('sng_1'), 2, 'a deleted song unlinks every song here linked to it');
-  assert.equal(links.get('p_2'), null);
-  links.drop('p_3');
+  assert.equal(links.get('u1', 'p_1'), null);
+  links.set('u1', 'p_1', { songId: 'sng_1', rev: 2, savedAt: 5 });
+  links.set('u1', 'p_2', { songId: 'sng_1', rev: 1, savedAt: 6 });
+  links.set('u1', 'p_3', { songId: 'sng_2', rev: 1, savedAt: 7 });
+  assert.deepEqual(songLinks(st).get('u1', 'p_1'), { songId: 'sng_1', rev: 2, savedAt: 5 }, 'another reader sees it');
+  assert.equal(links.dropSong('u1', 'sng_1'), 2, 'a deleted song unlinks every song here linked to it');
+  assert.equal(links.get('u1', 'p_2'), null);
+  links.drop('u1', 'p_3');
   assert.deepEqual(JSON.parse(st.map.get('overdub:cloud-song')), {});
+});
+
+test('the link is per account: another account neither sees nor drops it', () => {
+  const links = songLinks(memStorage());
+  links.set('u1', 'p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  assert.equal(links.get('u2', 'p_1'), null, 'account B: this song is not linked');
+  assert.equal(links.get('', 'p_1'), null, 'nobody signed in: no link');
+  links.set('u2', 'p_1', { songId: 'sng_9', rev: 1, savedAt: 2 });
+  assert.equal(links.dropSong('u2', 'sng_1'), 0, "B can't drop A's song");
+  links.drop('u2', 'p_1');
+  assert.deepEqual(links.get('u1', 'p_1'), { songId: 'sng_1', rev: 1, savedAt: 1 }, "A's link stays");
+});
+
+test('bases: the save each copy of a song stands on, by account and by the copy as it is', () => {
+  const st = memStorage();
+  const bases = songBases(st);
+  const a = { id: 'p_1', meta: { modified: '2026-10-18T10:00:00.000Z' } };
+  const b = { id: 'p_1', meta: { modified: '2026-10-18T10:05:00.000Z' } };
+  bases.set('u1', a, { songId: 'sng_1', rev: 1 }, { kept: true });
+  bases.set('u1', b, { songId: 'sng_1', rev: 3 });
+  assert.deepEqual(
+    songBases(st).get('u1', a),
+    { songId: 'sng_1', rev: 1 },
+    'two copies of one project id keep their own',
+  );
+  assert.deepEqual(bases.get('u1', docStamp(b)), { songId: 'sng_1', rev: 3 });
+  assert.equal(bases.get('u2', a), null, 'per account');
+  assert.deepEqual(bases.forStamp(docStamp(a)), [['u1', { songId: 'sng_1', rev: 1 }]]);
+  bases.unset('u1', docStamp(a));
+  assert.ok(bases.get('u1', a), 'a copy put aside is never unset as a passing state');
+  bases.dropSong('u1', 'sng_1');
+  assert.equal(bases.get('u1', b), null);
 });
 
 test('the link survives unreadable or blocked storage', () => {
   const junk = songLinks(memStorage({ 'overdub:cloud-song': '{nope' }));
-  assert.equal(junk.get('p_1'), null);
-  const bad = songLinks(memStorage({ 'overdub:cloud-song': JSON.stringify({ p_1: { songId: 3 } }) }));
-  assert.equal(bad.get('p_1'), null, 'a malformed entry is no link');
+  assert.equal(junk.get('u1', 'p_1'), null);
+  const bad = songLinks(memStorage({ 'overdub:cloud-song': JSON.stringify({ 'u1 p_1': { songId: 3 } }) }));
+  assert.equal(bad.get('u1', 'p_1'), null, 'a malformed entry is no link');
   const blocked = songLinks({
     getItem: () => {
       throw new Error('blocked');
@@ -164,8 +205,8 @@ test('the link survives unreadable or blocked storage', () => {
       throw new Error('blocked');
     },
   });
-  assert.doesNotThrow(() => blocked.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 }));
-  assert.equal(songLinks(null).get('p_1'), null);
+  assert.doesNotThrow(() => blocked.set('u1', 'p_1', { songId: 'sng_1', rev: 1, savedAt: 1 }));
+  assert.equal(songLinks(null).get('u1', 'p_1'), null);
 });
 
 /* ---------------------------------------------------------------- recordings and times */
@@ -244,46 +285,79 @@ function clock() {
     pending: () => due.size,
   };
 }
-function setup({ answer = null } = {}) {
+function setup({ answer = null, storage = memStorage(), uid = 'u1', remote = { rev: 1 } } = {}) {
   const t = clock();
-  const links = songLinks(memStorage());
-  let doc = { id: 'p_1', format: 'overdub/0', title: 'Night Ride', tracks: [] };
+  const links = songLinks(storage);
+  const bases = songBases(storage);
+  let tick = 0;
+  const stamped = (d) => ({ ...d, meta: { modified: `t${++tick}` } }); // (the store moves meta.modified on every change)
+  let doc = stamped({ id: 'p_1', format: 'overdub/0', title: 'Night Ride', tracks: [] });
   const calls = [];
-  let rev = 1;
+  const ids = [];
+  let who = uid;
   const cloud = {
-    async saveSong(id, d, baseRev) {
+    async saveSong(id, d, baseRev, saveId) {
       calls.push({ id, title: d.title, baseRev });
-      if (answer) return answer(id, d, baseRev);
-      if (baseRev !== rev)
-        throw Object.assign(new Error('newer'), { code: 'song_conflict', status: 409, details: { current: { rev } } });
-      rev++;
-      return { songId: id, rev, savedAt: 1000 + rev };
+      ids.push(saveId);
+      if (answer) return answer(id, d, baseRev, saveId);
+      if (baseRev !== remote.rev)
+        throw Object.assign(new Error('newer'), {
+          code: 'song_conflict',
+          status: 409,
+          details: { current: { rev: remote.rev } },
+        });
+      remote.rev++;
+      return { songId: id, rev: remote.rev, savedAt: 1000 + remote.rev };
     },
   };
   const states = [];
   const saver = createSaver({
     cloud,
     links,
+    bases,
     getDoc: () => doc,
+    user: () => who,
     delay: 5000,
     maxBytes: () => 1000,
     timers: t,
-    onState: (s) => states.push(s.status),
+    onState: (x) => states.push(x.status),
   });
+  saver.loaded(doc);
   return {
     t,
     links,
+    bases,
     saver,
     calls,
+    ids,
     states,
+    // Save to cloud, or Open: the song on screen is linked to that song in the account, at that save
+    link: (pid, l) => {
+      links.set(who, pid, l);
+      saver.based(who, saver.mark(), l);
+    },
     edit: (title) => {
-      doc = { ...doc, title };
+      doc = stamped({ ...doc, title });
       saver.changed();
+    },
+    // a song comes on screen (Open, Undo, Recent songs, a reload): the copy as it was stored
+    load: (d) => {
+      doc = d;
+      saver.loaded(d);
+    },
+    get doc() {
+      return doc;
     },
     set doc(d) {
       doc = d;
     },
-    bump: () => rev++,
+    set user(u) {
+      who = u;
+    },
+    get rev() {
+      return remote.rev;
+    },
+    bump: () => remote.rev++,
   };
 }
 
@@ -297,7 +371,7 @@ test('an unlinked song is never sent', async () => {
 
 test('a linked song saves 5 s after its last change, from the rev it knows, and moves the link on', async () => {
   const s = setup();
-  s.links.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
   s.edit('a');
   await s.t.tick(3000);
   s.edit('b');
@@ -305,7 +379,7 @@ test('a linked song saves 5 s after its last change, from the rev it knows, and 
   assert.equal(s.calls.length, 0, 'each change starts the 5 s again');
   await s.t.tick(1000);
   assert.deepEqual(s.calls, [{ id: 'sng_1', title: 'b', baseRev: 1 }]);
-  assert.deepEqual(s.links.get('p_1'), { songId: 'sng_1', rev: 2, savedAt: 1002 });
+  assert.deepEqual(s.links.get('u1', 'p_1'), { songId: 'sng_1', rev: 2, savedAt: 1002 });
   assert.equal(s.saver.state.status, 'saved');
   s.edit('c');
   await s.t.tick(5000);
@@ -314,7 +388,7 @@ test('a linked song saves 5 s after its last change, from the rev it knows, and 
 
 test('flush sends what is waiting at once, and only that', async () => {
   const s = setup();
-  s.links.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
   await s.saver.flush();
   assert.equal(s.calls.length, 0, 'nothing waiting: nothing sent');
   s.edit('a');
@@ -330,18 +404,18 @@ test('flush sends what is waiting at once, and only that', async () => {
 
 test('a newer save in the account: nothing is saved over it, and nothing more until it is settled', async () => {
   const s = setup();
-  s.links.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
   s.bump(); // another browser saved rev 2
   s.edit('mine');
   await s.t.tick(5000);
   assert.equal(s.saver.state.status, 'conflict');
   assert.deepEqual(s.saver.state.current, { rev: 2 });
-  assert.equal(s.links.get('p_1').rev, 1, 'the link stays where it was');
+  assert.equal(s.links.get('u1', 'p_1').rev, 1, 'the link stays where it was');
   s.edit('mine again');
   await s.t.tick(10000);
   assert.equal(s.calls.length, 1, 'no retry over it');
   // settled (the newer one opened: the link moves to its rev), saves go on
-  s.links.set('p_1', { songId: 'sng_1', rev: 2, savedAt: 2 });
+  s.link('p_1', { songId: 'sng_1', rev: 2, savedAt: 2 });
   s.saver.clear('p_1');
   s.edit('after');
   await s.t.tick(5000);
@@ -360,7 +434,7 @@ test('no Plus and signed out block saving; a network error tries again on the ne
         throw Object.assign(new Error('no'), err);
       },
     });
-    s.links.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+    s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
     s.edit('a');
     await s.t.tick(5000);
     assert.equal(s.saver.state.status, status, err.code);
@@ -372,7 +446,7 @@ test('no Plus and signed out block saving; a network error tries again on the ne
 
 test('a song past maxBytes is not sent, and says how big it is', async () => {
   const s = setup();
-  s.links.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
   s.doc = { id: 'p_1', title: 'Big', tracks: [], blob: 'x'.repeat(2000) };
   s.saver.changed();
   await s.t.tick(5000);
@@ -390,7 +464,7 @@ test('one save at a time: a change while one is out goes after it, from the new 
         release = () => r({ songId: id, rev: baseRev + 1, savedAt: 5 });
       }),
   });
-  s.links.set('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
   s.edit('a');
   await s.t.tick(5000);
   assert.equal(s.saver.state.status, 'saving');
@@ -403,5 +477,238 @@ test('one save at a time: a change while one is out goes after it, from the new 
   assert.deepEqual(s.calls[1], { id: 'sng_1', title: 'b', baseRev: 2 });
   release();
   await new Promise((r) => setImmediate(r));
-  assert.equal(s.links.get('p_1').rev, 3);
+  assert.equal(s.links.get('u1', 'p_1').rev, 3);
+});
+
+const settle = async () => {
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+};
+const copy = (d) => JSON.parse(JSON.stringify(d));
+
+/* ---------------------------------------------------------------- each copy keeps its own base */
+test('Undo after "Open the newer one": your copy saves from its own base, and is a conflict, not a silent overwrite', async () => {
+  const s = setup();
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.bump(); // another browser saved rev 2
+  s.edit('mine');
+  await s.t.tick(5000);
+  assert.equal(s.saver.state.status, 'conflict');
+  // Open the newer one: yours is put aside (Recent songs, Undo), the newer one comes on screen at rev 2
+  const mine = copy(s.doc);
+  s.saver.replacing(mine);
+  s.load({ id: 'p_1', format: 'overdub/0', title: 'Newer', tracks: [], meta: { modified: 'n1' } });
+  s.link('p_1', { songId: 'sng_1', rev: 2, savedAt: 2 });
+  s.saver.clear('p_1');
+  // Undo: yours comes back, and is edited
+  s.saver.replacing(copy(s.doc));
+  s.load(copy(mine));
+  s.edit('mine, edited');
+  await s.t.tick(5000);
+  assert.deepEqual(s.calls.at(-1), { id: 'sng_1', title: 'mine, edited', baseRev: 1 }, 'from the base your copy had');
+  assert.equal(s.saver.state.status, 'conflict', 'a 409: the person picks');
+  assert.equal(s.rev, 2, 'the newer save is untouched');
+});
+
+test('two tabs on one song: the second save is a conflict, never over the first', async () => {
+  const storage = memStorage();
+  const remote = { rev: 1 };
+  const a = setup({ storage, remote });
+  const b = setup({ storage, remote });
+  a.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  b.load(copy(a.doc)); // the other tab opened the same copy (the autosave)
+  a.edit('tab A');
+  await a.t.tick(5000);
+  assert.equal(remote.rev, 2);
+  b.edit('tab B');
+  await b.t.tick(5000);
+  assert.deepEqual(
+    b.calls.at(-1),
+    { id: 'sng_1', title: 'tab B', baseRev: 1 },
+    "not tab A's newer rev from shared storage",
+  );
+  assert.equal(b.saver.state.status, 'conflict');
+  assert.equal(remote.rev, 2);
+});
+
+test('a reload picks up the base recorded with the autosaved copy; a copy with no known base sends nothing and is a conflict', async () => {
+  const storage = memStorage();
+  const a = setup({ storage });
+  a.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  a.edit('one');
+  await a.t.tick(5000);
+  a.edit('two'); // not saved yet: the autosave holds this state
+  const autosaved = copy(a.doc);
+  const b = setup({ storage, remote: { rev: 2 } });
+  b.load(copy(autosaved));
+  b.edit('three');
+  await b.t.tick(5000);
+  assert.deepEqual(b.calls, [{ id: 'sng_1', title: 'three', baseRev: 2 }], 'the reload saves from rev 2');
+  assert.equal(b.saver.state.status, 'saved');
+  // a copy from before (Recent songs) whose base was never recorded
+  b.load({ id: 'p_1', format: 'overdub/0', title: 'old', tracks: [], meta: { modified: 'old' } });
+  b.edit('old, edited');
+  await b.t.tick(5000);
+  assert.equal(b.calls.length, 1, 'nothing sent');
+  assert.equal(b.saver.state.status, 'conflict');
+  assert.equal(b.saver.state.current, null);
+  assert.equal(b.saver.state.doc.title, 'old, edited', 'the conflict carries the copy');
+});
+
+/* ---------------------------------------------------------------- one queue entry per song */
+function held() {
+  const out = [];
+  return {
+    out,
+    answer: (id, d, baseRev) =>
+      new Promise((r) => {
+        out.push(() => r({ songId: id, rev: baseRev + 1, savedAt: 5 }));
+      }),
+    release: async () => {
+      while (out.length) {
+        out.shift()();
+        await settle();
+      }
+    },
+  };
+}
+
+test("a replaced song's save and the next song's save both go (the copy queued first)", async () => {
+  const h = held();
+  const s = setup({ answer: h.answer });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.edit('A 1');
+  await s.t.tick(5000); // A's first save is out
+  s.edit('A 2');
+  const a2 = copy(s.doc);
+  s.saver.replacing(a2); // A goes, waiting: its copy is queued
+  s.load({ id: 'p_2', format: 'overdub/0', title: 'B', tracks: [], meta: { modified: 'b0' } });
+  s.link('p_2', { songId: 'sng_2', rev: 7, savedAt: 1 });
+  s.edit('B 1');
+  await s.t.tick(5000); // B's save is queued behind
+  await h.release();
+  assert.deepEqual(s.calls, [
+    { id: 'sng_1', title: 'A 1', baseRev: 1 },
+    { id: 'sng_1', title: 'A 2', baseRev: 2 },
+    { id: 'sng_2', title: 'B 1', baseRev: 7 },
+  ]);
+});
+
+test("a save of the song on screen waiting when it's replaced goes as its copy, and the next song's save goes too", async () => {
+  const h = held();
+  const s = setup({ answer: h.answer });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.edit('A 1');
+  await s.t.tick(5000); // A's first save is out
+  s.edit('A 2');
+  await s.t.tick(5000); // A's next save is queued (the song on screen)
+  const a2 = copy(s.doc);
+  s.saver.replacing(a2); // then A goes: what was queued for it is its copy now
+  s.load({ id: 'p_2', format: 'overdub/0', title: 'B', tracks: [], meta: { modified: 'b0' } });
+  s.link('p_2', { songId: 'sng_2', rev: 7, savedAt: 1 });
+  s.edit('B 1');
+  await s.t.tick(5000);
+  await h.release();
+  assert.deepEqual(s.calls, [
+    { id: 'sng_1', title: 'A 1', baseRev: 1 },
+    { id: 'sng_1', title: 'A 2', baseRev: 2 },
+    { id: 'sng_2', title: 'B 1', baseRev: 7 },
+  ]);
+});
+
+test("a conflict on a replaced song's copy carries that copy, not the song on screen; a save says which song it saved", async () => {
+  const s = setup();
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.edit('A saved');
+  await s.t.tick(5000);
+  assert.equal(s.saver.state.doc.title, 'A saved');
+  assert.equal(s.saver.state.song.songId, 'sng_1');
+  s.bump(); // a newer save elsewhere
+  s.edit('A mine');
+  const mine = copy(s.doc);
+  const flushed = s.saver.replacing(mine);
+  s.load({ id: 'p_2', format: 'overdub/0', title: 'B on screen', tracks: [], meta: { modified: 'b0' } });
+  await flushed;
+  assert.equal(s.saver.state.status, 'conflict');
+  assert.equal(s.saver.state.doc.title, 'A mine');
+  assert.equal(s.saver.state.songId, 'sng_1');
+  assert.equal(s.saver.held('p_2'), null, 'the song on screen is not held by it');
+});
+
+/* ---------------------------------------------------------------- accounts */
+test("an account switch: the other account's link is never used, and a 404 doesn't drop it", async () => {
+  let release;
+  const s = setup({
+    answer: () =>
+      new Promise((_, no) => {
+        release = () => no(Object.assign(new Error('gone'), { code: 'song_not_found', status: 404 }));
+      }),
+  });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.edit('a');
+  await s.t.tick(5000); // a save for account u1 is out...
+  s.user = 'u2'; // ...and the person signs in as someone else before it's answered (with u2's cookie: 404)
+  release();
+  await settle();
+  assert.deepEqual(s.links.get('u1', 'p_1'), { songId: 'sng_1', rev: 1, savedAt: 1 }, "u1's link stays");
+  assert.ok(s.bases.get('u1', s.doc), "and so does u1's base");
+  s.edit('b');
+  await s.t.tick(5000);
+  assert.equal(s.calls.length, 1, 'u2 has no link for this song: nothing sent');
+  // in its own account, a 404 is the song gone: the link goes
+  s.user = 'u1';
+  s.edit('c');
+  await s.t.tick(5000);
+  release();
+  await settle();
+  assert.equal(s.links.get('u1', 'p_1'), null);
+});
+
+/* ---------------------------------------------------------------- saveId */
+test('a save whose answer was lost goes again as the same save (same saveId, same song), then the newer state', async () => {
+  const remote = { rev: 1 };
+  let lose = true;
+  let lastSaveId = null;
+  const sent = [];
+  const s = setup({
+    remote,
+    answer: async (id, d, baseRev, saveId) => {
+      sent.push({ title: d.title, baseRev, saveId });
+      if (baseRev !== remote.rev) {
+        if (saveId === lastSaveId) return { songId: id, rev: remote.rev, savedAt: 9 }; // a repeat: nothing written
+        throw Object.assign(new Error('newer'), {
+          code: 'song_conflict',
+          status: 409,
+          details: { current: { rev: remote.rev } },
+        });
+      }
+      remote.rev++;
+      lastSaveId = saveId;
+      if (lose) {
+        lose = false;
+        throw Object.assign(new Error('The service didn’t answer.'), { code: '', status: 0 });
+      }
+      return { songId: id, rev: remote.rev, savedAt: 9 };
+    },
+  });
+  s.link('p_1', { songId: 'sng_1', rev: 1, savedAt: 1 });
+  s.edit('one');
+  await s.t.tick(5000);
+  assert.equal(s.saver.state.status, 'error');
+  assert.equal(remote.rev, 2, 'it landed; only the answer was lost');
+  s.edit('two');
+  await s.t.tick(5000);
+  await settle();
+  assert.deepEqual(
+    sent.map((x) => [x.title, x.baseRev]),
+    [
+      ['one', 1],
+      ['one', 1],
+      ['two', 2],
+    ],
+  );
+  assert.equal(sent[1].saveId, sent[0].saveId, 'the retry is the same save');
+  assert.notEqual(sent[2].saveId, sent[0].saveId, 'the next save is a new one');
+  assert.match(sent[0].saveId, /^[A-Za-z0-9_-]{8,64}$/);
+  assert.equal(s.saver.state.status, 'saved');
+  assert.equal(remote.rev, 3, 'no conflict with itself, nothing lost');
 });

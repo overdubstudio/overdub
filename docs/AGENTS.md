@@ -666,11 +666,14 @@ what it flags.
 
 ## Privacy
 
-Your song stays in your browser, and the studio keeps no API key. The in-app agent's conversation goes to Anthropic, and
-only there: through Claude Code on your computer, or through your own local server and the key you set on it; and
-what an outside agent does travels only between your tab and that agent (through the relay while Connect is on). On
-overdubstudio.com, and nowhere else, the pages also send a few anonymous counts: one GET of `e.gif` each, with
-an event name and at most one word from a fixed list. That is page views (with the linking site's host), and in the
+Your song stays in your browser unless you save it to your Overdub account (Save to cloud in the Song menu, where the
+studio offers Overdub's own service): a song you save there is kept in your account until you delete it or the account,
+and deleted songs may stay in the service's backups for up to 35 days. Its recordings stay in the browser they were made
+in. The hosted agent still keeps no prompts, songs or take ids. The studio keeps no API key. The in-app agent's
+conversation goes to Anthropic, and only there: through Claude Code on your computer, or through your own local server
+and the key you set on it; and what an outside agent does travels only between your tab and that agent (through the
+relay while Connect is on). On overdubstudio.com, and nowhere else, the pages also send a few anonymous counts:
+one GET of `e.gif` each, with an event name and at most one word from a fixed list. That is page views (with the linking site's host), and in the
 studio: opens (`demo`, `new`, `saved`, `device`, `link`, with the linking site's host), the first play, agent
 messages (`demo`, `local`, `mcp`, `claude.ai`; outside agents once per page load), devices defined (`you`, `agent`),
 exports (by file type), shares (`link`, `agent`, `fork`), hums and keeps (`idea`, `take`). No cookies, nothing stored, no ids, no third

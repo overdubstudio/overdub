@@ -39,6 +39,10 @@ the agent asking before it takes anything out of a song from a link.
   server; a checkout address from the service opens only if it's `https:`. Nothing opens an ask before its price is on
   screen (`tools/cloud-test.js`).
 - **Their songs.** A song lives in the browser; a share link carries it in the URL hash, which never reaches a server.
+  Where the service is on, a signed-in person can also save a song to their account (Save to cloud, My songs:
+  `ui/songs.js`): the song document goes to the service over the same cookie session, is kept until they delete it or
+  the account (backups up to 35 days), and is read back only by them. Its recordings never leave the browser. A song
+  opened from the account goes through the same door as a song file: its devices are code, held until trusted here.
 - **Their machine**, when they run the local server, the MCP server or the Node renderer.
 - **Who made what**: bylines, History and the provenance report.
 

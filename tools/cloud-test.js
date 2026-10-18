@@ -3,8 +3,10 @@
 // Off without a site config; signing in with Google (the popup, the done page's message, the poll); the balance in the head; the price on screen before
 // any ask opens (typed, a suggestion, the tour, a direct send); a Claude of your own first; an ask streaming tool calls
 // that run here, signed Claude; Stop, retries, out of credits, credits back on undo; free moves; nothing secret kept in
-// the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Browsers run muted (tools/pw.js
-// QUIET). Screenshots: tools/.out/cloud-*.png.
+// the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Songs in the
+// account (ui/songs.js, against the fake's /v1/songs): off without them, signed out, no Plus, Save to cloud and the save
+// as you work, a newer save made elsewhere, open, earlier saves, delete, and My songs on a phone. Browsers run muted
+// (tools/pw.js QUIET). Screenshots: tools/.out/cloud-*.png.
 //
 //   node tools/cloud-test.js
 import http from 'node:http';

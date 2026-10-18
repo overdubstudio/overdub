@@ -610,11 +610,14 @@ device. It shows up as a card in the Agent tab (&quot;Claude wants to delete Bas
 you keep it, after the device check).</li>
 </ul>
 <h2 id="privacy"><a class="h-link" href="#privacy">Privacy</a></h2>
-<p>Your song stays in your browser, and the studio keeps no API key. The in-app agent's conversation goes to Anthropic, and
-only there: through Claude Code on your computer, or through your own local server and the key you set on it; and
-what an outside agent does travels only between your tab and that agent (through the relay while Connect is on). On
-overdubstudio.com, and nowhere else, the pages also send a few anonymous counts: one GET of <code>e.gif</code> each, with
-an event name and at most one word from a fixed list. That is page views (with the linking site's host), and in the
+<p>Your song stays in your browser unless you save it to your Overdub account (Save to cloud in the Song menu, where the
+studio offers Overdub's own service): a song you save there is kept in your account until you delete it or the account,
+and deleted songs may stay in the service's backups for up to 35 days. Its recordings stay in the browser they were made
+in. The hosted agent still keeps no prompts, songs or take ids. The studio keeps no API key. The in-app agent's
+conversation goes to Anthropic, and only there: through Claude Code on your computer, or through your own local server
+and the key you set on it; and what an outside agent does travels only between your tab and that agent (through the
+relay while Connect is on). On overdubstudio.com, and nowhere else, the pages also send a few anonymous counts:
+one GET of <code>e.gif</code> each, with an event name and at most one word from a fixed list. That is page views (with the linking site's host), and in the
 studio: opens (<code>demo</code>, <code>new</code>, <code>saved</code>, <code>device</code>, <code>link</code>, with the linking site's host), the first play, agent
 messages (<code>demo</code>, <code>local</code>, <code>mcp</code>, <code>claude.ai</code>; outside agents once per page load), devices defined (<code>you</code>, <code>agent</code>),
 exports (by file type), shares (<code>link</code>, <code>agent</code>, <code>fork</code>), hums and keeps (<code>idea</code>, <code>take</code>). No cookies, nothing stored, no ids, no third

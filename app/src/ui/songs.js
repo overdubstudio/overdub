@@ -226,7 +226,7 @@ export default function (app) {
     const got = await Promise.all(ids.map(hasAsset));
     const gone = ids.filter((_, i) => !got[i]);
     if (!gone.length) return '';
-    const names = gone.map((id) => doc.assets?.[id]?.name || doc.reference?.name || id).slice(0, 3).map((n) => `“${String(n).slice(0, 40)}”`);
+    const names = gone.map((id) => doc.assets?.[id]?.name || (doc.reference?.asset === id && doc.reference.name) || 'a recording').slice(0, 3).map((n) => `“${String(n).slice(0, 40)}”`);
     const more = gone.length > 3 ? ` and ${gone.length - 3} more` : '';
     return ` ${gone.length === 1 ? 'One recording isn’t' : `${gone.length} recordings aren’t`} in this browser, so ${gone.length === 1 ? 'it’s' : 'they’re'} silent here: ${names.join(', ')}${more}. A cloud save keeps the song, not its audio.`;
   }

@@ -5,7 +5,8 @@
 // that run here, signed Claude; Stop, retries, out of credits, credits back on undo; free moves; nothing secret kept in
 // the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Songs in the
 // account (ui/songs.js, against the fake's /v1/songs): off without them, signed out, no Plus, Save to cloud and the save
-// as you work, a newer save made elsewhere, open, earlier saves, delete, and My songs on a phone. Browsers run muted
+// as you work, a newer save made elsewhere, open, earlier saves, delete, a write whose answer is lost sent again as the
+// same write, a song put aside and Undo, two tabs on one song, and My songs on a phone. Browsers run muted
 // (tools/pw.js QUIET). Screenshots: tools/.out/cloud-*.png.
 //
 //   node tools/cloud-test.js
@@ -75,6 +76,8 @@ function fakeCloud() {
     if (typeof doc.reference?.asset === 'string') assets.add(doc.reference.asset);
     return { songId, title: String(doc.title || 'Untitled').slice(0, 120), rev, savedAt, createdAt, bytes: Buffer.byteLength(JSON.stringify(doc)), tracks: doc.tracks.length, assets: [...assets], pid: typeof doc.id === 'string' ? doc.id : null };
   };
+  // createId, saveId: optional nonces that make a write safe to send again (8 to 64 of [A-Za-z0-9_-])
+  const nonceOk = (x) => x === undefined || (typeof x === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(x));
   const validDoc = (d) => !!d && typeof d === 'object' && !Array.isArray(d) && (d.format === 'overdub/0' || /^earworm\//.test(String(d.format || ''))) && Array.isArray(d.tracks);
   function putSong(email, songId, doc, createdAt) {
     const all = songsOf(email), had = all.get(songId);
@@ -93,7 +96,13 @@ function fakeCloud() {
   const me = (u) => ({ user: { id: 'usr_' + u.email.length, email: u.email, createdAt: 1 }, balance: balance(u), asksHint: Math.round(u.balance / 3.5), plan: null, trial: { eligible: !!u.trialEligible, claimed: false },
     creditBack: { budget: 9, left: 9, periodEnd: 1 }, limits: { dailyCreditsLeft: 99 }, notice: u.notice || null,
     ...(songsOn ? { songs: { canSave: !!u.plus, count: songsOf(u.email).size, max: SONGS.maxSongs } } : {}) });
-  const send = (res, status, body, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(body === undefined ? '' : JSON.stringify(body)); };
+  let lose = 0;
+  const send = (res, status, body, headers = {}) => {
+    const lost = lose > 0 && /^\/v1\/songs/.test(res.req.url) && res.req.method === 'POST';
+    if (lost) lose--;
+    res.writeHead(lost ? 502 : status, { 'content-type': 'application/json', ...headers });
+    res.end(lost ? JSON.stringify({ error: { code: 'bad_gateway', message: 'The service didn’t answer.' } }) : body === undefined ? '' : JSON.stringify(body));
+  };
   const err = (res, status, code, message, details = {}) => send(res, status, { error: { code, message, ...details } });
 
   const server = http.createServer(async (req, res) => {
@@ -142,8 +151,14 @@ function fakeCloud() {
         if (!u.plus) return err(res, 403, 'songs_need_plus', 'Cloud saves come with Plus.');
         if (!validDoc(body?.doc)) return err(res, 400, 'validation_failed', 'That isn’t a song.', { field: 'doc' });
         if (Buffer.byteLength(JSON.stringify(body.doc)) > SONGS.maxBytes) return err(res, 413, 'song_too_large', 'That song is too big to save.');
+        if (!nonceOk(body.createId)) return err(res, 400, 'validation_failed', 'The studio sent something the service can’t take.', { field: 'createId' });
+        // the same create again (a retry after the answer was lost): the song it made, not a second one
+        const made = body.createId && [...all.values()].find((x) => x.createId === body.createId);
+        if (made) return send(res, 200, { song: made.row });
         if (all.size >= SONGS.maxSongs) return err(res, 403, 'song_limit', 'Your account holds 200 songs.');
-        return send(res, 201, { song: putSong(u.email, 'sng_' + String(++songSeq).padStart(6, '0'), body.doc) });
+        const row = putSong(u.email, 'sng_' + String(++songSeq).padStart(6, '0'), body.doc);
+        if (body.createId) all.get(row.songId).createId = body.createId;
+        return send(res, 201, { song: row });
       }
       if (!s) return err(res, 404, 'song_not_found', 'That song isn’t in your account.');
       if (sm[2] && req.method === 'GET') return send(res, 200, { revs: s.keep.map((rev) => ({ rev, savedAt: s.row.savedAt - (s.row.rev - rev) * 60000, bytes: Buffer.byteLength(JSON.stringify(s.docs.get(rev))) })) });
@@ -155,8 +170,15 @@ function fakeCloud() {
       if (req.method === 'POST') {
         if (!u.plus) return err(res, 403, 'songs_need_plus', 'Cloud saves come with Plus.');
         if (!validDoc(body?.doc)) return err(res, 400, 'validation_failed', 'That isn’t a song.', { field: 'doc' });
-        if (body.baseRev !== s.row.rev) return err(res, 409, 'song_conflict', 'There’s a newer save of this song.', { current: s.row });
-        return send(res, 200, { song: putSong(u.email, id, body.doc) });
+        if (!nonceOk(body.saveId)) return err(res, 400, 'validation_failed', 'The studio sent something the service can’t take.', { field: 'saveId' });
+        if (body.baseRev !== s.row.rev) {
+          // the same save again (its answer was lost): the row it made, and nothing written
+          if (body.saveId && s.lastSaveId === body.saveId) return send(res, 200, { song: s.row });
+          return err(res, 409, 'song_conflict', 'There’s a newer save of this song.', { current: s.row });
+        }
+        const row = putSong(u.email, id, body.doc);
+        s.lastSaveId = body.saveId || null;
+        return send(res, 200, { song: row });
       }
       if (req.method === 'DELETE') { all.delete(id); return send(res, 200, { deleted: true }); }
     }
@@ -224,7 +246,10 @@ function fakeCloud() {
       songsOf: (email) => [...songsOf(email).values()],
       seedSong: (email, doc, savedAt = Date.now()) => { const r = putSong(email, 'sng_' + String(++songSeq).padStart(6, '0'), doc); r.savedAt = savedAt; return r; },
       // another browser saves the song: its rev moves on, so this page's next save is a conflict
-      saveElsewhere(email, songId, patch) { const s = songsOf(email).get(songId); return putSong(email, songId, { ...s.docs.get(s.row.rev), ...patch }); },
+      saveElsewhere(email, songId, patch) { const s = songsOf(email).get(songId); const r = putSong(email, songId, { ...s.docs.get(s.row.rev), ...patch }); s.lastSaveId = null; return r; },
+      // the next n song writes land, and their answers are lost on the way back (a gateway's 502: a dropped connection
+      // would do, but Chromium quietly sends a POST again on a dropped keep-alive socket, so the check couldn't say who)
+      loseAnswers(n) { lose = n; },
       next(email) { next = email; },
       popup(o) { popup = { message: true, close: true, ...o }; },
       user(email) { return users.get(email); },
@@ -823,7 +848,12 @@ const fake = await fakeCloud();
   const closeMenu = (page) => page.evaluate(() => { for (const p of document.querySelectorAll('.ew-pop')) p.remove(); });
   const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('.ew-toast')].map((t) => t.textContent.trim()));
   const clearToasts = (page) => page.evaluate(() => document.querySelectorAll('.ew-toast').forEach((t) => t.remove()));
-  const link = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('overdub:cloud-song') || '{}')[window.overdub.store.get().id] || null);
+  // the song on screen's link, in the account signed in (overdub:cloud-song is keyed '<user id> <project id>')
+  const link = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('overdub:cloud-song') || '{}')[`${window.overdub.agent.cloud?.me?.user?.id} ${window.overdub.store.get().id}`] || null);
+  // the tab hidden for a moment: what's waiting goes at once
+  const hide = (page) => page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; });
+  const toastAct = (page, re) => page.evaluate((src) => { const t = [...document.querySelectorAll('.ew-toast')].find((x) => new RegExp(src).test(x.textContent)); t?.querySelector('.ew-toast-act')?.click(); return !!t; }, re.source);
+  const songNamed = (title) => fake.songsOf(who).filter((x) => x.row.title === title);
   const edit = (page, title) => page.evaluate((t) => window.overdub.store.dispatch({ type: 'project.set', patch: { title: t } }, { by: 'you', label: 'title' }), title);
   const songPosts = () => fake.reqs(/^\/v1\/songs/).filter((r) => r.method === 'POST');
 
@@ -899,8 +929,8 @@ const fake = await fakeCloud();
     const l = await link(page);
     const post = songPosts().at(-1);
     first = l?.songId;
-    t.ok(post?.path === '/v1/songs' && post.body?.doc?.id === pid && post.body.doc.title === 'Night Ride' && /^[A-Za-z0-9_-]{8,128}$/.test(post.headers['idempotency-key'] || '') && l?.rev === 1,
-      `Save to cloud: POST /v1/songs with the song (and one Idempotency-Key), and overdub:cloud-song links this song to it at rev 1 (${JSON.stringify(l)})`);
+    t.ok(post?.path === '/v1/songs' && post.body?.doc?.id === pid && post.body.doc.title === 'Night Ride' && /^[A-Za-z0-9_-]{8,64}$/.test(post.body.createId || '') && post.headers['idempotency-key'] === undefined && l?.rev === 1,
+      `Save to cloud: POST /v1/songs with the song (and one createId in the body, no Idempotency-Key header), and overdub:cloud-song links this song to it at rev 1 (${JSON.stringify(l)})`);
     const said = await toasts(page);
     t.ok(said.some((x) => /^“Night Ride” is in your account\. Changes save there as you work; its recordings stay in this browser\./.test(x)), `... and says so ("${said.find((x) => /account/.test(x))}")`);
     await closeMenu(page);
@@ -1018,6 +1048,107 @@ const fake = await fakeCloud();
     const find = await page.evaluate(() => window.overdub.find.search('my songs').map((r) => r.title));
     t.ok(find.includes('My songs'), `Find knows My songs (${find.slice(0, 4).join(', ')})`);
     await closeMenu(page);
+  }
+
+  // 8h. a write whose answer is lost goes again as the same write; a song put aside keeps its own save; two tabs
+  {
+    await clearToasts(page);
+    // Save to cloud, its answer lost: sent again with the same createId, and the account has one song, not two
+    await edit(page, 'Lost and found');
+    const c0 = songPosts().filter((r) => r.path === '/v1/songs').length;
+    fake.loseAnswers(1);
+    await page.evaluate(() => window.overdub.songs.save());
+    await until(() => link(page), 6000);
+    const creates = songPosts().filter((r) => r.path === '/v1/songs').slice(c0);
+    const lf = (await link(page))?.songId;
+    t.ok(creates.length === 2 && creates[0].body.createId && creates[1].body.createId === creates[0].body.createId && songNamed('Lost and found').length === 1 && songNamed('Lost and found')[0].row.songId === lf,
+      `Save to cloud whose answer was lost: sent again with the same createId, one song in the account, linked (${creates.length} posts, ${songNamed('Lost and found').length} songs)`);
+    // a save whose answer is lost: the next one is the same save again (same saveId), answered as a repeat, then the newer state
+    const path = `/v1/songs/${lf}`;
+    const s0 = songPosts().filter((r) => r.path === path).length;
+    fake.loseAnswers(1);
+    await edit(page, 'Lost and found (2)');
+    await hide(page);
+    const erred = await until(() => page.evaluate(() => window.overdub.songs.state.status === 'error'), 4000);
+    await edit(page, 'Lost and found (3)');
+    await hide(page);
+    await until(() => fake.songsOf(who).find((x) => x.row.songId === lf)?.row.title === 'Lost and found (3)', 6000);
+    const saves = songPosts().filter((r) => r.path === path).slice(s0).map((r) => r.body);
+    const row3 = fake.songsOf(who).find((x) => x.row.songId === lf).row;
+    t.ok(erred && saves.length === 3 && saves[0].saveId && saves[1].saveId === saves[0].saveId && saves[2].saveId !== saves[0].saveId && saves[1].doc.title === 'Lost and found (2)' && saves[1].baseRev === 1 && saves[2].baseRev === 2 && row3.rev === 3 && !(await toasts(page)).some((x) => /newer save/.test(x)),
+      `a save whose answer was lost goes again with its saveId (a repeat, no conflict with itself), then the newer state (${saves.map((x) => `${x.doc.title}@${x.baseRev}`).join(', ')}; rev ${row3.rev})`);
+    // a song put aside while its save waits: the list's row is that song's, not the one on screen
+    await page.evaluate(() => window.overdub.songs.refresh());
+    await edit(page, 'Lost and found (4)');
+    await page.evaluate(() => window.overdub.exporter.newSong());
+    await until(() => fake.songsOf(who).find((x) => x.row.songId === lf)?.row.title === 'Lost and found (4)', 6000);
+    await sleep(200);
+    const listed = await page.evaluate((id) => window.overdub.songs.list?.songs.find((x) => x.songId === id) || null, lf);
+    t.ok(listed?.title === 'Lost and found (4)' && listed.rev === 4,
+      `a song put aside saves as itself, and My songs' row says so, not the song on screen ("${listed?.title}", rev ${listed?.rev})`);
+    // Undo brings it back (with the save it stands on); "Open the newer one", then Undo to yours: yours is a conflict
+    await toastAct(page, /^New song\./);
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (4)', null, { timeout: 5000 });
+    await clearToasts(page);
+    fake.saveElsewhere(who, lf, { title: 'Lost and found (desk)' });
+    await edit(page, 'Lost and found (mine)');
+    await hide(page);
+    await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save/.test(t.textContent)), null, { timeout: 6000 });
+    await toastAct(page, /newer save/);
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (desk)', null, { timeout: 5000 });
+    await toastAct(page, /^Opened “Lost and found \(desk\)”/);
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (mine)', null, { timeout: 5000 });
+    await clearToasts(page);
+    const u0 = songPosts().filter((r) => r.path === path).length;
+    await edit(page, 'Lost and found (mine, after Undo)');
+    await hide(page);
+    await until(() => songPosts().filter((r) => r.path === path).length > u0, 4000);
+    await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save/.test(t.textContent)), null, { timeout: 4000 }).catch(() => null);
+    const undoSave = songPosts().filter((r) => r.path === path).at(-1).body;
+    const desk = fake.songsOf(who).find((x) => x.row.songId === lf).row;
+    t.ok(undoSave.baseRev === 4 && desk.title === 'Lost and found (desk)' && desk.rev === 5 && (await toasts(page)).some((x) => /^Not saved: your account has a newer save of “Lost and found \(mine, after Undo\)”/.test(x)),
+      `Undo after "Open the newer one": yours saves from its own save (baseRev ${undoSave.baseRev}), gets a 409 and asks; the newer save is untouched ("${desk.title}", rev ${desk.rev})`);
+    await shot('cloud-songs-undo-conflict');
+    // a copy put aside, a conflict: Keep mine makes a song of that copy, not of the song on screen
+    await toastAct(page, /newer save/);   // (Open the newer one: settled)
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (desk)', null, { timeout: 5000 });
+    await clearToasts(page);
+    fake.saveElsewhere(who, lf, { title: 'Lost and found (phone)' });
+    await edit(page, 'Lost and found (desk, mine)');
+    await page.evaluate(() => window.overdub.songs.open());
+    await page.waitForSelector(`.sg-row[data-song="${lf}"] .sg-open`, { timeout: 5000 });
+    await page.click(`.sg-row[data-song="${lf}"] .sg-open`);
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (phone)', null, { timeout: 5000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save of “Lost and found \(desk, mine\)”/.test(t.textContent)), null, { timeout: 5000 });
+    await page.click('.ew-toast .sg-toast-b');
+    await until(() => songNamed('Lost and found (desk, mine)').length === 1, 5000);
+    const kept = songNamed('Lost and found (desk, mine)');
+    const l3 = await link(page);
+    t.ok(kept.length === 1 && kept[0].row.songId !== lf && !songNamed('Lost and found (phone)').some((x) => x.row.songId !== lf) && l3?.songId === lf,
+      `a conflict on a song just put aside: Keep mine makes a new song of that copy ("${kept[0]?.row.title}"), and the song on screen stays linked to its own (${l3?.songId === lf})`);
+    // two tabs on one song: the second one's save is a conflict, never over the first's
+    await clearToasts(page);
+    await sleep(700);   // (the autosave: the second tab opens this copy)
+    const p2 = await page.context().newPage();
+    await p2.goto(page.url());
+    await ready(p2);
+    await p2.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-in' && !!window.overdub.agent.cloud.config?.songs, null, { timeout: 10000 });
+    const p2title = await p2.evaluate(() => window.overdub.store.get().title);
+    await edit(page, 'Lost and found (tab 1)');
+    await hide(page);
+    await until(() => fake.songsOf(who).find((x) => x.row.songId === lf)?.row.title === 'Lost and found (tab 1)', 5000);
+    const t0 = songPosts().filter((r) => r.path === path).length;
+    await edit(p2, 'Lost and found (tab 2)');
+    await hide(p2);
+    await until(() => songPosts().filter((r) => r.path === path).length > t0, 4000);
+    await p2.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save/.test(t.textContent)), null, { timeout: 4000 }).catch(() => null);
+    const tab2 = songPosts().filter((r) => r.path === path).at(-1).body;
+    const tabRow = fake.songsOf(who).find((x) => x.row.songId === lf).row;
+    const p2toast = await p2.evaluate(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save/.test(t.textContent)));
+    t.ok(p2title === 'Lost and found (phone)' && tab2.doc.title === 'Lost and found (tab 2)' && tab2.baseRev === tabRow.rev - 1 && tabRow.title === 'Lost and found (tab 1)' && p2toast,
+      `two tabs on one song: the second saves from the save it opened (baseRev ${tab2.baseRev}, the account at ${tabRow.rev}), gets a 409 and asks; the first tab's save stands ("${tabRow.title}")`);
+    await p2.close();
+    await clearToasts(page);
   }
   t.ok(realErrors(errors).length === 0, 'no page errors (songs)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();

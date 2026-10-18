@@ -1888,15 +1888,22 @@ service's `GET /v1/config`.
 - `agent/cloud-panel.js` draws it in the Agent tab: a row in settings, the sign-in sheet, the balance in the presence
   line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account.
 - **Songs in the account** (`ui/songs.js`, `app.songs`; on only when `GET /v1/config` has `songs`): the client's
-  `listSongs`, `getSong(id, rev?)`, `songRevs(id)`, `createSong(doc)` (one `Idempotency-Key`), `saveSong(id, doc,
-  baseRev)` and `deleteSong(id)` speak the service's `/v1/songs` (the song document is stored in the account; its
-  recordings never leave the browser). `agent/cloud-songs.js` is the pure part: the link (`localStorage
-  overdub:cloud-song`, a project id to `{ songId, rev, savedAt }`) and the saver, which saves a linked song 5 s after
-  a change and when the tab is hidden (ui `'song:replacing' { song }` from `ui/export.js` flushes the song being
-  replaced, as it was), one save at a time, always from the rev it knows. A `409 song_conflict` saves nothing over the
-  newer save and holds that song until the person picks: open the newer one, or keep theirs as a new song (a toast).
-  `songs_need_plus`, a 401, `song_too_large` and `song_not_found` hold it too; a network error tries again on the next
-  change. The Song menu draws `app.songs.menuRows()` (Save to cloud, or *Saved to cloud · 2 min ago*, and My songs);
+  `listSongs`, `getSong(id, rev?)`, `songRevs(id)`, `createSong(doc, createId?)`, `saveSong(id, doc, baseRev,
+  saveId?)` and `deleteSong(id)` speak the service's `/v1/songs` (the song document is stored in the account; its
+  recordings never leave the browser). A write's nonce rides in the JSON body, not an `Idempotency-Key` (CORS lets no
+  new header through, and the core reads only 64 KB of a body for it): one `createId` per Save to cloud press and one
+  `saveId` per save, each sent again when the answer is lost, so a write that landed answers as a repeat.
+  `agent/cloud-songs.js` is the pure part: the link (`localStorage overdub:cloud-song`, an account's project id to
+  `{ songId, rev, savedAt }`, keyed by the signed-in user id), the base each copy of a song stands on (`localStorage
+  overdub:cloud-base`, keyed by the account and the copy's `id` and `meta.modified`: the song on screen keeps its own
+  in memory, and a copy put aside in `overdub:previous`, Recent songs or the song before Make it yours, or held by the
+  autosave, finds its own again; never a newer rev another tab or copy wrote) and the saver, which saves a linked song
+  5 s after a change and when the tab is hidden (ui `'song:replacing' { song }` from `ui/export.js` puts the song
+  aside with its base and flushes it, as it was), one save at a time, one queued save per song, always from the base
+  that copy has. A `409 song_conflict`, or a copy whose base isn't known, saves nothing over the newer save and holds
+  that song until the person picks: open the newer one, or keep that copy as a new song (a toast).
+  `songs_need_plus`, a 401, `song_too_large` and `song_not_found` (that account's link goes, never another's) hold
+  it too; a network error tries the same save again on the next change. The Song menu draws `app.songs.menuRows()` (Save to cloud, or *Saved to cloud · 2 min ago*, and My songs);
   My songs is a popover under the Song key (a bottom sheet on a phone): the list (title, last saved, tracks, *N
   recordings on this browser only*), Open (through `app.exporter.openSong`, the song file's door: Recent songs, Undo,
   `guardDevices`, the held-devices ask; missing recordings named), Earlier saves (open one as a copy, with a new

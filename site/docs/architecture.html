@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 133 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 134 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -1762,13 +1762,20 @@ move offered in the log lands in the box with its price and needs a second press
 <li><code>agent/cloud-panel.js</code> draws it in the Agent tab: a row in settings, the sign-in sheet, the balance in the presence
 line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account.</li>
 <li><strong>Songs in the account</strong> (<code>ui/songs.js</code>, <code>app.songs</code>; on only when <code>GET /v1/config</code> has <code>songs</code>): the client's
-<code>listSongs</code>, <code>getSong(id, rev?)</code>, <code>songRevs(id)</code>, <code>createSong(doc)</code> (one <code>Idempotency-Key</code>), <code>saveSong(id, doc, baseRev)</code> and <code>deleteSong(id)</code> speak the service's <code>/v1/songs</code> (the song document is stored in the account; its
-recordings never leave the browser). <code>agent/cloud-songs.js</code> is the pure part: the link (<code>localStorage overdub:cloud-song</code>, a project id to <code>{ songId, rev, savedAt }</code>) and the saver, which saves a linked song 5 s after
-a change and when the tab is hidden (ui <code>'song:replacing' { song }</code> from <code>ui/export.js</code> flushes the song being
-replaced, as it was), one save at a time, always from the rev it knows. A <code>409 song_conflict</code> saves nothing over the
-newer save and holds that song until the person picks: open the newer one, or keep theirs as a new song (a toast).
-<code>songs_need_plus</code>, a 401, <code>song_too_large</code> and <code>song_not_found</code> hold it too; a network error tries again on the next
-change. The Song menu draws <code>app.songs.menuRows()</code> (Save to cloud, or <em>Saved to cloud · 2 min ago</em>, and My songs);
+<code>listSongs</code>, <code>getSong(id, rev?)</code>, <code>songRevs(id)</code>, <code>createSong(doc, createId?)</code>, <code>saveSong(id, doc, baseRev, saveId?)</code> and <code>deleteSong(id)</code> speak the service's <code>/v1/songs</code> (the song document is stored in the account; its
+recordings never leave the browser). A write's nonce rides in the JSON body, not an <code>Idempotency-Key</code> (CORS lets no
+new header through, and the core reads only 64 KB of a body for it): one <code>createId</code> per Save to cloud press and one
+<code>saveId</code> per save, each sent again when the answer is lost, so a write that landed answers as a repeat.
+<code>agent/cloud-songs.js</code> is the pure part: the link (<code>localStorage overdub:cloud-song</code>, an account's project id to
+<code>{ songId, rev, savedAt }</code>, keyed by the signed-in user id), the base each copy of a song stands on (<code>localStorage overdub:cloud-base</code>, keyed by the account and the copy's <code>id</code> and <code>meta.modified</code>: the song on screen keeps its own
+in memory, and a copy put aside in <code>overdub:previous</code>, Recent songs or the song before Make it yours, or held by the
+autosave, finds its own again; never a newer rev another tab or copy wrote) and the saver, which saves a linked song
+5 s after a change and when the tab is hidden (ui <code>'song:replacing' { song }</code> from <code>ui/export.js</code> puts the song
+aside with its base and flushes it, as it was), one save at a time, one queued save per song, always from the base
+that copy has. A <code>409 song_conflict</code>, or a copy whose base isn't known, saves nothing over the newer save and holds
+that song until the person picks: open the newer one, or keep that copy as a new song (a toast).
+<code>songs_need_plus</code>, a 401, <code>song_too_large</code> and <code>song_not_found</code> (that account's link goes, never another's) hold
+it too; a network error tries the same save again on the next change. The Song menu draws <code>app.songs.menuRows()</code> (Save to cloud, or <em>Saved to cloud · 2 min ago</em>, and My songs);
 My songs is a popover under the Song key (a bottom sheet on a phone): the list (title, last saved, tracks, <em>N
 recordings on this browser only</em>), Open (through <code>app.exporter.openSong</code>, the song file's door: Recent songs, Undo,
 <code>guardDevices</code>, the held-devices ask; missing recordings named), Earlier saves (open one as a copy, with a new

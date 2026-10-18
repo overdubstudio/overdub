@@ -929,6 +929,13 @@ function mountPanel(el, app) {
     if (was !== bridge.state || s.agent) { renderHead(); if (showKey || !agent.provider) renderAll(); }
   }));
   offs.push(ui.on('select', () => { contextOff = false; renderComposer(); }));
+  // another part of the studio asks for one of the account's sheets (ui/songs.js: the plans, for cloud saves)
+  offs.push(ui.on('cloud:show', ({ view = 'account' } = {}) => {
+    if (!cu.enabled) return;
+    try { ui.setOpen?.('right', true); } catch { /* no right pane on this layout */ }
+    ui.show('agent');
+    cu.show(view);
+  }));
   offs.push(ui.on('agent:compose', ({ text = '', send: go = false } = {}) => {
     ui.show('agent');
     if (go && text) { send(text); return; }

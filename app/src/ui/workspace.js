@@ -14,7 +14,8 @@
 // there is in localStorage 'overdub:workspace').
 //
 // Other modules never import this file: they tag parts with data-feature and call app.ui.workspace?.… so each works
-// with or without it. installWorkspace(ui, app, decision) is called by main.js straight after createShell.
+// with or without it. installWorkspace(ui, app, decision) is called by main.js straight after createShell. A module that
+// is only sometimes there adds its own Do row while it is: ui.workspace.addFind({ title, purpose, aliases, run }) -> off.
 
 import { h, css, byline, authorOf } from './dom.js';
 import { kitHashes, kitState, kitLine, prefetchKit } from './kitload.js';
@@ -306,9 +307,17 @@ export function installWorkspace(ui, app, decision = { view: 'full' }) {
   }
 
   /* ------------------------------------------------ the sources */
+  // Do rows a module adds while it's on (ui/songs.js: My songs, only when the account has songs): { title, purpose,
+  // aliases, run } -> off
+  const extras = new Set();
+  api.addFind = (it) => {
+    const row = { kind: 'do', id: 'do:' + it.title, title: it.title, purpose: it.purpose || '', aliases: it.aliases || [], key: '', run: it.run };
+    extras.add(row);
+    return () => { extras.delete(row); };
+  };
   // Do: every key the studio declares, by its label (modes, keys that only work inside something, are left out)
   function doItems() {
-    const seen = new Set(), out = [];
+    const seen = new Set(), out = [...extras];
     for (const k of ui.keys?.list?.() || []) {
       if (!k.label || k.when || seen.has(k.label)) continue;
       seen.add(k.label);

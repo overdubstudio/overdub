@@ -319,8 +319,10 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
   }
   function deleteRow(c) {
     if (!del) return h('div.ag-kc-acts', h('button.btn.btn-txt.ag-link.ag-cl-del', { type: 'button', onclick: () => { del = { step: 'ask' }; cached.sig = ''; renderAll(); } }, 'Delete my account'));
+    // (songs saved to the account, when the service keeps them: ui/songs.js, GET /v1/config songs)
+    const songs = !!c.songs;
     const run = async (opts) => {
-      try { await c.deleteAccount(opts); del = null; view = null; said = ''; push({ k: 'note', kind: 'ok', text: 'Your account is deleted. Your songs are in this browser, as they were.' }); }
+      try { await c.deleteAccount(opts); del = null; view = null; said = ''; push({ k: 'note', kind: 'ok', text: songs ? 'Your account is deleted, and the songs saved to it. The songs in this browser are as they were.' : 'Your account is deleted. Your songs are in this browser, as they were.' }); }
       catch (e) {
         if (e.code === 'subscription_active') del = { step: 'plan', opts };
         else if (e.code === 'paid_credits_left') del = { step: 'credits', credits: e.details?.credits, opts };
@@ -332,7 +334,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const words = del.step === 'plan' ? 'You have Overdub Plus on this account. Deleting it cancels the plan now, and no more payments are taken.'
       : del.step === 'credits' ? `You have ${plural(del.credits || 0, 'paid credit')} left. Deleting the account gives them up.`
         : del.step === 'error' ? del.message
-          : 'Deleting your account signs you out everywhere and removes your email address from Overdub. Our backups keep it for up to 35 days, then it’s gone from them too. Our records of payments and of what each ask cost stay, without your address; the payment provider keeps its own receipts, as tax law asks. Your songs aren’t on the account: they stay in this browser.';
+          : 'Deleting your account signs you out everywhere and removes your email address from Overdub. Our backups keep it for up to 35 days, then it’s gone from them too. Our records of payments and of what each ask cost stay, without your address; the payment provider keeps its own receipts, as tax law asks. ' + (songs ? 'The songs you saved to the account go with it; the songs in this browser stay.' : 'Your songs aren’t on the account: they stay in this browser.');
     const next = del.step === 'plan' ? () => run({ ...opts, cancelPlan: true }) : del.step === 'credits' ? () => run({ ...opts, forfeitCredits: true }) : () => run(opts);
     return h('div.ag-cl-delete', h('p.ag-kc-small', words),
       h('div.ag-kc-acts',

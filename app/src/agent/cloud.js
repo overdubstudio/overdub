@@ -21,6 +21,18 @@
 //   cloud.rateCard() -> [{ kind, label, credits }] / cloud.setBalance(balance)
 //   cloud.on(type, fn) -> off            'state', 'me', 'config'
 //
+// Songs in the account (the service's songs module; ui/songs.js draws them), on when GET /v1/config names it:
+//   cloud.songs -> { maxBytes, maxSongs } | null
+//   cloud.listSongs() -> { songs: [row], canSave, max }      newest save first; canSave: the account has Plus (or a trial)
+//   cloud.getSong(id, rev?) -> { song: row, doc }            rev: an earlier save the service kept
+//   cloud.songRevs(id) -> [{ rev, savedAt, bytes }]
+//   cloud.createSong(doc) -> row                              rev 1; one Idempotency-Key per call
+//   cloud.saveSong(id, doc, baseRev) -> row                   409 song_conflict (details.current: the newer row) when
+//                                                             the account has a save this page hasn't seen
+//   cloud.deleteSong(id) -> { deleted: true }
+// A row is { songId, title, rev, savedAt, createdAt, bytes, tracks, assets: [asset id], pid }. Saving needs Plus
+// (403 songs_need_plus); reading and deleting your own songs always work.
+//
 // Every request carries the session cookie (credentials: 'include'); the cookie is httpOnly on the service's origin, so
 // this page never holds a token. Nothing from /v1/me is stored in the browser. Errors are CloudError
 // { status, code, message, details }, the message written for a musician by the service.
@@ -172,6 +184,24 @@ export function createCloud({ api = null, fetch: f = (...a) => globalThis.fetch(
     forgetLocal();
     setMe(null); setState('signed-out');
   }
+  /* ------------------------------------------------------------------ songs */
+  const songPath = (id) => `/v1/songs/${encodeURIComponent(id)}`;
+  // the module's limits, when the service has it on (an absent or switched-off songs entry: no songs here)
+  function songs() {
+    const s = config?.songs;
+    if (!s || typeof s !== 'object' || s.enabled === false) return null;
+    return { maxBytes: Number(s.maxBytes) > 0 ? Number(s.maxBytes) : 0, maxSongs: Number(s.maxSongs) > 0 ? Number(s.maxSongs) : 0 };
+  }
+  async function listSongs() {
+    const r = await req('GET', '/v1/songs');
+    return { songs: Array.isArray(r?.songs) ? r.songs.filter((x) => x && typeof x.songId === 'string') : [], canSave: typeof r?.canSave === 'boolean' ? r.canSave : null, max: Number(r?.max) || 0 };
+  }
+  const getSong = (id, rev = null) => req('GET', songPath(id) + (rev != null ? `?rev=${encodeURIComponent(Math.floor(Number(rev)))}` : ''));
+  async function songRevs(id) { const r = await req('GET', songPath(id) + '/revs'); return Array.isArray(r?.revs) ? r.revs : []; }
+  async function createSong(doc) { const r = await req('POST', '/v1/songs', { doc }, { key: newKey() }); return r?.song || null; }
+  async function saveSong(id, doc, baseRev) { const r = await req('POST', songPath(id), { doc, baseRev }); return r?.song || null; }
+  const deleteSong = (id) => req('DELETE', songPath(id));
+
   const rateCard = () => (Array.isArray(config?.rateCard) ? config.rateCard.filter((r) => r && typeof r.kind === 'string' && Number.isFinite(r.credits)) : []);
 
   return {
@@ -186,6 +216,8 @@ export function createCloud({ api = null, fetch: f = (...a) => globalThis.fetch(
     open, call, wait, finish, creditBack,
     claimTrial, checkout, sync, activity, deleteAccount,
     rateCard, setBalance,
+    get songs() { return songs(); },
+    listSongs, getSong, songRevs, createSong, saveSong, deleteSong,
     on(type, fn) { if (!fns.has(type)) fns.set(type, new Set()); fns.get(type).add(fn); return () => fns.get(type).delete(fn); },
   };
 }

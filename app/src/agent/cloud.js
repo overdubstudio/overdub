@@ -26,9 +26,10 @@
 //   cloud.listSongs() -> { songs: [row], canSave, max }      newest save first; canSave: the account has Plus (or a trial)
 //   cloud.getSong(id, rev?) -> { song: row, doc }            rev: an earlier save the service kept
 //   cloud.songRevs(id) -> [{ rev, savedAt, bytes }]
-//   cloud.createSong(doc) -> row                              rev 1; one Idempotency-Key per call
-//   cloud.saveSong(id, doc, baseRev) -> row                   409 song_conflict (details.current: the newer row) when
-//                                                             the account has a save this page hasn't seen
+//   cloud.createSong(doc, createId?) -> row                   rev 1; the same createId again answers the song it made
+//   cloud.saveSong(id, doc, baseRev, saveId?) -> row          409 song_conflict (details.current: the newer row) when
+//                                                             the account has a save this page hasn't seen; the same
+//                                                             saveId again answers the save it made (a repeat)
 //   cloud.deleteSong(id) -> { deleted: true }
 // A row is { songId, title, rev, savedAt, createdAt, bytes, tracks, assets: [asset id], pid }. Saving needs Plus
 // (403 songs_need_plus); reading and deleting your own songs always work.
@@ -198,8 +199,11 @@ export function createCloud({ api = null, fetch: f = (...a) => globalThis.fetch(
   }
   const getSong = (id, rev = null) => req('GET', songPath(id) + (rev != null ? `?rev=${encodeURIComponent(Math.floor(Number(rev)))}` : ''));
   async function songRevs(id) { const r = await req('GET', songPath(id) + '/revs'); return Array.isArray(r?.revs) ? r.revs : []; }
-  async function createSong(doc) { const r = await req('POST', '/v1/songs', { doc }, { key: newKey() }); return r?.song || null; }
-  async function saveSong(id, doc, baseRev) { const r = await req('POST', songPath(id), { doc, baseRev }); return r?.song || null; }
+  // A write is safe to send again because its nonce rides in the body (createId, saveId: 8 to 64 of [A-Za-z0-9_-]),
+  // not in an Idempotency-Key header: the service's CORS lets no new header through, and the core's Idempotency-Key
+  // reads only the first 64 KB of a body, where a song can be 8 MB.
+  async function createSong(doc, createId = null) { const r = await req('POST', '/v1/songs', createId ? { doc, createId } : { doc }); return r?.song || null; }
+  async function saveSong(id, doc, baseRev, saveId = null) { const r = await req('POST', songPath(id), saveId ? { doc, baseRev, saveId } : { doc, baseRev }); return r?.song || null; }
   const deleteSong = (id) => req('DELETE', songPath(id));
 
   const rateCard = () => (Array.isArray(config?.rateCard) ? config.rateCard.filter((r) => r && typeof r.kind === 'string' && Number.isFinite(r.credits)) : []);

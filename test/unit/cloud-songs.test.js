@@ -96,9 +96,22 @@ test('listSongs, getSong, songRevs, createSong, saveSong, deleteSong: the contra
   );
   const [create, save] = s.log.filter((r) => r.method === 'POST');
   assert.deepEqual(create.body, { doc });
-  assert.match(create.headers['idempotency-key'], /^[A-Za-z0-9_-]{8,128}$/, 'one Idempotency-Key per create');
+  // (no Idempotency-Key: CORS lets no new header through, and the core reads only 64 KB of a body for it)
+  assert.equal(create.headers['idempotency-key'], undefined, 'no Idempotency-Key header on a create');
   assert.deepEqual(save.body, { doc, baseRev: 1 });
   assert.equal(save.headers['idempotency-key'], undefined);
+});
+
+test('createSong and saveSong carry their nonce in the body (createId, saveId), never in a header', async () => {
+  const s = service({ 'POST /v1/songs': [201, { song: row() }], 'POST /v1/songs/sng_1': { song: row({ rev: 2 }) } });
+  const c = createCloud({ api: API, fetch: s.fetch, win: {} });
+  const doc = { id: 'p_1', format: 'overdub/0', tracks: [] };
+  await c.createSong(doc, 'create_abc123');
+  await c.saveSong('sng_1', doc, 1, 'save_abc123');
+  const [create, save] = s.log;
+  assert.deepEqual(create.body, { doc, createId: 'create_abc123' });
+  assert.deepEqual(save.body, { doc, baseRev: 1, saveId: 'save_abc123' });
+  for (const r of s.log) assert.deepEqual(Object.keys(r.headers), ['content-type'], 'only content-type: CORS allows no other');
 });
 
 test('a save over a newer one is a CloudError song_conflict carrying the newer row', async () => {

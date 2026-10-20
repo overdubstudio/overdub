@@ -984,7 +984,8 @@ const fake = await fakeCloud();
     t.ok(post?.path === '/v1/songs' && post.body?.doc?.id === pid && post.body.doc.title === 'Night Ride' && /^[A-Za-z0-9_-]{8,64}$/.test(post.body.createId || '') && post.headers['idempotency-key'] === undefined && l?.rev === 1,
       `Save to cloud: POST /v1/songs with the song (and one createId in the body, no Idempotency-Key header), and overdub:cloud-song links this song to it at rev 1 (${JSON.stringify(l)})`);
     const said = await toasts(page);
-    t.ok(said.some((x) => /^“Night Ride” is in your account\. Changes save there as you work; its recordings stay in this browser\./.test(x)), `... and says so ("${said.find((x) => /account/.test(x))}")`);
+    const recs = await page.evaluate(async () => (await import('/app/src/agent/cloud-songs.js')).songAssets(window.overdub.store.get()).length);
+    t.ok(recs === 0 && said.some((x) => /^“Night Ride” is in your account\. Changes save there as you work\.$/.test(x)), `... and says so, with no word of recordings for a song without any ("${said.find((x) => /account/.test(x))}")`);
     await closeMenu(page);
     const rows2 = await songMenu(page);
     const head2 = await menuHead(page);
@@ -1088,6 +1089,16 @@ const fake = await fakeCloud();
     const l = await link(page);
     t.ok(/^Opened “Tape Hiss” from your account\. One recording isn’t in this browser, so it’s silent here: “Vocal take 1”\. A cloud save keeps the song, not its audio\./.test(tx) && l?.songId === hiss.songId,
       `Open: the song comes in, linked, and its missing recording is named ("${tx.slice(0, 160)}")`);
+    // Save to cloud for a song with recordings: the toast counts them, and says they stay here
+    await clearToasts(page);
+    const taped = song('Two Takes', { tracks: [{ name: 'Vox', kind: 'audio', clips: [{ kind: 'audio', asset: 'a_take01', start: 0, length: 4 }, { kind: 'audio', asset: 'a_take02', start: 4, length: 4 }] }], assets: { a_take01: { kind: 'audio', name: 'Take 1', sr: 48000, channels: 1, duration: 2 }, a_take02: { kind: 'audio', name: 'Take 2', sr: 48000, channels: 1, duration: 2 } } });
+    await page.evaluate((d) => window.overdub.exporter.openSong(d, { from: 'file', name: d.title }), taped);
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Two Takes', null, { timeout: 5000 });
+    await clearToasts(page);
+    await page.evaluate(() => window.overdub.songs.save());
+    await until(async () => (await toasts(page)).some((x) => /“Two Takes” is in your account/.test(x)), 5000);
+    const tapedSaid = (await toasts(page)).find((x) => /“Two Takes” is in your account/.test(x)) || '';
+    t.ok(tapedSaid === '“Two Takes” is in your account. Changes save there as you work; its 2 recordings stay in this browser.', `a song with recordings: the toast counts them ("${tapedSaid}")`);
     // earlier saves of the first song: open one as a copy, unlinked
     await clearToasts(page);
     await page.evaluate(() => window.overdub.songs.open());

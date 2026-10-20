@@ -178,7 +178,9 @@ export default function (app) {
       linkTo(who, mark, song);
       saver.clear(doc.id);
       busy = '';
-      ui.toast(`“${titleOf(doc)}” is in your account. Changes save there as you work; its recordings stay in this browser.`, { kind: 'ok', ms: 6000 });
+      // (its recordings, when it has any, by count: a cloud save keeps the song, not its audio)
+      const n = songAssets(doc).length;
+      ui.toast(`“${titleOf(doc)}” is in your account. Changes save there as you work${n ? `; its ${plural(n, 'recording')} ${n === 1 ? 'stays' : 'stay'} in this browser` : ''}.`, { kind: 'ok', ms: 6000 });
       if (edits !== at) saver.changed();   // (changed while it went)
       refresh();
       return true;

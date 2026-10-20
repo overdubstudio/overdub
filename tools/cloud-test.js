@@ -882,7 +882,8 @@ const fake = await fakeCloud();
   const link = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('overdub:cloud-song') || '{}')[`${window.overdub.agent.cloud?.me?.user?.id} ${window.overdub.store.get().id}`] || null);
   // the tab hidden for a moment: what's waiting goes at once
   const hide = (page) => page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; });
-  const toastAct = (page, re) => page.evaluate((src) => { const t = [...document.querySelectorAll('.ew-toast')].find((x) => new RegExp(src).test(x.textContent)); t?.querySelector('.ew-toast-act')?.click(); return !!t; }, re.source);
+  // a toast's action: its first, or the one with that label
+  const toastAct = (page, re, label = '') => page.evaluate(([src, label]) => { const t = [...document.querySelectorAll('.ew-toast')].find((x) => new RegExp(src).test(x.textContent)); [...(t?.querySelectorAll('.ew-toast-act') || [])].find((b) => !label || b.textContent === label)?.click(); return !!t; }, [re.source, label]);
   const songNamed = (title) => fake.songsOf(who).filter((x) => x.row.title === title);
   const edit = (page, title) => page.evaluate((t) => window.overdub.store.dispatch({ type: 'project.set', patch: { title: t } }, { by: 'you', label: 'title' }), title);
   const songPosts = () => fake.reqs(/^\/v1\/songs/).filter((r) => r.method === 'POST');
@@ -1020,6 +1021,15 @@ const fake = await fakeCloud();
     const s = fake.songsOf(who).find((x) => x.row.songId === first);
     t.ok(/^Not saved: your account has a newer save of “Night Ride \(phone\)”, from just now, made in another tab or browser\. Nothing was saved over it\./.test(tx) && /Keep mine as a new song/.test(tx) && /Open the newer one/.test(tx) && s.row.title === 'Night Ride (laptop)' && songPosts().length === n0 + 1,
       `a save the account answers 409: a toast with two ways out, and the newer save untouched ("${tx.slice(0, 120)}…")`);
+    // the two ways out are equal choices: both the toast's actions past its hairline, drawn the same
+    const two = await page.evaluate(() => {
+      const t = [...document.querySelectorAll('.ew-toast')].find((x) => /newer save/.test(x.textContent));
+      const acts = [...t.querySelectorAll('.ew-toast-act')];
+      const look = (b) => { const c = getComputedStyle(b); return [c.fontSize, c.fontWeight, c.color, c.textDecorationLine, c.height].join(' '); };
+      return { labels: acts.map((b) => b.textContent), inText: !!t.querySelector('.ew-toast-text button'), same: acts.length === 2 && look(acts[0]) === look(acts[1]), sep: !!t.querySelector('.ew-toast-sep') };
+    });
+    t.ok(two.labels.join(' | ') === 'Open the newer one | Keep mine as a new song' && two.same && two.sep && !two.inText,
+      `the conflict toast's two ways out are its two actions, drawn alike past the hairline, none inside the words (${JSON.stringify(two)})`);
     await shot('cloud-songs-conflict');
     // no more tries while it's open
     await edit(page, 'Night Ride (phone 2)');
@@ -1028,7 +1038,7 @@ const fake = await fakeCloud();
     const rows = await songMenu(page);
     t.ok(rows.some((r) => /^Not saved: a newer save is in your account/.test(r)), `the Song menu says so too (${rows.find((r) => /^Not saved/.test(r))})`);
     await closeMenu(page);
-    await page.click('.ew-toast .sg-toast-b');
+    await toastAct(page, /newer save/, 'Keep mine as a new song');
     await until(async () => (await link(page))?.songId !== first, 5000);
     const l = await link(page);
     t.ok(l && l.songId !== first && l.rev === 1 && fake.songsOf(who).length === 3 && fake.songsOf(who).find((x) => x.row.songId === l.songId).row.title === 'Night Ride (phone 2)',
@@ -1170,7 +1180,7 @@ const fake = await fakeCloud();
     await page.click(`.sg-row[data-song="${lf}"] .sg-open`);
     await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (phone)', null, { timeout: 5000 });
     await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save of “Lost and found \(desk, mine\)”/.test(t.textContent)), null, { timeout: 5000 });
-    await page.click('.ew-toast .sg-toast-b');
+    await toastAct(page, /newer save of “Lost and found \(desk, mine\)”/, 'Keep mine as a new song');
     await until(() => songNamed('Lost and found (desk, mine)').length === 1, 5000);
     const kept = songNamed('Lost and found (desk, mine)');
     const l3 = await link(page);

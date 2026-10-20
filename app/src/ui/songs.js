@@ -225,11 +225,14 @@ export default function (app) {
     if (!songId) return;
     const cur = s.current || {};
     const title = titleOf(doc);
-    const keepBtn = h('button.btn.btn-txt.sg-toast-b', { type: 'button', onclick: () => { t.remove(); keepAsNew(s); } }, 'Keep mine as a new song');
     const why = s.current === null && s.error?.details?.unknown
-      ? `Not saved: this copy of “${title}” may be older than the save in your account. Nothing was saved over it. `
-      : `Not saved: your account has a newer save of “${title}”${cur.savedAt ? `, from ${savedAgo(cur.savedAt)}` : ''}, made in another tab or browser. Nothing was saved over it. `;
-    const t = ui.toast([why, keepBtn], { kind: 'info', ms: 20000, action: { label: 'Open the newer one', run: () => openNewer(songId, cur.title || title) } });
+      ? `Not saved: this copy of “${title}” may be older than the save in your account. Nothing was saved over it.`
+      : `Not saved: your account has a newer save of “${title}”${cur.savedAt ? `, from ${savedAgo(cur.savedAt)}` : ''}, made in another tab or browser. Nothing was saved over it.`;
+    // two equal ways out, side by side past the toast's hairline
+    ui.toast(why, { kind: 'info', ms: 20000, action: [
+      { label: 'Open the newer one', run: () => openNewer(songId, cur.title || title) },
+      { label: 'Keep mine as a new song', run: () => keepAsNew(s) },
+    ] });
   }
   async function openNewer(songId, title) {
     const ok = await openSong({ songId, title });
@@ -470,10 +473,9 @@ const SONGS_CSS = `
 .sg-rev small { font-size: 12px; color: var(--text-3); }
 .sm-cloud-bad b { color: var(--text); }
 .sm-cloud-bad small { color: var(--bad); }
-.sg-toast-b { margin-left: 2px; }
 /* a phone, or a finger: rows of 44 px keys, the sheet along the bottom */
 @media (pointer: coarse), (max-width: 640px) {
-  .sg .btn, .sg .btn-txt, .sg-row .sg-acts .btn, .sg-row .sg-acts .btn-txt, .sg-toast-b { min-height: 44px; }
+  .sg .btn, .sg .btn-txt, .sg-row .sg-acts .btn, .sg-row .sg-acts .btn-txt { min-height: 44px; }
   .sg .btn-txt { padding: 0 6px; }
 }
 @media (max-width: 640px) {

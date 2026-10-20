@@ -99,7 +99,9 @@ overdub/
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
                          export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
-                         Overdub account, app.songs), provenance.js, share.js, onboard.js, reference.js,
+                         Overdub account, app.songs), account.js (the account key beside Song and its sheet: sign
+                         in, the plan and Get Plus, the songs' rows, app.account), provenance.js, share.js,
+                         onboard.js, reference.js,
                          start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
                          (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
@@ -1888,7 +1890,11 @@ service's `GET /v1/config`.
   ("warmer", "make it brighter") or "use <device>" by its exact name (`freeMove`) runs in the page, free, signed
   `you`, and is never sent.
 - `agent/cloud-panel.js` draws it in the Agent tab: a row in settings, the sign-in sheet, the balance in the presence
-  line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account.
+  line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account. Top up is the one
+  place the plans and packs are sold; while `hosted.enabled` is false it is the plans alone (Plus keeps songs in the
+  account), and the account sheet offers Get Plus in Top up's place. `ui/account.js` is the top bar's way in: a key
+  beside Song (only with a cloud origin) and a sheet for who's signed in, the plan, `app.songs.menuRows()` and, while
+  the agent is on, the credits; its Get Plus opens Top up (`ui.emit('cloud:show', { view: 'topup' })`).
 - **Songs in the account** (`ui/songs.js`, `app.songs`; on only when `GET /v1/config` has `songs`): the client's
   `listSongs`, `getSong(id, rev?)`, `songRevs(id)`, `createSong(doc, createId?)`, `saveSong(id, doc, baseRev,
   saveId?)` and `deleteSong(id)` speak the service's `/v1/songs` (the song document is stored in the account; its

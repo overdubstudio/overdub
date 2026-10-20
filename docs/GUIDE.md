@@ -728,8 +728,9 @@ pedals and 27 amps aren't on that shelf; find them in the studio's browser. To w
 ## Your songs in your account
 
 Where the studio runs Overdub's own service (it says so by offering it; a copy you host yourself doesn't), the Song
-menu has two more rows. **Save to cloud** keeps the song on screen in your Overdub account as well as in this browser,
-and from then on it saves there a few seconds after each change; the row then says when, *Saved to cloud · 2 min ago*.
+menu has two more rows, at its top. **Save to cloud** keeps the song on screen in your Overdub account as well as in
+this browser, and from then on it saves there a few seconds after each change; the row then says when, *Saved to cloud ·
+2 min ago*, and so does the line under the song's title.
 **My songs** (or Find: *my songs*) lists what's in your account: when each was saved, its tracks, and its recordings,
 which stay in the browser they were made in (*2 recordings on this browser only*). **Open** brings one in the way a
 song file opens: the song on screen goes to Recent songs and Undo brings it back, and a recording that isn't in this

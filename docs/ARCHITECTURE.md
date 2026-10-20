@@ -1878,6 +1878,8 @@ service's `GET /v1/config`.
   `502 upstream_error` (or the same as an error event mid-stream) are retried, twice at most, with the same body.
   The page keeps which History entries each ask made (`overdub:cloud:takes`) and asks for its credits back when all
   of them are undone (or its card is declined, or its device still fails its check) inside the window finish gave.
+  It also keeps the last checkout Top up opened (`overdub:cloud:checkout`, `{ ref, sku }`): the tab that pays lands
+  on `?plus=done&ref=`, which doesn't say what was bought, so a plan's landing names the plan.
 - **The send gate.** While credits are on, nothing opens an ask until its price was on screen for that exact text:
   `agent.quote(text)` names the kind (`agent/cloud-kind.js classify`, open rules) and its price from the rate card,
   the panel shows it beside Send ("A new part · N credits ▾", the ▾ lists the other kinds) and marks it

@@ -6,7 +6,8 @@
 // the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Songs in the
 // account (ui/songs.js, against the fake's /v1/songs): off without them, signed out, no Plus, Save to cloud and the save
 // as you work, a newer save made elsewhere, open, earlier saves, delete, a write whose answer is lost sent again as the
-// same write, a song put aside and Undo, two tabs on one song, and My songs on a phone. Browsers run muted
+// same write, a song put aside and Undo, two tabs on one song, and My songs on a phone; Top up's plans, "on" beside the
+// one bought. Browsers run muted
 // (tools/pw.js QUIET). Screenshots: tools/.out/cloud-*.png.
 //
 //   node tools/cloud-test.js
@@ -92,8 +93,10 @@ function fakeCloud() {
   }
   const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(/;\s*/).filter(Boolean).map((c) => [c.slice(0, c.indexOf('=')), c.slice(c.indexOf('=') + 1)]));
   const userOf = (req) => { const e = sessions.get(cookies(req)['od.session_token']); return e ? users.get(e) : null; };
+  const PLANS = { plus_x: 'Overdub Plus, monthly', plus_y: 'Overdub Plus, yearly' };   // the config's plans, by sku
   const balance = (u) => ({ total: u.balance, monthly: 0, trial: 0, packs: u.balance, other: 0, held: 0, debt: 0, nextExpiry: null });
-  const me = (u) => ({ user: { id: 'usr_' + u.email.length, email: u.email, createdAt: 1 }, balance: balance(u), asksHint: Math.round(u.balance / 3.5), plan: null, trial: { eligible: !!u.trialEligible, claimed: false },
+  const me = (u) => ({ user: { id: 'usr_' + u.email.length, email: u.email, createdAt: 1 }, balance: balance(u), asksHint: Math.round(u.balance / 3.5),
+    plan: u.plan ? { plan: u.plan, label: PLANS[u.plan], status: 'active', renewsAt: Date.now() + 30 * 864e5, endsAt: null, monthlyCredits: 123, nextGrantAt: null } : null, trial: { eligible: !!u.trialEligible, claimed: false },
     creditBack: { budget: 9, left: 9, periodEnd: 1 }, limits: { dailyCreditsLeft: 99 }, notice: u.notice || null,
     ...(songsOn ? { songs: { canSave: !!u.plus, count: songsOf(u.email).size, max: SONGS.maxSongs } } : {}) });
   let lose = 0;
@@ -124,7 +127,7 @@ function fakeCloud() {
     if (req.method === 'OPTIONS') { res.writeHead(204, allowed ? { 'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'content-type, idempotency-key' } : {}); return res.end(); }
     if (req.method !== 'GET' && !allowed && !url.pathname.startsWith('/dev/')) return err(res, 403, 'forbidden_origin', 'That came from a page Overdub doesn’t know.');
     const p = url.pathname;
-    if (p === '/v1/config') return send(res, 200, { ...(songsOn ? { songs: { enabled: true, ...SONGS } } : {}), rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: hosted } });
+    if (p === '/v1/config') return send(res, 200, { ...(songsOn ? { songs: { enabled: true, ...SONGS } } : {}), rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }, { sku: 'plus_y', label: 'Overdub Plus, yearly', usd: 12.3, interval: 'year', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: hosted } });
     const signIn = (email) => { const tok = randomUUID(); if (!users.has(email)) users.set(email, { email, balance: 30 }); sessions.set(tok, email); return `od.session_token=${tok}; HttpOnly; SameSite=Lax; Path=/`; };
     // Google, the whole round trip in one page: the real service goes to Google, back to its callback, and ends on
     // /v1/auth/done, which sets the cookie, posts overdub:signed-in to the opener at each studio origin and closes
@@ -185,9 +188,10 @@ function fakeCloud() {
     if (p === '/v1/me/activity') return send(res, 200, { items: [...actions.values()].filter((a) => a.email === u.email && a.charged).map((a) => ({ at: a.at, kind: 'spend', credits: -a.credits, label: RATE.find((r) => r.kind === a.kind).label, actionId: a.id })) });
     if (p === '/v1/auth/logout') { sessions.delete(cookies(req)['od.session_token']); return send(res, 204, undefined, { 'set-cookie': 'od.session_token=; Max-Age=0; Path=/' }); }
     if (p === '/v1/trial/claim') { u.balance += 6; u.trialEligible = false; return send(res, 200, me(u)); }
-    if (p === '/v1/billing/checkout') return send(res, 200, { url: `http://localhost:${server.address().port}/dev/checkout`, checkoutRef: 'chk_1' });
+    // (a checkout remembers what it's for: the sync after it starts that plan, or grants that pack)
+    if (p === '/v1/billing/checkout') { u.checkout = body?.sku; return send(res, 200, { url: `http://localhost:${server.address().port}/dev/checkout`, checkoutRef: 'chk_1' }); }
     // chk_late: a checkout the provider hasn't marked paid yet (nothing granted, and the answer says so)
-    if (p === '/v1/billing/sync') { if (body?.checkoutRef === 'chk_late') return send(res, 200, { ...me(u), checkoutPaid: false }); u.balance += 40; return send(res, 200, { ...me(u), checkoutPaid: true }); }
+    if (p === '/v1/billing/sync') { if (body?.checkoutRef === 'chk_late') return send(res, 200, { ...me(u), checkoutPaid: false }); if (PLANS[u.checkout]) { u.plan = u.checkout; u.plus = true; } else u.balance += 40; u.checkout = null; return send(res, 200, { ...me(u), checkoutPaid: true }); }
     if (p === '/v1/agent/actions' && req.method === 'POST') {
       if (!/^[A-Za-z0-9_-]{8,128}$/.test(req.headers['idempotency-key'] || '')) return err(res, 400, 'validation_failed', 'The studio sent something the agent can’t take. Reload and try again.', { field: 'idempotency-key' });
       if (paused) return err(res, 503, 'hosted_paused', 'Claude on Overdub credits is paused right now. Your own Claude, Claude Code and the demo still work.');
@@ -242,6 +246,10 @@ function fakeCloud() {
       pause(on) { paused = on; },
       hosted(on) { hosted = on; },
       songs(on) { songsOn = on; },
+      // a plan on that account (a sku from the config's plans), or none
+      plan(email, sku) { users.get(email).plan = sku || null; },
+      // the account's songs put aside (an account with none), and back
+      stashSongs(email) { const had = songs.get(email); songs.set(email, new Map()); return () => songs.set(email, had); },
       plus(email, on) { if (!users.has(email)) users.set(email, { email, balance: 30 }); users.get(email).plus = on; },
       songsOf: (email) => [...songsOf(email).values()],
       seedSong: (email, doc, savedAt = Date.now()) => { const r = putSong(email, 'sng_' + String(++songSeq).padStart(6, '0'), doc); r.savedAt = savedAt; return r; },
@@ -666,6 +674,28 @@ const fake = await fakeCloud();
   await page.click('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)');
   await page.waitForFunction(() => window.overdub.agent.cloud.me?.balance?.total === 41, null, { timeout: 5000 }).catch(() => {});
   t.ok(await page.evaluate(() => window.overdub.agent.cloud.me?.balance?.total === 41), 'after paying, "I’ve paid" asks the service and the balance updates');
+  // Top up's plans: "on" beside the one plan the account has (GET /v1/me's plan.plan), and a plan bought says so
+  const planRows = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.ag-cl-topup .ag-cl-row')].map((r) => [r.dataset.sku, { on: [...r.querySelectorAll('.t3')].some((x) => x.textContent === 'on'), btn: r.querySelector('.btn')?.textContent || '' }])));
+  const topStatus = () => page.evaluate(() => document.querySelector('.ag-cl-topup .ag-cl-status')?.textContent || '');
+  const before = await planRows();
+  t.ok((await topStatus()) === 'Done: your credits are in.' && !before.plus_x.on && !before.plus_y.on && before.plus_x.btn === 'Choose' && before.plus_y.btn === 'Choose',
+    `a pack paid for: "${await topStatus()}", and with no plan both plans offer Choose (${JSON.stringify(before)})`);
+  const popup2 = page.context().waitForEvent('page', { timeout: 5000 }).catch(() => null);
+  await page.click('.ag-cl-topup [data-sku="plus_x"] .btn');
+  await (await popup2)?.close();
+  await page.waitForSelector('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)', { timeout: 5000 });
+  await page.click('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)');
+  await page.waitForFunction(() => window.overdub.agent.cloud.me?.plan?.plan === 'plus_x', null, { timeout: 5000 }).catch(() => {});
+  await sleep(200);
+  const after = await planRows();
+  t.ok(after.plus_x.on && !after.plus_y.on && !after.plus_x.btn && !after.plus_y.btn,
+    `Plus monthly bought: "on" beside monthly only, and neither plan offers Choose while it runs (${JSON.stringify(after)})`);
+  t.ok((await topStatus()) === 'Done: you’re on Overdub Plus, monthly.', `... and the sheet says which plan, not credits ("${await topStatus()}")`);
+  await page.evaluate(() => document.querySelector('.ag-cl-topup')?.scrollIntoView({ block: 'start' }));
+  await shot('cloud-plan-on');
+  fake.plan('jess@example.com', null);
+  fake.plus('jess@example.com', false);
+  await page.evaluate(() => window.overdub.agent.cloud.refresh());
   // paused
   fake.pause(true);
   await ask('Rework the outro');
@@ -786,6 +816,17 @@ const fake = await fakeCloud();
   t.ok(billingPosts === 0, `a cancelled checkout charges and syncs nothing (${billingPosts} billing calls)`);
   t.ok(cx.path === '/app/' && cx.search === '', `and plus=cancel leaves the address bar (${cx.path}${cx.search})`);
   await shot('cloud-cancelled');
+  // a plan's checkout, paid in its own tab: that tab lands here and says which plan, not "credits are in"
+  const popup3 = page.context().waitForEvent('page', { timeout: 5000 }).catch(() => null);
+  await page.click('.ag-cl-topup [data-sku="plus_x"] .btn');
+  await (await popup3)?.close();
+  await page.goto(new URL('/app/?plus=done&ref=chk_1', page.url()).href, { waitUntil: 'load' });
+  await ready(page);
+  await page.waitForSelector('.ag-cl-account .ag-cl-status', { timeout: 10000 }).catch(() => {});
+  const planBack = await page.evaluate(() => document.querySelector('.ag-cl-account .ag-cl-status')?.textContent || '');
+  t.ok(planBack === 'Paid. You’re on Overdub Plus, monthly.', `back from paying for a plan, the note names the plan ("${planBack}")`);
+  fake.plan('pat@example.com', null);
+  fake.plus('pat@example.com', false);
   t.ok(realErrors(errors).length === 0, 'no page errors (back from a checkout)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }
@@ -845,6 +886,7 @@ const fake = await fakeCloud();
     await page.waitForSelector('.sm', { timeout: 3000 });
     return page.evaluate(() => [...document.querySelectorAll('.sm .sm-i')].map((b) => b.textContent.trim()));
   };
+  const menuHead = (page) => page.evaluate(() => document.querySelector('.sm .sm-head small')?.textContent || '');
   const closeMenu = (page) => page.evaluate(() => { for (const p of document.querySelectorAll('.ew-pop')) p.remove(); });
   const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('.ew-toast')].map((t) => t.textContent.trim()));
   const clearToasts = (page) => page.evaluate(() => document.querySelectorAll('.ew-toast').forEach((t) => t.remove()));
@@ -852,7 +894,8 @@ const fake = await fakeCloud();
   const link = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('overdub:cloud-song') || '{}')[`${window.overdub.agent.cloud?.me?.user?.id} ${window.overdub.store.get().id}`] || null);
   // the tab hidden for a moment: what's waiting goes at once
   const hide = (page) => page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); delete document.hidden; });
-  const toastAct = (page, re) => page.evaluate((src) => { const t = [...document.querySelectorAll('.ew-toast')].find((x) => new RegExp(src).test(x.textContent)); t?.querySelector('.ew-toast-act')?.click(); return !!t; }, re.source);
+  // a toast's action: its first, or the one with that label
+  const toastAct = (page, re, label = '') => page.evaluate(([src, label]) => { const t = [...document.querySelectorAll('.ew-toast')].find((x) => new RegExp(src).test(x.textContent)); [...(t?.querySelectorAll('.ew-toast-act') || [])].find((b) => !label || b.textContent === label)?.click(); return !!t; }, [re.source, label]);
   const songNamed = (title) => fake.songsOf(who).filter((x) => x.row.title === title);
   const edit = (page, title) => page.evaluate((t) => window.overdub.store.dispatch({ type: 'project.set', patch: { title: t } }, { by: 'you', label: 'title' }), title);
   const songPosts = () => fake.reqs(/^\/v1\/songs/).filter((r) => r.method === 'POST');
@@ -883,8 +926,8 @@ const fake = await fakeCloud();
   // 8b. signed out: Save to cloud says sign in; My songs is the sign-in, the Agent tab's Google
   {
     const rows = await songMenu(page);
-    t.ok(rows.some((r) => /^Save to cloudSign in to save songs to your account$/.test(r)) && rows.some((r) => /^My songs/.test(r)),
-      `signed out, the Song menu offers Save to cloud with "Sign in to save songs to your account", and My songs (${rows.filter((r) => /cloud|songs/i.test(r)).join(' | ')})`);
+    t.ok(/^Save to cloudSign in to save songs to your account$/.test(rows[0]) && /^My songs/.test(rows[1]) && !/·/.test(await menuHead(page)),
+      `signed out, the Song menu opens on Save to cloud with "Sign in to save songs to your account", then My songs, and the title's line says nothing of the account (${rows.filter((r) => /cloud|songs/i.test(r)).join(' | ')})`);
     await page.click('.sm .sm-cloud-save');
     await page.waitForSelector('.sg-pop .sg-google', { timeout: 3000 });
     const s = await page.evaluate(() => ({ text: document.querySelector('.sg-pop').textContent, fields: document.querySelectorAll('.sg-pop input, .sg-pop iframe').length }));
@@ -907,6 +950,18 @@ const fake = await fakeCloud();
     t.ok(/Cloud saves come with Plus\. The songs already here still open/.test(s) && !/Save “/.test(s), 'without Plus, My songs says cloud saves come with Plus, and offers no Save');
     await shot('cloud-songs-no-plus');
     await closeMenu(page);
+    // no plan and nothing in the account yet: what Plus gives, and See the plans; nothing about saving
+    const restore = fake.stashSongs(who);
+    await page.evaluate(() => window.overdub.songs.refresh());
+    await page.evaluate(() => window.overdub.songs.open());
+    await page.waitForFunction(() => !/Reading your songs/.test(document.querySelector('.sg-pop')?.textContent || ''), null, { timeout: 5000 });
+    const empty = await page.evaluate(() => ({ text: document.querySelector('.sg-pop').textContent, lines: [...document.querySelectorAll('.sg-pop .sg-line, .sg-pop .sg-note')].map((x) => x.textContent), btns: [...document.querySelectorAll('.sg-pop .btn')].map((b) => b.textContent) }));
+    t.ok(empty.lines.length === 1 && /^Cloud saves come with Plus: your songs save to your account as you work, and open on any browser\.$/.test(empty.lines[0]) && empty.btns.join() === 'See the plans' && !/Save to cloud|Nothing in your account|already here/.test(empty.text),
+      `without Plus and with no songs, My songs is one line on what Plus gives and See the plans, nothing about saving (${empty.lines.join(' | ')} [${empty.btns.join(', ')}])`);
+    await shot('cloud-songs-no-plus-empty');
+    await closeMenu(page);
+    restore();
+    await page.evaluate(() => window.overdub.songs.refresh());
     const rows = await songMenu(page);
     t.ok(rows.some((r) => /^Save to cloudCloud saves come with Plus$/.test(r)), `... and the Song menu's Save to cloud says "Cloud saves come with Plus" (${rows.find((r) => /^Save to cloud/.test(r))})`);
     await page.click('.sm .sm-cloud-save');
@@ -940,10 +995,18 @@ const fake = await fakeCloud();
     t.ok(post?.path === '/v1/songs' && post.body?.doc?.id === pid && post.body.doc.title === 'Night Ride' && /^[A-Za-z0-9_-]{8,64}$/.test(post.body.createId || '') && post.headers['idempotency-key'] === undefined && l?.rev === 1,
       `Save to cloud: POST /v1/songs with the song (and one createId in the body, no Idempotency-Key header), and overdub:cloud-song links this song to it at rev 1 (${JSON.stringify(l)})`);
     const said = await toasts(page);
-    t.ok(said.some((x) => /^“Night Ride” is in your account\. Changes save there as you work; its recordings stay in this browser\./.test(x)), `... and says so ("${said.find((x) => /account/.test(x))}")`);
+    const recs = await page.evaluate(async () => (await import('/app/src/agent/cloud-songs.js')).songAssets(window.overdub.store.get()).length);
+    t.ok(recs === 0 && said.some((x) => /^“Night Ride” is in your account\. Changes save there as you work\.$/.test(x)), `... and says so, with no word of recordings for a song without any ("${said.find((x) => /account/.test(x))}")`);
     await closeMenu(page);
     const rows2 = await songMenu(page);
+    const head2 = await menuHead(page);
     t.ok(rows2.some((r) => /^Saved to cloud · just nowsaves as you work$/.test(r)) && !rows2.some((r) => /^Save to cloud/.test(r)), `the Song menu says "Saved to cloud · just now" for it (${rows2.find((r) => /^Saved/.test(r))})`);
+    // the cloud rows first, under the title, and the file rows together; the title's line says where it's saved
+    const idx = (re) => rows2.findIndex((r) => re.test(r));
+    t.ok(idx(/^Saved to cloud/) === 0 && idx(/^My songs/) === 1 && idx(/^New song/) === 2 && idx(/^Save the project file/) === idx(/^Import /) + rows2.filter((r) => /^Import /.test(r)).length,
+      `the Song menu opens on Saved to cloud and My songs, then New song; Save the project file stays with the file rows (${rows2.slice(0, 3).map((r) => r.slice(0, 20)).join(' | ')})`);
+    t.ok(/^\d+ bpm, \d+ tracks? · saved to your account just now$/.test(head2), `the menu's header line says the song is saved to your account ("${head2}")`);
+    await shot('cloud-songs-menu');
     await closeMenu(page);
     // a change: saved 5 s later, from the rev it knows
     const n0 = songPosts().length, at = Date.now();
@@ -978,6 +1041,15 @@ const fake = await fakeCloud();
     const s = fake.songsOf(who).find((x) => x.row.songId === first);
     t.ok(/^Not saved: your account has a newer save of “Night Ride \(phone\)”, from just now, made in another tab or browser\. Nothing was saved over it\./.test(tx) && /Keep mine as a new song/.test(tx) && /Open the newer one/.test(tx) && s.row.title === 'Night Ride (laptop)' && songPosts().length === n0 + 1,
       `a save the account answers 409: a toast with two ways out, and the newer save untouched ("${tx.slice(0, 120)}…")`);
+    // the two ways out are equal choices: both the toast's actions past its hairline, drawn the same
+    const two = await page.evaluate(() => {
+      const t = [...document.querySelectorAll('.ew-toast')].find((x) => /newer save/.test(x.textContent));
+      const acts = [...t.querySelectorAll('.ew-toast-act')];
+      const look = (b) => { const c = getComputedStyle(b); return [c.fontSize, c.fontWeight, c.color, c.textDecorationLine, c.height].join(' '); };
+      return { labels: acts.map((b) => b.textContent), inText: !!t.querySelector('.ew-toast-text button'), same: acts.length === 2 && look(acts[0]) === look(acts[1]), sep: !!t.querySelector('.ew-toast-sep') };
+    });
+    t.ok(two.labels.join(' | ') === 'Open the newer one | Keep mine as a new song' && two.same && two.sep && !two.inText,
+      `the conflict toast's two ways out are its two actions, drawn alike past the hairline, none inside the words (${JSON.stringify(two)})`);
     await shot('cloud-songs-conflict');
     // no more tries while it's open
     await edit(page, 'Night Ride (phone 2)');
@@ -986,7 +1058,7 @@ const fake = await fakeCloud();
     const rows = await songMenu(page);
     t.ok(rows.some((r) => /^Not saved: a newer save is in your account/.test(r)), `the Song menu says so too (${rows.find((r) => /^Not saved/.test(r))})`);
     await closeMenu(page);
-    await page.click('.ew-toast .sg-toast-b');
+    await toastAct(page, /newer save/, 'Keep mine as a new song');
     await until(async () => (await link(page))?.songId !== first, 5000);
     const l = await link(page);
     t.ok(l && l.songId !== first && l.rev === 1 && fake.songsOf(who).length === 3 && fake.songsOf(who).find((x) => x.row.songId === l.songId).row.title === 'Night Ride (phone 2)',
@@ -1028,6 +1100,16 @@ const fake = await fakeCloud();
     const l = await link(page);
     t.ok(/^Opened “Tape Hiss” from your account\. One recording isn’t in this browser, so it’s silent here: “Vocal take 1”\. A cloud save keeps the song, not its audio\./.test(tx) && l?.songId === hiss.songId,
       `Open: the song comes in, linked, and its missing recording is named ("${tx.slice(0, 160)}")`);
+    // Save to cloud for a song with recordings: the toast counts them, and says they stay here
+    await clearToasts(page);
+    const taped = song('Two Takes', { tracks: [{ name: 'Vox', kind: 'audio', clips: [{ kind: 'audio', asset: 'a_take01', start: 0, length: 4 }, { kind: 'audio', asset: 'a_take02', start: 4, length: 4 }] }], assets: { a_take01: { kind: 'audio', name: 'Take 1', sr: 48000, channels: 1, duration: 2 }, a_take02: { kind: 'audio', name: 'Take 2', sr: 48000, channels: 1, duration: 2 } } });
+    await page.evaluate((d) => window.overdub.exporter.openSong(d, { from: 'file', name: d.title }), taped);
+    await page.waitForFunction(() => window.overdub.store.get().title === 'Two Takes', null, { timeout: 5000 });
+    await clearToasts(page);
+    await page.evaluate(() => window.overdub.songs.save());
+    await until(async () => (await toasts(page)).some((x) => /“Two Takes” is in your account/.test(x)), 5000);
+    const tapedSaid = (await toasts(page)).find((x) => /“Two Takes” is in your account/.test(x)) || '';
+    t.ok(tapedSaid === '“Two Takes” is in your account. Changes save there as you work; its 2 recordings stay in this browser.', `a song with recordings: the toast counts them ("${tapedSaid}")`);
     // earlier saves of the first song: open one as a copy, unlinked
     await clearToasts(page);
     await page.evaluate(() => window.overdub.songs.open());
@@ -1128,7 +1210,7 @@ const fake = await fakeCloud();
     await page.click(`.sg-row[data-song="${lf}"] .sg-open`);
     await page.waitForFunction(() => window.overdub.store.get().title === 'Lost and found (phone)', null, { timeout: 5000 });
     await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save of “Lost and found \(desk, mine\)”/.test(t.textContent)), null, { timeout: 5000 });
-    await page.click('.ew-toast .sg-toast-b');
+    await toastAct(page, /newer save of “Lost and found \(desk, mine\)”/, 'Keep mine as a new song');
     await until(() => songNamed('Lost and found (desk, mine)').length === 1, 5000);
     const kept = songNamed('Lost and found (desk, mine)');
     const l3 = await link(page);
@@ -1190,6 +1272,21 @@ const fake = await fakeCloud();
     t.ok(m.keys >= 4 && !m.short.length, `phone: its ${m.keys} keys are 44 px tall${m.short.length ? ' (not: ' + m.short.map((k) => `${k.t} ${k.h}`).join(', ') + ')' : ''}`);
     await sleep(350);
     await P.shot('cloud-songs-phone');
+    // the Song menu on a phone: the cloud rows first; and a toast with two ways out keeps both 40 px keys on screen
+    await closeMenu(P.page);
+    const prow = await songMenu(P.page);
+    t.ok(/^Save to cloud/.test(prow[0]) && /^My songs/.test(prow[1]), `phone: the Song menu opens on Save to cloud and My songs (${prow.slice(0, 2).join(' | ')})`);
+    await sleep(350);
+    await P.shot('cloud-songs-phone-menu');
+    await closeMenu(P.page);
+    const two = await P.page.evaluate(() => {
+      const t = window.overdub.ui.toast('Not saved: your account has a newer save of “Night Ride”, from just now, made in another tab or browser. Nothing was saved over it.', { ms: 20000, action: [{ label: 'Open the newer one', run: () => {} }, { label: 'Keep mine as a new song', run: () => {} }] });
+      const r = t.getBoundingClientRect();
+      return { keys: [...t.querySelectorAll('.ew-toast-act')].map((b) => { const q = b.getBoundingClientRect(); return { h: Math.round(q.height), in: q.left >= 0 && q.right <= innerWidth }; }), inside: r.left >= 0 && r.right <= innerWidth };
+    });
+    t.ok(two.keys.length === 2 && two.keys.every((k) => k.h >= 40 && k.in) && two.inside, `phone: a toast's two ways out are both 40 px keys, on screen (${JSON.stringify(two)})`);
+    await sleep(250);
+    await P.shot('cloud-songs-phone-toast');
     t.ok(realErrors(P.errors).length === 0, 'no page errors (songs on a phone)' + (realErrors(P.errors).length ? ': ' + realErrors(P.errors).slice(0, 3).join(' | ') : ''));
     await P.close();
   }

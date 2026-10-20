@@ -21,7 +21,8 @@
 // without Plus: the list still shows and opens, and Save says "Cloud saves come with Plus" and opens the plans (the
 // Agent tab's Top up, ui event 'cloud:show').
 //
-//   app.songs = { enabled, open({ anchor }), save(), menuRows() -> [{ cls, label, sub, run }], list, state }
+//   app.songs = { enabled, open({ anchor }), save(), menuRows() -> [{ cls, label, sub, run }], status() -> words for the
+//                 menu's header line, list, state }
 
 import { h, css } from './dom.js';
 import { popover } from './rack.js';
@@ -31,6 +32,8 @@ import { songLinks, songBases, docStamp, songAssets, savedAgo, jsonBytes, create
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const mb = (n) => `${(n / 1e6).toFixed(1)} MB`;
 const titleOf = (x) => String(x?.title || 'Untitled').slice(0, 120);
+// My songs without a plan, and nothing in the account yet: what saving there gives you
+const PLUS_WHY = 'Cloud saves come with Plus: your songs save to your account as you work, and open on any browser.';
 
 export default function (app) {
   const { store, ui } = app;
@@ -175,7 +178,9 @@ export default function (app) {
       linkTo(who, mark, song);
       saver.clear(doc.id);
       busy = '';
-      ui.toast(`“${titleOf(doc)}” is in your account. Changes save there as you work; its recordings stay in this browser.`, { kind: 'ok', ms: 6000 });
+      // (its recordings, when it has any, by count: a cloud save keeps the song, not its audio)
+      const n = songAssets(doc).length;
+      ui.toast(`“${titleOf(doc)}” is in your account. Changes save there as you work${n ? `; its ${plural(n, 'recording')} ${n === 1 ? 'stays' : 'stay'} in this browser` : ''}.`, { kind: 'ok', ms: 6000 });
       if (edits !== at) saver.changed();   // (changed while it went)
       refresh();
       return true;
@@ -223,11 +228,14 @@ export default function (app) {
     if (!songId) return;
     const cur = s.current || {};
     const title = titleOf(doc);
-    const keepBtn = h('button.btn.btn-txt.sg-toast-b', { type: 'button', onclick: () => { t.remove(); keepAsNew(s); } }, 'Keep mine as a new song');
     const why = s.current === null && s.error?.details?.unknown
-      ? `Not saved: this copy of “${title}” may be older than the save in your account. Nothing was saved over it. `
-      : `Not saved: your account has a newer save of “${title}”${cur.savedAt ? `, from ${savedAgo(cur.savedAt)}` : ''}, made in another tab or browser. Nothing was saved over it. `;
-    const t = ui.toast([why, keepBtn], { kind: 'info', ms: 20000, action: { label: 'Open the newer one', run: () => openNewer(songId, cur.title || title) } });
+      ? `Not saved: this copy of “${title}” may be older than the save in your account. Nothing was saved over it.`
+      : `Not saved: your account has a newer save of “${title}”${cur.savedAt ? `, from ${savedAgo(cur.savedAt)}` : ''}, made in another tab or browser. Nothing was saved over it.`;
+    // two equal ways out, side by side past the toast's hairline
+    ui.toast(why, { kind: 'info', ms: 20000, action: [
+      { label: 'Open the newer one', run: () => openNewer(songId, cur.title || title) },
+      { label: 'Keep mine as a new song', run: () => keepAsNew(s) },
+    ] });
   }
   async function openNewer(songId, title) {
     const ok = await openSong({ songId, title });
@@ -339,6 +347,19 @@ export default function (app) {
     return out;
   }
 
+  // the Song menu's header line, after "100 bpm, 6 tracks": how the song on screen stands in the account, only while
+  // it's linked ("saved to your account just now"); '' otherwise
+  function status() {
+    if (!on() || listening()) return '';
+    const l = linked();
+    if (!l) return '';
+    if (!cloud.me) return 'not saved to your account: signed out';
+    const st = saver.state.pid === pid() ? saver.state : null;
+    if (st?.status === 'conflict' || saver.held(pid()) || st?.status === 'error') return 'not saved to your account';
+    if (st?.status === 'saving' || st?.status === 'waiting') return 'saving to your account…';
+    return `saved to your account ${savedAgo(st?.savedAt || l.savedAt)}`;
+  }
+
   /* ---------------------------------------------------------------- My songs */
   function open({ anchor = null } = {}) {
     if (!on()) return false;
@@ -371,16 +392,19 @@ export default function (app) {
       h('small', me ? `${n != null ? `${n}${maxSongs() ? ` of ${maxSongs()}` : ''} songs, ` : ''}in your Overdub account as ${me.user?.email || 'you'}` : 'songs kept in your Overdub account'));
     if (!me) return [head, ...signedOut()];
     const out = [head];
+    // no plan and no songs: what Plus gives, and the plans; nothing about saving or keeping songs it can't do yet
+    const plusOnly = !listening() && canSave() === false && !!list && !list.songs.length;
     // the song on screen: in the account already, or a Save to cloud for it
     const l = linked();
     if (!listening()) {
       if (l) out.push(h('p.sg-line', `“${titleOf(store.get())}” is in your account and saves as you work.`));
-      else if (canSave() === false) out.push(h('div.sg-plus', h('p.sg-line', 'Cloud saves come with Plus. The songs already here still open, and you can delete them.'), h('div.sg-acts', btn('plans', '', 'See the plans', () => { close(); plans(); }))));
+      else if (canSave() === false) out.push(h('div.sg-plus', h('p.sg-line', plusOnly ? PLUS_WHY : 'Cloud saves come with Plus. The songs already here still open, and you can delete them.'), h('div.sg-acts', btn('plans', '', 'See the plans', () => { close(); plans(); }))));
       else out.push(h('div.sg-acts', btn('save', '.btn-go.sg-save', busy === 'save' ? 'Saving…' : `Save “${titleOf(store.get()).slice(0, 40)}” to cloud`, () => save(), { disabled: busy === 'save' })));
     }
     if (said) out.push(h('p.sg-said', { role: 'status' }, said));
     if (listErr && !list) out.push(h('p.sg-err', listErr), h('div.sg-acts', btn('retry', '', 'Try again', () => refresh())));
     else if (!list) out.push(h('p.sg-line.sg-quiet', 'Reading your songs…'));
+    else if (plusOnly) return out;
     else if (!list.songs.length) out.push(h('p.sg-line.sg-quiet', 'Nothing in your account yet. Save to cloud keeps the song on screen here, and it saves as you work.'));
     else out.push(h('ul.sg-list', list.songs.map(songRow)));
     out.push(h('p.sg-note', 'Songs here are kept until you delete them or your account. Recordings stay in the browser they were made in.'));
@@ -433,7 +457,7 @@ export default function (app) {
     get enabled() { return on(); },
     get list() { return list; },
     get state() { return saver.state; },
-    open, save, menuRows, refresh,
+    open, save, menuRows, status, refresh,
   };
 }
 
@@ -465,10 +489,9 @@ const SONGS_CSS = `
 .sg-rev small { font-size: 12px; color: var(--text-3); }
 .sm-cloud-bad b { color: var(--text); }
 .sm-cloud-bad small { color: var(--bad); }
-.sg-toast-b { margin-left: 2px; }
 /* a phone, or a finger: rows of 44 px keys, the sheet along the bottom */
 @media (pointer: coarse), (max-width: 640px) {
-  .sg .btn, .sg .btn-txt, .sg-row .sg-acts .btn, .sg-row .sg-acts .btn-txt, .sg-toast-b { min-height: 44px; }
+  .sg .btn, .sg .btn-txt, .sg-row .sg-acts .btn, .sg-row .sg-acts .btn-txt { min-height: 44px; }
   .sg .btn-txt { padding: 0 6px; }
 }
 @media (max-width: 640px) {

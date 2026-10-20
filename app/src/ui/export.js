@@ -22,7 +22,8 @@
 // DAWproject and the reports) and keeps New song, the demos, Save, Share a link, Export mix and Take one; on a phone the
 // Song key itself is More's first row, not the top bar's.
 // The printable provenance report is ui/provenance.js; the DAWproject writer is core/dawproject.js. Songs in your
-// Overdub account (Save to cloud, My songs) are ui/songs.js: the menu shows the rows app.songs.menuRows() gives it.
+// Overdub account (Save to cloud, My songs) are ui/songs.js: the menu shows the rows app.songs.menuRows() gives it,
+// first under the title, and app.songs.status() on the title's line.
 // ui event 'song:replacing' { song } goes out just before a song is replaced, with the song as it was (its cloud save).
 
 import { h, css, icon, byline } from './dom.js';
@@ -592,11 +593,18 @@ export default function (app) {
       olderList ? h('button.sm-i.sm-more.sm-older-t', { 'aria-expanded': 'false', onclick: (e) => { olderList.hidden = !olderList.hidden; e.currentTarget.setAttribute('aria-expanded', String(!olderList.hidden)); } },
         h('span', h('b', 'Older'), h('small', `${rec.length - 4} more: ${rec.slice(4).map((e) => `“${(e.title || 'Untitled').slice(0, 20)}”`).join(', ')}`)), icon('chevron', { size: 14 })) : null,
       olderList] : [];
+    const cloudRows = (app.songs?.menuRows?.() || []).map((r) => item(null, r.label, r.sub, null, r.run, r.cls || ''));
+    const cloudSaid = app.songs?.status?.() || '';
+    const stats = `${p.tempo} bpm, ${p.tracks.length} track${p.tracks.length === 1 ? '' : 's'}`;
     const share = provenance(app).summary;
     const kinds = share.notes.byKind;
     const tot = share.notes.total || 0;
     const body = h('div.sm',
-      h('div.sm-head', h('b', p.title), h('small', `${p.tempo} bpm, ${p.tracks.length} track${p.tracks.length === 1 ? '' : 's'}`)),
+      // (and, for a song linked to the account, how its save there stands: "· saved to your account just now")
+      h('div.sm-head', h('b', p.title), h('small', cloudSaid ? [h('span.sm-nb', stats), ' ', h('span.sm-nb', `· ${cloudSaid}`)] : stats)),
+      // songs in your Overdub account (ui/songs.js) first, under the title: Save to cloud or how its save is going, and
+      // My songs
+      ...cloudRows,
       h('button.sm-i.sm-new', { onclick: (e) => ask(e.currentTarget, 'Start a new song?', 'New song', newSong) }, h('span', h('b', 'New song'), h('small', 'a blank reel'))),
       // Start a song: the same blank reel, and the stage on it (ui/start.js); a blank song needs no question
       app.start ? h('button.sm-i.sm-start', { onclick: (e) => { if (blankSong()) { pop.close(); app.start.open({ kind: 'tap' }); } else ask(e.currentTarget, 'Start a new song?', 'Start a song', startFresh); } }, h('span', h('b', 'Start a song'), h('small', 'a blank reel, then your idea'))) : null,
@@ -622,8 +630,6 @@ export default function (app) {
       app.importers?.pickAudio ? item('wave', 'Import audio…', 'WAV, MP3, M4A or OGG, from the playhead’s bar', null, () => app.importers.pickAudio({ track: ui.state.selection?.track || null }), '', 'files') : null,
       app.devicesIO ? item('knob', 'Import a device…', 'checked before it’s added', `${mod}⇧I`, () => app.devicesIO.pick(), '', 'files') : null,
       item('check', 'Save the project file', 'the song, every note and device', `${mod}S`, saveProject),
-      // songs in your Overdub account (ui/songs.js): Save to cloud or how its save is going, and My songs
-      ...(app.songs?.menuRows?.() || []).map((r) => item(null, r.label, r.sub, null, r.run, r.cls || '')),
       app.share?.copy ? item('send', 'Share a link', 'copies it: the song, but not its audio clips', null, () => app.share.copy({ anchor: at.isConnected ? at : btn })) : null,
       app.find?.open ? item('search', 'Find anything', 'a panel, an action, a sound or help', `${mod}K`, () => app.find.open()) : null,
       app.onboard?.start ? item('play', 'Take one', 'the two-minute tour, on this song', null, () => app.onboard.start({ force: true, restart: true })) : null,
@@ -683,6 +689,8 @@ const EXPORT_CSS = `
 .sm-head { display: grid; gap: 3px; padding: 6px 10px 10px; border-bottom: var(--rule-heavy); margin-bottom: 4px; }
 .sm-head b { font-family: var(--font-display); font-style: italic; font-weight: 800; font-stretch: 125%; font-variation-settings: var(--font-display-vars); font-size: 19px; line-height: 1.05; letter-spacing: -.012em; }
 .sm-head small { color: var(--text-3); font: 11.5px var(--font-mono); }
+/* (the title's line wraps between its parts, never inside one) */
+.sm-head .sm-nb { white-space: nowrap; }
 .sm-i { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; padding: 6px 10px; border: 0; border-radius: 0; background: none; color: var(--text-2); cursor: pointer; text-align: left; }
 .sm-i:hover, .sm-i:focus-visible { background: var(--bg-3); color: var(--text); outline: none; }
 .sm-i:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-2); }

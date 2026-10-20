@@ -611,33 +611,37 @@ export function createShell(root, app) {
   // while the pointer or focus is on it.
   // It is a plain ruled note (no pill, no glow): what happened, then its action as an underlined word past a hairline.
   // text: a string (a key in backticks, `0`, is drawn as a key), a node, or an array of both.
+  // action: { label, run }, or a list of them when there are two equal ways out ("Open the newer one" or "Keep mine as
+  // a new song"): each an underlined word past the same hairline, one above the other.
   // The same words again while they're still up (a monitor complaining on every change, a key pressed twice) don't
   // stack: the note there takes the newest's action and clock and counts them, "×3". A phone shows two at most (the
   // oldest goes for the newest), so they never pile over what you're using.
   ui.toast = (text, { kind = 'info', ms = 3200, action = null } = {}) => {
     const words = (Array.isArray(text) ? text : [text]).map((x) => (typeof x === 'string' ? x : x?.textContent || '')).join('');
-    const key = `${kind}|${words}|${action?.label || ''}`;
+    const list = (a) => (Array.isArray(a) ? a : a ? [a] : []).filter((x) => x?.label);
+    const key = `${kind}|${words}|${list(action).map((a) => a.label).join('|')}`;
     const same = toastsNow().find((x) => x._key === key && !x.classList.contains('out'));
     if (same) { same._again(action, ms); return same; }
-    let act = action;
+    let acts = list(action);
+    const btns = acts.map((a, i) => h('button.btn.btn-txt.ew-toast-act', { type: 'button', onclick: () => { acts[i].run(); t.remove(); } }, a.label));
     const t = h(`div.ew-toast.ew-toast-${kind}`, h('span.ew-toast-text', toastText(text)),
-      action ? [h('i.ew-toast-sep', { 'aria-hidden': 'true' }), h('button.btn.btn-txt.ew-toast-act', { type: 'button', onclick: () => { act.run(); t.remove(); } }, action.label)] : null);
+      btns.length ? [h('i.ew-toast-sep', { 'aria-hidden': 'true' }), btns.length > 1 ? h('span.ew-toast-acts', btns) : btns[0]] : null);
     t._key = key;
     toasts.append(t);
     if (phone()) { const up = toastsNow().filter((x) => !x.classList.contains('out')); for (const x of up.slice(0, Math.max(0, up.length - 2))) { x.classList.add('out'); setTimeout(() => x.remove(), 300); } }
     placeToasts();
-    let left = action ? Math.max(ms, 10000) : ms, since = performance.now(), timer = 0, held = 0, n = 1;
+    let left = acts.length ? Math.max(ms, 10000) : ms, since = performance.now(), timer = 0, held = 0, n = 1;
     const go = () => { since = performance.now(); timer = setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, left); };
     const hold = () => { if (held++) return; clearTimeout(timer); left = Math.max(1500, left - (performance.now() - since)); };
     const free = () => { if (held && !--held) go(); };
     t._again = (a2, ms2) => {
       n++;
-      if (a2) act = a2;
+      if (list(a2).length) acts = list(a2);
       let c = t.querySelector('.ew-toast-n');
       if (!c) { c = h('span.ew-toast-n', { 'aria-label': '' }); t.querySelector('.ew-toast-text').after(c); }
       c.textContent = `×${n}`;
       c.setAttribute('aria-label', `${n} times`);
-      left = a2 ? Math.max(ms2, 10000) : ms2;
+      left = acts.length ? Math.max(ms2, 10000) : ms2;
       if (!held) { clearTimeout(timer); go(); }
     };
     t.addEventListener('pointerenter', hold); t.addEventListener('pointerleave', free);
@@ -764,6 +768,8 @@ button { font: inherit; color: inherit; }
 .ew-toast-n { flex: none; margin-left: -6px; font: 600 12px/1 var(--font-mono); color: var(--text-3); }
 .ew-toast-sep { flex: none; width: 1px; align-self: stretch; margin: -2px 0; background: var(--line-2); }
 .ew-toast-act { flex: none; color: var(--text); }
+/* two equal ways out: one above the other, past the one hairline */
+.ew-toast-acts { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .ew-toast-bad { border-color: color-mix(in srgb, var(--rec) 55%, var(--line-2)); }
 .ew-toast.out { opacity: 0; transition: opacity .16s var(--ease, ease); }
 /* on a touch screen there is no hover to pause a toast, and an action toast stays 10 s over whatever is under it

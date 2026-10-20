@@ -21,8 +21,9 @@
 // without Plus: the list still shows and opens, and Save says "Cloud saves come with Plus" and opens the plans (the
 // Agent tab's Top up, ui event 'cloud:show').
 //
-//   app.songs = { enabled, open({ anchor }), save(), menuRows() -> [{ cls, label, sub, run }], status() -> words for the
-//                 menu's header line, list, state }
+//   app.songs = { enabled, open({ anchor }), save({ anchor }), menuRows({ anchor }) -> [{ cls, label, sub, run }] (anchor: what My
+//                 songs opens under; the account's sheet, ui/account.js, shows these rows too), status() -> words for
+//                 the menu's header line, list, state }
 
 import { h, css } from './dom.js';
 import { popover } from './rack.js';
@@ -323,7 +324,7 @@ export default function (app) {
   }
 
   /* ---------------------------------------------------------------- the Song menu's rows */
-  function menuRows() {
+  function menuRows({ anchor = null } = {}) {
     if (!on() || listening()) return [];
     const out = [];
     const l = linked();
@@ -333,17 +334,17 @@ export default function (app) {
       const c = saver.conflict(pid());
       if (st?.status === 'conflict' || hold?.code === 'song_conflict') out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: a newer save is in your account', sub: 'open it, or keep yours as a new song', run: () => conflictToast(st?.status === 'conflict' ? st : { ...c, pid: pid(), uid: uid(), current: hold.details?.current ?? null }) });
       else if (hold?.code === 'songs_need_plus') out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: cloud saves come with Plus', sub: 'see the plans', run: plans });
-      else if (hold) out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved to your account', sub: hold.message || '', run: () => open() });
-      else if (st?.status === 'saving' || st?.status === 'waiting') out.push({ cls: '.sm-cloud', label: 'Saving to your account…', sub: 'saves as you work', run: () => open() });
+      else if (hold) out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved to your account', sub: hold.message || '', run: () => open({ anchor }) });
+      else if (st?.status === 'saving' || st?.status === 'waiting') out.push({ cls: '.sm-cloud', label: 'Saving to your account…', sub: 'saves as you work', run: () => open({ anchor }) });
       else if (st?.status === 'error') out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved to your account yet', sub: `${st.error?.message || 'the service didn’t answer'}: the next change tries again`, run: () => { saver.changed(); saver.flush(); } });
-      else out.push({ cls: '.sm-cloud', label: `Saved to cloud · ${savedAgo(st?.savedAt || l.savedAt)}`, sub: 'saves as you work', run: () => open() });
-    } else if (l && !cloud.me) out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: signed out', sub: 'Sign in to save songs to your account', run: () => open() });
+      else out.push({ cls: '.sm-cloud', label: `Saved to cloud · ${savedAgo(st?.savedAt || l.savedAt)}`, sub: 'saves as you work', run: () => open({ anchor }) });
+    } else if (l && !cloud.me) out.push({ cls: '.sm-cloud.sm-cloud-bad', label: 'Not saved: signed out', sub: 'Sign in to save songs to your account', run: () => open({ anchor }) });
     else {
       const sub = !cloud.me ? 'Sign in to save songs to your account' : canSave() === false ? 'Cloud saves come with Plus' : 'keeps it in your account, saved as you work';
-      out.push({ cls: '.sm-cloud.sm-cloud-save', label: busy === 'save' ? 'Saving to your account…' : 'Save to cloud', sub, run: () => save() });
+      out.push({ cls: '.sm-cloud.sm-cloud-save', label: busy === 'save' ? 'Saving to your account…' : 'Save to cloud', sub, run: () => save({ anchor }) });
     }
     const n = list?.songs?.length;
-    out.push({ cls: '.sm-mysongs', label: 'My songs', sub: cloud.me ? (n != null ? `${plural(n, 'song')} in your account` : 'songs in your account') : 'sign in to see your songs', run: () => open() });
+    out.push({ cls: '.sm-mysongs', label: 'My songs', sub: cloud.me ? (n != null ? `${plural(n, 'song')} in your account` : 'songs in your account') : 'sign in to see your songs', run: () => open({ anchor }) });
     return out;
   }
 

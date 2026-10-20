@@ -43,6 +43,7 @@ const MODULES = [
   './agent/panel.js', './agent/history.js', './agent/presence.js', './agent/bridge.js',
   './agent/remote.js',
   './ui/songs.js', // My songs and Save to cloud: songs in your Overdub account (agent/cloud.js), when its service has them
+  './ui/account.js', // the account's key beside Song and its sheet (sign in, Plus, My songs), when the deploy names the service
   './ui/devices-io.js', // export / import device files; ?device=<id> opens the song with that device on a track
   './ui/share.js', // share links (#s=…): the listening banner, Make it yours, the share_link tool
   './ui/onboard.js', // "Take one": the first-run coach (never under navigator.webdriver unless forced)

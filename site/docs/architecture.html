@@ -160,7 +160,9 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
                          export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
-                         Overdub account, app.songs), provenance.js, share.js, onboard.js, reference.js,
+                         Overdub account, app.songs), account.js (the account key beside Song and its sheet: sign
+                         in, the plan and Get Plus, the songs' rows, app.account), provenance.js, share.js,
+                         onboard.js, reference.js,
                          start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
                          (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
@@ -1762,7 +1764,11 @@ move offered in the log lands in the box with its price and needs a second press
 (&quot;warmer&quot;, &quot;make it brighter&quot;) or &quot;use &lt;device&gt;&quot; by its exact name (<code>freeMove</code>) runs in the page, free, signed
 <code>you</code>, and is never sent.</li>
 <li><code>agent/cloud-panel.js</code> draws it in the Agent tab: a row in settings, the sign-in sheet, the balance in the presence
-line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account.</li>
+line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account. Top up is the one
+place the plans and packs are sold; while <code>hosted.enabled</code> is false it is the plans alone (Plus keeps songs in the
+account), and the account sheet offers Get Plus in Top up's place. <code>ui/account.js</code> is the top bar's way in: a key
+beside Song (only with a cloud origin) and a sheet for who's signed in, the plan, <code>app.songs.menuRows()</code> and, while
+the agent is on, the credits; its Get Plus opens Top up (<code>ui.emit('cloud:show', { view: 'topup' })</code>).</li>
 <li><strong>Songs in the account</strong> (<code>ui/songs.js</code>, <code>app.songs</code>; on only when <code>GET /v1/config</code> has <code>songs</code>): the client's
 <code>listSongs</code>, <code>getSong(id, rev?)</code>, <code>songRevs(id)</code>, <code>createSong(doc, createId?)</code>, <code>saveSong(id, doc, baseRev, saveId?)</code> and <code>deleteSong(id)</code> speak the service's <code>/v1/songs</code> (the song document is stored in the account; its
 recordings never leave the browser). A write's nonce rides in the JSON body, not an <code>Idempotency-Key</code> (CORS lets no

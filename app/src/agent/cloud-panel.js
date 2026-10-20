@@ -1,6 +1,7 @@
 // @ts-check
 // The Agent panel's side of Claude on Overdub credits (agent/cloud.js): the sign-in sheet, the balance in the head, the
-// price on an ask before it's sent, out of credits, paused, top up, where the credits went, credits back. Only when the
+// price on an ask before it's sent, out of credits, paused, top up (the plans and packs; while paused, the plans alone:
+// Plus keeps songs in the account too, ui/songs.js), where the credits went, credits back. Only when the
 // deploy names the service (app/src/site-config.js); otherwise nothing here draws. No prices live in this file: the
 // rate card, plans and packs come from the service (GET /v1/config).
 //
@@ -60,7 +61,9 @@ function paidWords(me, sku, plans) {
 }
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const money = (usd) => { try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(usd) ? 0 : 2 }).format(usd); } catch { return '$' + usd; } };
-const day = (ms) => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short' });
+export const day = (ms) => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short' });
+// a plan that's running (GET /v1/me plan.status): the account is on it, and no other plan is offered
+export const planRuns = (plan) => !!plan && /^(active|trialing|past_due)$/.test(plan.status || '');
 const ls = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* full */ } },
@@ -265,13 +268,17 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     return pairs.filter(([sku, p]) => typeof sku === 'string' && /^[a-z0-9_]{1,40}$/.test(sku) && p && Number.isFinite(p.usd));
   }
 
+  // While the hosted agent is paused (GET /v1/config hosted.enabled false) there is nothing to spend credits on, so no
+  // packs: the sheet is the plans alone, for what Plus gives now (songs in the account, ui/songs.js), its credits once
+  // the agent is back
   function topUpSheet(c) {
     const cfg = c.config || {};
-    const packs = skuList(cfg.packs);
+    const paused = cfg.hosted?.enabled === false;
+    const packs = paused ? [] : skuList(cfg.packs);
     const plans = skuList(cfg.plans);
     // the plan this account is on (GET /v1/me's plan.plan is its sku, overdub-cloud SPEC §8.2): "on" beside that one
     // only; the other plans offer nothing while it runs (the service turns a second plan down, already_subscribed)
-    const running = !!c.me?.plan && /active|trialing|past_due/.test(c.me.plan.status || '');
+    const running = planRuns(c.me?.plan);
     const mine = running ? c.me.plan.plan || plans.find(([, p]) => p.label === c.me.plan.label)?.[0] || '' : '';
     const planAct = (sku) => (!running ? null : sku === mine ? h('span.t3', 'on') : h('span'));
     const buy = async (sku) => {
@@ -281,8 +288,9 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
       busyWord = ''; cached.sig = ''; renderAll();
     };
     const line = (sku, title, price, sub, act) => h('li.ag-cl-row', { dataset: { sku } }, h('span.ag-cl-row-t', h('b', title), sub ? h('span.t3', sub) : null), h('span.ag-cl-row-n', price), act);
-    return h('div.ag-cl.ag-cl-topup', sheetHead('Top up'),
-      h('p.ag-kc-small', 'Prices are in US dollars. Credits you buy never expire.'),
+    return h('div.ag-cl.ag-cl-topup', { dataset: { paused: String(paused) } }, sheetHead(paused ? 'Overdub Plus' : 'Top up'),
+      paused && !running ? h('p.ag-kc-p.ag-cl-plus-now', `Plus keeps your songs in your account: they save as you work, and open on any browser. Its monthly credits work once ${HOSTED_NAME} is back; it’s paused right now.`) : null,
+      h('p.ag-kc-small', paused ? 'Prices are in US dollars.' : 'Prices are in US dollars. Credits you buy never expire.'),
       h('ul.ag-cl-list',
         ...plans.map(([sku, p]) => line(sku, p.label, money(p.usd), `${p.monthlyCredits ? `${p.monthlyCredits} credits a month, ` : ''}a ${p.interval === 'year' ? 'year' : 'month'}`, planAct(sku) || h('button.btn', { type: 'button', disabled: !!busyWord, onclick: () => buy(sku) }, busyWord === sku ? 'Opening…' : 'Choose'))),
         ...packs.map(([sku, p]) => line(sku, p.label, money(p.usd), '', h('button.btn', { type: 'button', disabled: !!busyWord, onclick: () => buy(sku) }, busyWord === sku ? 'Opening…' : 'Buy')))),
@@ -298,8 +306,10 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const b = me.balance || {};
     const plan = me.plan;
     const tookSomething = (store.history || []).some((x) => x.by === 'you');
-    // the service's kill switch (GET /v1/config hosted.enabled false): nothing to spend credits on, so nothing to buy
+    // the service's kill switch (GET /v1/config hosted.enabled false): nothing to spend credits on, so no credits to
+    // buy and no trial; Plus still (its songs in the account), on the plans' own sheet
     const paused = c.config?.hosted?.enabled === false;
+    const onPlan = planRuns(plan);
     const n = Number(b.total) || 0;
     // credits back only mean something once there's something to spend or something was spent
     const spends = n > 0 || b.held > 0 || !!plan || !!activity?.length;
@@ -315,7 +325,8 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
       paused ? h('p.ag-kc-p.ag-cl-paused-note', `${HOSTED_NAME} is paused right now. Your own Claude, Claude Code and the demo still work.`) : null,
       !paused && me.trial?.eligible ? h('div.ag-cl-trial', h('p.ag-kc-small', tookSomething ? 'There’s a free trial on this account, once.' : 'There’s a free trial on this account, once. It unlocks after your first saved take.'),
         h('button.btn', { type: 'button', disabled: !tookSomething, onclick: async () => { try { await c.claimTrial(); said = 'The trial credits are in.'; } catch (e) { said = e.message; } cached.sig = ''; renderAll(); } }, 'Claim the trial')) : null,
-      paused ? null : h('div.ag-kc-acts', h('button.btn', { type: 'button', onclick: () => show('topup') }, 'Top up')),
+      paused && !onPlan ? h('p.ag-kc-small', 'Plus still keeps your songs in your account: they save as you work, and open on any browser.') : null,
+      paused ? (onPlan ? null : h('div.ag-kc-acts', h('button.btn.ag-cl-getplus', { type: 'button', onclick: () => show('topup') }, 'Get Plus'))) : h('div.ag-kc-acts', h('button.btn', { type: 'button', onclick: () => show('topup') }, 'Top up')),
       said ? h('p.ag-cl-status', { role: 'status' }, said) : null,
       h('div.ag-kc-label', 'Where your credits went'),
       activity == null ? h('p.ag-kc-small', 'Reading…') : items.length ? h('ul.ag-cl-list', items) : h('p.ag-kc-small', 'Nothing yet.'),

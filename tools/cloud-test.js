@@ -13,7 +13,8 @@
 //   node tools/cloud-test.js
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { open, tally } from './pw.js';
+import path from 'node:path';
+import { open, tally, OUTDIR } from './pw.js';
 
 const t = tally('cloud');
 const realErrors = (errs) => errs.filter((e) => !/Failed to load resource|favicon|fonts\.g/.test(e));
@@ -1290,6 +1291,196 @@ const fake = await fakeCloud();
     t.ok(realErrors(P.errors).length === 0, 'no page errors (songs on a phone)' + (realErrors(P.errors).length ? ': ' + realErrors(P.errors).slice(0, 3).join(' | ') : ''));
     await P.close();
   }
+  fake.songs(false);
+}
+
+/* ------------------------------------------------------------------ 9. the account key and its sheet (ui/account.js) */
+// The key beside Song: "Sign in" signed out, and it signs in; signed in with no plan while the hosted agent is paused,
+// the sheet offers Get Plus, the plans are on sale (no packs), and once Plus is paid the plan shows and Save to cloud
+// works. Then the top bar at several widths, a take recording: neither the Song key nor this one sits under anything.
+{
+  // what on the top bar draws over the key (a control, a canvas, or text of its own), as it shows after any box that
+  // clips it; miss: the key isn't on screen
+  const overKey = (page, sel) => page.evaluate((sel) => {
+    const key = document.querySelector(sel);
+    if (!key || !key.getClientRects().length || getComputedStyle(key).visibility === 'hidden') return { miss: true, hits: [] };
+    const shown = (el) => {
+      const r = el.getBoundingClientRect(), box = { l: r.left, r: r.right, t: r.top, b: r.bottom };
+      for (let a = el.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+        const cs = getComputedStyle(a), q = a.getBoundingClientRect(), m = cs.overflowX === 'clip' ? parseFloat(cs.overflowClipMargin) || 0 : 0;
+        if (cs.overflowX !== 'visible') { box.l = Math.max(box.l, q.left - m); box.r = Math.min(box.r, q.right + m); }
+        if (cs.overflowY !== 'visible') { box.t = Math.max(box.t, q.top - m); box.b = Math.min(box.b, q.bottom + m); }
+      }
+      return box.r - box.l > 0.5 && box.b - box.t > 0.5 ? box : null;
+    };
+    const k = shown(key), hits = [];
+    for (const el of document.querySelectorAll('header.ew-top *')) {
+      if (key.contains(el) || el.contains(key) || !el.getClientRects().length || getComputedStyle(el).visibility === 'hidden') continue;
+      const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+      if (!own && !/^(BUTTON|CANVAS|IMG|INPUT)$/.test(el.tagName)) continue;
+      const b = shown(el);
+      if (b && k && b.l < k.r - 0.5 && b.r > k.l + 0.5 && b.t < k.b - 0.5 && b.b > k.t + 0.5) hits.push(`${typeof el.className === 'string' && el.className ? el.className.split(' ').pop() : el.tagName} "${el.textContent.trim().slice(0, 12)}"`);
+    }
+    const r = key.getBoundingClientRect();
+    return { miss: false, hits, on: r.left >= 0 && r.right <= innerWidth };
+  }, sel);
+  // a press on what may not be there (on code without the key, the checks after it still run, and say FAIL)
+  const tap = (page, sel) => page.click(sel, { timeout: 3000 }).catch(() => null);
+  const accText = (page) => page.evaluate(() => ({ key: document.querySelector('.ac-btn')?.innerText.trim() || '', shown: !!document.querySelector('.ac-btn')?.getClientRects().length, sheet: document.querySelector('.ac-pop')?.textContent || '', btns: [...document.querySelectorAll('.ac-pop .btn, .ac-pop .sm-i')].map((b) => b.textContent.trim()) }));
+
+  fake.songs(true);
+  fake.hosted(false);
+  const who = 'pat@example.com';
+  fake.grant(who, 0);
+  fake.plus(who, false);
+  fake.plan(who, null);
+  const { page, errors, close, shot } = await studio(fake);
+  await page.waitForFunction(() => !!window.overdub.agent.cloud?.config?.songs && window.overdub.agent.cloud.checked, null, { timeout: 10000 }).catch(() => null);
+  await page.waitForFunction(() => !!document.querySelector('.ac-btn')?.getClientRects().length, null, { timeout: 5000 }).catch(() => {});
+
+  // 9a. signed out: the key says Sign in, beside Song, and it opens the sign-in; Continue with Google signs in
+  {
+    const k = await accText(page);
+    const order = await page.evaluate(() => { const a = document.querySelector('.ac-btn')?.getBoundingClientRect(), s = document.querySelector('.sm-btn')?.getBoundingClientRect(); return a && s ? Math.round(a.left - s.right) : null; });
+    t.ok(k.shown && k.key === 'Sign in' && order != null && order >= 0 && order <= 24, `signed out, the top bar has "Sign in" right after Song ("${k.key}", ${order} px after it)`);
+    await tap(page, '.ac-btn');
+    await page.waitForSelector('.ac-pop .ac-google', { timeout: 3000 }).catch(() => null);
+    const s = await accText(page);
+    t.ok(/Sign in to save songs to your account/.test(s.sheet) && s.btns.includes('Continue with Google') && !(await page.evaluate(() => document.querySelectorAll('.ac-pop input, .ac-pop iframe').length)),
+      `Sign in opens the account sheet on one Continue with Google, no field ("${s.sheet.slice(0, 90)}")`);
+    await sleep(300);
+    await shot('cloud-account-key-signin');
+    fake.next(who);
+    fake.popup({});
+    await Promise.all([page.context().waitForEvent('page', { timeout: 5000 }), page.click('.ac-pop .ac-google', { timeout: 3000 })]).catch(() => null);
+    await page.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-in', null, { timeout: 8000 }).catch(() => null);
+    await until(() => accText(page).then((x) => /Signed in as pat@example\.com/.test(x.sheet)), 3000);
+    const after = await accText(page);
+    t.ok(after.key === 'Account' && /Signed in as pat@example\.com/.test(after.sheet) && after.btns.includes('Sign out'), `signed in from the key: it says Account, and the sheet says who, with Sign out ("${after.key}")`);
+  }
+
+  // 9b. no plan, the hosted agent paused: the plan says so and Get Plus is there; no credits; the song on screen's
+  // Save to cloud and My songs, as the Song menu has them
+  {
+    await until(() => accText(page).then((x) => x.btns.some((b) => /^My songs/.test(b))), 4000);
+    const s = await accText(page);
+    const plan = await page.evaluate(() => document.querySelector('.ac-pop .ac-plan')?.textContent || '');
+    t.ok(plan === 'No plan' && s.btns.includes('Get Plus') && !/Credits/.test(s.sheet), `paused, no plan: the sheet says "No plan" and offers Get Plus, and nothing about credits (${s.btns.join(' | ')})`);
+    t.ok(s.btns.some((b) => /^Save to cloudCloud saves come with Plus$/.test(b)) && s.btns.some((b) => /^My songs/.test(b)), 'the sheet has the song on screen\'s Save to cloud ("Cloud saves come with Plus") and My songs, the Song menu\'s rows');
+    await sleep(300);
+    await shot('cloud-account-key-noplan');
+    await tap(page, '.ac-pop .ac-getplus');
+    await page.waitForSelector('.ag-cl-topup', { timeout: 5000 }).catch(() => null);
+    const top = await page.evaluate(() => ({ text: (document.querySelector('.ag-cl-topup')?.textContent || ''), head: document.querySelector('.ag-cl-topup h3')?.textContent || '', skus: [...document.querySelectorAll('.ag-cl-topup .ag-cl-row')].map((r) => r.dataset.sku), open: window.overdub.ui.isOpen?.('right'), pop: !!document.querySelector('.ac-pop') }));
+    t.ok(top.head === 'Overdub Plus' && top.skus.join() === 'plus_x,plus_y' && top.open && !top.pop,
+      `Get Plus, paused: the Agent pane opens on the plans alone, headed Overdub Plus, no packs (${top.skus.join(', ')})`);
+    t.ok(/Plus keeps your songs in your account: they save as you work, and open on any browser\./.test(top.text) && /Its monthly credits work once Claude on Overdub credits is back; it’s paused right now\./.test(top.text) && !/never expire/.test(top.text),
+      `... and says what Plus gives now, and when its credits work ("${top.text.slice(12, 200)}")`);
+    await sleep(300);
+    await shot('cloud-account-key-plans-paused');
+    // the Agent tab's own account sheet, paused: the note stays, and Get Plus leads to the same plans
+    await page.evaluate(() => window.overdub.ui.emit('cloud:show', { view: 'account' }));
+    await page.waitForSelector('.ag-cl-account', { timeout: 5000 }).catch(() => null);
+    const agentAcc = await page.evaluate(() => ({ text: (document.querySelector('.ag-cl-account')?.textContent || ''), btns: [...document.querySelectorAll('.ag-cl-account .btn')].map((b) => b.textContent) }));
+    t.ok(/is paused right now\./.test(agentAcc.text) && agentAcc.btns.includes('Get Plus') && !agentAcc.btns.includes('Top up'), `the Agent tab's account sheet, paused: the note, and Get Plus in Top up's place (${agentAcc.btns.join(' | ')})`);
+    await tap(page, '.ag-cl-account .ag-cl-getplus');
+    await page.waitForSelector('.ag-cl-topup [data-sku="plus_x"] .btn', { timeout: 5000 }).catch(() => null);
+    // choosing a plan opens the checkout; paid, the plan shows and Save to cloud saves
+    const popup = page.context().waitForEvent('page', { timeout: 5000 }).catch(() => null);
+    await tap(page, '.ag-cl-topup [data-sku="plus_x"] .btn');
+    const pay = await popup;
+    t.ok(pay && /\/dev\/checkout$/.test(pay.url()) && fake.reqs('/v1/billing/checkout').some((r) => r.body?.sku === 'plus_x'), `Choose on a plan, paused, opens its checkout in a new tab (${pay?.url()})`);
+    await pay?.close();
+    await page.waitForSelector('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)', { timeout: 5000 }).catch(() => null);
+    await tap(page, '.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)');
+    await page.waitForFunction(() => window.overdub.agent.cloud.me?.plan?.plan === 'plus_x' && window.overdub.agent.cloud.me?.songs?.canSave === true, null, { timeout: 5000 }).catch(() => {});
+    await tap(page, '.ac-btn');
+    await page.waitForSelector('.ac-pop .ac-plan', { timeout: 3000 }).catch(() => null);
+    await until(() => page.evaluate(() => /^Overdub Plus, monthly · renews /.test(document.querySelector('.ac-pop .ac-plan')?.textContent || '')), 3000);
+    const paid = await accText(page);
+    const planNow = await page.evaluate(() => document.querySelector('.ac-pop .ac-plan')?.textContent || '');
+    t.ok(/^Overdub Plus, monthly · renews \d{1,2} \w{3}$|^Overdub Plus, monthly · renews \w{3} \d{1,2}$/.test(planNow) && !paid.btns.includes('Get Plus'), `paid: the sheet shows the plan, "${planNow}", and no Get Plus`);
+    await until(() => accText(page).then((x) => x.btns.some((b) => /^Save to cloudkeeps it in your account/.test(b))), 4000);
+    const n0 = fake.songsOf(who).length;
+    await page.evaluate(() => [...document.querySelectorAll('.ac-pop .sm-i')].find((b) => /^Save to cloud/.test(b.textContent))?.click());
+    await until(() => fake.songsOf(who).length > n0, 5000);
+    const saved = fake.songsOf(who).map((x) => x.row.title);
+    t.ok(saved.length === n0 + 1 && saved.includes(await page.evaluate(() => window.overdub.store.get().title)), `... and Save to cloud from the sheet keeps the song on screen in the account (${saved.join(', ')})`);
+    await sleep(200);
+    await tap(page, '.ac-btn');
+    await page.waitForSelector('.ac-pop', { timeout: 3000 }).catch(() => null);
+    await until(() => accText(page).then((x) => x.btns.some((b) => /^Saved to cloud/.test(b))), 4000);
+    await sleep(300);
+    await shot('cloud-account-key-plus');
+    await page.keyboard.press('Escape');
+  }
+
+  // 9c. Find reaches it
+  {
+    const found = await page.evaluate(() => ['account', 'sign in', 'plus', 'billing'].map((q) => [q, window.overdub.find.search(q).slice(0, 3).map((r) => r.title)]));
+    t.ok(found.every(([, titles]) => titles.includes('Account')), `Find has the account for ${found.map(([q, ti]) => `"${q}" (${ti.join(', ')})`).join('; ')}`);
+  }
+
+  // 9d. the top bar at several widths, a take going in (its mark beside the position): the Song key and the account
+  // key sit under nothing, and both stay on screen
+  {
+    // (the recorder says a take is running: the transport shows its mark, as it does while you record)
+    await page.evaluate(() => { const r = window.overdub.input.recorder; window.__recState = Object.getOwnPropertyDescriptor(r, 'state'); Object.defineProperty(r, 'state', { configurable: true, get: () => 'rec' }); window.overdub.ui.emit('transport-ui'); });
+    const bad = [];
+    for (const w of [1000, 1180, 1280, 1366, 1440, 1600]) {
+      await page.setViewportSize({ width: w, height: 860 });
+      await sleep(450);
+      for (const sel of ['.sm-btn', '.ac-btn']) {
+        const o = await overKey(page, sel);
+        if (o.miss || o.hits.length || !o.on) bad.push(`${w} ${sel}: ${o.miss ? 'not on screen' : !o.on ? 'off the edge' : o.hits.join(', ')}`);
+      }
+      if (w === 1000 || w === 1440) await page.screenshot({ path: path.join(OUTDIR, `cloud-account-bar-${w}.png`), clip: { x: 0, y: 0, width: w, height: 64 } });
+    }
+    const take = await page.evaluate(() => !document.querySelector('.tp-take')?.hidden);
+    t.ok(take && !bad.length, `a take recording, at 1000, 1180, 1280, 1366, 1440 and 1600 px: the Song key and the account key sit under nothing on the top bar${bad.length ? ` (${bad.join('; ')})` : ''}`);
+    await page.evaluate(() => { const r = window.overdub.input.recorder; if (window.__recState) Object.defineProperty(r, 'state', window.__recState); else delete r.state; window.overdub.ui.emit('transport-ui'); });
+  }
+  t.ok(realErrors(errors).length === 0, 'no page errors (the account key)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
+  await close();
+
+  // 9e. a phone: the key on the bar's first row beside Song, under nothing; signed in it's the initial; the sheet runs
+  // along the bottom with 44 px keys
+  {
+    const P = await open('/app/', { width: 390, height: 844 });
+    await ready(P.page);
+    await P.page.evaluate(() => { localStorage.setItem('overdub:welcomed', '1'); });
+    await P.page.reload({ waitUntil: 'load' });
+    await ready(P.page);
+    await P.page.waitForFunction(() => window.overdub.agent.cloud?.checked && !!document.querySelector('.ac-btn')?.getClientRects().length, null, { timeout: 10000 }).catch(() => {});
+    const out1 = { song: await overKey(P.page, '.sm-btn'), acc: await overKey(P.page, '.ac-btn'), key: (await accText(P.page)).key };
+    await sleep(300);
+    await P.shot('cloud-account-key-phone');
+    await tap(P.page, '.ac-btn');
+    await P.page.waitForSelector('.ac-pop .ac-google', { timeout: 3000 }).catch(() => null);
+    fake.next(who);
+    fake.popup({});
+    await Promise.all([P.page.context().waitForEvent('page', { timeout: 5000 }), P.page.click('.ac-pop .ac-google', { timeout: 3000 })]).catch(() => null);
+    await P.page.waitForFunction(() => window.overdub.agent.cloud?.state === 'signed-in', null, { timeout: 8000 }).catch(() => null);
+    await until(() => accText(P.page).then((x) => /Signed in as/.test(x.sheet) && x.btns.some((b) => /^My songs/.test(b))), 4000);
+    await sleep(350);
+    const m = await P.page.evaluate(() => {
+      const pop = document.querySelector('.ac-pop');
+      if (!pop) return { left: -1, right: -1, bottom: -1, short: [], keys: 0, key: '', label: '' };
+      const r = pop.getBoundingClientRect();
+      const keys = [...pop.querySelectorAll('button')].filter((b) => b.getClientRects().length).map((b) => ({ t: b.textContent.trim().slice(0, 16), h: Math.round(b.getBoundingClientRect().height) }));
+      const k = document.querySelector('.ac-btn');
+      return { left: Math.round(r.left), right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), short: keys.filter((x) => x.h < 44), keys: keys.length, key: k?.innerText.trim() || '', label: k?.getAttribute('aria-label') || '' };
+    });
+    await P.shot('cloud-account-key-phone-sheet');
+    const out2 = { song: await overKey(P.page, '.sm-btn'), acc: await overKey(P.page, '.ac-btn') };
+    const fine = (o) => !o.miss && o.on && !o.hits.length;
+    t.ok(out1.key === 'Sign in' && fine(out1.song) && fine(out1.acc) && fine(out2.song) && fine(out2.acc) && m.key === 'P' && /pat@example\.com/.test(m.label),
+      `phone: "Sign in" beside Song, then the initial ("${m.key}"), each under nothing (${JSON.stringify({ out1, out2 }).slice(0, 200)})`);
+    t.ok(m.left === 8 && m.right === 8 && m.bottom === 8 && m.keys >= 3 && !m.short.length, `phone: the account sheet runs along the bottom, its ${m.keys} keys 44 px tall (${JSON.stringify({ left: m.left, right: m.right, bottom: m.bottom, short: m.short })})`);
+    t.ok(realErrors(P.errors).length === 0, 'no page errors (the account key on a phone)' + (realErrors(P.errors).length ? ': ' + realErrors(P.errors).slice(0, 3).join(' | ') : ''));
+    await P.close();
+  }
+  fake.hosted(true);
   fake.songs(false);
 }
 

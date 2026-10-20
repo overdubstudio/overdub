@@ -1219,7 +1219,7 @@ const CSS = `
 /* The top bar, set like a spec sheet: regions split by hairlines, never boxed. The song (title, then who played on it);
    the transport glyphs; the position as a big numeral; Tempo, Meter and Key as small labels over their values; the click
    and its beat lamps; All off; the output meter. */
-[data-panel="transport"] { container-type: inline-size; container-name: tp; align-self: stretch; width: 100%; min-width: 0; }
+[data-panel="transport"] { container-type: inline-size; container-name: tp; align-self: stretch; width: 100%; min-width: 0; overflow-x: clip; overflow-clip-margin: 6px; }
 .tp-row { display: flex; align-items: center; gap: 0; height: 100%; min-height: 52px; min-width: 0; }
 .tp-group { display: flex; align-items: center; gap: 2px; flex: none; height: 40px; padding: 0 9px; border-left: var(--rule); }
 .tp-g-title { border-left: 0; padding-left: 4px; }
@@ -1375,11 +1375,16 @@ const CSS = `
 .tp-kill.hit .tp-kill-sq { background: var(--bg); }
 .tp-kill:not(.hit) { transition: background .4s var(--ease, ease), color .4s var(--ease, ease); }
 /* the output meter: two hairline bars and the held peak, in mono */
+/* The last thing on the bar, and the last to give way: when the bar is still too full with the wordmark gone (the
+   shell's .ew-top-tight: a take's mark beside the position, a long track name after Onto), the group shrinks, and what
+   doesn't fit in its box, the number first and then the bars, wraps onto a second line the box doesn't show. Past
+   that the transport's own box clips (above): nothing on it is ever drawn over the Song key. */
 .tp-g-meter { padding-right: 4px; }
-.tp-meterbox { display: flex; align-items: center; gap: 8px; height: 28px; min-width: 104px; padding: 0 2px; }
-.tp-meter-l { font-size: 10.5px; color: var(--text-3); }
-.tp-meter { width: 48px; height: 11px; display: block; }
-.tp-db { width: 8ch; flex: none; color: var(--text-2); text-align: right; white-space: nowrap; }   /* −12.3 dB fits: the bar never moves as the level does */
+.ew-top-tight .tp-g-meter { flex: 0 1 auto; min-width: 0; }
+.tp-meterbox { display: flex; flex-wrap: wrap; align-content: flex-start; align-items: center; column-gap: 8px; height: 28px; min-width: 0; padding: 0 2px; overflow: hidden; }
+.tp-meter-l { font-size: 10.5px; line-height: 28px; color: var(--text-3); }
+.tp-meter { width: 48px; height: 11px; margin: 8.5px 0; display: block; }
+.tp-db { width: 8ch; flex: none; line-height: 28px; color: var(--text-2); text-align: right; white-space: nowrap; }   /* −12.3 dB fits: the bar never moves as the level does */
 .tp-db.clip { color: var(--bad); }
 /* clipping: "Clipping" over "2.4 dB" in the state red, in the number's place and at its width (the same mono ch) */
 .tp-over { flex: none; width: 8ch; height: 28px; align-items: flex-end; font: 400 11.5px var(--font-mono); color: var(--bad); }
@@ -1387,7 +1392,7 @@ const CSS = `
 .tp-over[hidden] { display: none; }
 .tp-over .tp-lab { margin-bottom: 3px; font-family: var(--font-ui); color: var(--bad); }
 .tp-over .tp-val { font-size: 11px; font-weight: 600; }
-.tp-over:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.tp-over:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }   /* (inside: the meter's box clips) */
 .tp-keypop { width: 248px; }
 .tp-roots { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; padding: 2px 4px 6px; }
 .tp-root { height: 28px; border-radius: var(--r-press); border: var(--rule-2); background: none; color: var(--text); cursor: pointer; font: 600 12px var(--font-mono); }
@@ -1403,14 +1408,14 @@ const CSS = `
    bars stay, and the number is in their title), and only then the meter, where R records, Undo and Redo, and Loop.
    While the bar carries a mark (the keys playing notes, a held lane), the number gives way first, at 1366 and under:
    the mark is what's happening now, and the line under the title reads whole ("Keys play Bass  Esc"). */
-@container tp (max-width: 1330px) { .tp-count, .tp-meter-l, .tp-pos-side, .tp-key-l { display: none; } .tp-key-s { display: inline; } .tp-meter { width: 34px; } .tp-meterbox { min-width: 0; gap: 6px; } .tp-group { padding: 0 6px; } .tp-g-title { max-width: 220px; } .tp-tog { padding: 0 6px; } .tp-g-mode { gap: 3px; } .tp-spec { padding: 0 6px; } }
+@container tp (max-width: 1330px) { .tp-count, .tp-meter-l, .tp-pos-side, .tp-key-l { display: none; } .tp-key-s { display: inline; } .tp-meter { width: 34px; } .tp-meterbox { column-gap: 6px; } .tp-group { padding: 0 6px; } .tp-g-title { max-width: 220px; } .tp-tog { padding: 0 6px; } .tp-g-mode { gap: 3px; } .tp-spec { padding: 0 6px; } }
 @container tp (max-width: 1160px) { .tp-g-title { min-width: 104px; } .tp-pos-bar { font-size: 28px; } .tp-ball, .tp-take { margin-left: 4px; } .tp-db-u { display: none; } .tp-db, .tp-over { width: 6ch; } }
 @container tp (max-width: 1100px) { .tp-group { padding: 0 5px; } }
 @container tp (max-width: 1060px) { .tp-tap, .tp-credits, .tp-has-hold .tp-db, .tp-has-held .tp-db, .tp-has-hold .tp-over, .tp-has-held .tp-over { display: none; } }
 @container tp (max-width: 1040px) { .tp-group, .tp-has-hold .tp-group:not(.tp-g-title) { padding: 0 4px; } .tp-spec, .tp-tog { padding: 0 5px; } .tp-beats { gap: 3px; } .tp-beats i { width: 8px; height: 8px; } .tp-beats i.one { width: 10px; height: 10px; } .tp-ball-dot { bottom: 7px; } }
 @container tp (max-width: 1000px) { .tp-pos-six { display: none; } .tp-pos-bar { width: calc((var(--tp-bar-digits, 2) + 1) * 1ch + .45em); } }
 @container tp (max-width: 990px) { .tp-g-title { min-width: 96px; } }
-@container tp (max-width: 960px) { .tp-pos-bar { font-size: 26px; } .tp-group, .tp-has-hold .tp-group:not(.tp-g-title) { padding: 0 3px; } .tp-spec, .tp-tog { padding: 0 4px; } .tp-kill { padding: 0 7px; gap: 6px; } .tp-caret { width: 15px; } .tp-meterbox { gap: 4px; } }
+@container tp (max-width: 960px) { .tp-pos-bar { font-size: 26px; } .tp-group, .tp-has-hold .tp-group:not(.tp-g-title) { padding: 0 3px; } .tp-spec, .tp-tog { padding: 0 4px; } .tp-kill { padding: 0 7px; gap: 6px; } .tp-caret { width: 15px; } .tp-meterbox { column-gap: 4px; } }
 @container tp (max-width: 900px) { .tp-db, .tp-over { display: none; } }
 @container tp (max-width: 880px) { .tp-g-meter { display: none; } }
 @container tp (max-width: 860px) { .tp-g-title { max-width: 150px; min-width: 100px; } .tp-pos-bar { font-size: 24px; } .tp-recto { display: none; } }
@@ -1418,7 +1423,7 @@ const CSS = `
 @container tp (max-width: 825px) { .tp-loop { display: none; } }
 @container tp (max-width: 810px) { .tp-g-title { display: none; } .tp-g-pos { border-left: 0; } }
 @container tp (max-width: 690px) { .tp-g-song { display: none; } .tp-g-mode { display: none; } }
-@container tp (max-width: 520px) { .tp-g-edit, .tp-g-mode { display: none; } }
+@container tp (max-width: 520px) { .tp-g-edit, .tp-g-mode, .tp-take { display: none; } }   /* (the take mark as on a phone: the record lamp says it) */
 @container tp (max-width: 440px) { .tp-kill span { display: none; } .tp-kill { padding: 0 9px; } .tp-g-play .tp-btn:first-child { display: none; } .tp-group { border-left: 0; padding: 0 4px; } }
 /* On a phone (under 640 px) the top bar is two rows (app/style/app.css sets the order): the song, its menu and the panes;
    then stop, play, record, the position as a numeral, the tempo, and All off at the right edge. */

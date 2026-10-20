@@ -727,8 +727,11 @@ pedals and 27 amps aren't on that shelf; find them in the studio's browser. To w
 
 ## Your songs in your account
 
-Where the studio runs Overdub's own service (it says so by offering it; a copy you host yourself doesn't), the Song
-menu has two more rows, at its top. **Save to cloud** keeps the song on screen in your Overdub account as well as in
+Where the studio runs Overdub's own service (it says so by offering it; a copy you host yourself doesn't), the top bar
+has a key beside **Song**: **Sign in** while you aren't, **Account** once you are (on a phone, your initial). It opens
+your account: who's signed in and **Sign out**, your plan (*Overdub Plus, monthly · renews 19 Nov*, or *No plan* with
+**Get Plus**), the song on screen's **Save to cloud** and **My songs**, and your credits while Claude on Overdub credits
+is on. Find gets there too: *account*, *sign in*, *plus*. The Song menu has the same two song rows, at its top. **Save to cloud** keeps the song on screen in your Overdub account as well as in
 this browser, and from then on it saves there a few seconds after each change; the row then says when, *Saved to cloud ·
 2 min ago*, and so does the line under the song's title.
 **My songs** (or Find: *my songs*) lists what's in your account: when each was saved, its tracks, and its recordings,
@@ -738,7 +741,10 @@ browser is named and plays silent. **Earlier saves** lists the last few saves of
 a song of its own. **Delete** asks under the row first; the copy in this browser stays.
 
 Signed out, Save to cloud asks you to sign in (the same Google sign-in as Claude on Overdub credits). Saving needs
-Plus or a trial; without one, your saved songs still open and delete, and Save opens the plans.
+Plus or a trial; without one, your saved songs still open and delete, and Save opens the plans. To buy Plus, press
+**Get Plus** in your account (or **See the plans** in My songs): the plans open in the Agent tab, **Choose** opens the
+checkout in a new tab, and once it's paid your plan shows in your account and Save to cloud saves. Plus works while
+Claude on Overdub credits is paused: it keeps your songs then, and its monthly credits work once the agent is back.
 
 If the same song was saved somewhere else since this tab last saved it (another tab, your laptop), nothing is saved over
 it. The studio asks: **Open the newer one**, or **Keep mine as a new song**.

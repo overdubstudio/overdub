@@ -919,6 +919,14 @@ const fake = await fakeCloud();
   let first = null;
   {
     fake.plus(who, true);
+    // Plus bought in this tab (or another): GET /v1/me says so, and Save to cloud follows it with no other ask
+    // (the list read before still said canSave false)
+    const listReads = fake.reqs('/v1/songs').filter((r) => r.method === 'GET').length;
+    await page.evaluate(() => window.overdub.agent.cloud.refresh());
+    const offered = await songMenu(page);
+    await closeMenu(page);
+    t.ok(offered.some((r) => /^Save to cloudkeeps it in your account, saved as you work$/.test(r)) && fake.reqs('/v1/songs').filter((r) => r.method === 'GET').length === listReads,
+      `Plus bought: once /v1/me says so, Save to cloud is offered at once, without reading the list again (${offered.find((r) => /^Save to cloud/.test(r))})`);
     await page.evaluate(() => window.overdub.songs.refresh());
     await edit(page, 'Night Ride');
     const pid = await page.evaluate(() => window.overdub.store.get().id);

@@ -49,6 +49,7 @@ export default function (app) {
   let offFind = null;
   let edits = 0;                // changes to the song on screen (a save made while it changed goes again)
 
+  let meCanSave = null;          // GET /v1/me's songs.canSave, as last seen
   let lastUid = '';              // the account last signed in here (a linked song says "signed out" while nobody is)
   const on = () => !!cloud?.enabled && !!cloud.songs;
   const listening = () => !!app.share?.listening;
@@ -86,6 +87,14 @@ export default function (app) {
     if (who) lastUid = who;
     if (on() && who && who !== listFor) { listFor = who; saver.clear(); refresh(); }
     if (!who && listFor) { listFor = ''; list = null; here.clear(); }
+    // GET /v1/me says whether saving is on now (a plan bought or ended in this tab or another): its newest answer
+    // wins over the list's older one, and a song held for want of Plus saves again
+    const can = on() && who && typeof cloud.me?.songs?.canSave === 'boolean' ? cloud.me.songs.canSave : null;
+    if (can !== null && can !== meCanSave) {
+      if (list) list.canSave = can;
+      if (can && saver.held(pid())?.code === 'songs_need_plus') { saver.clear(pid()); saver.changed(); }
+    }
+    meCanSave = can;
     paint();
   }
   app.agent?.on?.('cloud', attach);

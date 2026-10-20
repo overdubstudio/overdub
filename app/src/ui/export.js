@@ -13,6 +13,7 @@
 //   provenance(app) -> the attribution log (an object)
 //
 // app.exporter = { encodeWav, encodeMidi, zipStore, provenance, newSong(), openDemo(), openFile(), loadText(text, name),
+//                  openSong(project, { from, name, said }) (a song from outside: a file, or the account, ui/songs.js),
 //                  saveProject(), exportMix(), exportRelease(), lastRelease(), exportStems(), exportMidi(), exportLog(), exportDawproject(), openReport(), busy,
 //                  recent() -> [{ id, title, at, tracks }], openRecent(i), putAside(song, msg) (a song main.js replaced on the way in),
 //                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone),
@@ -20,7 +21,9 @@
 // The simple view (ui/workspace.js) puts the file rows away (data-feature="files": open a file, the imports, stems, MIDI,
 // DAWproject and the reports) and keeps New song, the demos, Save, Share a link, Export mix and Take one; on a phone the
 // Song key itself is More's first row, not the top bar's.
-// The printable provenance report is ui/provenance.js; the DAWproject writer is core/dawproject.js.
+// The printable provenance report is ui/provenance.js; the DAWproject writer is core/dawproject.js. Songs in your
+// Overdub account (Save to cloud, My songs) are ui/songs.js: the menu shows the rows app.songs.menuRows() gives it.
+// ui event 'song:replacing' { song } goes out just before a song is replaced, with the song as it was (its cloud save).
 
 import { h, css, icon, byline } from './dom.js';
 import { authorKind, authorName, popover, closePopovers } from './rack.js';
@@ -355,6 +358,7 @@ export default function (app) {
     const { prev, lost } = keepPrevious();
     // another song starts from the top, stopped: not at wherever the last one's playhead was left
     try { if (app.engine?.playing) app.engine.stop(); app.engine?.seek?.(0); } catch { /* no audio yet */ }
+    ui.emit('song:replacing', { song: prev });
     store.load(next, { by: 'you' });
     // the old song's toasts with an Undo go with it (the take just put in, a delete): their Undo would land on this one
     try { for (const t of document.querySelectorAll('.ew-toast')) if (t.querySelector('.ew-toast-act')) t.remove(); } catch { /* no DOM */ }
@@ -370,6 +374,7 @@ export default function (app) {
       const cur = JSON.parse(JSON.stringify(store.get()));
       dropRecent(prev);
       const gone = blank(cur) ? [] : addRecent(cur);
+      ui.emit('song:replacing', { song: cur });
       store.load(prev, { by: 'you' });
       ui.toast(`Back to “${prev.title || 'Untitled'}”.${offList(gone)}`);
     } } });
@@ -410,13 +415,18 @@ export default function (app) {
     if (p && p.format === 'overdub-device/0' && app.devicesIO) { app.devicesIO.importText(text, name); return true; }
     if (p && p.format === 'overdub-provenance/0') { ui.toast('That’s an attribution log, not a song. Open the .overdub.json project file.', { kind: 'bad' }); return false; }
     if (!p || typeof p !== 'object' || !Array.isArray(p.tracks) || (p.format && !isProjectFormat(p.format))) { ui.toast(`${name} isn’t an Overdub project`, { kind: 'bad' }); return false; }
-    // a song file's devices are code from whoever wrote the file: they can't take over a built-in's or the shelf's id,
-    // and the ones this browser hasn't trusted are held until the person says (main.js; the ask is ui/share.js's)
+    openSong(p, { from: 'file', name });
+    return true;
+  }
+  // A song from outside the studio (a file; a song from your account, ui/songs.js): its devices are code from whoever
+  // wrote it, so they can't take over a built-in's or the shelf's id, and the ones this browser hasn't trusted are held
+  // until the person says (main.js; the ask is ui/share.js's). said: the toast's first words. -> Promise<boolean>
+  function openSong(p, { from = 'file', name = 'the file', said = null } = {}) {
+    if (!p || typeof p !== 'object' || !Array.isArray(p.tracks) || (p.format && !isProjectFormat(p.format))) { ui.toast(`${name} isn’t an Overdub project`, { kind: 'bad' }); return Promise.resolve(false); }
     const { renamed } = guardDevices(p, { prefix: 'you' });
     const moved = Object.entries(renamed).map(([a, b]) => `${a} is ${b}`);
-    replaceSong(p, `Opened “${p.title || name}”.${moved.length ? ` Its own ${moved.length === 1 ? 'device uses an id' : 'devices use ids'} the studio ships, so here ${moved.join(', ')}.` : ''}`)
-      .then(() => ui.emit('song:opened', { from: 'file', name }));
-    return true;
+    return replaceSong(p, `${said || `Opened “${p.title || name}”.`}${moved.length ? ` Its own ${moved.length === 1 ? 'device uses an id' : 'devices use ids'} the studio ships, so here ${moved.join(', ')}.` : ''}`)
+      .then(() => { ui.emit('song:opened', { from, name }); return true; });
   }
   function openFile() {
     const inp = h('input', { type: 'file', accept: '.json,.overdub.json,application/json', style: { display: 'none' } });
@@ -538,7 +548,7 @@ export default function (app) {
   }
   const openReport = () => openProvenanceReport(app);
 
-  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, startSong, openDemo, putAside, openFile, loadText, saveProject, exportMix, exportRelease, lastRelease: () => lastRelease, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
+  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, startSong, openDemo, putAside, openFile, loadText, openSong, saveProject, exportMix, exportRelease, lastRelease: () => lastRelease, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
     recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, openMenu: (anchor) => openMenu(anchor) };
 
   /* ---------------------------------------------------- the menu */
@@ -612,6 +622,8 @@ export default function (app) {
       app.importers?.pickAudio ? item('wave', 'Import audio…', 'WAV, MP3, M4A or OGG, from the playhead’s bar', null, () => app.importers.pickAudio({ track: ui.state.selection?.track || null }), '', 'files') : null,
       app.devicesIO ? item('knob', 'Import a device…', 'checked before it’s added', `${mod}⇧I`, () => app.devicesIO.pick(), '', 'files') : null,
       item('check', 'Save the project file', 'the song, every note and device', `${mod}S`, saveProject),
+      // songs in your Overdub account (ui/songs.js): Save to cloud or how its save is going, and My songs
+      ...(app.songs?.menuRows?.() || []).map((r) => item(null, r.label, r.sub, null, r.run, r.cls || '')),
       app.share?.copy ? item('send', 'Share a link', 'copies it: the song, but not its audio clips', null, () => app.share.copy({ anchor: at.isConnected ? at : btn })) : null,
       app.find?.open ? item('search', 'Find anything', 'a panel, an action, a sound or help', `${mod}K`, () => app.find.open()) : null,
       app.onboard?.start ? item('play', 'Take one', 'the two-minute tour, on this song', null, () => app.onboard.start({ force: true, restart: true })) : null,

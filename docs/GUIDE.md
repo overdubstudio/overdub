@@ -681,8 +681,10 @@ only the studio's tools, and its edits are signed `claude`, like the agent in th
 conversation; **New** starts it over.
 
 Songs are kept per site, so a song on the public studio and one on `localhost` are separate. Move one across with
-the Song menu: **Save the project file** (`⌘S`) on one, open it (`⌘O`) on the other. More, for Claude Desktop,
-Cursor, VS Code and Codex too: [Connect an agent](../integrations/README.md).
+the Song menu: **Save the project file** (`⌘S`) on one, open it (`⌘O`) on the other (or, where the studio offers an
+Overdub account, **Save to cloud** on one and **My songs** on the other:
+[Your songs in your account](#your-songs-in-your-account)). More, for Claude Desktop, Cursor, VS Code and Codex too:
+[Connect an agent](../integrations/README.md).
 
 ### Your own API key, on your own server
 
@@ -722,6 +724,23 @@ The [device library](/app/library.html) has 66 devices: the 53 built-in instrume
 wrote, each from one request, and the request is on the card. Play any of them on the page. The Guitar Studio's 101
 pedals and 27 amps aren't on that shelf; find them in the studio's browser. To write one by hand, see
 [Writing devices](DEVICES.md).
+
+## Your songs in your account
+
+Where the studio runs Overdub's own service (it says so by offering it; a copy you host yourself doesn't), the Song
+menu has two more rows. **Save to cloud** keeps the song on screen in your Overdub account as well as in this browser,
+and from then on it saves there a few seconds after each change; the row then says when, *Saved to cloud · 2 min ago*.
+**My songs** (or Find: *my songs*) lists what's in your account: when each was saved, its tracks, and its recordings,
+which stay in the browser they were made in (*2 recordings on this browser only*). **Open** brings one in the way a
+song file opens: the song on screen goes to Recent songs and Undo brings it back, and a recording that isn't in this
+browser is named and plays silent. **Earlier saves** lists the last few saves of a song; **Open as a copy** opens one as
+a song of its own. **Delete** asks under the row first; the copy in this browser stays.
+
+Signed out, Save to cloud asks you to sign in (the same Google sign-in as Claude on Overdub credits). Saving needs
+Plus or a trial; without one, your saved songs still open and delete, and Save opens the plans.
+
+If the same song was saved somewhere else since this tab last saved it (another tab, your laptop), nothing is saved over
+it. The studio asks: **Open the newer one**, or **Keep mine as a new song**.
 
 ## Share and fork
 

@@ -59,6 +59,7 @@
 <li><a href="#bring-claudeai">Bring claude.ai</a></li>
 <li><a href="#bring-claude-code">Bring Claude Code</a><ol><li><a href="#your-own-api-key-on-your-own-server">Your own API key, on your own server</a></li></ol></li>
 <li><a href="#build-a-device">Build a device</a></li>
+<li><a href="#your-songs-in-your-account">Your songs in your account</a></li>
 <li><a href="#share-and-fork">Share and fork</a></li>
 <li><a href="#bring-material-in">Bring material in</a></li>
 <li><a href="#take-it-elsewhere">Take it elsewhere</a></li>
@@ -68,7 +69,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">The guide</a></h1>
-    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 59 min to read</p>
+    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 61 min to read</p>
     <article class="prose">
 <p>Overdub is a studio for you and your agents. You lay down a take, your agent plays over it, you play over that, and
 every take is signed: warm for you, cool for it. This page gets you from the door to a kept take in five minutes,
@@ -708,8 +709,10 @@ computer, on your Claude plan rather than an API key, with the model you pick in
 only the studio's tools, and its edits are signed <code>claude</code>, like the agent in the page. Each song keeps its own
 conversation; <strong>New</strong> starts it over.</p>
 <p>Songs are kept per site, so a song on the public studio and one on <code>localhost</code> are separate. Move one across with
-the Song menu: <strong>Save the project file</strong> (<code>⌘S</code>) on one, open it (<code>⌘O</code>) on the other. More, for Claude Desktop,
-Cursor, VS Code and Codex too: <a href="integrations.html">Connect an agent</a>.</p>
+the Song menu: <strong>Save the project file</strong> (<code>⌘S</code>) on one, open it (<code>⌘O</code>) on the other (or, where the studio offers an
+Overdub account, <strong>Save to cloud</strong> on one and <strong>My songs</strong> on the other:
+<a href="#your-songs-in-your-account">Your songs in your account</a>). More, for Claude Desktop, Cursor, VS Code and Codex too:
+<a href="integrations.html">Connect an agent</a>.</p>
 <h3 id="your-own-api-key-on-your-own-server"><a class="h-link" href="#your-own-api-key-on-your-own-server">Your own API key, on your own server</a></h3>
 <p>Self-hosting, with an Anthropic API key rather than a Claude plan? Give the key to the server, not the page:</p>
 <div class="code" data-lang="sh"><pre><code>OVERDUB_ANTHROPIC_KEY=sk-ant-… node server/serve.js</code></pre></div>
@@ -740,6 +743,19 @@ checked again on the way in, and refused, with the report, if it fails.</li>
 wrote, each from one request, and the request is on the card. Play any of them on the page. The Guitar Studio's 101
 pedals and 27 amps aren't on that shelf; find them in the studio's browser. To write one by hand, see
 <a href="devices.html">Writing devices</a>.</p>
+<h2 id="your-songs-in-your-account"><a class="h-link" href="#your-songs-in-your-account">Your songs in your account</a></h2>
+<p>Where the studio runs Overdub's own service (it says so by offering it; a copy you host yourself doesn't), the Song
+menu has two more rows. <strong>Save to cloud</strong> keeps the song on screen in your Overdub account as well as in this browser,
+and from then on it saves there a few seconds after each change; the row then says when, <em>Saved to cloud · 2 min ago</em>.
+<strong>My songs</strong> (or Find: <em>my songs</em>) lists what's in your account: when each was saved, its tracks, and its recordings,
+which stay in the browser they were made in (<em>2 recordings on this browser only</em>). <strong>Open</strong> brings one in the way a
+song file opens: the song on screen goes to Recent songs and Undo brings it back, and a recording that isn't in this
+browser is named and plays silent. <strong>Earlier saves</strong> lists the last few saves of a song; <strong>Open as a copy</strong> opens one as
+a song of its own. <strong>Delete</strong> asks under the row first; the copy in this browser stays.</p>
+<p>Signed out, Save to cloud asks you to sign in (the same Google sign-in as Claude on Overdub credits). Saving needs
+Plus or a trial; without one, your saved songs still open and delete, and Save opens the plans.</p>
+<p>If the same song was saved somewhere else since this tab last saved it (another tab, your laptop), nothing is saved over
+it. The studio asks: <strong>Open the newer one</strong>, or <strong>Keep mine as a new song</strong>.</p>
 <h2 id="share-and-fork"><a class="h-link" href="#share-and-fork">Share and fork</a></h2>
 <p><strong>Share a link</strong> in the Song menu copies a link with the whole song in it: notes, devices (including ones written in
 the song) and the mix. Audio recordings stay behind, and the studio says so. The song is packed into the link

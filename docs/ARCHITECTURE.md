@@ -98,7 +98,8 @@ overdub/
                          editors/ (generic.js, and the editors the studio's own devices name: eq8.js, shaper.js,
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
-                         export.js (the Song menu, files out), provenance.js, share.js, onboard.js, reference.js,
+                         export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
+                         Overdub account, app.songs), provenance.js, share.js, onboard.js, reference.js,
                          start.js (Start a song: the blank song's door and its stage, app.start), start-hum.js
                          (the stage's hum steps), beatwindow.js (the click view's two bars and the ball),
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
@@ -115,7 +116,8 @@ overdub/
                          lexicon.js + lexicon-personal.js, panel.js (chat UI), history.js, presence.js, diff.js,
                          keep.js (a song from a link: what waits for Keep), bridge.js (page side of MCP),
                          remote.js (page side of the relay), cloud.js, cloud-kind.js, cloud-panel.js (Claude
-                         on Overdub credits; off unless the site config names cloud.api),
+                         on Overdub credits; off unless the site config names cloud.api), cloud-songs.js (the
+                         link between a song here and one in the account, and the saver that keeps it saved),
                          community-tool.js (find_community_device)                                     [agent layer]
   tools/                 pw.js (browser harness, fixed), <area>-test.js checks, run-all.js, render.js, bench/
   integrations/          the Claude Code plugin and skill, configs for other MCP clients, check.js
@@ -1060,7 +1062,8 @@ with `rank()`: Go to (`FEATURES`: `ui.show` its panel, or a two-second pencil ou
 when an agent asked), Do (every `ui.keys` declaration with a `label`, run as the key would be), Sound (devices and
 presets: an instrument tries on the selected track through `app.sounds.try`, never an overwrite; else the Browser
 searches it), Help (the guide page's `h2[id]`/`h3[id]` headings, read once) and, last, Ask (`ui.emit('agent:compose',
-{ text, send: true })`). Local search spends no tokens. The layout is per browser and is **never an op**: not in the
+{ text, send: true })`). A module that's only sometimes there adds its own Do row while it is,
+`ui.workspace.addFind({ title, purpose, aliases, run }) -> off` (My songs, `ui/songs.js`). Local search spends no tokens. The layout is per browser and is **never an op**: not in the
 store, not undoable, never in a share link or a song file. Which view a load opens in is `decideView`
 (`ui/workspace-view.js`, pure): `full` for everyone, nothing written down; a saved `view: 'simple'` is read as full
 (`from: 'merged'`: the studio says so once, on `overdub:start.merged`). `?view=simple` opens the earlier simple view
@@ -1075,7 +1078,7 @@ prototype (`ui/round.js`) over it. Other modules never import `workspace.js`: th
 ```js
 ui.workspace = { FEATURES, view(), setView(view, { by }), has(id), panelShown(panelId), featureOfPanel(panelId),
                  go(id, { by, query }), add(ids, { by, note }), putAway(ids, { by }), reach(id, by), list(), where(id),
-                 openFind({ query }), closeFind(), search(q), openMore (an alias) }
+                 openFind({ query }), closeFind(), search(q), openMore (an alias), addFind(row) -> off }
 app.find = { open({ query }), close(), search(q) }
 ```
 
@@ -1884,6 +1887,28 @@ service's `GET /v1/config`.
   `you`, and is never sent.
 - `agent/cloud-panel.js` draws it in the Agent tab: a row in settings, the sign-in sheet, the balance in the presence
   line, out of credits (Top up and Use your own Claude, the same size), paused, top up, the account.
+- **Songs in the account** (`ui/songs.js`, `app.songs`; on only when `GET /v1/config` has `songs`): the client's
+  `listSongs`, `getSong(id, rev?)`, `songRevs(id)`, `createSong(doc, createId?)`, `saveSong(id, doc, baseRev,
+  saveId?)` and `deleteSong(id)` speak the service's `/v1/songs` (the song document is stored in the account; its
+  recordings never leave the browser). A write's nonce rides in the JSON body, not an `Idempotency-Key` (CORS lets no
+  new header through, and the core reads only 64 KB of a body for it): one `createId` per Save to cloud press and one
+  `saveId` per save, each sent again when the answer is lost, so a write that landed answers as a repeat.
+  `agent/cloud-songs.js` is the pure part: the link (`localStorage overdub:cloud-song`, an account's project id to
+  `{ songId, rev, savedAt }`, keyed by the signed-in user id), the base each copy of a song stands on (`localStorage
+  overdub:cloud-base`, keyed by the account and the copy's `id` and `meta.modified`: the song on screen keeps its own
+  in memory, and a copy put aside in `overdub:previous`, Recent songs or the song before Make it yours, or held by the
+  autosave, finds its own again; never a newer rev another tab or copy wrote) and the saver, which saves a linked song
+  5 s after a change and when the tab is hidden (ui `'song:replacing' { song }` from `ui/export.js` puts the song
+  aside with its base and flushes it, as it was), one save at a time, one queued save per song, always from the base
+  that copy has. A `409 song_conflict`, or a copy whose base isn't known, saves nothing over the newer save and holds
+  that song until the person picks: open the newer one, or keep that copy as a new song (a toast).
+  `songs_need_plus`, a 401, `song_too_large` and `song_not_found` (that account's link goes, never another's) hold
+  it too; a network error tries the same save again on the next change. The Song menu draws `app.songs.menuRows()` (Save to cloud, or *Saved to cloud · 2 min ago*, and My songs);
+  My songs is a popover under the Song key (a bottom sheet on a phone): the list (title, last saved, tracks, *N
+  recordings on this browser only*), Open (through `app.exporter.openSong`, the song file's door: Recent songs, Undo,
+  `guardDevices`, the held-devices ask; missing recordings named), Earlier saves (open one as a copy, with a new
+  project id and no link) and Delete (asked under the row). Signed out it offers the same Google sign-in; without
+  Plus the list still opens and Save opens the plans (ui `'cloud:show' { view: 'topup' }`, answered by the Agent tab).
 - `tools/agent-bundle.js` exports the bundle (`{ version, source, system, tools }`) from a running studio for the
   service to import; `tools/cloud-test.js` runs all of this against a fake of the service.
 
@@ -1899,7 +1924,7 @@ local relay instead).
 ## Songs in and out
 
 - **Autosave.** `main.js` saves the song to localStorage (`overdub:project`) half a second after each change; audio
-  lives in IndexedDB. `?new` and `?demo=<id>` open another song and keep the saved one as the previous song
+  lives in IndexedDB. A song linked to the account also saves there, 5 s after a change (`ui/songs.js`, above). `?new` and `?demo=<id>` open another song and keep the saved one as the previous song
   (`overdub:previous`), with an Undo.
 - **Share links and the fork** (`core/share.js`, `ui/share.js`, `app.share`): the song rides in the URL hash
   (`/app/#s=…`: JSON `{ f: 'overdub-share/0', at, from: { name?, mark? }, dropped, song }`, deflate-raw, base64url; at
@@ -1929,6 +1954,8 @@ local relay instead).
   stems render held devices as silence and pass-throughs and say so ("Left out: Tin Whistle, kept off on this
   computer."); the attribution log marks them `held`. A project file opened (`loadText`: the Song menu's Open, ⌘O,
   or a file dropped on the studio) emits ui `'song:opened' { from: 'file' }`, so its ask says "This file brings".
+  `openSong(project, { from, name, said })` is that door for any song from outside (a file; the account, `from:
+  'cloud'`). Just before any song is replaced, ui `'song:replacing' { song }` carries the song as it was.
 - **DAWproject** (`core/dawproject.js`): tempo and meter, tracks with their mixer settings, note clips, audio clips
   (their recordings embedded as WAV), sections as markers. Overdub's devices can't travel, so each is a placeholder
   device with its name, id and parameter values. Pure; `ui/export.js` zips it.
@@ -1955,7 +1982,7 @@ the rest. Audio starts on the first gesture. URL switches: `?new`, `?demo=<id>`,
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,
-analytics, plugin, jam, site, siteConfig }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
+analytics, plugin, jam, songs, site, siteConfig }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
 `browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.siteConfig` is
 `loadSiteConfig`'s answer as boot read it (main.js waits for it, at most 4 s, `CONFIG_WAIT_MS`, before the first
 module starts), or null when this load couldn't see it.

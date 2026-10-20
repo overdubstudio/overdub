@@ -6,7 +6,8 @@
 // the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Songs in the
 // account (ui/songs.js, against the fake's /v1/songs): off without them, signed out, no Plus, Save to cloud and the save
 // as you work, a newer save made elsewhere, open, earlier saves, delete, a write whose answer is lost sent again as the
-// same write, a song put aside and Undo, two tabs on one song, and My songs on a phone. Browsers run muted
+// same write, a song put aside and Undo, two tabs on one song, and My songs on a phone; Top up's plans, "on" beside the
+// one bought. Browsers run muted
 // (tools/pw.js QUIET). Screenshots: tools/.out/cloud-*.png.
 //
 //   node tools/cloud-test.js
@@ -92,8 +93,10 @@ function fakeCloud() {
   }
   const cookies = (req) => Object.fromEntries(String(req.headers.cookie || '').split(/;\s*/).filter(Boolean).map((c) => [c.slice(0, c.indexOf('=')), c.slice(c.indexOf('=') + 1)]));
   const userOf = (req) => { const e = sessions.get(cookies(req)['od.session_token']); return e ? users.get(e) : null; };
+  const PLANS = { plus_x: 'Overdub Plus, monthly', plus_y: 'Overdub Plus, yearly' };   // the config's plans, by sku
   const balance = (u) => ({ total: u.balance, monthly: 0, trial: 0, packs: u.balance, other: 0, held: 0, debt: 0, nextExpiry: null });
-  const me = (u) => ({ user: { id: 'usr_' + u.email.length, email: u.email, createdAt: 1 }, balance: balance(u), asksHint: Math.round(u.balance / 3.5), plan: null, trial: { eligible: !!u.trialEligible, claimed: false },
+  const me = (u) => ({ user: { id: 'usr_' + u.email.length, email: u.email, createdAt: 1 }, balance: balance(u), asksHint: Math.round(u.balance / 3.5),
+    plan: u.plan ? { plan: u.plan, label: PLANS[u.plan], status: 'active', renewsAt: Date.now() + 30 * 864e5, endsAt: null, monthlyCredits: 123, nextGrantAt: null } : null, trial: { eligible: !!u.trialEligible, claimed: false },
     creditBack: { budget: 9, left: 9, periodEnd: 1 }, limits: { dailyCreditsLeft: 99 }, notice: u.notice || null,
     ...(songsOn ? { songs: { canSave: !!u.plus, count: songsOf(u.email).size, max: SONGS.maxSongs } } : {}) });
   let lose = 0;
@@ -124,7 +127,7 @@ function fakeCloud() {
     if (req.method === 'OPTIONS') { res.writeHead(204, allowed ? { 'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'content-type, idempotency-key' } : {}); return res.end(); }
     if (req.method !== 'GET' && !allowed && !url.pathname.startsWith('/dev/')) return err(res, 403, 'forbidden_origin', 'That came from a page Overdub doesn’t know.');
     const p = url.pathname;
-    if (p === '/v1/config') return send(res, 200, { ...(songsOn ? { songs: { enabled: true, ...SONGS } } : {}), rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: hosted } });
+    if (p === '/v1/config') return send(res, 200, { ...(songsOn ? { songs: { enabled: true, ...SONGS } } : {}), rateCard: RATE, moreTime: { multiplier: 2, kinds: [] }, plans: [{ sku: 'plus_x', label: 'Overdub Plus, monthly', usd: 1.23, interval: 'month', monthlyCredits: 123 }, { sku: 'plus_y', label: 'Overdub Plus, yearly', usd: 12.3, interval: 'year', monthlyCredits: 123 }], packs: [{ sku: 'pack_x', label: '40 credits', usd: 0.45, credits: 40 }], trial: { credits: 6 }, signIn: { provider: 'google', start: '/v1/auth/google' }, promptVersions: [], hosted: { enabled: hosted } });
     const signIn = (email) => { const tok = randomUUID(); if (!users.has(email)) users.set(email, { email, balance: 30 }); sessions.set(tok, email); return `od.session_token=${tok}; HttpOnly; SameSite=Lax; Path=/`; };
     // Google, the whole round trip in one page: the real service goes to Google, back to its callback, and ends on
     // /v1/auth/done, which sets the cookie, posts overdub:signed-in to the opener at each studio origin and closes
@@ -185,9 +188,10 @@ function fakeCloud() {
     if (p === '/v1/me/activity') return send(res, 200, { items: [...actions.values()].filter((a) => a.email === u.email && a.charged).map((a) => ({ at: a.at, kind: 'spend', credits: -a.credits, label: RATE.find((r) => r.kind === a.kind).label, actionId: a.id })) });
     if (p === '/v1/auth/logout') { sessions.delete(cookies(req)['od.session_token']); return send(res, 204, undefined, { 'set-cookie': 'od.session_token=; Max-Age=0; Path=/' }); }
     if (p === '/v1/trial/claim') { u.balance += 6; u.trialEligible = false; return send(res, 200, me(u)); }
-    if (p === '/v1/billing/checkout') return send(res, 200, { url: `http://localhost:${server.address().port}/dev/checkout`, checkoutRef: 'chk_1' });
+    // (a checkout remembers what it's for: the sync after it starts that plan, or grants that pack)
+    if (p === '/v1/billing/checkout') { u.checkout = body?.sku; return send(res, 200, { url: `http://localhost:${server.address().port}/dev/checkout`, checkoutRef: 'chk_1' }); }
     // chk_late: a checkout the provider hasn't marked paid yet (nothing granted, and the answer says so)
-    if (p === '/v1/billing/sync') { if (body?.checkoutRef === 'chk_late') return send(res, 200, { ...me(u), checkoutPaid: false }); u.balance += 40; return send(res, 200, { ...me(u), checkoutPaid: true }); }
+    if (p === '/v1/billing/sync') { if (body?.checkoutRef === 'chk_late') return send(res, 200, { ...me(u), checkoutPaid: false }); if (PLANS[u.checkout]) { u.plan = u.checkout; u.plus = true; } else u.balance += 40; u.checkout = null; return send(res, 200, { ...me(u), checkoutPaid: true }); }
     if (p === '/v1/agent/actions' && req.method === 'POST') {
       if (!/^[A-Za-z0-9_-]{8,128}$/.test(req.headers['idempotency-key'] || '')) return err(res, 400, 'validation_failed', 'The studio sent something the agent can’t take. Reload and try again.', { field: 'idempotency-key' });
       if (paused) return err(res, 503, 'hosted_paused', 'Claude on Overdub credits is paused right now. Your own Claude, Claude Code and the demo still work.');
@@ -242,6 +246,10 @@ function fakeCloud() {
       pause(on) { paused = on; },
       hosted(on) { hosted = on; },
       songs(on) { songsOn = on; },
+      // a plan on that account (a sku from the config's plans), or none
+      plan(email, sku) { users.get(email).plan = sku || null; },
+      // the account's songs put aside (an account with none), and back
+      stashSongs(email) { const had = songs.get(email); songs.set(email, new Map()); return () => songs.set(email, had); },
       plus(email, on) { if (!users.has(email)) users.set(email, { email, balance: 30 }); users.get(email).plus = on; },
       songsOf: (email) => [...songsOf(email).values()],
       seedSong: (email, doc, savedAt = Date.now()) => { const r = putSong(email, 'sng_' + String(++songSeq).padStart(6, '0'), doc); r.savedAt = savedAt; return r; },
@@ -666,6 +674,28 @@ const fake = await fakeCloud();
   await page.click('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)');
   await page.waitForFunction(() => window.overdub.agent.cloud.me?.balance?.total === 41, null, { timeout: 5000 }).catch(() => {});
   t.ok(await page.evaluate(() => window.overdub.agent.cloud.me?.balance?.total === 41), 'after paying, "I’ve paid" asks the service and the balance updates');
+  // Top up's plans: "on" beside the one plan the account has (GET /v1/me's plan.plan), and a plan bought says so
+  const planRows = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.ag-cl-topup .ag-cl-row')].map((r) => [r.dataset.sku, { on: [...r.querySelectorAll('.t3')].some((x) => x.textContent === 'on'), btn: r.querySelector('.btn')?.textContent || '' }])));
+  const topStatus = () => page.evaluate(() => document.querySelector('.ag-cl-topup .ag-cl-status')?.textContent || '');
+  const before = await planRows();
+  t.ok((await topStatus()) === 'Done: your credits are in.' && !before.plus_x.on && !before.plus_y.on && before.plus_x.btn === 'Choose' && before.plus_y.btn === 'Choose',
+    `a pack paid for: "${await topStatus()}", and with no plan both plans offer Choose (${JSON.stringify(before)})`);
+  const popup2 = page.context().waitForEvent('page', { timeout: 5000 }).catch(() => null);
+  await page.click('.ag-cl-topup [data-sku="plus_x"] .btn');
+  await (await popup2)?.close();
+  await page.waitForSelector('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)', { timeout: 5000 });
+  await page.click('.ag-cl-topup .ag-kc-acts .btn:not(.btn-txt)');
+  await page.waitForFunction(() => window.overdub.agent.cloud.me?.plan?.plan === 'plus_x', null, { timeout: 5000 }).catch(() => {});
+  await sleep(200);
+  const after = await planRows();
+  t.ok(after.plus_x.on && !after.plus_y.on && !after.plus_x.btn && !after.plus_y.btn,
+    `Plus monthly bought: "on" beside monthly only, and neither plan offers Choose while it runs (${JSON.stringify(after)})`);
+  t.ok((await topStatus()) === 'Done: you’re on Overdub Plus, monthly.', `... and the sheet says which plan, not credits ("${await topStatus()}")`);
+  await page.evaluate(() => document.querySelector('.ag-cl-topup')?.scrollIntoView({ block: 'start' }));
+  await shot('cloud-plan-on');
+  fake.plan('jess@example.com', null);
+  fake.plus('jess@example.com', false);
+  await page.evaluate(() => window.overdub.agent.cloud.refresh());
   // paused
   fake.pause(true);
   await ask('Rework the outro');

@@ -48,6 +48,13 @@ export function takeCheckoutReturn(win = globalThis) {
   return { ref: ref && REF.test(ref) ? ref : null };
 }
 const NOT_YET = 'The payment hasn’t reached us yet. Give it a minute, then press I’ve paid.';
+// a checkout from Top up, paid: a plan says which, a pack says its credits are in
+// (me: GET /v1/me after the sync; sku: what was bought; plans: [[sku, item]] from GET /v1/config)
+function paidWords(me, sku, plans) {
+  if (!sku || !plans.some(([s]) => s === sku)) return 'Done: your credits are in.';
+  const label = me?.plan?.plan === sku && me.plan.label ? me.plan.label : plans.find(([s]) => s === sku)[1].label;
+  return `Done: you’re on ${String(label || 'Overdub Plus')}.`;
+}
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const money = (usd) => { try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(usd) ? 0 : 2 }).format(usd); } catch { return '$' + usd; } };
 const day = (ms) => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short' });
@@ -59,6 +66,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
   const cloud = () => agent.cloud;
   let view = null;              // the sheet asked for: 'signin' | 'account' | 'out' | 'topup' | 'paused'
   let hint = null, hintOn = '', moreTime = false, menuOpen = false;   // hintOn: the words a kind was picked for
+  let bought = '';                // the sku of the checkout opened from Top up, for the line once it's paid
   let busyWord = '', said = '';   // busyWord: the button that's working; said: the sheet's last line
   let checkoutRef = null, activity = null, del = null;
   let cached = { sig: '', node: null };
@@ -254,9 +262,14 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const cfg = c.config || {};
     const packs = skuList(cfg.packs);
     const plans = skuList(cfg.plans);
-    const subscribed = c.me?.plan && /active|trialing|past_due/.test(c.me.plan.status || '');
+    // the plan this account is on (GET /v1/me's plan.plan is its sku, overdub-cloud SPEC §8.2): "on" beside that one
+    // only; the other plans offer nothing while it runs (the service turns a second plan down, already_subscribed)
+    const running = !!c.me?.plan && /active|trialing|past_due/.test(c.me.plan.status || '');
+    const mine = running ? c.me.plan.plan || plans.find(([, p]) => p.label === c.me.plan.label)?.[0] || '' : '';
+    const planAct = (sku) => (!running ? null : sku === mine ? h('span.t3', 'on') : h('span'));
     const buy = async (sku) => {
       busyWord = sku; said = ''; cached.sig = ''; renderAll();
+      bought = sku;
       try { const r = await c.checkout(sku); checkoutRef = r.checkoutRef || null; said = r.url ? 'The checkout is open in a new tab. When it’s done, come back here.' : 'The checkout didn’t open. Try again in a moment.'; } catch (e) { said = e.message; }
       busyWord = ''; cached.sig = ''; renderAll();
     };
@@ -264,11 +277,11 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     return h('div.ag-cl.ag-cl-topup', sheetHead('Top up'),
       h('p.ag-kc-small', 'Prices are in US dollars. Credits you buy never expire.'),
       h('ul.ag-cl-list',
-        ...plans.map(([sku, p]) => line(sku, p.label, money(p.usd), `${p.monthlyCredits ? `${p.monthlyCredits} credits a month, ` : ''}a ${p.interval === 'year' ? 'year' : 'month'}`, subscribed ? h('span.t3', 'on') : h('button.btn', { type: 'button', disabled: !!busyWord, onclick: () => buy(sku) }, busyWord === sku ? 'Opening…' : 'Choose'))),
+        ...plans.map(([sku, p]) => line(sku, p.label, money(p.usd), `${p.monthlyCredits ? `${p.monthlyCredits} credits a month, ` : ''}a ${p.interval === 'year' ? 'year' : 'month'}`, planAct(sku) || h('button.btn', { type: 'button', disabled: !!busyWord, onclick: () => buy(sku) }, busyWord === sku ? 'Opening…' : 'Choose'))),
         ...packs.map(([sku, p]) => line(sku, p.label, money(p.usd), '', h('button.btn', { type: 'button', disabled: !!busyWord, onclick: () => buy(sku) }, busyWord === sku ? 'Opening…' : 'Buy')))),
       !plans.length && !packs.length ? h('p.ag-kc-small', 'Nothing to buy right now.') : null,
       said ? h('p.ag-cl-status', { role: 'status' }, said) : null,
-      checkoutRef ? h('div.ag-kc-acts', h('button.btn', { type: 'button', onclick: async () => { try { const r = await c.sync(checkoutRef); if (r.paid) { checkoutRef = null; said = 'Done: your credits are in.'; } else said = NOT_YET; } catch (e) { said = e.message; } cached.sig = ''; renderAll(); } }, 'I’ve paid: update my credits')) : null,
+      checkoutRef ? h('div.ag-kc-acts', h('button.btn', { type: 'button', onclick: async () => { try { const r = await c.sync(checkoutRef); if (r.paid) { checkoutRef = null; said = paidWords(c.me, bought, plans); } else said = NOT_YET; } catch (e) { said = e.message; } cached.sig = ''; renderAll(); } }, 'I’ve paid: update my credits')) : null,
       h('div.ag-kc-acts', closeBtn()));
   }
 

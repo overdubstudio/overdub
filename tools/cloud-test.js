@@ -816,6 +816,17 @@ const fake = await fakeCloud();
   t.ok(billingPosts === 0, `a cancelled checkout charges and syncs nothing (${billingPosts} billing calls)`);
   t.ok(cx.path === '/app/' && cx.search === '', `and plus=cancel leaves the address bar (${cx.path}${cx.search})`);
   await shot('cloud-cancelled');
+  // a plan's checkout, paid in its own tab: that tab lands here and says which plan, not "credits are in"
+  const popup3 = page.context().waitForEvent('page', { timeout: 5000 }).catch(() => null);
+  await page.click('.ag-cl-topup [data-sku="plus_x"] .btn');
+  await (await popup3)?.close();
+  await page.goto(new URL('/app/?plus=done&ref=chk_1', page.url()).href, { waitUntil: 'load' });
+  await ready(page);
+  await page.waitForSelector('.ag-cl-account .ag-cl-status', { timeout: 10000 }).catch(() => {});
+  const planBack = await page.evaluate(() => document.querySelector('.ag-cl-account .ag-cl-status')?.textContent || '');
+  t.ok(planBack === 'Paid. You’re on Overdub Plus, monthly.', `back from paying for a plan, the note names the plan ("${planBack}")`);
+  fake.plan('pat@example.com', null);
+  fake.plus('pat@example.com', false);
   t.ok(realErrors(errors).length === 0, 'no page errors (back from a checkout)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));
   await close();
 }

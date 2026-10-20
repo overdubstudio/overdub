@@ -30,6 +30,9 @@ import { freeMove } from './cloud-kind.js';
 import { listDevices } from '../devices/registry.js';
 
 const NOTICE_KEY = 'overdub:cloud:notice-80:';
+// the last checkout opened from Top up, { ref, sku }: the tab that pays lands back on ?plus=done&ref=, which doesn't say
+// what was bought, so a plan's landing can name the plan
+const CHECKOUT_KEY = 'overdub:cloud:checkout';
 const REF = /^[A-Za-z0-9_-]{4,128}$/;
 
 // ?plus=done[&ref=] -> { ref }; ?plus=cancel -> { cancelled: true } (and plus and ref leave the address bar, the rest
@@ -58,7 +61,11 @@ function paidWords(me, sku, plans) {
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const money = (usd) => { try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(usd) ? 0 : 2 }).format(usd); } catch { return '$' + usd; } };
 const day = (ms) => new Date(ms).toLocaleDateString([], { day: 'numeric', month: 'short' });
-const ls = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* full */ } } };
+const ls = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* full */ } },
+  del: (k) => { try { localStorage.removeItem(k); } catch { /* blocked */ } },
+};
 
 export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll, renderHead, openOwn, useDemo, closeSettings = () => {} }) {
   css('agent-cloud', CSS);
@@ -270,7 +277,7 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     const buy = async (sku) => {
       busyWord = sku; said = ''; cached.sig = ''; renderAll();
       bought = sku;
-      try { const r = await c.checkout(sku); checkoutRef = r.checkoutRef || null; said = r.url ? 'The checkout is open in a new tab. When it’s done, come back here.' : 'The checkout didn’t open. Try again in a moment.'; } catch (e) { said = e.message; }
+      try { const r = await c.checkout(sku); checkoutRef = r.checkoutRef || null; if (checkoutRef) ls.set(CHECKOUT_KEY, JSON.stringify({ ref: checkoutRef, sku })); said = r.url ? 'The checkout is open in a new tab. When it’s done, come back here.' : 'The checkout didn’t open. Try again in a moment.'; } catch (e) { said = e.message; }
       busyWord = ''; cached.sig = ''; renderAll();
     };
     const line = (sku, title, price, sub, act) => h('li.ag-cl-row', { dataset: { sku } }, h('span.ag-cl-row-t', h('b', title), sub ? h('span.t3', sub) : null), h('span.ag-cl-row-n', price), act);
@@ -430,7 +437,11 @@ export function cloudPanel({ app, agent, h, byline, input, grow, push, renderAll
     try { ui.setOpen?.('right', true); ui.show?.('agent'); } catch { /* no right pane on this layout */ }
     if (!c.me) { said = 'Sign in with the Google account you paid with to see your credits.'; show('signin'); return; }
     if (!paid) { checkoutRef = ref; said = NOT_YET; show('topup'); return; }
-    said = 'Paid. Your credits are in.';
+    let opened = null;
+    try { opened = JSON.parse(ls.get(CHECKOUT_KEY) || 'null'); } catch { /* not ours */ }
+    ls.del(CHECKOUT_KEY);
+    const plan = ref && opened?.ref === ref && skuList(c.config?.plans).find(([s]) => s === opened.sku);
+    said = plan ? `Paid. You’re on ${(c.me.plan?.plan === plan[0] && c.me.plan.label) || plan[1].label || 'Overdub Plus'}.` : 'Paid. Your credits are in.';
     show('account');
     // the page is still settling from its load (the pane opening, the studio taking focus): the heading again, once
     setTimeout(() => { const d = globalThis.document, n = cached.node; if (n?.isConnected && (!d.activeElement || d.activeElement === d.body)) n.querySelector('h3')?.focus({ preventScroll: true }); }, 500);

@@ -875,6 +875,7 @@ const fake = await fakeCloud();
     await page.waitForSelector('.sm', { timeout: 3000 });
     return page.evaluate(() => [...document.querySelectorAll('.sm .sm-i')].map((b) => b.textContent.trim()));
   };
+  const menuHead = (page) => page.evaluate(() => document.querySelector('.sm .sm-head small')?.textContent || '');
   const closeMenu = (page) => page.evaluate(() => { for (const p of document.querySelectorAll('.ew-pop')) p.remove(); });
   const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('.ew-toast')].map((t) => t.textContent.trim()));
   const clearToasts = (page) => page.evaluate(() => document.querySelectorAll('.ew-toast').forEach((t) => t.remove()));
@@ -914,8 +915,8 @@ const fake = await fakeCloud();
   // 8b. signed out: Save to cloud says sign in; My songs is the sign-in, the Agent tab's Google
   {
     const rows = await songMenu(page);
-    t.ok(rows.some((r) => /^Save to cloudSign in to save songs to your account$/.test(r)) && rows.some((r) => /^My songs/.test(r)),
-      `signed out, the Song menu offers Save to cloud with "Sign in to save songs to your account", and My songs (${rows.filter((r) => /cloud|songs/i.test(r)).join(' | ')})`);
+    t.ok(/^Save to cloudSign in to save songs to your account$/.test(rows[0]) && /^My songs/.test(rows[1]) && !/·/.test(await menuHead(page)),
+      `signed out, the Song menu opens on Save to cloud with "Sign in to save songs to your account", then My songs, and the title's line says nothing of the account (${rows.filter((r) => /cloud|songs/i.test(r)).join(' | ')})`);
     await page.click('.sm .sm-cloud-save');
     await page.waitForSelector('.sg-pop .sg-google', { timeout: 3000 });
     const s = await page.evaluate(() => ({ text: document.querySelector('.sg-pop').textContent, fields: document.querySelectorAll('.sg-pop input, .sg-pop iframe').length }));
@@ -986,7 +987,14 @@ const fake = await fakeCloud();
     t.ok(said.some((x) => /^“Night Ride” is in your account\. Changes save there as you work; its recordings stay in this browser\./.test(x)), `... and says so ("${said.find((x) => /account/.test(x))}")`);
     await closeMenu(page);
     const rows2 = await songMenu(page);
+    const head2 = await menuHead(page);
     t.ok(rows2.some((r) => /^Saved to cloud · just nowsaves as you work$/.test(r)) && !rows2.some((r) => /^Save to cloud/.test(r)), `the Song menu says "Saved to cloud · just now" for it (${rows2.find((r) => /^Saved/.test(r))})`);
+    // the cloud rows first, under the title, and the file rows together; the title's line says where it's saved
+    const idx = (re) => rows2.findIndex((r) => re.test(r));
+    t.ok(idx(/^Saved to cloud/) === 0 && idx(/^My songs/) === 1 && idx(/^New song/) === 2 && idx(/^Save the project file/) === idx(/^Import /) + rows2.filter((r) => /^Import /.test(r)).length,
+      `the Song menu opens on Saved to cloud and My songs, then New song; Save the project file stays with the file rows (${rows2.slice(0, 3).map((r) => r.slice(0, 20)).join(' | ')})`);
+    t.ok(/^\d+ bpm, \d+ tracks? · saved to your account just now$/.test(head2), `the menu's header line says the song is saved to your account ("${head2}")`);
+    await shot('cloud-songs-menu');
     await closeMenu(page);
     // a change: saved 5 s later, from the rev it knows
     const n0 = songPosts().length, at = Date.now();
@@ -1242,6 +1250,21 @@ const fake = await fakeCloud();
     t.ok(m.keys >= 4 && !m.short.length, `phone: its ${m.keys} keys are 44 px tall${m.short.length ? ' (not: ' + m.short.map((k) => `${k.t} ${k.h}`).join(', ') + ')' : ''}`);
     await sleep(350);
     await P.shot('cloud-songs-phone');
+    // the Song menu on a phone: the cloud rows first; and a toast with two ways out keeps both 40 px keys on screen
+    await closeMenu(P.page);
+    const prow = await songMenu(P.page);
+    t.ok(/^Save to cloud/.test(prow[0]) && /^My songs/.test(prow[1]), `phone: the Song menu opens on Save to cloud and My songs (${prow.slice(0, 2).join(' | ')})`);
+    await sleep(350);
+    await P.shot('cloud-songs-phone-menu');
+    await closeMenu(P.page);
+    const two = await P.page.evaluate(() => {
+      const t = window.overdub.ui.toast('Not saved: your account has a newer save of “Night Ride”, from just now, made in another tab or browser. Nothing was saved over it.', { ms: 20000, action: [{ label: 'Open the newer one', run: () => {} }, { label: 'Keep mine as a new song', run: () => {} }] });
+      const r = t.getBoundingClientRect();
+      return { keys: [...t.querySelectorAll('.ew-toast-act')].map((b) => { const q = b.getBoundingClientRect(); return { h: Math.round(q.height), in: q.left >= 0 && q.right <= innerWidth }; }), inside: r.left >= 0 && r.right <= innerWidth };
+    });
+    t.ok(two.keys.length === 2 && two.keys.every((k) => k.h >= 40 && k.in) && two.inside, `phone: a toast's two ways out are both 40 px keys, on screen (${JSON.stringify(two)})`);
+    await sleep(250);
+    await P.shot('cloud-songs-phone-toast');
     t.ok(realErrors(P.errors).length === 0, 'no page errors (songs on a phone)' + (realErrors(P.errors).length ? ': ' + realErrors(P.errors).slice(0, 3).join(' | ') : ''));
     await P.close();
   }

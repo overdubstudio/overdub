@@ -21,7 +21,8 @@
 // without Plus: the list still shows and opens, and Save says "Cloud saves come with Plus" and opens the plans (the
 // Agent tab's Top up, ui event 'cloud:show').
 //
-//   app.songs = { enabled, open({ anchor }), save(), menuRows() -> [{ cls, label, sub, run }], list, state }
+//   app.songs = { enabled, open({ anchor }), save(), menuRows() -> [{ cls, label, sub, run }], status() -> words for the
+//                 menu's header line, list, state }
 
 import { h, css } from './dom.js';
 import { popover } from './rack.js';
@@ -344,6 +345,19 @@ export default function (app) {
     return out;
   }
 
+  // the Song menu's header line, after "100 bpm, 6 tracks": how the song on screen stands in the account, only while
+  // it's linked ("saved to your account just now"); '' otherwise
+  function status() {
+    if (!on() || listening()) return '';
+    const l = linked();
+    if (!l) return '';
+    if (!cloud.me) return 'not saved to your account: signed out';
+    const st = saver.state.pid === pid() ? saver.state : null;
+    if (st?.status === 'conflict' || saver.held(pid()) || st?.status === 'error') return 'not saved to your account';
+    if (st?.status === 'saving' || st?.status === 'waiting') return 'saving to your account…';
+    return `saved to your account ${savedAgo(st?.savedAt || l.savedAt)}`;
+  }
+
   /* ---------------------------------------------------------------- My songs */
   function open({ anchor = null } = {}) {
     if (!on()) return false;
@@ -441,7 +455,7 @@ export default function (app) {
     get enabled() { return on(); },
     get list() { return list; },
     get state() { return saver.state; },
-    open, save, menuRows, refresh,
+    open, save, menuRows, status, refresh,
   };
 }
 

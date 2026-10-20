@@ -31,6 +31,8 @@ import { songLinks, songBases, docStamp, songAssets, savedAgo, jsonBytes, create
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const mb = (n) => `${(n / 1e6).toFixed(1)} MB`;
 const titleOf = (x) => String(x?.title || 'Untitled').slice(0, 120);
+// My songs without a plan, and nothing in the account yet: what saving there gives you
+const PLUS_WHY = 'Cloud saves come with Plus: your songs save to your account as you work, and open on any browser.';
 
 export default function (app) {
   const { store, ui } = app;
@@ -371,16 +373,19 @@ export default function (app) {
       h('small', me ? `${n != null ? `${n}${maxSongs() ? ` of ${maxSongs()}` : ''} songs, ` : ''}in your Overdub account as ${me.user?.email || 'you'}` : 'songs kept in your Overdub account'));
     if (!me) return [head, ...signedOut()];
     const out = [head];
+    // no plan and no songs: what Plus gives, and the plans; nothing about saving or keeping songs it can't do yet
+    const plusOnly = !listening() && canSave() === false && !!list && !list.songs.length;
     // the song on screen: in the account already, or a Save to cloud for it
     const l = linked();
     if (!listening()) {
       if (l) out.push(h('p.sg-line', `“${titleOf(store.get())}” is in your account and saves as you work.`));
-      else if (canSave() === false) out.push(h('div.sg-plus', h('p.sg-line', 'Cloud saves come with Plus. The songs already here still open, and you can delete them.'), h('div.sg-acts', btn('plans', '', 'See the plans', () => { close(); plans(); }))));
+      else if (canSave() === false) out.push(h('div.sg-plus', h('p.sg-line', plusOnly ? PLUS_WHY : 'Cloud saves come with Plus. The songs already here still open, and you can delete them.'), h('div.sg-acts', btn('plans', '', 'See the plans', () => { close(); plans(); }))));
       else out.push(h('div.sg-acts', btn('save', '.btn-go.sg-save', busy === 'save' ? 'Saving…' : `Save “${titleOf(store.get()).slice(0, 40)}” to cloud`, () => save(), { disabled: busy === 'save' })));
     }
     if (said) out.push(h('p.sg-said', { role: 'status' }, said));
     if (listErr && !list) out.push(h('p.sg-err', listErr), h('div.sg-acts', btn('retry', '', 'Try again', () => refresh())));
     else if (!list) out.push(h('p.sg-line.sg-quiet', 'Reading your songs…'));
+    else if (plusOnly) return out;
     else if (!list.songs.length) out.push(h('p.sg-line.sg-quiet', 'Nothing in your account yet. Save to cloud keeps the song on screen here, and it saves as you work.'));
     else out.push(h('ul.sg-list', list.songs.map(songRow)));
     out.push(h('p.sg-note', 'Songs here are kept until you delete them or your account. Recordings stay in the browser they were made in.'));

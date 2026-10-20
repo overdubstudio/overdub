@@ -937,6 +937,18 @@ const fake = await fakeCloud();
     t.ok(/Cloud saves come with Plus\. The songs already here still open/.test(s) && !/Save “/.test(s), 'without Plus, My songs says cloud saves come with Plus, and offers no Save');
     await shot('cloud-songs-no-plus');
     await closeMenu(page);
+    // no plan and nothing in the account yet: what Plus gives, and See the plans; nothing about saving
+    const restore = fake.stashSongs(who);
+    await page.evaluate(() => window.overdub.songs.refresh());
+    await page.evaluate(() => window.overdub.songs.open());
+    await page.waitForFunction(() => !/Reading your songs/.test(document.querySelector('.sg-pop')?.textContent || ''), null, { timeout: 5000 });
+    const empty = await page.evaluate(() => ({ text: document.querySelector('.sg-pop').textContent, lines: [...document.querySelectorAll('.sg-pop .sg-line, .sg-pop .sg-note')].map((x) => x.textContent), btns: [...document.querySelectorAll('.sg-pop .btn')].map((b) => b.textContent) }));
+    t.ok(empty.lines.length === 1 && /^Cloud saves come with Plus: your songs save to your account as you work, and open on any browser\.$/.test(empty.lines[0]) && empty.btns.join() === 'See the plans' && !/Save to cloud|Nothing in your account|already here/.test(empty.text),
+      `without Plus and with no songs, My songs is one line on what Plus gives and See the plans, nothing about saving (${empty.lines.join(' | ')} [${empty.btns.join(', ')}])`);
+    await shot('cloud-songs-no-plus-empty');
+    await closeMenu(page);
+    restore();
+    await page.evaluate(() => window.overdub.songs.refresh());
     const rows = await songMenu(page);
     t.ok(rows.some((r) => /^Save to cloudCloud saves come with Plus$/.test(r)), `... and the Song menu's Save to cloud says "Cloud saves come with Plus" (${rows.find((r) => /^Save to cloud/.test(r))})`);
     await page.click('.sm .sm-cloud-save');

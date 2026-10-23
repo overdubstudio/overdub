@@ -46,7 +46,7 @@ jobs:
           persist-credentials: false
 
       # node only: the checkers are the static job's
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           install_args: node
 
@@ -63,7 +63,7 @@ jobs:
           persist-credentials: false
 
       # installs node and every checker mise.toml pins
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
 
       - name: The static checks (npm run check)
         run: tools/check.sh
@@ -101,7 +101,7 @@ jobs:
           persist-credentials: false
 
       # node only: nothing the deploy doesn't run goes near the job that holds the AWS role
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
         with:
           install_args: node
 

@@ -745,7 +745,7 @@ export default function (app) {
   // it runs from Tap a beat (the first minute), Song → Take one, and ?coach. (A tour left half-way waits there too.)
   const simple = ui.workspace?.view?.() === 'simple';
   if (forced) start({ force: true, restart: true });
-  else if (simple) { /* not by itself */ }
+  else if (simple || params.has('room')) { /* not by itself (?room: the live room is its own first run) */ }
   else if (!navigator.webdriver && elsewhere() && ((was && was.state === 'on') || (!was && firstVisit))) paused = true;
   else if (!navigator.webdriver && !elsewhere() && ((was && was.state === 'on') || (!was && firstVisit && !welcomeUp()))) start();
   // a tour that stepped aside for a link picks up when a song of yours is on screen again; not when the link's song is

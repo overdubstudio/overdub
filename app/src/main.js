@@ -38,6 +38,7 @@ const MODULES = [
   './ui/sounds.js', // the sound card (app.sounds: trying an instrument by ear, Keep and Back); after plugin.js and input/index.js
   './ui/grooves.js', // the Grooves tab (core/grooves.js) and the find_grooves, use_groove and drum_track tools; before the bridges too
   './ui/jam.js', // the Jam room beside Arrange, and its tools (get_jam, make_jam_track, set_tone, show_on_fretboard)
+  './ui/liveroom.js', // ?room only (a prototype): the live room in front of the glass; play a riff twice and the band comes in
   './ui/community.js', // the community shelf (From the community, in the Browser) and find_community_device; off unless on a local host
   './agent/sounds-tool.js', // suggest_sounds (sounds on the card, app.sounds.suggest); before the panel and the bridges
   './agent/panel.js', './agent/history.js', './agent/presence.js', './agent/bridge.js',
@@ -146,7 +147,7 @@ function putAside(next) {
   return next;
 }
 function loadSaved() {
-  if (params.has('new')) { opened = 'new'; return putAside(createProject()); }
+  if (params.has('new') || params.has('room')) { opened = 'new'; return putAside(createProject()); }
   if (params.has('demo')) return putAside(demoById(params.get('demo')));
   try { const s = localStorage.getItem(SAVE_KEY); if (s) { const p = cleanProject(JSON.parse(s)); opened = 'saved'; return p; } } catch (e) { console.warn('overdub: saved project unreadable, starting the demo', e); }
   if (workspace.view === 'simple') { opened = 'new'; return createProject(); }
@@ -292,10 +293,11 @@ async function boot() {
     if (app.exporter?.putAside) app.exporter.putAside(kept, `${what} “${kept.title}” is in Recent songs, and Undo brings it back.`);
     else app.ui.toast(`${what} “${kept.title}” is kept: Undo brings it back.`, { kind: 'ok', ms: 9000, action: { label: 'Undo', run: () => { store.load(kept, { by: 'you' }); app.ui.toast(`Back to “${kept.title}”`); } } });
   }
-  // ?new and ?demo= have done their job: off the address, so a reload (or a restored tab) opens the song saved here,
-  // not the demo again over your edits to it (the modules that read the address have read it by now)
-  if (params.has('new') || params.has('demo')) {
-    try { const u = new URL(location.href); u.searchParams.delete('new'); u.searchParams.delete('demo'); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* fine */ }
+  // ?new, ?demo= and ?room have done their job: off the address, so a reload (or a restored tab) opens the song saved
+  // here, not the demo again over your edits to it (the modules that read the address have read it by now; the live
+  // room keeps its own flag for the tab)
+  if (params.has('new') || params.has('demo') || params.has('room')) {
+    try { const u = new URL(location.href); for (const k of ['new', 'demo', 'room']) u.searchParams.delete(k); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* fine */ }
   }
 
   document.documentElement.dataset.ready = '1';

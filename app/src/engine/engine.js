@@ -3,7 +3,9 @@
 //
 //   const engine = createEngine(store);
 //   await engine.start();                       // from a user gesture
-//   engine.play(fromBeat?, { countIn: { beats, preroll } }?) / stop({ live }?) / seek(beat) / toggle(); engine.playing; engine.beat
+//   engine.play(fromBeat?, { countIn: { beats, preroll }, at }?) / stop({ live }?) / seek(beat) / toggle(); engine.playing; engine.beat
+//     at: the audio-clock time (ctx.currentTime's) the first beat is scheduled for, when that is later than now and
+//     the start delay (the live room starts the band on the next pass of a riff: ui/liveroom.js)
 //   engine.starting (a play() waiting for the engine or a renew: stop() cancels it) ; engine.gen (counts transport
 //     starts: play, seek, play from elsewhere; a loop wrap is the same run)
 //   engine.gridBeat (the playhead on the unwrapped grid: it doesn't jump back at a loop wrap; null when stopped)
@@ -1008,10 +1010,10 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   }
 
   // Start the transport at song beat `from`, or `count.beats` before it with a count-in (see the header).
-  function begin(from, count = null) {
+  function begin(from, count = null, at = 0) {
     T.gen = (T.gen || 0) + 1;
     const now = ctx.currentTime;
-    T.startT = frame(ctx, now + START_DELAY);
+    T.startT = frame(ctx, Math.max(now + START_DELAY, Number.isFinite(at) ? at : 0));
     T.anchors = [{ t: T.startT, u: 0, spb: spbNow() }];
     const s0 = count ? from - count.beats : from;
     T.tmSrc = P().tempoMap || null;
@@ -1068,7 +1070,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     const from = Math.max(0, Number.isFinite(fromBeat) ? fromBeat : T.cursor);
     if (T.playing) halt(null, false, false);   // (the keys the musician holds play on)
     T.cursor = from;
-    begin(from, countOf(opts));
+    begin(from, countOf(opts), opts?.at);
     if (AU.lanes.length) reconcile();
     transportEvt('play');
     return api;

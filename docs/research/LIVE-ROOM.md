@@ -306,15 +306,19 @@ bar has a Live room key before Song. Nothing of it runs without `?room`.
 
 **The amp.** The room first plugged you into Guitar Studio rigs (Kraken Core at the metal club, Dammit Crab in the
 basement, Low Tide Blues at the blues bar). Through a real guitar and interface, the metal club sounded like the DI,
-while the Jam room's metal track, whose Live guitar plays through Half Stack, sounded right. The rigs were voiced for
-a hot input, and at a moderate one their amps hardly break up. Measured in Chromium on a four-tone chord (the share of
-the output that's harmonics and intermodulation), Kraken Core was 52% at −12 dBFS peaks but 8% at −24. Half Stack's
-Modern was 49% and 41%; the basement's and the blues bar's rigs were 1% or less at −24. So every place now plugs into
-Half Stack, at three of its settings: a kernel, so a take sounds the same live, in the studio's renders and in the
-canonical one. `tools/liveroom-test.js` checks that each place's first setting breaks up at −24 dBFS and that every
-setting is as loud as Modern. A second cause turned up the same day, on the same machine: there, the Guitar Studio's
-pedals and amps passed the dry signal until each one was switched off and on, a bug in the graph devices (on main, not
-fixed here) that Half Stack, a kernel, doesn't have. A muted Chromium with autoplay allowed didn't reproduce it.
+while the Jam room's metal track, whose Live guitar plays through Half Stack, sounded right. Most of that was a bug in
+Chrome 155, found the same day: it drops a `setValueCurveAtTime` curve that is over before its node first renders, and
+the Guitar Studio's footswitch (devices/graph.js) switches a pedal or amp on with a 10 ms curve when it's built, before
+its strip wires it in. So on Chrome 155 every one of them passed its dry signal until it was switched off and on, and
+Half Stack, a kernel that bypasses inside its worklet, didn't. Chromium 151 (the test browser) lands the curve, which
+is why no check saw it; `devices/kit.js` now sets the curve's last value again where it ends (endAt), and
+`tools/guitar-test.js` 6b catches the drop when run on a Chrome 155 (CHROMIUM=). The rigs are also tame at a moderate
+input, being voiced for a hot one. Measured in Chromium 151 on a four-tone chord (the share of the output that's
+harmonics and intermodulation), Kraken Core was 52% at −12 dBFS peaks but 8% at −24. Half Stack's Modern was 49% and
+41%; the basement's and the blues bar's rigs were 1% or less at −24. So every place plugs into Half Stack, at three of
+its settings: a kernel, so a take sounds the same live, in the studio's renders and in the canonical one.
+`tools/liveroom-test.js` checks that each place's first setting breaks up at −24 dBFS and that every setting is as
+loud as Modern.
 
 **Measured levels** (`tools/liveroom-test.js`, by the canonical renderer): a reference DI of each place's own riff,
 peaks at −12 dBFS, through the place's first setting at +6 dB, against the band:

@@ -12,6 +12,8 @@ import { normTrack, normClip, normInsert, normKey, idNotes, sortNotes, newId, is
 import { parseNotes, parseGrid, normNote, validMeter, isPlace, mapNominal } from './music.js';
 import { TUNING_IDS } from './fretboard.js';
 import { ARRANGEMENT_OPS } from './arrangement.js';
+import { ROOM_OPS } from './liveroom/room-ops.js';
+import { SHEET_OPS } from './liveroom/sheet-ops.js';
 import { MIXER, paramSpec, parsePoints, normPoints, pointsPrint, rt, mkPoint, pointBy, signPoints } from './automation.js';
 
 const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
@@ -867,6 +869,9 @@ for (const [type, plan] of Object.entries(ARRANGEMENT_OPS)) {
     return { inverse, created };
   };
 }
+// The live room's ops (docs/research/LIVE-ROOM-MODE.md §9.2): the song's room (room.set, room.part.set) and the
+// kitchen table's sheet (sheet.set, sheet.section.add/set/remove, sheet.line.add/set/remove), in core/liveroom/.
+Object.assign(OPS, ROOM_OPS, SHEET_OPS);
 
 export const OP_TYPES = Object.keys(OPS).filter((k) => k !== 'notes.restore');
 

@@ -250,6 +250,8 @@ function signGuest(song, guest) {
     for (const c of list(t.clips)) { sign(c); list(c.notes).forEach(signIfSigned); }
   }
   if (isObj(song.master)) { inserts(song.master.inserts); lanes(song.master.auto); }
+  // the live room's sheet (docs/research/LIVE-ROOM-MODE.md §9.5): its words are the guest's too
+  if (isObj(song.sheet)) for (const s of list(song.sheet.sections)) list(s.lines).forEach(sign);
 }
 
 // The song as the listener gets it. `own` is true only for a link this browser made (openShared checks its mark): it

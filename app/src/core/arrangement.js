@@ -23,6 +23,10 @@
 //                                                      new clips end to end; 'loop' lengthens a notes clip, notes looped
 //   planClipSplit(p, { track?, clip, at })             split a clip at song beat `at` into two (a take: every take in
 //                                                      its folder, and both halves are folders: see "comping" below)
+//   planSectionMove(p, { section, before })            move a section and everything in its bars to just before
+//                                                      `before` (a section; null: after the last one), the bars between
+//                                                      closing up behind it: the song keeps its length, and the clips
+//                                                      and the section keep their ids (so its room.parts entry stays)
 //   -> { ops, summary, ... } (the summary is one plain sentence); bad input throws an Error that says what would work
 //
 // Notes keep their sounding part: a note across a cut is shortened to it, and its tail (a pitched note's; a drum hit
@@ -36,7 +40,8 @@
 
 import { newId, LIMITS, songSize, isTakeId } from './project.js';
 import { beatsPerBar, beatSecs, beatsBefore, hasTempoMap, mapInsert, mapRemove } from './music.js';
-import { lanesOf, specFor, cutLane, spliceLane, insertTime, removeTime, laneKey, mkPoint, rt, valueBefore, pointBy } from './automation.js';
+import { lanesOf, specFor, cutLane, spliceLane, insertTime, removeTime, laneKey, mkPoint, rt, valueBefore, valueAt, pointBy } from './automation.js';
+import { partOf } from './liveroom/model.js';
 
 const EPS = 1e-6;
 const MIN_NOTE = 1 / 64;      // music.js normNote's shortest note
@@ -598,6 +603,10 @@ export function planSectionDuplicate(p, op = {}, ctx = null) {
   const add = { type: 'section.add', section: { id, name: nextName(p, sec.name), start: to, length: L, ...(sec.color ? { color: sec.color } : {}) } };
   if (op.ref) add.ref = op.ref;
   ops.push(add);
+  // the live room's part for it (its feel, its sides: core/liveroom/model.js) goes with the copy, as it is (a newer
+  // studio's keys in it too: room.part.set's restore form puts an entry in whole)
+  const part = partOf(p, sec.id);
+  if (part) ops.push({ type: 'room.part.set', section: id, _restore: clone(part) });
   // each lane with points in the section: the section's stretch of it (its values at both edges) written at the copy,
   // on the lane as it is after the push made room
   let laneCount = 0;
@@ -614,6 +623,94 @@ export function planSectionDuplicate(p, op = {}, ctx = null) {
   return {
     ops, section: id, name: add.section.name, source: sec.name, from: r4(a), to: r4(to), length: L, clips, notes, pushed: push, insert: ins, lanes: laneCount,
     summary: `Copied ${sec.name} (${spanLabel(p, L)}) to ${after ? 'right after it' : whereLabel(p, to)} as ${add.section.name}, with ${plural(clips.length, 'clip')}${laneCount ? ` and its automation (${plural(laneCount, 'lane')})` : ''}${push ? (moved || ins.sections.moved ? `; everything after moved right ${spanLabel(p, L)}` : '') : ''}.`,
+  };
+}
+
+/* ------------------------------------------------------------------------------------------------ move */
+// The section [a, b) goes to d, the start of `before` (or the end of the last section): from before a, what lies in
+// [d, a) moves right L beats and the section lands at d; from after b, what lies in [b, d) moves left L and the section
+// lands at d - L. In two steps, each one the same op's plan:
+//   1. the edges (a, b and d, right to left): a clip across one is split there, as time.insert splits it (one a hair
+//      over an edge, a pickup a quarter beat before it or a ring a quarter beat after it, isn't), and a take folder
+//      across one becomes two folders; then the move again (this op, by ids), planned on the song with the halves in it
+//   2. with nothing across an edge: every clip and section in the bars that move gets its new start (clip.set,
+//      section.set: they keep their ids), the lanes over them are rewritten (each stretch of a lane goes with its
+//      bars), and a loop wholly inside the section or the bars between goes with them
+// Refused in bars a tempo map follows (as a duplicate is) and for a move that changes nothing.
+export function planSectionMove(p, op = {}, ctx = null) {
+  const sec = findSection(p, op.section, ctx);
+  const a = sec.start, L = sec.length, b = a + L;
+  const target = op.before == null ? null : findSection(p, op.before, ctx);
+  const d = target ? target.start : Math.max(...p.sections.map((x) => x.start + x.length));
+  const where = target ? `before ${target.name}` : 'to the end';
+  if (target === sec || (d >= a - EPS && d <= b + EPS)) throw new Error(`${sec.name} is there already: name the section it should go before (before: "<section>"), or before: null for the end`);
+  if (hasTempoMap(p) && Math.min(a, d) < p.tempoMap.anchors[p.tempoMap.anchors.length - 1].beat - EPS) throw new Error('This part follows a recording; moving it would break the grid');
+  const how = (c, x) => (c.start + c.length <= x + EPS ? 'stays' : c.start >= x - MIN_CLIP + EPS ? 'moves' : c.start + c.length - x >= MIN_CLIP - EPS ? 'splits' : 'stays');
+  // 1. the edges
+  for (const x of [...new Set([a, b, d])].sort((u, v) => v - u)) {
+    const mint = idMinter(p), ops = [];
+    let split = 0;
+    for (const t of p.tracks) {
+      const parts = new Map();
+      for (const c of t.clips) if (isTakeId(c.take)) { const h = how(c, x), y = parts.get(c.take) || { left: false, right: false }; if (h !== 'moves') y.left = true; if (h !== 'stays') y.right = true; parts.set(c.take, y); }
+      const side = new Map();
+      for (const [id, y] of parts) if (y.left && y.right) side.set(id, newId('tk'));
+      for (const c of t.clips) {
+        const h = how(c, x), tk = side.get(c.take) || null;
+        if (h === 'splits') { ops.push(...splitOps(p, t, c, x, { id: mint('c'), take: tk }).ops); split++; }
+        else if (h === 'moves' && tk) ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch: { take: tk } });
+      }
+    }
+    if (!ops.length) continue;
+    roomFor(p, `Moving ${sec.name}`, { clips: split });
+    ops.push({ type: 'section.move', section: sec.id, before: target ? target.id : null });
+    return { ops, section: sec.id, from: r4(a), to: r4(d < a ? d : d - L), length: L, split, summary: `Moved ${sec.name} (${spanLabel(p, L)}) ${where}, ${plural(split, 'clip')} split at its edges first.` };
+  }
+  // 2. the move
+  const ops = [];
+  const back = d < a;                                  // to before where it is
+  const by = back ? d - a : d - b;                     // the section's bars
+  const other = back ? L : -L;                         // the bars it passes
+  const lo = Math.min(a, d), hi = Math.max(b, d);
+  const inSec = (c) => how(c, a) === 'moves' && how(c, b) === 'stays';
+  const inOther = (c) => (back ? how(c, d) === 'moves' && how(c, a) === 'stays' : how(c, b) === 'moves' && how(c, d) === 'stays');
+  let moved = 0, passed = 0;
+  for (const t of p.tracks) for (const c of t.clips) {
+    const k = inSec(c) ? by : inOther(c) ? other : 0;
+    if (!k) continue;
+    ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch: { start: r4(Math.max(0, c.start + k)) } });
+    if (k === by) moved++; else passed++;
+  }
+  let sections = 0;
+  for (const x of p.sections) {
+    const k = x === sec || (x.start >= a - EPS && x.start < b - EPS) ? by : (back ? x.start >= d - EPS && x.start < a - EPS : x.start >= b - EPS && x.start < d - EPS) ? other : 0;
+    if (!k) continue;
+    ops.push({ type: 'section.set', section: x.id, patch: { start: r4(Math.max(0, x.start + k)) } });
+    if (x !== sec) sections++;
+  }
+  const lp = p.loop || {};
+  let loop = false;
+  if (fin(lp.start) && fin(lp.end)) {
+    const within = (u, v) => lp.start >= u - EPS && lp.end <= v + EPS;
+    const k = within(a, b) ? by : (back ? within(d, a) : within(b, d)) ? other : 0;
+    if (k) { ops.push({ type: 'project.set', patch: { loop: { on: !!lp.on, start: r4(lp.start + k), end: r4(lp.end + k) } } }); loop = true; }
+  }
+  // each lane's stretch over the section and the bars it passes goes with them (its values at every edge kept)
+  const laneOps = lanesPlan(p, ctx, (pts, spec) => {
+    const inner = back
+      ? [...shiftPts(cutLane(pts, a, b, spec), d), ...shiftPts(cutLane(pts, d, a, spec), d + L)]
+      : [...shiftPts(cutLane(pts, b, d, spec), a), ...shiftPts(cutLane(pts, a, b, spec), d - L)];
+    return spliceLane(pts, lo, hi, inner, spec);
+  }, (l) => hasIn(l.lane.points, lo, hi) || valueAt(l.lane.points, lo) !== valueAt(l.lane.points, hi));
+  ops.push(...laneOps);
+  const bits = [];
+  if (moved) bits.push(`${plural(moved, 'clip')} with it`);
+  if (passed || sections) bits.push(`${[passed && plural(passed, 'clip'), sections && plural(sections, 'section')].filter(Boolean).join(' and ')} ${back ? 'later' : 'earlier'} to make room`);
+  if (loop) bits.push('the loop went with them');
+  if (laneOps.length) bits.push(`${plural(laneOps.length, 'automation lane')} too`);
+  return {
+    ops, section: sec.id, from: r4(a), to: r4(a + by), length: L, moved, passed, sections, loop, lanes: laneOps.length,
+    summary: `Moved ${sec.name} (${spanLabel(p, L)}) ${where}, to ${whereLabel(p, a + by)}${bits.length ? `: ${bits.join('; ')}` : ''}.`,
   };
 }
 
@@ -1338,4 +1435,5 @@ export const ARRANGEMENT_OPS = {
   'time.remove': planTimeRemove,
   'clip.repeat': planClipRepeat,
   'clip.split': planClipSplit,
+  'section.move': planSectionMove,
 };

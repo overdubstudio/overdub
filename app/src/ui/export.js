@@ -7,15 +7,27 @@
 // localStorage overdub:recent; a song opened from it leaves it, and a demo as the shelf has it gives up its place first),
 // and the toast can put it back. A take still recording goes into the song before it is replaced.
 //
-//   encodeWav(buffer | { sampleRate, channels: Float32Array[] }, { bits: 16 | 24 }) -> Uint8Array
+//   encodeWav(buffer | { sampleRate, channels: Float32Array[] }, { bits: 16 | 24 | 32 }) -> Uint8Array   (32: IEEE
+//                                                           float, every sample kept exactly, the way the asset store has it)
+//   decodeWav(bytes) -> { sampleRate, channels: Float32Array[] } | null   (16- and 24-bit PCM, 32-bit float)
 //   encodeMidi(project, { ppq = 480 }) -> Uint8Array        (Standard MIDI File, format 1)
 //   zipStore([{ name, data: Uint8Array | string }]) -> Uint8Array   (a plain zip, stored)
+//   unzip(bytes) -> Promise<[{ name, data: Uint8Array }]>   (stored or deflated entries; what zipStore writes, and more)
 //   provenance(app) -> the attribution log (an object)
+//   download(name, data, type)                              the file to the browser's downloads
+// The live room's way out (docs/research/LIVE-ROOM-MODE.md §3.14; ui/liveroom/send.js says it): the release at 16 bits
+// for the share sheet (releaseRender), and the song with its recordings as one zip (songZip, SONG_ZIP) that ⌘O opens
+// again, putting the recordings back in this browser (loadZip). A song with a room opens in the room (§2.1).
 //
 // app.exporter = { encodeWav, encodeMidi, zipStore, provenance, newSong(), openDemo(), openFile(), loadText(text, name),
 //                  openSong(project, { from, name, said }) (a song from outside: a file, or the account, ui/songs.js),
 //                  saveProject(), exportMix(), exportRelease(), lastRelease(), exportStems(), exportMidi(), exportLog(), exportDawproject(), openReport(), busy,
+//                  releaseRender({ bits }) -> { wav, seconds, lufs, peak, bytes, name } | { error } (the release, unsaved),
+//                  songZip() -> { zip, name, recordings, missing, bytes } (the song and its recordings, unsaved),
+//                  loadZip(bytes, name) -> Promise<boolean> (a Send the song zip: its recordings back, then the song),
+//                  newSong({ door }) (door: the Song menu's New song, which opens the live room's door on it),
 //                  recent() -> [{ id, title, at, tracks }], openRecent(i), putAside(song, msg) (a song main.js replaced on the way in),
+//                  forgetRecent(id) -> n (every copy of that song off Recent songs: the live room's Take it off the shelf),
 //                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone),
 //                  startSong({ anchor }) (Song ▸ Start a song: the stage on a blank song, else New song's question first) }
 // The simple view (ui/workspace.js) puts the file rows away (data-feature="files": open a file, the imports, stems, MIDI,
@@ -40,16 +52,21 @@ import { lufs, truePeak } from '../audio/measure.js';
 /* ================================================================ WAV */
 export function encodeWav(buf, { bits = 24 } = {}) {
   const chans = buf.channels || Array.from({ length: buf.numberOfChannels }, (_, i) => buf.getChannelData(i));
-  const sr = buf.sampleRate, nch = chans.length, len = chans[0]?.length || 0;
+  const sr = buf.sampleRate || buf.sr, nch = chans.length, len = chans[0]?.length || 0;
   const bps = bits / 8, block = nch * bps, dataLen = len * block;
   const out = new Uint8Array(44 + dataLen);
   const dv = new DataView(out.buffer);
   const str = (o, s) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
   str(0, 'RIFF'); dv.setUint32(4, 36 + dataLen, true); str(8, 'WAVE');
-  str(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, nch, true);
+  str(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, bits === 32 ? 3 : 1, true); dv.setUint16(22, nch, true);
   dv.setUint32(24, sr, true); dv.setUint32(28, sr * block, true); dv.setUint16(32, block, true); dv.setUint16(34, bits, true);
   str(36, 'data'); dv.setUint32(40, dataLen, true);
   let o = 44;
+  if (bits === 32) {
+    // (float: as it is, not clipped, so a recording comes back bit for bit)
+    for (let i = 0; i < len; i++) for (let c = 0; c < nch; c++) { dv.setFloat32(o, chans[c][i], true); o += 4; }
+    return out;
+  }
   for (let i = 0; i < len; i++) {
     for (let c = 0; c < nch; c++) {
       let x = chans[c][i];
@@ -63,6 +80,41 @@ export function encodeWav(buf, { bits = 24 } = {}) {
     }
   }
   return out;
+}
+
+// A WAV read back: RIFF chunks walked to 'fmt ' and 'data'; 16- and 24-bit PCM, 32-bit float (format 3, or
+// WAVE_FORMAT_EXTENSIBLE naming either). -> { sampleRate, channels } | null
+export function decodeWav(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  if (b.length < 12) return null;
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const tag = (o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+  if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return null;
+  let fmt = null, data = null;
+  for (let o = 12; o + 8 <= b.length;) {
+    const id = tag(o), size = dv.getUint32(o + 4, true), at = o + 8;
+    if (id === 'fmt ' && size >= 16) {
+      let format = dv.getUint16(at, true);
+      if (format === 0xfffe && size >= 26) format = dv.getUint16(at + 24, true);
+      fmt = { format, nch: dv.getUint16(at + 2, true), sr: dv.getUint32(at + 4, true), bits: dv.getUint16(at + 14, true) };
+    } else if (id === 'data') data = { at, size: Math.min(size, b.length - at) };
+    o = at + size + (size & 1);
+  }
+  if (!fmt || !data || !fmt.nch || !(fmt.sr > 0)) return null;
+  const { format, nch, sr, bits } = fmt, bps = bits / 8;
+  if (!((format === 1 && (bits === 16 || bits === 24)) || (format === 3 && bits === 32))) return null;
+  const len = Math.floor(data.size / (bps * nch));
+  const channels = Array.from({ length: nch }, () => new Float32Array(len));
+  let o = data.at;
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < nch; c++) {
+      if (format === 3) channels[c][i] = dv.getFloat32(o, true);
+      else if (bits === 16) { const v = dv.getInt16(o, true); channels[c][i] = v < 0 ? v / 32768 : v / 32767; }
+      else { let v = b[o] | (b[o + 1] << 8) | (b[o + 2] << 16); if (v & 0x800000) v -= 0x1000000; channels[c][i] = v < 0 ? v / 8388608 : v / 8388607; }
+      o += bps;
+    }
+  }
+  return { sampleRate: sr, channels };
 }
 
 /* ================================================================ the release (spec 0014 R33) */
@@ -204,6 +256,48 @@ export function zipStore(files) {
   return out;
 }
 
+// A zip read back: the central directory's entries, each stored (method 0) or deflated (8, through the browser's own
+// DecompressionStream), its CRC checked. -> Promise<[{ name, data }]>; throws on a file that isn't a zip it can read
+export async function unzip(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  let end = -1;
+  for (let i = b.length - 22; i >= Math.max(0, b.length - 22 - 65535); i--) if (dv.getUint32(i, true) === 0x06054b50) { end = i; break; }
+  if (end < 0) throw new Error('not a zip file');
+  const count = dv.getUint16(end + 10, true), cdOff = dv.getUint32(end + 16, true);
+  const dec = new TextDecoder();
+  const out = [];
+  for (let i = 0, o = cdOff; i < count; i++) {
+    if (o + 46 > b.length || dv.getUint32(o, true) !== 0x02014b50) throw new Error('the zip’s directory is broken');
+    const method = dv.getUint16(o + 10, true), crc = dv.getUint32(o + 16, true), csize = dv.getUint32(o + 20, true), usize = dv.getUint32(o + 24, true);
+    const nlen = dv.getUint16(o + 28, true), xlen = dv.getUint16(o + 30, true), clen = dv.getUint16(o + 32, true), lh = dv.getUint32(o + 42, true);
+    const name = dec.decode(b.subarray(o + 46, o + 46 + nlen));
+    o += 46 + nlen + xlen + clen;
+    if (name.endsWith('/')) continue;
+    if (lh + 30 > b.length || dv.getUint32(lh, true) !== 0x04034b50) throw new Error(`the zip’s entry ${name} is broken`);
+    const at = lh + 30 + dv.getUint16(lh + 26, true) + dv.getUint16(lh + 28, true);
+    const raw = b.subarray(at, at + csize);
+    let data;
+    if (method === 0) data = raw.slice();
+    else if (method === 8 && typeof DecompressionStream === 'function') data = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    else throw new Error(`the zip’s entry ${name} is packed in a way this browser can’t open`);
+    if (data.length !== usize || crc32(data) !== crc) throw new Error(`the zip’s entry ${name} doesn’t check out`);
+    out.push({ name, data });
+  }
+  return out;
+}
+// What Send the song writes (ui/liveroom/send.js): the song's JSON at the top, each recording as a 32-bit float WAV
+// under recordings/, named by its asset id. -> the entries' names
+export const SONG_ZIP = { song: 'song.overdub.json', dir: 'recordings/' };
+const assetFile = (id) => `${SONG_ZIP.dir}${encodeURIComponent(id)}.wav`;
+// the recordings a song names: its audio clips' assets, and project.assets' own
+export function songAssets(p) {
+  const ids = new Set();
+  for (const t of (p && p.tracks) || []) for (const c of t.clips || []) if (c && c.kind === 'audio' && typeof c.asset === 'string' && c.asset) ids.add(c.asset);
+  for (const id of Object.keys((p && p.assets) || {})) if (id) ids.add(id);
+  return [...ids];
+}
+
 /* ================================================================ provenance */
 export function provenance(app) {
   const { store } = app;
@@ -244,8 +338,8 @@ export function provenance(app) {
 }
 
 /* ================================================================ the menu */
-const safeName = (s) => String(s || 'Untitled').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Untitled';
-function download(name, data, type = 'application/octet-stream') {
+export const safeName = (s) => String(s || 'Untitled').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Untitled';
+export function download(name, data, type = 'application/octet-stream') {
   const blob = data instanceof Blob ? data : new Blob([data], { type });
   const url = URL.createObjectURL(blob);
   const a = h('a', { href: url, download: name, style: { display: 'none' } });
@@ -280,13 +374,17 @@ export default function (app) {
     try { localStorage.setItem(RECENT, '[]'); } catch { /* storage blocked */ }
     return list;
   };
-  // a song the studio can make again exactly: a demo untouched since the shelf made it, or a blank untitled one
+  // a song the studio can make again exactly (a demo untouched since the shelf made it, or a blank untitled one), or a
+  // live room song, which the room's shelf keeps
   let demoIds = null;
   const sameBody = (a, b) => JSON.stringify(a, (k, v) => (k === 'meta' || k === 'created' || k === 'modified' ? undefined : v)) === JSON.stringify(b, (k, v) => (k === 'meta' || k === 'created' || k === 'modified' ? undefined : v));
   // (untitled with nothing in it: no track, or only empty ones, as Make your own leaves it before a take)
   const blank = (song) => (!song.title || song.title === 'Untitled') && song.tracks.every((t) => !(t.clips || []).length);
   function spare(song) {
     if (blank(song)) return true;
+    // (a live room song is kept on the room's shelf, ui/liveroom/shelf.js: in Recent it gives way first, so switching
+    // between room songs never pushes a control room song, kept nowhere else, off the end)
+    if (song.room && typeof song.room === 'object' && !Array.isArray(song.room)) return true;
     if (!demoIds) demoIds = new Map(DEMOS.map((d) => [stableIds({ tracks: [] }, d.id).id, d.id]));
     const d = demoIds.get(song.id);
     if (!d) return false;
@@ -313,6 +411,14 @@ export default function (app) {
     if (keep.length !== list.length) writeRecent(keep);
   }
   const recent = () => { const cur = stamp(store.get()); return readRecent().filter((e) => stamp(e.song) !== cur); };
+  // every copy of a song (by id) off the list: a song taken off the live room's shelf goes from here too
+  // (ui/liveroom/shelf.js), or it would come back as a plain box with its recordings gone. -> how many went
+  function forgetRecent(id) {
+    if (typeof id !== 'string' || !id) return 0;
+    const list = readRecent(), keep = list.filter((e) => e.id !== id && e.song?.id !== id);
+    if (keep.length !== list.length) writeRecent(keep);
+    return list.length - keep.length;
+  }
   function openRecent(i) {
     const e = recent()[i];
     if (!e) return false;
@@ -388,9 +494,13 @@ export default function (app) {
     undoToast(JSON.parse(JSON.stringify(prev)), msg, lost);
     return lost;
   }
-  async function newSong() {
+  // door: the Song menu's New song, which opens on the live room's door (docs/research/LIVE-ROOM-MODE.md §2.1): the blank
+  // song is made first, so Control room → is one press back to it. Not under navigator.webdriver, where every way in
+  // but ?room is the control room's, as it was (the suites that press New song see what they always saw)
+  async function newSong({ door = false } = {}) {
     const { createProject } = await import('../core/project.js');
     await replaceSong(createProject(), `New song. “${store.get().title}” is in Recent songs, and Undo brings it back.`);
+    if (door && app.liveRoom && !navigator.webdriver) app.liveRoom.open({ screen: 'door' });
   }
   // Start a song (Song ▸ Start a song, Find's "start"): on a blank song the stage opens at Tap a beat; a song with
   // something in it asks New song's question first, in the Song menu under the row (a new song, then the stage)
@@ -427,13 +537,57 @@ export default function (app) {
     const { renamed } = guardDevices(p, { prefix: 'you' });
     const moved = Object.entries(renamed).map(([a, b]) => `${a} is ${b}`);
     return replaceSong(p, `${said || `Opened “${p.title || name}”.`}${moved.length ? ` Its own ${moved.length === 1 ? 'device uses an id' : 'devices use ids'} the studio ships, so here ${moved.join(', ')}.` : ''}`)
-      .then(() => { ui.emit('song:opened', { from, name }); return true; });
+      .then(() => { ui.emit('song:opened', { from, name }); sideFor(); return true; });
   }
+  // A song from outside opens on its side of the glass (docs/research/LIVE-ROOM-MODE.md §2.1): one with a room in the
+  // room, one without in the control room. Under navigator.webdriver the control room keeps it, as before the room,
+  // unless the room is already open (a song opened from inside it stays there).
+  function sideFor() {
+    const lr = app.liveRoom;
+    if (!lr) return;
+    const p = store.get(), roomy = !!(p.room && typeof p.room === 'object');
+    // (the kitchen table has its own screen; the electric places share the stage)
+    if (roomy && (lr.isOpen() || !navigator.webdriver)) lr.open({ screen: p.room.place === 'kitchen' ? 'kitchen' : 'stage' });
+    else if (!roomy && lr.isOpen()) lr.close();
+  }
+  // ⌘O and Song ▸ Open: a project file, or a Send the song zip (its recordings come back into this browser first)
   function openFile() {
-    const inp = h('input', { type: 'file', accept: '.json,.overdub.json,application/json', style: { display: 'none' } });
-    inp.addEventListener('change', async () => { const f = inp.files?.[0]; inp.remove(); if (f) loadText(await f.text(), f.name); });
+    const inp = h('input', { type: 'file', accept: '.json,.overdub.json,application/json,.zip,.overdub.zip,application/zip', style: { display: 'none' } });
+    inp.addEventListener('change', async () => {
+      const f = inp.files?.[0]; inp.remove();
+      if (!f) return;
+      if (/\.zip$/i.test(f.name) || /zip/.test(f.type)) loadZip(new Uint8Array(await f.arrayBuffer()), f.name);
+      else loadText(await f.text(), f.name);
+    });
     document.body.append(inp);
     inp.click();
+  }
+  // A Send the song zip: the song's JSON, and its recordings as WAVs under recordings/ (SONG_ZIP). Each recording goes
+  // back into this browser's asset store under its own id, as it was (a 32-bit float WAV is the samples exactly), then
+  // the song opens, in the room when it has one. -> Promise<boolean>
+  async function loadZip(bytes, name = 'the file') {
+    let files;
+    try { files = await unzip(bytes); } catch (e) { ui.toast(`${name} isn’t a song Overdub can open (${e.message})`, { kind: 'bad' }); return false; }
+    const json = files.find((f) => f.name === SONG_ZIP.song) || files.find((f) => /\.json$/i.test(f.name) && !f.name.includes('/'));
+    if (!json) { ui.toast(`${name} has no song in it: Send the song puts a ${SONG_ZIP.song} at its top.`, { kind: 'bad' }); return false; }
+    let p;
+    try { p = JSON.parse(new TextDecoder().decode(json.data)); } catch { ui.toast(`${name}’s song isn’t readable (not JSON)`, { kind: 'bad' }); return false; }
+    if (!p || typeof p !== 'object' || !Array.isArray(p.tracks) || (p.format && !isProjectFormat(p.format))) { ui.toast(`${name} isn’t an Overdub project`, { kind: 'bad' }); return false; }
+    const want = new Set(songAssets(p));
+    let back = 0;
+    for (const f of files) {
+      if (!f.name.startsWith(SONG_ZIP.dir) || !/\.wav$/i.test(f.name)) continue;
+      let id;
+      try { id = decodeURIComponent(f.name.slice(SONG_ZIP.dir.length, -4)); } catch { continue; }
+      if (!want.has(id)) continue;
+      const w = decodeWav(f.data);
+      if (!w || !w.channels.length) continue;
+      try { await app.engine.assets.put(id, { sr: w.sampleRate, channels: w.channels }); back++; } catch (e) { console.warn('overdub: a recording didn’t go back in', id, e); }
+    }
+    const said = `Opened “${p.title || name}”${back ? `, with ${back} recording${back === 1 ? '' : 's'} back in this browser` : ''}.`;
+    const ok = await openSong(p, { from: 'zip', name, said });
+    if (ok) ui.emit('song:zip', { name, recordings: back });
+    return ok;
   }
   function saveProject() {
     const p = store.get();
@@ -465,6 +619,35 @@ export default function (app) {
       ui.toast(`Exported ${safeName(p.title)}.wav · 24-bit, ${buf.sampleRate / 1000} kHz, ${dur(buf.duration)}${out ? `.${out}` : ''}`, { kind: out ? 'info' : 'ok', ms: out ? 7000 : 3200 });
       return wav;
     } catch (e) { console.error(e); ui.toast('Could not export the mix: ' + e.message, { kind: 'bad' }); return null; } finally { setBusy(null); }
+  }
+  // The release, rendered and measured but not saved (ui/liveroom/send.js shares it): the whole song from its first sound
+  // to the end of its tail, muted tracks out, at 48 kHz in `bits`. -> { wav, seconds, lufs, peak, bytes, name, out } or
+  // { error: 'empty' | 'silent' | message }
+  async function releaseRender({ bits = 24 } = {}) {
+    const p = store.get();
+    if (!p.tracks.some((t) => t.clips.length)) return { error: 'empty' };
+    const buf = await render({ tail: 6 });
+    const cut = releaseTrim(buf);
+    const seconds = cut.channels[0].length / cut.sampleRate;
+    if (!seconds) return { error: 'silent' };
+    const wav = encodeWav(cut, { bits });
+    return { wav, seconds, lufs: lufs(cut), peak: truePeak(cut), bytes: wav.length, sampleRate: cut.sampleRate, name: safeName(p.title), out: leftOut() };
+  }
+  // The song and its recordings as one zip (SONG_ZIP): the project's JSON and every recording it names, each a 32-bit
+  // float WAV, the way the asset store keeps it. -> { zip, name, recordings, missing, bytes }
+  async function songZip() {
+    const p = store.get();
+    const files = [{ name: SONG_ZIP.song, data: JSON.stringify(p, null, 1) }];
+    let recordings = 0, missing = 0;
+    for (const id of songAssets(p)) {
+      let buf = null;
+      try { buf = await app.engine.assets?.get(id); } catch { buf = null; }
+      if (!buf) { missing++; continue; }
+      files.push({ name: assetFile(id), data: encodeWav(buf, { bits: 32 }) });
+      recordings++;
+    }
+    const zip = zipStore(files);
+    return { zip, name: `${safeName(p.title)}.overdub.zip`, recordings, missing, bytes: zip.length };
   }
   // Export release: the whole song as a 24-bit WAV from its first sound to the end of its tail, muted tracks left out
   // (a render plays nothing muted), measured (audio/measure.js: integrated loudness and true peak) and said in the toast
@@ -549,8 +732,8 @@ export default function (app) {
   }
   const openReport = () => openProvenanceReport(app);
 
-  app.exporter = { encodeWav, encodeMidi, zipStore, crc32, provenance: () => provenance(app), newSong, startSong, openDemo, putAside, openFile, loadText, openSong, saveProject, exportMix, exportRelease, lastRelease: () => lastRelease, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
-    recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, openMenu: (anchor) => openMenu(anchor) };
+  app.exporter = { encodeWav, decodeWav, encodeMidi, zipStore, unzip, crc32, provenance: () => provenance(app), newSong, startSong, openDemo, putAside, openFile, loadText, loadZip, openSong, saveProject, exportMix, exportRelease, releaseRender, songZip, lastRelease: () => lastRelease, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
+    recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, forgetRecent, openMenu: (anchor) => openMenu(anchor) };
 
   /* ---------------------------------------------------- the menu */
   // the width under which app.css hides the transport's loop and metronome group
@@ -605,7 +788,7 @@ export default function (app) {
       // songs in your Overdub account (ui/songs.js) first, under the title: Save to cloud or how its save is going, and
       // My songs
       ...cloudRows,
-      h('button.sm-i.sm-new', { onclick: (e) => ask(e.currentTarget, 'Start a new song?', 'New song', newSong) }, h('span', h('b', 'New song'), h('small', 'a blank reel'))),
+      h('button.sm-i.sm-new', { onclick: (e) => ask(e.currentTarget, 'Start a new song?', 'New song', () => newSong({ door: true })) }, h('span', h('b', 'New song'), h('small', 'a blank reel'))),
       // Start a song: the same blank reel, and the stage on it (ui/start.js); a blank song needs no question
       app.start ? h('button.sm-i.sm-start', { onclick: (e) => { if (blankSong()) { pop.close(); app.start.open({ kind: 'tap' }); } else ask(e.currentTarget, 'Start a new song?', 'Start a song', startFresh); } }, h('span', h('b', 'Start a song'), h('small', 'a blank reel, then your idea'))) : null,
       // a new song with the first minute on it (Take one's beat, then a tune over it): the welcome's main action

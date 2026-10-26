@@ -38,7 +38,7 @@ export async function run(T, ctx) {
   const part = process.env.PART || '';
   node(T);
   if (!ctx.pages) return;
-  if (!part || part === 'soundcheck') await soundcheck(T, ctx);
+  if (!part || part === 'soundcheck') { await soundcheck(T, ctx); await together(T); }
   if (!part || part === 'deck') await deckPage(T, ctx);
 }
 
@@ -186,6 +186,37 @@ async function soundcheck(T, ctx) {
     T.ok(offL && offL.vars.flat === true && Math.abs(offL.vars.cents - 20) <= 5 && offL.t > sixth && offL.t < sixth + 2, `tune: six notes of a C2 20 cents flat say “${offL ? LINES['tune.off'].text(offL.vars) : '(nothing)'}” at ${fmt(offL?.t)} s, after the sixth (${sixth} s)`);
     const errs = errors.filter((e) => !IGNORE(e));
     T.ok(errs.length === 0, `soundcheck: no page errors (${errs.length})${errs.length ? '\n    ' + errs.slice(0, 5).join('\n    ') : ''}`);
+  } finally { await room.close(); }
+}
+
+// The same guitar on both channels of a stereo input (a mono source on it; Chromium plays a one-channel fake that way):
+// none is 12 dB over the other, and it's coming in, so the lamp picks the loudest within a second or so and lights,
+// rather than saying nothing's coming in
+async function together(T) {
+  const g = mix([{ buf: riffDI(CHORD, { passes: 4, peak: -12, tail: 0, seed: 5, jitter: 0 }).buf, at: 1 }], { length: Math.round(12 * SR) });
+  const room = await openRoom('/app/?room', { fake: { wav: { sr: SR, channels: [g, g] } }, name: 'input-together' });
+  const { E, errors } = room;
+  try {
+    const r = await E(async () => {
+      const app = window.overdub;
+      const { mountLamps, lampsState } = await import('/app/src/ui/liveroom/soundcheck.js');
+      const { createDeck } = await import('/app/src/ui/liveroom/deck.js');
+      const said = [], el = document.createElement('div');
+      document.body.append(el);
+      const lamps = mountLamps(el, { app, ui: app.ui, store: app.store, deck: createDeck(app), view: () => ({ place: null }), say: (id) => said.push(id), prefs: null, scene: null });
+      let on = true;
+      const loop = (now) => { if (!on) return; lamps.frame(now); requestAnimationFrame(loop); };
+      requestAnimationFrame(loop);
+      const t0 = performance.now();
+      while (performance.now() - t0 < 9000 && !lampsState().plug?.lit) await new Promise((res) => setTimeout(res, 50));
+      const plug = lampsState().plug, channels = app.input.audio.state.channels;
+      on = false; lamps.unmount();
+      return { plug, channels, said };
+    });
+    T.ok(r.channels < 2 || (r.plug?.lit && /^Guitar on input [12] of /.test(r.plug.text) && r.said.includes('plug.ok')),
+      `plugged in: the same guitar on both channels (${r.channels}) lights the lamp on the loudest (“${r.plug?.text}”; said ${r.said.join(', ')})`);
+    const errs = errors.filter((e) => !IGNORE(e));
+    T.ok(!errs.length, `both channels together: no page errors (${errs.length})`);
   } finally { await room.close(); }
 }
 

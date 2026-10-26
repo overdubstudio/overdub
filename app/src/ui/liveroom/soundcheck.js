@@ -12,7 +12,8 @@
 //
 // What each lamp does:
 //   1. Plug in: the input (the last one used; else an interface over a mic, a mic at the kitchen), opened with all its
-//      channels, the one that moves on the first strum picked (at least 12 dB over the others: audioin pickChannel);
+//      channels, the one that moves on the first strum picked (at least 12 dB over the others: audioin pickChannel; all
+//      of them moving together for a second, the loudest);
 //      nothing in 5 s, a refusal, or a mic at an electric place, each says so. Monitoring is the input layer's (on
 //      through the amp for an interface). Device and channel selects, 16 px.
 //   2. Level: the hardest strums' peak over the last 3 s, said when it has held a second; the lamp shows the number
@@ -146,7 +147,7 @@ export function mountLamps(el, ctx) {
   }
 
   /* ---- 1. plug in */
-  let openedAt = 0, picked = null, okSaid = false, nothingSaid = false, holds = [];
+  let openedAt = 0, picked = null, okSaid = false, nothingSaid = false, holds = [], together = 0;
   async function chooseDevice() {
     const a = audio();
     const list = await a.devices().catch(() => []);
@@ -176,7 +177,7 @@ export function mountLamps(el, ctx) {
       return;
     }
     if (gone) return;
-    openedAt = performance.now(); picked = null; okSaid = false; nothingSaid = false; holds = [];
+    openedAt = performance.now(); picked = null; okSaid = false; nothingSaid = false; holds = []; together = 0;
     fillPick();
     const st = a.state;
     if (st.inputKind === 'mic' && place() && place() !== 'kitchen') { set('plug', 'warn', 'plug.mic'); say('plug.mic'); }
@@ -212,7 +213,12 @@ export function mountLamps(el, ctx) {
     holds.push({ t: now, v: lv.map((x) => x.db) });
     while (holds.length && holds[0].t < now - 500) holds.shift();
     const hold = lv.map((_, i) => Math.max(...holds.map((x) => x.v[i] ?? -Infinity)));
-    const ch = lv.length >= 2 ? pickChannel(hold) : hold[0] >= -50 ? 1 : null;
+    let ch = lv.length >= 2 ? pickChannel(hold) : hold[0] >= -50 ? 1 : null;
+    // (every channel moving together, none 12 dB over the rest, for a second: the same signal on all of them, a mono
+    // source on a stereo input. It's coming in: the loudest is picked, never "nothing's coming in")
+    const top = Math.max(...hold);
+    if (!ch && lv.length >= 2 && top >= -50) { if (!together) together = now; else if (now - together >= SETTLE_MS) ch = hold.indexOf(top) + 1; }
+    else if (!ch) together = 0;
     if (ch) {
       picked = ch;
       if (String(a.state.channel) !== String(ch)) a.useChannel(ch);

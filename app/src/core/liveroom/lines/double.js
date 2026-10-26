@@ -8,7 +8,7 @@
 //          it from coming back after a reload). Ids are unique across every lines/*.js file.
 //
 // The vars each takes (a part is its section's name as the song has it, "Verse"; the line lowercases it in a sentence):
-//   learn.got {}                       side.now { place }                       side.tight { part, ms }
+//   learn.got { place }                side.now { place }                       side.tight { part, ms }
 //   learn.thin {}                      side.fine { part, ms }                   side.drift { part, bar, dir, ms }
 //   side.punched { bar, ms }           side.wander { part, bar }                side.use2 { part, count, take }
 //   side.intro {}                      side.both {}                             guide.held { take, ms }
@@ -26,7 +26,7 @@ const times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${WORDS[n] || n} t
 
 export const LINES = {
   // the band learned the part (§3.4): about a second after the take's line
-  'learn.got': { text: () => 'They’ve got it: the kick’s on your chugs and the bass has your roots.' },
+  'learn.got': { text: (v) => (v?.place === 'bluesbar' ? 'They’ve got it: the drummer’s on your shuffle and the bass walks your roots.' : 'They’ve got it: the kick’s on your chugs and the bass has your roots.') },
   'learn.thin': { text: () => 'The kick keeps its own pattern here: it didn’t hear clear low notes. The bass waits for them.' },
   // the other side (§3.7)
   // (the basement offers it once, after the second part, §2.4; elsewhere it's the next press)

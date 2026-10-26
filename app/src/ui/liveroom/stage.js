@@ -415,7 +415,7 @@ screens.add({
           const r = dispatch(ops, { by: 'overdub', label: plan.label, reason: plan.reason || `room:learn:${section}` });
           if (!r.ok) console.error('liveroom: the band\'s learning', r.error);
           else {
-            say(plan.thin ? 'learn.thin' : 'learn.got');
+            say(plan.thin ? 'learn.thin' : 'learn.got', { place: view().place });
             // (the basement's other side is offered once, after its second part, as a question)
             if (view().place === 'basement' && offered(view(), { ...runState(), run: 'idle' })?.id === 'other') say('side.now', { place: 'basement' });
           }

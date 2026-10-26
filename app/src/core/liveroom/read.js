@@ -137,11 +137,16 @@ function floorOf(ps) {
 }
 
 // The key's root: the pitch class the riff's lowest notes sit on, weighted by how long each is held and a beat more
-// for the part's 1 (the prototype's rootOf).
+// for the part's 1 (the prototype's rootOf); and the note on each bar's 1, low or not, two beats more, since a riff
+// comes home there (a shuffle walking E, B, C♯, D has more fifths than roots, and its E can read an octave up).
 function keyRoot(notes, low) {
   if (low == null) return null;
   const w = new Map();
-  for (const n of notes) if (n.p != null && n.p <= low + 5) w.set(pcOf(n.p), (w.get(pcOf(n.p)) || 0) + n.d + (Math.abs(n.t) < EPS ? 1 : 0));
+  const on1 = (t) => Math.abs(t - Math.round(t / 4) * 4) < EPS;
+  for (const n of notes) {
+    if (n.p == null || (n.p > low + 5 && !on1(n.t))) continue;
+    w.set(pcOf(n.p), (w.get(pcOf(n.p)) || 0) + n.d + (on1(n.t) ? 2 : 0) + (Math.abs(n.t) < EPS ? 1 : 0));
+  }
   return [...w].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? null;
 }
 const SCALES = { metal: 'minor', basement: 'minor', bluesbar: 'blues' };

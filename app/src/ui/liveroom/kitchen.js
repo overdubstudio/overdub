@@ -4,7 +4,9 @@
 // (ui/liveroom/deck.js: countIn({ voice: 'none' }) for the work tape, take, stop). On headphones there's the other way
 // in beside the bare tape (§6.3): Count me in, one bar of sticks (countIn({ bars: 1, voice: 'sticks' })) with the
 // shaker on the song's time under the take; ← → and T set the tempo first. A counted take is on the grid by
-// construction, so nothing about its time is read: the band reads its chords straight away.
+// construction, so nothing about its time is read: the band reads its chords straight away. The input opens by itself
+// when the browser already allows it (a mic first, as soundcheck.js picks one for the kitchen), else on the
+// headphones answer, a press, when the browser asks.
 //
 // What the musician hears before they choose is a preview (store.preview: nothing in the song, nothing in History);
 // what they keep is one step: the time (tempo.map) by you, the read (sections, the Chords track) by the house, a
@@ -25,6 +27,7 @@ import {
 } from '../../core/liveroom/kitchen-plans.js';
 import { capoChoices } from '../../core/liveroom/sheet-text.js';
 import { beatsPerBar, beatToSec, secToBeat } from '../../core/music.js';
+import { inputKind } from '../../input/audioin.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
@@ -99,6 +102,32 @@ screens.add({
     // (the output the engine plays to: its sink's id, the default one's 'default'; the answer is kept per output)
     function outputLabel() { const sink = app.engine?.ctx?.sinkId; return String((typeof sink === 'string' && sink) || 'default'); }
 
+    // the input: the one saved, else a mic (the kitchen's), opened by itself when the browser already allows it (ask:
+    // false), else on a press (the browser asks then)
+    let micAsked = false;
+    async function openMic({ ask = true } = {}) {
+      const a = app.input?.audio;
+      if (!a || a.state.open || micAsked) return !!a?.state?.open;
+      if (!ask) {
+        let granted = false;
+        try { granted = (await navigator.permissions?.query?.({ name: /** @type {any} */ ('microphone') }))?.state === 'granted'; } catch { granted = false; }
+        if (!granted || !live || a.state.open || micAsked) return !!a.state.open;
+      }
+      micAsked = true;
+      try {
+        const list = await a.devices().catch(() => []);
+        const saved = a.state.deviceId && list.some((d) => d.id === a.state.deviceId) ? a.state.deviceId : '';
+        const mic = saved ? null : list.find((d) => inputKind(d.label, { isDefault: d.id === 'default' }) === 'mic');
+        await a.open({ device: saved || mic?.id || '', channel: a.state.channel || '1', capture: true });
+        return true;
+      } catch (e) {
+        micAsked = false;
+        if (/allow|NotAllowed|denied/i.test(String(e?.message || e))) { if (live) say('k.mic.refused'); }
+        else console.warn('overdub kitchen input:', e?.message || e);
+        return false;
+      }
+    }
+
     // what it is: from the room's input, the guess the room shows (§2.5: it picks and shows it)
     function guessMic() {
       const label = inputNow().device;
@@ -127,6 +156,7 @@ screens.add({
     const r0 = roomOf(p0);
     const tapes = () => (store.get().tracks.find((t) => t.id === takeTrack())?.clips || []).filter((c) => c.kind === 'audio').length;
     // (coming back: a kitchen song with its tape already rolled; a table the door just set has its tracks, no takes)
+    let fresh = false;
     if (r0?.place === 'kitchen' && takeTrack() && tapes()) {
       run.mic = r0.mic === 'two' ? 'two' : 'laptop';
       const known = ctx.prefs.get().outputs[outputLabel()] || SAYS_OUTPUT(outputLabel());
@@ -134,15 +164,23 @@ screens.add({
       run.step = run.phones == null ? 'phones' : 'paper';
       for (const t of store.get().tracks) if (t.id === takeTrack()) run.takes = t.clips.filter((c) => c.kind === 'audio').length;
     } else {
-      run.micGuess = guessMic();
+      fresh = true;
       if (r0?.place !== 'kitchen' || !takeTrack()) setup('one');
-      run.mic = run.micGuess;
+      run.mic = run.micGuess = guessMic();
       const said = SAYS_OUTPUT(outputLabel()) || ctx.prefs.get().outputs[outputLabel()];
       if (said) { run.phones = said === 'headphones'; run.step = 'balance'; } else run.step = 'phones';
-      say('k.how', { mic: MICS.find((m) => m.id === run.mic).label });
     }
-    browserCheck();
-    if (run.step === 'balance') startBalance();
+    // (the guess and the browser's settings are the input's: read once it's open, if the browser lets it open now)
+    openMic({ ask: false }).then(() => {
+      if (!live) return;
+      if (fresh) {
+        if (!run.picked) run.mic = run.micGuess = guessMic();
+        say('k.how', { mic: MICS.find((m) => m.id === run.mic).label });
+      }
+      browserCheck();
+      if (run.step === 'balance' && !run.balance) startBalance();
+      draw();
+    });
 
     function browserCheck() {
       const { settings: s, device } = inputNow();
@@ -153,6 +191,7 @@ screens.add({
       const m = MICS.find((x) => x.id === id);
       if (!m || (m.mic === 'two' && !twoMoving())) return;
       run.mic = id;
+      run.picked = true;
       if ((roomNow().mic || 'one') !== m.mic) setup(m.mic);
       draw();
     }
@@ -162,8 +201,9 @@ screens.add({
       ctx.prefs.set({ outputs: { [outputLabel()]: yes ? 'headphones' : 'speakers' } });
       if (!yes) say('k.speakers.wait');
       run.step = 'balance';
-      startBalance();
       draw();
+      // (the press the browser asks for the input on, when it hasn't been allowed yet)
+      openMic().then(() => { if (live && run.step === 'balance' && !run.balance) { startBalance(); draw(); } });
     }
     // the balance: three seconds of strumming, three of a voice; the voice wanted 3-8 dB over the guitar
     function startBalance() {

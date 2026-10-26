@@ -19,6 +19,7 @@ const list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', '
 export const LINES = {
   'k.how': { text: ({ mic = 'The laptop’s mic' } = {}) => `How is it miked? ${mic}, by the look of it.` },
   'k.phones': { text: () => 'Headphones on?' },
+  'k.mic.refused': { text: () => 'The browser said no to the mic, so nothing can go on tape. Allow it in the site settings, then come back.' },
   'k.speakers.wait': { text: () => 'On speakers, the band waits till you’re done.' },
   'k.balance.strum': { text: () => 'Strum the way you’ll play.' },
   'k.balance.sing': { text: () => 'Sing a line, or speak one.' },

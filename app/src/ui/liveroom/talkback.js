@@ -20,6 +20,7 @@ import { h, byline } from '../dom.js';
 
 const LIT_MS = 4000;
 const DWELL_MS = 2600;
+const PRESS = /^(keydown|pointerdown|pointerup|mousedown|mouseup|click)$/;
 const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 export function createTalkback({ app = null } = {}) {
@@ -34,8 +35,13 @@ export function createTalkback({ app = null } = {}) {
   // (the order of presses and lines, by count: two in the same instant still have an order)
   let seq = 0, pressedAt = -1, saidAt = 0, shownAt = 0;
   // (a key or a tap since the last line: the next one answers it, and shows at once)
-  const pressed = () => { pressedAt = ++seq; };
+  // (each event counted once: by the first line said while it's handled, else by the listener below)
+  let counted = null;
+  const pressed = (e) => { if (e && e === counted) return; if (e) counted = e; pressedAt = ++seq; };
   if (typeof document !== 'undefined') { document.addEventListener('keydown', pressed, true); document.addEventListener('pointerdown', pressed, true); }
+  // (the shell's keys listen on window, so a key's own move runs before the listener above hears the key: a line said
+  // while a key or a tap is still being handled is that press's answer all the same)
+  const handling = () => { const e = typeof window !== 'undefined' ? window.event : undefined; if (e && PRESS.test(e.type)) pressed(e); };
   const soon = () => clock() - litAt < DWELL_MS && pressedAt < shownAt;
   const show = (t, who) => {
     const sign = who && who !== 'overdub' ? byline(who, { app }) : null;
@@ -63,6 +69,7 @@ export function createTalkback({ app = null } = {}) {
     get by() { return now.by; },
     say(t, { by: who = 'overdub', wait = false } = {}) {
       if (held) { waiting = { t, who }; return; }
+      handling();
       // (a press since the last line was said: this one answers it, and what was waiting is old news)
       const answer = pressedAt > saidAt;
       saidAt = ++seq;

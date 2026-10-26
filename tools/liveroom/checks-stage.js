@@ -370,12 +370,18 @@ export async function run(T, ctx) {
     await settle(150);
     const pv = await E(() => ({ gain: window.overdub.store.get().master.gain || 0, hist: window.overdub.store.history.length, run: window.overdub.ui.state.liveRoom.run, limiter: window.overdub.store.get().master.inserts.find((x) => x.device === 'core.limiter')?.params?.gain, line: document.querySelector('.lr-tb-line')?.textContent || '' }));
     const nH = (await history(page)).length;
+    // (a click on the hovered chip focuses it too: the part it started plays on, and the preview's line isn't said again)
+    const beat0 = await E(() => window.overdub.engine.beat);
     await page.click('.lr-chip[data-finish="loud"]');
     await settle(150);
+    const beat1 = await E(() => ({ beat: window.overdub.engine.beat, playing: window.overdub.engine.playing }));
     h = await history(page);
     r = await E(READ);
     const chosen = r.said.filter((x) => /^Loud/.test(x)).at(-1) || '';
     const db = L.loud - L.tight;
+    const heardLoud = r.said.filter((x) => /^Hearing Loud/.test(x)).length;
+    T.ok(beat1.playing && beat1.beat >= beat0 && heardLoud === 1,
+      `hovered then clicked: the part plays on (beat ${beat0.toFixed(2)} → ${beat1.beat.toFixed(2)}), "Hearing Loud" said ${heardLoud} time${heardLoud === 1 ? '' : 's'}`);
     T.ok(L.loud - L.tight >= 1 && Math.abs(pv.gain - (g0 - db)) < 0.02 && pv.hist === nH && pv.run === 'play' && pv.limiter === 14,
       `measured on this song: Tight ${L.tight}, Loud ${L.loud}, Room ${L.room} LUFS; Loud focused plays it with the master ${(pv.gain - g0).toFixed(2)} dB (level-matched), nothing in History`);
     T.ok(h.length === nH + 1 && h.at(-1).by === 'you' && h.at(-1).reason === 'room:finish' && chosen === `Loud: the same mix, pushed. About ${Math.round(db)} dB louder than Tight.` && (await E(() => window.overdub.store.get().room.finish)) === 'loud',
@@ -443,6 +449,25 @@ export async function run(T, ctx) {
       return { live: document.querySelector('.lr-tb-text')?.getAttribute('aria-live'), scene: document.querySelector('.lr-scene')?.getAttribute('aria-hidden'), named, focus: lr.contains(document.activeElement) || document.activeElement === document.body };
     });
     T.ok(acc.live === 'polite' && acc.scene === 'true' && acc.named && acc.focus, `access: the talkback is a polite live region, the scene aria-hidden, every button named, focus in the room (${json(acc)})`);
+
+    // the talkback answers a key: the shell's keys run on window before the strip hears the key, so a line said by a
+    // key's own move still shows at once over the lines waiting their turn; a second line from the same key waits
+    const tbk = await E(async () => {
+      const { createTalkback } = await import('/app/src/ui/liveroom/talkback.js');
+      const tb = createTalkback({});
+      tb.say('one', { wait: true });
+      tb.say('two', { wait: true });
+      const before = tb.text;
+      const run = (e) => { if (e.code === 'F13') { tb.say('answer', { wait: true }); tb.say('after', { wait: true }); } };
+      window.addEventListener('keydown', run, true);
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'F13', key: 'F13', bubbles: true }));
+      window.removeEventListener('keydown', run, true);
+      const now = tb.text;
+      tb.frame();
+      return { before, now, next: tb.text };
+    });
+    T.ok(tbk.before === 'one' && tbk.now === 'answer' && tbk.next === 'answer',
+      `the talkback answers a key at once over the waiting lines: "${tbk.before}" → "${tbk.now}", and the key’s second line waits ("${tbk.next}" a frame later)`);
 
     // layouts: no sideways scroll, the scene at a whole scale; the phone's targets and text
     for (const [w, hh, tag] of [[1440, 900, '1440'], [1280, 800, '1280'], [390, 844, 'phone']]) {

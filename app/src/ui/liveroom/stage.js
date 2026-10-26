@@ -532,6 +532,8 @@ screens.add({
     const sayNow = (id, vars) => { try { room?.__lrTalkback?.pressed?.(); } catch { /* fine */ } return say(id, vars); };
     // a chip focused: its finish heard, level-matched, the part playing if nothing was (released on blur)
     function finishFocus(f) {
+      // (the chip already heard: hovered, then clicked, which focuses it too; the part plays on and nothing's said again)
+      if (f && S.focusFin?.id === f) return;
       finishBlur({ quiet: true });
       const v = view(), cur = finOn(v);
       if (!f || f === cur || busy()) return;

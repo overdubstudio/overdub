@@ -30,7 +30,8 @@
 //       input (your amp follows it, the right one while you play the other side); L, R: each guitar side's own meter
 //       (the left from Guitar L, the right from Guitar R, or the blues bar's Lead); bass: the Bass track's meter;
 //       master: the master's meter per side (the ledge's VU needles)
-//   run: the deck's state ('count', 'take', 'double', 'punch', 'play', 'loop', 'read', ...); rolling (boolean): the
+//   run: the deck's run ('count', 'take', 'double', 'punch', 'play', 'loop', 'read', ...; or deck.state itself, whose
+//       run it reads); rolling (boolean): the
 //       tape rolls (left out: while run is any of those but 'read'); beat: the heard beat (the reels turn a quarter turn a beat while the tape rolls);
 //       bar: the counter's bar (left out: from the beat); count: the count's number on the kick head while it counts;
 //       loading: how much of the drummer's kit is in, 0..1, on the kick head until it is (the count waits for it)
@@ -46,7 +47,7 @@
 // Under reduced motion nothing shakes, sways, swings or pans and the reels stand still; the lamps, the panel meters,
 // the VU faces and the counter still follow their signals.
 
-import { W, H, drawScene, LAYOUT, signalsOf } from './scenes.js';
+import { W, H, drawScene, LAYOUT, signalsOf, placeOf } from './scenes.js';
 import { drawCoverArt } from './cover.js';
 
 export { W, H };
@@ -80,7 +81,7 @@ const STILL = Object.freeze({ reduced: true });
 
 export function drawCrop(g, place, size = { w: 128, h: 96 }, view = null) {
   const w = whole(size?.w, 1, W, 128), h = whole(size?.h, 1, H, 96);
-  const f = LAYOUT[place]?.focus || { x: 64, y: 20, w: 128, h: 110 };
+  const f = placeOf(place) ? LAYOUT[place].focus : { x: 64, y: 20, w: 128, h: 110 };
   const room = h <= H - LEDGE ? H - LEDGE : H;
   const dx = whole(f.x + f.w / 2 - w / 2, 0, W - w, 0), dy = whole(Math.max(f.y + f.h / 2 - h / 2, f.y + f.h - h), 0, room - h, 0);
   drawScene(cropOf(g, dx, dy, w, h), place, view && typeof view === 'object' ? view : STILL);
@@ -96,7 +97,7 @@ const PHONE = Object.freeze({ w: 192, h: 108, strip: 72, pan: 200 });
 const STEP_FOCUS = { soundcheck: 'amp', plug: 'amp', level: 'amp', tune: 'amp', lineup: 'amp', amp: 'amp', double: 'amps', other: 'amps', side: 'amps', feel: 'kit', drums: 'kit', count: 'kit', bass: 'bass', bassYours: 'bass' };
 function targetOf(view) {
   const v = view && typeof view === 'object' ? view : {};
-  const place = typeof v.place === 'string' ? v.place : null, L = LAYOUT[place];
+  const place = placeOf(v.place), L = place ? LAYOUT[place] : null;
   const kitchen = place === 'kitchen', w = PHONE.w, h = kitchen ? PHONE.strip : PHONE.h;
   const word = typeof v.focus === 'string' ? v.focus : STEP_FOCUS[v.step] || (v.side === 'R' && !kitchen ? 'amps' : null);
   let b = null;

@@ -7,6 +7,7 @@
 //   signalsOf(view)              the scene's signals from the room's view (index.js says what a view carries): every
 //                                level in 0..1, the flags, the counter's bar, reduced motion
 //   drawScene(g, place, view)    one frame of a place: a pure function of the view (the same view, the same pixels)
+//   placeOf(place)               the place's id when it is one of the four, else null (the bare room)
 //   LAYOUT[place]                where its gear stands: { ampL, ampR, kit, bass, focus } as { x, y, w, h } (the
 //                                phone's window frames these; the checks read them)
 //   lightsOf(place)              the boxes whose pixels a level may change under reduced motion: the lamps, the amps'
@@ -63,7 +64,7 @@ const ROLE_OF = { shaker: 'shaker', cajon: 'cajon', bass: 'kbass', strings: 'str
 
 export function signalsOf(view) {
   const v = isObj(view) ? view : {}, live = isObj(v.live) ? v.live : {};
-  const run = typeof v.run === 'string' ? v.run : isObj(v.run) ? String(v.run.kind ?? v.run.id ?? '') : '';
+  const run = typeof v.run === 'string' ? v.run : isObj(v.run) ? String(v.run.run ?? v.run.kind ?? v.run.id ?? '') : '';
   const meter = Array.isArray(v.meter) && v.meter[0] > 0 && v.meter[1] > 0 ? v.meter : [4, 4];
   const bpb = (meter[0] * 4) / meter[1];
   const beat = Number.isFinite(v.beat) ? v.beat : 0;
@@ -325,18 +326,20 @@ function bare(g) {
 }
 
 const PLACES = { metal, basement, bluesbar, kitchen };
+// a place's own entry, or nothing: a song's place id is whatever its file says ('toString' or '__proto__' is no place)
+export const placeOf = (place) => (typeof place === 'string' && Object.hasOwn(PLACES, place) ? place : null);
 
 export function drawScene(g, place, view) {
-  const s = signalsOf(view);
+  const s = signalsOf(view), id = placeOf(place);
   g.globalAlpha = 1;
-  (PLACES[place] || bare)(g, s);
+  (id ? PLACES[id] : bare)(g, s);
   g.globalAlpha = 1;
-  ledge(g, s, { reels: place === 'metal' });
+  ledge(g, s, { reels: id === 'metal' });
 }
 
 // where the lights are: the amps' heads and panels, the bass rig's lamp, the ledge's
 export function lightsOf(place) {
-  const L = LAYOUT[place], out = [LEDGE_PARTS.talk, LEDGE_PARTS.counter, ...LEDGE_PARTS.vu];
+  const L = placeOf(place) ? LAYOUT[place] : null, out = [LEDGE_PARTS.talk, LEDGE_PARTS.counter, ...LEDGE_PARTS.vu];
   if (!L) return out;
   const grow = (b) => ({ x: b.x - 6, y: b.y - 6, w: b.w + 12, h: b.h + 12 });
   if (place === 'metal') {

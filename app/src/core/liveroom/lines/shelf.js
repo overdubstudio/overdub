@@ -7,9 +7,10 @@
 //   LINES: { [id]: { text(vars) -> string, once? } }   once: said once per song (ui/liveroom/prefs.js said/mark keeps
 //          it from coming back after a reload). Ids are unique across every lines/*.js file.
 //
-// The shelf's (ui/liveroom/shelf.js, §3.13), sending's (ui/liveroom/send.js, §3.14), coming back's (§2.6), and note.*:
+// The shelf's (ui/liveroom/shelf.js, §3.13), sending's (ui/liveroom/send.js, §3.14), and note.*:
 // the tape box's note, written from the song each time (core/liveroom/label.js labelOf), never stored. Numbers come in
 // already written (a time as 1:51, megabytes as a whole number); a list of parts comes in as words ("Verse and chorus").
+// Coming back (§2.6) is lines/stage.js's back.where and back.assets, which shelf.js says.
 // shelf.backup is said once per browser, not per song: the shelf keeps that itself (prefs said/mark under 'browser').
 
 const s = (n, one, many) => (n === 1 ? one : many);
@@ -45,7 +46,4 @@ export const LINES = {
   'note.paper': { text: ({ n = 0 } = {}) => `The paper has ${n} ${s(n, 'section', 'sections')}, no take yet.` },
   'note.take': { text: ({ time = '0:00' } = {}) => `Take 1 is in: ${time}.` },
   'note.takes': { text: ({ n = 2, master = 0 } = {}) => `${n} takes in${master ? `; the band follows take ${master}` : ''}.` },
-  // coming back (§2.6)
-  'note.back': { text: ({ title = 'The song', note = '' } = {}) => `${title}, where you left it${note ? `: ${note}.` : '.'}` },
-  'note.assets': { text: () => 'This song’s recordings are in another browser. The band’s here; your guitar isn’t.' },
 };

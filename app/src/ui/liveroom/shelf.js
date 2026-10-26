@@ -24,9 +24,12 @@ import * as db from './shelf-db.js';
 import { prefs } from './prefs.js';
 import { drawCover } from './pixels/index.js';
 import { labelOf, titleDice } from '../../core/liveroom/label.js';
-import { LINES } from '../../core/liveroom/lines/shelf.js';
+import { LINES as SHELF } from '../../core/liveroom/lines/shelf.js';
+import { LINES as STAGE } from '../../core/liveroom/lines/stage.js';
 import { songAssets } from '../export.js';
 
+// (the shelf's own lines, and coming back's, which are the stage's: back.where, back.assets)
+const LINES = { ...SHELF, ...STAGE };
 const line = (id, vars) => LINES[id].text(vars || {});
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 const roomy = (p) => isObj(p?.room);
@@ -94,14 +97,14 @@ export async function comeBack(app) {
   const p = app.store.get();
   if (!roomy(p)) return [];
   const L = labelOf(p), said = [];
-  const text = line('note.back', { title: L.title, note: L.where });
+  const text = line('back.where', { title: L.title, note: L.where });
   app.liveRoom?.say?.(text);
   said.push(text);
   const ids = songAssets(p);
   if (ids.length) {
     const have = await Promise.all(ids.map((id) => Promise.resolve(app.engine?.assets?.get?.(id)).then((b) => !!b).catch(() => false)));
     if (have.some((x) => !x) && app.store.get().id === p.id) {
-      const t = line('note.assets');
+      const t = line('back.assets');
       app.liveRoom?.say?.(t);
       said.push(t);
     }

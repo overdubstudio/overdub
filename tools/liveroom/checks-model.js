@@ -8,7 +8,7 @@
 //   3. the song: a room and a sheet survive save and load, unknown keys and all; the same song with and without them
 //      renders to the same hash (an older reader skips them); a share link signs the sheet's lines as the guest;
 //      store.redo keeps a step's reason and audition
-//   4. the session's seams: readRoom's view, prefs over overdub:room (a stub storage, and none), decideDoor's stub
+//   4. the session's seams: readRoom's view, prefs over overdub:room (a stub storage, and none), decideDoor's rows
 //   5. the page (muted Chromium; PAGES=0 skips it): /app/?room opens the room over an inert studio with the anti-flash
 //      attribute set and cleared, its keys held, the talkback signed; Control room → gives the studio back with History
 //      as it was, and the Live room key brings the room back; bare /app/ and ?new under navigator.webdriver open
@@ -32,12 +32,13 @@ export const FROZEN = {
   'core/liveroom/model.js': ['PLACE_IDS', 'RIG_IDS', 'FINISHES', 'FEEL_IDS', 'ROLES', 'ROOM_LIMITS', 'cleanRoom', 'cleanSheet', 'roomOf', 'partOf', 'sheetOf', 'NAMES', 'ORDER', 'putKey', 'placeKey'],
   'core/liveroom/room-ops.js': ['ROOM_OPS'],
   'core/liveroom/sheet-ops.js': ['SHEET_OPS'],
-  'core/liveroom/places.js': ['PLACES', 'placeOf', 'RIGS', 'rigChain', 'rigLabel', 'setupOf', 'feelsOf', 'finishChain', 'earOf', 'chordAt'],
-  'core/liveroom/read.js': ['readTake', 'readInWorker'],
+  // (with stream B's additions, each in §14.2's rows)
+  'core/liveroom/places.js': ['PLACES', 'placeOf', 'RIGS', 'rigChain', 'rigLabel', 'setupOf', 'feelsOf', 'finishChain', 'earOf', 'chordAt', 'FADERS', 'FEELS', 'FEEL_GROOVES', 'FILLS', 'WINDOWS', 'bandTracks', 'chainHash', 'fillsOf', 'finishBus', 'follows', 'grooveOf', 'gtrEq', 'guitarChain', 'guitarGain', 'lowCut', 'partKey'],
+  'core/liveroom/read.js': ['readTake', 'readInWorker', 'SNAP', 'THIN_ONSETS', 'attacksOf', 'earOf', 'hear', 'riffOf'],
   'core/liveroom/read-worker.js': [],
-  'core/liveroom/band.js': ['guideOps', 'planLearn', 'planFeel', 'planFinish', 'planBassYours', 'bandFor'],
-  'core/liveroom/tight.js': ['measurePair'],
-  'core/liveroom/double.js': ['planDouble', 'planUseAsRight'],
+  'core/liveroom/band.js': ['guideOps', 'planLearn', 'planFeel', 'planFinish', 'planBassYours', 'bandFor', 'HOUSE_RULES', 'MUTE_V', 'TOUCH', 'bandNotes', 'defaultFeel', 'guideOf', 'isHouse', 'riffIn'],
+  'core/liveroom/tight.js': ['measurePair', 'BASEMENT_MS', 'LIMIT_MS', 'MATCH_MS', 'REFINE_MS', 'TIGHT_MS', 'UNMATCHED'],
+  'core/liveroom/double.js': ['planDouble', 'planUseAsRight', 'PAN_RAMP', 'panLaneOps', 'planPans', 'roleTrack', 'sidesOf'],
   'core/liveroom/session.js': ['readRoom', 'offered', 'stopBeat', 'press'],
   'core/liveroom/plans.js': ['planPlace', 'takeOps', 'planLayout', 'planTwice', 'planMove', 'planShorter', 'planRemove', 'planEnd'],
   'core/liveroom/sheet.js': ['parseSheet', 'formatSheet', 'lineParts', 'soundingKey', 'transposeChord'],
@@ -233,14 +234,14 @@ export async function run(T, ctx) {
     const rows = [
       [{ search: '?room' }, 'room', 'new'],
       [{ search: '?room', webdriver: true }, 'room', 'new'],
-      [{ search: '' }, 'control', 'demo'],
+      [{ search: '' }, 'room', 'new'],
       [{ search: '', saved: true }, 'control', 'saved'],
       [{ search: '?new', webdriver: true }, 'control', 'new'],
       [{ search: '?demo=boiler-room' }, 'control', 'demo'],
       [{ search: '?room', hash: '#s=abc' }, 'control', 'shared'],
     ];
     const off = rows.filter(([a, side, sg]) => { const d = decideDoor(a); return d.side !== side || d.song !== sg; });
-    T.ok(!off.length, `decideDoor (the stub): ?room is the room's on a new song, even under webdriver; everything else today's first screens; a share link the control room's${off.length ? ': wrong for ' + off.map(([a]) => json(a)).join(', ') : ''}`);
+    T.ok(!off.length, `decideDoor: ?room is the room's on a new song, even under webdriver; a first visit the room's door; under webdriver today's first screens; a share link the control room's${off.length ? ': wrong for ' + off.map(([a]) => json(a)).join(', ') : ''}`);
   }
 
   /* ---------------------------------------------------------------------------------------------- 5. the page */

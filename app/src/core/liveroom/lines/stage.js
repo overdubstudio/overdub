@@ -22,7 +22,8 @@
 //   end.follows    {}                                       R on the End
 //   hear.done      { parts, time }                          top to bottom, nothing empty
 //   hear.empty     { time, part }                           top to bottom, a part still empty
-//   back.where     { title, note }                          coming back to a song (the note: written from the song)
+//   back.where     { title, note }                          coming back to a song (the note: one clause written from the
+//                                                           song, core/liveroom/label.js labelOf's where; ui/liveroom/shelf.js says it)
 //   back.assets    {}                                       the song's recordings aren't in this browser
 //   undo.pair      { part, take, back? }                    ⌘Z took a take and the band's learning out together
 //   redo.pair      { part, take }                           ⇧⌘Z put them back
@@ -53,7 +54,7 @@ export const LINES = {
   'end.follows': { text: () => 'The end follows your last part.' },
   'hear.done': { text: ({ parts, time }) => `That’s the song: ${parts} part${parts === 1 ? '' : 's'}, ${time}.` },
   'hear.empty': { text: ({ time, part }) => `That’s ${time} top to bottom. The ${low(part)}’s still empty.` },
-  'back.where': { text: ({ title, note }) => `${title}, where you left it${note ? `: ${note}` : '.'}` },
+  'back.where': { text: ({ title, note }) => `${title}, where you left it${note ? `: ${note}.` : '.'}` },
   'back.assets': { text: () => 'This song’s recordings are in another browser. The band’s here; your guitar isn’t.' },
   'undo.pair': { text: ({ part, take, back }) => `Undone: ${low(part)} take ${take}.${back ? ` The drummer’s back on take ${back}.` : ''}` },
   'redo.pair': { text: ({ part, take }) => `Back in: ${low(part)} take ${take}, and the band’s learning with it.` },

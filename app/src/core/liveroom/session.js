@@ -103,8 +103,9 @@ export function readRoom(p) {
   const overlap = (c, s) => Math.min(c.start + c.length, s.start + s.length) - Math.max(c.start, s.start);
   const within = (c, s) => overlap(c, s) > OVER;
   // (a take of a part starts in it, its 30 ms lead aside, or covers most of it: the ring of the part before, a bar or
-  // two into it, isn't one)
-  const takeIn = (c, s) => within(c, s) && (c.start >= s.start - 0.5 || overlap(c, s) > s.length / 2);
+  // two into it, isn't one, nor the piece of it the recorder's take folder keeps muted under a new take, a muted clip
+  // shorter than half the part)
+  const takeIn = (c, s) => within(c, s) && (c.start >= s.start - 0.5 || overlap(c, s) > s.length / 2) && !(c.mute && c.length < s.length / 2);
   const clipsIn = (role, s) => {
     const t = role ? byId(roles[role]) : null;
     if (!t) return [];

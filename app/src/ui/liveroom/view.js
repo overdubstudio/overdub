@@ -4,8 +4,10 @@
 // screens share. Nothing in it lives in the DOM.
 //
 //   liveView(ctx, extra) -> readRoom's view and { run, side, card, menu, beat, bar, counting, playing, levels,
-//       reduced, focus, take, ... }: the scene's view (ui/liveroom/pixels sceneOf().draw and windowFor read it). levels:
-//       each role's meter now ({ guitarL, guitarR, drums, bass, master, input }: dBFS peaks, -120 for silence)
+//       reduced, live, count, rolling, loading, plugged, learning, heard, title, step, ... }: the scene's view
+//       (ui/liveroom/pixels sceneOf().draw and windowFor read it, its header says each field). levels: each role's meter
+//       now ({ guitarL, guitarR, drums, bass, master, input }: dBFS peaks, -120 for silence); live: the same and the
+//       drummer's hits in 0..1, as the scene takes them
 //   runPlan(store, plan, { by, label?, reason? }) -> the dispatch's result   a plan's ops in one step, and what it
 //       needs after them (plan.after, core/liveroom/plans.js) joined to it: one undo step
 //   pairAt(history) -> { take, learn, section } | null    the newest two steps are a take of a part and the band's
@@ -36,6 +38,26 @@ export function tuningWords(id) {
 
 const reducedMotion = () => { try { return !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches; } catch { return false; } };
 
+// a meter's dBFS as the scene takes it (0..1: -48 dB is 0, -6 dB is 1, the prototype's mapping)
+const unit = (db) => (Number.isFinite(db) ? Math.max(0, Math.min(1, (db + 48) / 42)) : 0);
+// The drummer's hits at a beat, as the scene's envelopes (1 on the note, falling over about 120 ms): the notes of the
+// clips playing on a track there (the song as it sounds, a preview's band among them), by the kit's pieces
+const PIECE = { 35: 'kick', 36: 'kick', 37: 'snare', 38: 'snare', 39: 'snare', 40: 'snare', 42: 'hat', 44: 'hat', 46: 'hat', 49: 'crash', 52: 'crash', 55: 'crash', 57: 'crash', 51: 'crash', 59: 'crash', 41: 'tom', 43: 'tom', 45: 'tom', 47: 'tom', 48: 'tom', 50: 'tom' };
+const DECAY = 0.12;
+function hitsOn(track, beat, spb, piece, out) {
+  for (const c of track?.clips || []) {
+    if (c.mute || c.kind !== 'notes' || beat < c.start - 1e-6 || beat > c.start + c.length + 0.5) continue;
+    for (const n of c.notes || []) {
+      const at = c.start + n.t, ago = (beat - at) * spb;
+      if (ago < 0 || ago > 0.5 || at > c.start + c.length + 1e-6) continue;
+      const k = piece(n.p);
+      if (!k) continue;
+      const e = (n.v ?? 0.8) * Math.exp(-ago / DECAY);
+      if (e > (out[k] || 0)) out[k] = Math.round(e * 1000) / 1000;
+    }
+  }
+}
+
 export function liveView(ctx, extra = {}) {
   const v = ctx.view();
   const L = ctx.ui?.state?.liveRoom || {};
@@ -49,11 +71,39 @@ export function liveView(ctx, extra = {}) {
   levels.input = typeof input === 'number' ? input : input?.peak ?? -120;
   const beat = eng?.playing ? eng.beat : null;
   const bpb = v.bpb || 4;
+  const run = L.run || 'idle';
+  const deck = ctx.deck?.state || null;
+  // what's live, for the scene (ui/liveroom/pixels: levels and hits in 0..1): your input, each side's own meter, the
+  // bass, the master's needles, the drummer's hits on the beat heard
+  const live = {
+    input: unit(levels.input), L: unit(levels.guitarL ?? levels.guitar), R: unit(levels.guitarR ?? levels.lead), bass: unit(levels.bass),
+    master: [unit(levels.master), unit(levels.master)],
+  };
+  const p = ctx.store?.get?.() || null;
+  if (p && beat != null) {
+    const spb = 60 / (p.tempo || 120), track = (role) => (v.roles?.[role] ? p.tracks.find((t) => t.id === v.roles[role]) : null);
+    hitsOn(track('drums'), beat, spb, (m) => PIECE[m], live);
+    hitsOn(track('shaker'), beat, spb, () => 'shaker', live);
+    hitsOn(track('cajon'), beat, spb, () => 'cajon', live);
+  }
+  // the count's number on the kick head while the drummer counts you in
+  const k = eng?.counting || null;
+  let count = null;
+  if (k && beat != null) { const i = Math.floor(beat - k.from + 1e-6); if (i >= 0 && i < k.beats) count = (i % bpb) + 1; }
+  const takes = run === 'count' || run === 'take';
+  // (the phone's window: your amp in the soundcheck, both in a double, the kit while a feel is chosen)
+  const step = L.side === 'R' && takes ? 'double' : L.menu ? 'feel' : !v.taken && !takes ? 'soundcheck' : null;
   return {
     ...v,
-    run: L.run || 'idle', side: L.side || 'L', card: L.card || null, menu: L.menu || null,
-    beat, bar: beat == null ? null : Math.floor(beat / bpb) + 1, counting: eng?.counting || null, playing: !!eng?.playing,
-    levels, reduced: reducedMotion(), deck: ctx.deck?.state || null,
+    run, side: L.side || 'L', card: L.card || null, menu: L.menu || null,
+    beat, bar: beat == null ? null : Math.floor(beat / bpb) + 1, counting: k, playing: !!eng?.playing,
+    levels, reduced: reducedMotion(), deck,
+    live, count, rolling: takes || run === 'play' || !!eng?.playing,
+    loading: deck?.kit === 'loading' ? Math.max(0, Math.min(0.99, (deck.kitPct ?? 0) / 100)) : null,
+    plugged: !!deck?.input?.open, learning: run === 'learn',
+    // the blues bar's neon: on from your first note (a take in the song, or the input moving under a take)
+    heard: !!v.taken || (takes && live.input > 0.1),
+    title: p?.title || '', ...(step ? { step } : {}),
     ...extra,
   };
 }

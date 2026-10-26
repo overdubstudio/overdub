@@ -19,6 +19,7 @@ import { screens } from './screens.js';
 import { drawCrop } from './pixels/index.js';
 import { planPlace } from '../../core/liveroom/plans.js';
 import { setupOf, placeOf, PLACES } from '../../core/liveroom/places.js';
+import { PLAYERS } from '../../core/liveroom/kitchen-plans.js';
 import { bandFor } from '../../core/liveroom/band.js';
 import { NAMES } from '../../core/liveroom/model.js';
 import { LINES } from '../../core/liveroom/lines/door.js';
@@ -38,8 +39,7 @@ const title = (place) => { const n = NAMES.place[place] || place; return n[0].to
 const tempoOf = (place) => { try { return Math.round(setupOf(place).tempo) || placeOf(place).prefer; } catch { return placeOf(place).prefer; } };
 
 /* ------------------------------------------------------------------------------------------------ the preview */
-// A track of the place's setup by its role (core/liveroom/places.js setupOf: B's), read loosely: an instrument as
-// { device, params }, its chain as inserts. Until the setup has tracks, the prototype's kit and bass.
+// A track of the place's setup by its role (core/liveroom/places.js setupOf): its instrument, its chain, its fader.
 function setupTrack(setup, role) {
   const t = (Array.isArray(setup?.tracks) ? setup.tracks : []).find((x) => x && (x.role === role || x.id === role));
   if (!t) return null;
@@ -62,7 +62,8 @@ export function previewSong(place) {
     const notes = [{ t: 0, p: 36, d: 0.25, v: 0.9 }, { t: 1, p: 38, d: 0.25, v: 0.75 }, { t: 2, p: 36, d: 0.25, v: 0.85 }, { t: 2.5, p: 36, d: 0.25, v: 0.6 }, { t: 3, p: 38, d: 0.25, v: 0.78 }];
     for (let e = 0; e < bpb; e += 0.5) notes.push({ t: e, p: 82, d: 0.2, v: e % 1 ? 0.45 : 0.6 });
     const p = createProject({ id: 'p_door_kitchen', title: 'The kitchen table', tempo, meter: [4, 4] });
-    p.tracks = [track('t_door_hands', 'Hand Crate', { instrument: { device: 'core.handkit', params: {} }, inserts: [], gain: 0 }, notes.sort((a, b) => a.t - b.t), bpb)];
+    const sh = PLAYERS.shaker;
+    p.tracks = [track('t_door_hands', sh.name, { instrument: { device: sh.device, params: { ...sh.params } }, inserts: [], gain: 0 }, notes.sort((a, b) => a.t - b.t), bpb)];
     return cleanProject(p);
   }
   const P = PLACES[place] || placeOf(place);
@@ -73,11 +74,11 @@ export function previewSong(place) {
   const root = place === 'metal' ? 0 : 4;
   const riff = { n: bpb, bpm: tempo, root, notes: Array.from({ length: 8 }, (_, i) => ({ t: i / 2, p: 36 + root, d: 0.4 })) };
   const band = bandFor(place, riff, { from: 0, length: bpb, seed: 7 });
-  const drums = setupTrack(setup, 'drums') || { instrument: { device: P.drums.kit.device, params: { ...P.drums.kit.params } }, inserts: [], gain: P.gain?.drums ?? 0 };
-  const bass = setupTrack(setup, 'bass') || { instrument: { device: 'core.bassguitar', params: { ...(P.bass?.params || {}) } }, inserts: [], gain: P.gain?.bass ?? 0 };
+  const drums = setupTrack(setup, 'drums'), bass = setupTrack(setup, 'bass');
   const p = createProject({ id: `p_door_${place}`, title: title(place), tempo, meter: [4, 4] });
-  p.tracks = [track('t_door_drums', 'Drums', drums, band.drums, bpb)];
-  if (band.bass.length) p.tracks.push(track('t_door_bass', 'Bass', bass, band.bass, bpb));
+  p.tracks = [];
+  if (drums) p.tracks.push(track('t_door_drums', 'Drums', drums, band.drums, bpb));
+  if (bass && band.bass.length) p.tracks.push(track('t_door_bass', 'Bass', bass, band.bass, bpb));
   const master = Array.isArray(setup?.master) ? setup.master.filter((x) => x && x.device) : [];
   if (master.length) p.master = { gain: 0, inserts: fx(master) };
   return cleanProject(p);

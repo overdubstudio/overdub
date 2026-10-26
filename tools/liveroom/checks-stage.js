@@ -3,15 +3,19 @@
 //
 // Node: the press counts (12 at the metal club, 10 at the basement, 9 at the blues bar) on core/liveroom/session.js's
 // reducer, the offered move after each kind of step, and the stop rule at every place.
-// Muted Chromium: the metal club's session on the stage, with stand-ins where another stream's part isn't in this
-// build. The deck is a fake that commits each take as the recorder would (asset.add and the take folder's clip.add,
-// one step by you), the place's tracks are a stand-in setup (core/liveroom/places.js setupOf has none until stream B),
-// and the band's learning is dispatched by hand as the house's step (core/liveroom/band.js planLearn is inert until B).
-// Each check that leans on a stand-in says which stream it needs.
+// Muted Chromium: the metal club's first session (§2.3) on the real room: the door's planPlace, the deck (its count,
+// its takes through the recorder, its stop rule), the band's read and learning (core/liveroom/read.js in its worker,
+// band.js planLearn), the double (double.js planDouble, tight.js measurePair) and the finish (band.js planFinish). The
+// guitar is a fake (fake.js session: a riff's DI at 132, every pass at its own place in one WAV that Chromium plays as
+// the input, never to a speaker), each pass's count lined up with the part it plays (harness.js alignCount's sum: the
+// count's `at` given to the deck's countIn), the deck's latency 0 (the fake has none). Hear it all and the wide
+// playback after the other side are moved on by seeking near their end: what's checked is where they start and that
+// they stop and say so, not a minute and fifty-one seconds of listening.
 
 import path from 'node:path';
 import { press as pressRoom, offered, stopBeat } from '../../app/src/core/liveroom/session.js';
 import { openRoom, history, press, OUT } from './harness.js';
+import { session } from './fake.js';
 
 export const name = 'stage';
 export const pages = true;
@@ -21,67 +25,49 @@ const SPACE = (n) => Array.from({ length: n }, () => 'space');
 const walk = (ids) => ids.reduce((s, id) => pressRoom(s, id), {});
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|the server responded with a status of 404/.test(e);
 
-// the place's tracks, standing in for places.js setupOf's until stream B fills it in // needs B
-const SETUP = {
-  tempo: 132, meter: [4, 4], grid: 4, count: { beats: 4, voice: 'sticks' },
-  tracks: [
-    { role: 'guitarL', name: 'Guitar L', kind: 'audio', pan: -0.8 },
-    { role: 'guitarR', name: 'Guitar R', kind: 'audio', pan: 0.8 },
-    { role: 'drums', name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} } },
-    { role: 'bass', name: 'Bass', kind: 'instrument', instrument: { device: 'core.poly', params: {} } },
-  ],
-  master: [],
-};
+// The fake guitar at 132: a verse of palm-muted chugs on drop C's low C with a held note at the end of the bar, a
+// chorus of held power chords. Each pass the session plays sits at its own bar of the file, the gaps the room's own
+// time between passes (the ring, the read, the presses).
+const BPM = 132;
+const VERSE = { bpm: BPM, beats: 4, chord: true, notes: [[0, 36, 0], [0.5, 36, 0], [1, 36, 0], [1.5, 39, 0.5], [2, 36, 0], [2.5, 36, 0], [3, 41, 0.75]] };
+const CHORUS = { bpm: BPM, beats: 4, chord: true, notes: [[0, 36, 1], [1, 43, 1], [2, 41, 1], [3, 39, 0.75]] };
+// [what, the riff, the file's bar it starts on, seed]
+const PASSES = [['verse L', VERSE, 1, 11], ['verse R', VERSE, 19, 12], ['chorus', CHORUS, 37, 13], ['chorus again', CHORUS, 53, 14], ['chorus kept', CHORUS, 67, 15], ['chorus R', CHORUS, 77, 16]];
+function stageFake() {
+  return session({ bpm: BPM, lead: 14, tail: 4, parts: PASSES.map(([, riff, bar, seed]) => ({ kind: 'riff', riff, bar, passes: 8, seed, jitter: 0.003, peak: -12 })) });
+}
 
-// In the page: the stage's ctx captured as it mounts, its deck swapped for a fake that commits each take as the
-// recorder would, and the engine's transport held still (beat and playing set by the check), so nothing plays.
-const INSTALL = async (setup) => {
+// In the page: the room on a metal song (the door's step, planPlace by you), the input open on the fake, the deck's
+// latency 0, and its countIn given each pass's `at` in turn (the audio-clock time of the count's first beat that puts
+// the pass's downbeat on its part of the file); a pass with no part queued counts in as the deck would
+const INSTALL = async ({ parts }) => {
   const o = window.overdub;
-  const { screens } = await import('/app/src/ui/liveroom/screens.js');
   const { planPlace } = await import('/app/src/core/liveroom/plans.js');
-  const F = (window.__lrFake = { calls: [], n: 0, cur: null, resolve: null, kept: null, beat: 0, playing: false, plays: [] });
-  // (a commit as the stage's seam has it, or, as: 'deck', the deck's own take: { ok, txn, take, takes, from, to, quietLead })
-  function commit({ track, from, to }, as = 'commit') {
-    const p = o.store.get();
-    const t = p.tracks.find((x) => x.id === track);
-    const n = ++F.n, id = `a_fake${n}`, cid = `c_fake${n}`;
-    const start = from <= 0 ? 0 : from - 4, len = to + 4 - start, spb = 60 / p.tempo;
-    const ops = [{ type: 'asset.add', asset: { id, kind: 'audio', name: `Take ${n}`, sr: 48000, channels: 1, duration: len * spb } }];
-    // (what played there is muted under it, as the recorder's take folder does: a clip mostly under the new take)
-    for (const c of t.clips) if (!c.mute && Math.min(c.start + c.length, to) - Math.max(c.start, from) > c.length / 2) ops.push({ type: 'clip.set', track, clip: c.id, patch: { mute: true } });
-    ops.push({ type: 'clip.add', track, clip: { id: cid, kind: 'audio', asset: id, start, length: len, offset: 0, take: `tk_fake${n}`, name: `Take ${n}` } });
-    const r = o.store.dispatch(ops, { by: 'you', label: `Take ${n}` });
-    if (!r.ok) return { ok: false, error: r.error };
-    const tk = { track, clip: cid, asset: id, start, length: len };
-    return as === 'deck' ? { ok: true, txn: r.txn.id, take: tk, takes: [tk], from, to, quietLead: 0 } : { ok: true, commit: { txn: r.txn.id, track, clip: cid, from, to } };
-  }
-  const fake = {
-    state: { run: 'idle' },
-    countIn(a) { F.calls.push(['countIn', a]); fake.state.run = 'count'; return Promise.resolve({ ok: true }); },
-    take(a) { F.calls.push(['take', a]); F.cur = a; fake.state.run = 'take'; return new Promise((res) => { F.resolve = res; }); },
-    stop(a) {
-      F.calls.push(['stop', a]);
-      fake.state.run = 'idle';
-      const cur = F.cur, res = F.resolve;
-      F.cur = null; F.resolve = null;
-      if (a.keep === 'capture') { F.kept = cur; res?.({ ok: false, cancelled: true }); return Promise.resolve({ ok: true }); }
-      res?.({ ok: true });
-      return Promise.resolve(cur ? commit({ track: cur.track, from: cur.from, to: a.to }, 'deck') : { ok: false, error: 'no take' });
-    },
-    keepAfterAll() { F.calls.push(['keepAfterAll']); const k = F.kept; F.kept = null; return Promise.resolve(k ? commit({ track: k.track, from: k.from, to: k.punch ? k.punch.to : k.from + 32 }) : { ok: false }); },
-    level: () => null, tuner: () => null,
+  const { createDeck } = await import('/app/src/ui/liveroom/deck.js');
+  const st = await import('/app/src/ui/liveroom/stage.js');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (fn, ms = 60000) => { const t0 = performance.now(); while (!fn()) { if (performance.now() - t0 > ms) throw new Error('timed out'); await sleep(5); } };
+  window.__lr = { sleep, until, stageState: st.stageState, queue: [], counts: [], takes: [], stops: [], said: [] };
+  o.liveRoom.on('say', (e) => window.__lr.said.push(e.text));
+  const pl = planPlace(o.store.get(), { place: 'metal' });
+  const r = o.store.dispatch(pl.ops, { by: 'you', label: pl.label, reason: pl.reason });
+  await o.engine.start?.();
+  await o.input.audio.open({ channel: '1', capture: true, monitor: false });
+  await until(() => o.input.audio.state.open && Number.isFinite(o.input.audio.state.firstFrame), 15000);
+  const deck = createDeck(o);
+  deck.latency = 0;
+  const count = deck.countIn, take = deck.take, stop = deck.stop;
+  const st0 = o.input.audio.state, fileT0 = st0.firstFrame / (st0.sr || o.engine.ctx.sampleRate);
+  deck.countIn = (a = {}) => {
+    const part = window.__lr.queue.shift();
+    const bpb = 4, spb = 60 / (o.store.get().tempo || 120);
+    const at = part == null ? null : fileT0 + parts[part] - (a.bars ?? 1) * bpb * spb;
+    window.__lr.counts.push({ ...a, at, part: part ?? null, now: o.engine.ctx.currentTime });
+    return count(at == null ? a : { ...a, at });
   };
-  // a punch ends itself at its part's end: the check says when
-  F.finish = () => { const cur = F.cur, res = F.resolve; F.cur = null; F.resolve = null; fake.state.run = 'idle'; res?.(commit({ track: cur.track, from: cur.punch.from, to: cur.punch.to })); };
-  const def = screens.get('stage'), mount = def.mount;
-  def.mount = (el, ctx) => { window.__lrCtx = ctx; Object.assign(ctx.deck, fake); return mount(el, ctx); };
-  // the transport, held still
-  const e = o.engine;
-  Object.defineProperty(e, 'beat', { get: () => F.beat, configurable: true });
-  Object.defineProperty(e, 'playing', { get: () => F.playing, configurable: true });
-  e.play = (from) => { F.plays.push(from ?? null); F.playing = true; F.beat = from || 0; };
-  e.stop = () => { F.playing = false; };
-  const r = o.store.dispatch(planPlace(o.store.get(), { place: 'metal', setup }).ops, { by: 'you', label: 'Into the metal club', reason: 'room:place' });
+  deck.take = (a = {}) => { window.__lr.takes.push(JSON.parse(JSON.stringify(a))); return take(a); };
+  deck.stop = (a = {}) => { window.__lr.stops.push(JSON.parse(JSON.stringify(a))); return stop(a); };
+  window.__lr.fileT0 = fileT0;
   o.liveRoom.open({ screen: 'stage' });
   return r.ok;
 };
@@ -97,10 +83,11 @@ const READ = () => {
     dim: st?.dataset.run || null,
     line: document.querySelector('.lr-tb-line')?.textContent || '',
     by: document.querySelector('.lr-tb-by .by')?.textContent || null,
-    tempo: p.tempo,
+    tempo: p.tempo, beat: o.engine.beat, playing: o.engine.playing,
     sections: p.sections.slice().sort((a, b) => a.start - b.start).map((s) => [s.name, s.start, s.length]),
     cards: [...document.querySelectorAll('.lr-cards > [data-card]')].map((c) => c.querySelector('.lr-card-name')?.textContent || c.textContent.trim()),
-    calls: window.__lrFake.calls.map(([k, a]) => [k, a ? JSON.parse(JSON.stringify(a)) : null]),
+    counts: window.__lr.counts.map((x) => ({ ...x })), takes: window.__lr.takes.slice(), stops: window.__lr.stops.slice(), said: window.__lr.said.slice(),
+    state: window.__lr.stageState(),
   };
 };
 
@@ -126,67 +113,95 @@ export async function run(T, ctx) {
     T.ok(!bad.length, `the stop: in a bar's first beat the line just gone, later the next; at the blues bar whole choruses; never before the first bar is whole${bad.length ? ': wrong at ' + json(bad) : ''}`);
     T.ok(offered({ place: 'metal', cards: [], parts: [] }, 'take')?.id === 'take' && offered({ place: 'metal', cards: [], parts: [] }, 'play')?.id === 'stop' && offered({ place: null }, 'idle') === null,
       'the offered move: during a pass That’s a take, during playback Stop, and nothing on the door');
+    // two left takes within the pair rule: Use take 1 as the right side, before the other side
+    const two = { place: 'metal', cards: [{ id: 's1', name: 'Chorus', takes: { L: ['a', 'b'], R: [], lead: [] }, part: {} }], parts: [{ id: 's1', name: 'Chorus', takes: { L: ['a', 'b'], R: [], lead: [] }, part: {} }] };
+    const u2 = offered(two, { run: 'idle', last: 's1', use2: { card: 's1', take: 1 } });
+    T.ok(u2?.id === 'use2' && u2.label === 'Use take 1 as the right side' && offered(two, { run: 'idle', last: 's1' })?.id === 'other', `two left takes within the pair rule offer "${u2?.label}" ahead of the other side`);
   }
 
   if (!ctx.pages) return;
   /* ---------------------------------------------------------------------------------------- §11.6, muted Chromium */
-  const s = await openRoom('/app/?room', { name: 'stage' });
+  const fk = stageFake();
+  const parts = fk.timeline.parts.map((x) => x.at);
+  const s = await openRoom('/app/?room', { fake: fk, name: 'stage' });
   const { page, E } = s;
   const settle = (ms = 60) => page.evaluate((ms) => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), ms)), ms);
+  const waitFor = (fn, arg, ms = 60000) => page.waitForFunction(fn, arg, { timeout: ms, polling: 20 });
+  // (the transport at a song beat; the room idle, the recorder too; History's newest step a learning)
+  const toBeat = (b) => waitFor((b) => window.overdub.engine.playing && window.overdub.engine.beat >= b, b, 120000);
+  const idle = () => waitFor(() => window.overdub.ui.state.liveRoom.run === 'idle' && window.overdub.input.recorder.state === 'idle', null, 60000);
+  const learned = (sec) => waitFor((sec) => window.overdub.store.history.at(-1)?.reason === `room:learn:${sec}` && window.overdub.ui.state.liveRoom.run === 'idle', sec, 60000);
+  const labelled = (label) => waitFor((label) => window.overdub.store.history.some((x) => x.label === label), label, 90000).catch(async (e) => {
+    const said = await E(() => [...window.__lr.said.slice(-4), ...window.overdub.store.get().tracks.filter((t) => /Guitar/.test(t.name)).map((t) => `${t.name}: ${t.clips.map((c) => `${c.id}@${c.start}+${c.length}${c.mute ? 'M' : ''} take ${c.take}`).join(', ')}`)]);
+    throw new Error(`no step "${label}": History ${(await history(page)).map((x) => `${x.label} (${x.by})`).join(', ')}; said ${said.join(' / ')}; ${String(e.message).split('\n')[0]}`);
+  });
+  const queue = (i) => E((i) => window.__lr.queue.push(i), i);
+  const pedal = () => E(() => { window.overdub.input.emit('expr', { src: 'midi', sustain: true }); window.overdub.input.emit('expr', { src: 'midi', sustain: false }); });
+  const saidSince = (r0, r1) => r1.said.slice(r0.said.length);
+  const any = (lines, re) => lines.find((x) => re.test(x)) || null;
+  // (a count lined up with its part: its first beat still ahead of the audio clock when the deck was asked)
+  const lined = (c) => c && c.at != null && c.at > c.now + 0.02;
   try {
-    const placed = await E(INSTALL, SETUP);
-    await settle(200);
+    const placed = await E(INSTALL, { parts });
+    await settle(300);
     let r = await E(READ);
-    T.ok(placed && r.screen === 'stage' && r.primary === 'Count me in' && /The drummer’s at 132/.test(r.line), `the stage on a metal song: Count me in, and the drummer's tempo said (${r.primary}; "${r.line}")`); // needs B (setupOf's tracks)
+    const tracks = await E(() => window.overdub.store.get().tracks.map((t) => `${t.name}:${t.by}`));
+    T.ok(placed && r.screen === 'stage' && r.primary === 'Count me in' && any(r.said, /The drummer’s at 132/) && json(tracks) === json(['Guitar L:you', 'Guitar R:you', 'Drums:overdub', 'Bass:overdub', 'Riff (as heard):overdub']),
+      `the stage on a metal song (planPlace by you): Count me in, the drummer's tempo said, the tracks and who made them (${tracks.join(', ')})`);
     await s.shot('liveroom/stage-1440');
 
     // keys: every key of §3.17 declared through ui.keys.add, in the group 'Live room', with a when
     const keys = await E(() => window.overdub.ui.keys.list().filter((k) => k.group === 'Live room' && k.label !== 'Held while the live room is open').map((k) => ({ s: `${k.mod ? k.mod + '+' : ''}${k.key}`, when: typeof k.when === 'function' })));
     const missing = STAGE_KEYS.filter((k) => !keys.some((x) => x.s === k && x.when));
     T.ok(!missing.length, `every key of §3.17 is declared with ui.keys.add, in the group 'Live room', with the room's when (${STAGE_KEYS.length} keys)${missing.length ? '; missing: ' + missing.join(' ') : ''}`);
-    // under the room the studio's single keys do nothing
     const left0 = await E(() => window.overdub.ui.isOpen('left'));
     await press(page, 'KeyB');
     T.ok((await E(() => window.overdub.ui.isOpen('left'))) === left0, 'on the stage the studio’s single keys are held (B left the browser pane as it was)');
 
     // the tempo before the first take: ← → 2 BPM, ⇧ 10
+    let r0 = await E(READ);
     await press(page, 'ArrowRight');
     await press(page, 'Shift+ArrowRight');
     const t1 = (await E(READ)).tempo;
     await press(page, 'Shift+ArrowLeft');
     await press(page, 'ArrowLeft');
     r = await E(READ);
-    T.ok(t1 === 144 && r.tempo === 132 && /The drummer’s at 132/.test(r.line), `before the first take ← → move the tempo 2 BPM and ⇧ 10 (132 → ${t1} → ${r.tempo}), said each time`);
+    T.ok(t1 === 144 && r.tempo === 132 && /The drummer’s at 132/.test(saidSince(r0, r).at(-1) || ''), `before the first take ← → move the tempo 2 BPM and ⇧ 10 (132 → ${t1} → ${r.tempo}), said each time`);
 
-    // Space: counted in, the take from beat 0 on Guitar L, the rest of the stage dimmed
+    // Space: counted in (a bar of sticks, lined up with the fake's verse), the take from beat 0 on Guitar L
+    await queue(0);
     await press(page, 'Space');
     await settle();
     r = await E(READ);
     const gL = await E(() => window.overdub.store.get().tracks.find((t) => t.name === 'Guitar L')?.id);
     const gR = await E(() => window.overdub.store.get().tracks.find((t) => t.name === 'Guitar R')?.id);
-    const tk = r.calls.find((c) => c[0] === 'take')?.[1], ci = r.calls.find((c) => c[0] === 'countIn')?.[1];
-    T.ok(ci?.from === 0 && tk?.track === gL && tk?.from === 0 && !tk?.punch && r.run === 'take' && r.primary === 'That’s a take' && r.dim === 'take',
-      `Space counts in (countIn from ${ci?.from}, ${ci?.bars} bar of ${ci?.voice}) and the take starts on Guitar L at beat 0; the primary reads ${r.primary}, the rest dims (${r.dim})`); // needs A (the deck)
-    // That's a take, pressed half a beat into bar 9: the part is 8 bars
-    await E(() => { window.__lrFake.beat = 32.5; });
+    let ci = r.counts.at(-1), tk = r.takes.at(-1);
+    T.ok(ci?.from === 0 && ci?.bars === 1 && ci?.voice === 'sticks' && lined(ci) && tk?.track === gL && tk?.from === 0 && !tk?.punch && (r.run === 'count' || r.run === 'take') && r.primary === 'That’s a take' && r.dim === 'take',
+      `Space counts in (the deck's countIn from ${ci?.from}, ${ci?.bars} bar of ${ci?.voice}, its first stick ${ci ? (ci.at - ci.now).toFixed(2) : '-'} s ahead) and the take starts on Guitar L at beat 0; the primary reads ${r.primary}, the rest dims (${r.dim})`);
+    // That's a take, pressed half a beat into bar 9: the part is 8 bars, the band learns it
+    await toBeat(32.45);
     await press(page, 'Space');
-    await settle();
-    r = await E(READ);
+    await labelled('Verse take 1');
     let h = await history(page);
-    const stop = r.calls.find((c) => c[0] === 'stop')?.[1];
-    const verse = h.at(-1);
-    T.ok(stop?.to === 32 && stop?.at === 'bar' && json(r.sections) === json([['Verse', 0, 32], ['End', 32, 4]]) && verse.label === 'Verse take 1' && verse.by === 'you' && /^room:take:/.test(verse.reason) && verse.ops.includes('clip.add') && verse.ops.includes('section.add'),
-      `That's a take half a beat into bar 9 ends on bar 9's line: one step by you, "${verse.label}" (${verse.reason}), the take and its part and the End together (${json(r.sections)})`);
-    T.ok(/^Verse is in: 8 bars at 132/.test(r.line) && r.cards[0]?.startsWith('Verse') && r.primary === 'The other side', `the verse lands: "${r.line}", a card, and the offered move is The other side (${r.primary})`);
-    // the band learns it: the house's step after the take // needs B (planLearn)
-    const learn = (sec, part) => E(({ sec, part }) => {
-      const o = window.overdub, p = o.store.get(), d = p.tracks.find((t) => t.name === 'Drums'), s0 = p.sections.find((x) => x.id === sec);
-      return o.store.dispatch([{ type: 'clip.add', track: d.id, clip: { kind: 'notes', start: s0.start, length: s0.length, notes: [{ p: 36, t: 0, d: 0.25, v: 0.9 }] } }], { by: 'overdub', label: `The band learned the ${part}`, reason: `room:learn:${sec}` }).ok;
-    }, { sec, part });
-    const vsec = verse.reason.slice('room:take:'.length);
-    await learn(vsec, 'verse');
-    const n0 = (await history(page)).length;
+    const verse = h.find((x) => x.label === 'Verse take 1'), vsec = verse.reason.slice('room:take:'.length);
+    await learned(vsec);
+    r = await E(READ);
+    h = await history(page);
+    const stop = r.stops.at(-1), vlearn = h.at(-1);
+    T.ok(stop?.at === 'bar' && json(r.sections) === json([['Verse', 0, 32], ['End', 32, 4]]) && verse.by === 'you' && /^room:take:/.test(verse.reason) && verse.ops.includes('asset.add') && verse.ops.includes('clip.add') && verse.ops.includes('section.add'),
+      `That's a take half a beat into bar 9 ends on bar 9's line: one step by you, "${verse.label}" (${verse.reason}), the recording, its part and the End together (${json(r.sections)})`);
+    T.ok(vlearn.by === 'overdub' && vlearn.label === 'The band learned the verse' && any(r.said, /^Verse is in: 8 bars at 132/) && any(r.said, /^They’ve got it/) && r.cards[0]?.startsWith('Verse') && r.primary === 'The other side',
+      `the verse lands ("${any(r.said, /^Verse is in/)}"), the band learns it ("${vlearn.label}", by the house: "${any(r.said, /^They’ve got it|^The kick keeps/)}"), and the offered move is The other side (${r.primary})`);
+    // the kick on the fake riff's chugs: each kick near a chug within 15 ms of it
+    const kicks = await E((vsec) => { const p = window.overdub.store.get(), sec = p.sections.find((x) => x.id === vsec), d = p.tracks.find((t) => t.name === 'Drums'); const spb = 60 / p.tempo; return d.clips.filter((c) => !c.mute && c.start < sec.start + sec.length && c.start + c.length > sec.start).flatMap((c) => c.notes.filter((n) => n.p === 35 || n.p === 36).map((n) => (c.start + n.t) * spb)); }, vsec);
+    const chugs = fk.timeline.parts[0].notes.filter((n) => n.d < 0.25).map((n) => n.t - parts[0]);
+    const near = kicks.map((k) => chugs.reduce((m, c) => (Math.abs(c - k) < Math.abs(m) ? c - k : m), Infinity)).filter((x) => Math.abs(x) < 0.06);
+    const worst = Math.max(0, ...near.map((x) => Math.abs(x) * 1000));
+    const med = near.map((x) => x * 1000).sort((a, b) => a - b)[near.length >> 1];
+    T.ok(near.length >= chugs.length * 0.8 && worst <= 15, `the kick on the chugs: ${near.length} kicks on the verse's ${chugs.length} palm-muted chugs, the furthest ${worst.toFixed(1)} ms from its chug (15 or under; median ${med?.toFixed(1)} ms, chug minus kick)`);
+
     // ⌘Z in the room: the take and its learning in one press, said; ⇧⌘Z both back
+    const n0 = h.length;
     await press(page, 'Meta+KeyZ');
     await settle();
     r = await E(READ);
@@ -198,42 +213,61 @@ export async function run(T, ctx) {
     h = await history(page);
     T.ok(h.length === n0 && h.at(-1).reason === `room:learn:${vsec}` && h.at(-2).label === 'Verse take 1' && /^Back in: verse take 1/.test(r.line), `⇧⌘Z redoes the pair, each with its reason (${h.slice(-2).map((x) => x.label).join(', ')}): "${r.line}"`);
 
-    // PageDown (a page-turner pedal): the other side, on Guitar R over the verse's bars, ending itself
+    // PageDown (a page-turner pedal): the other side, set up by the house, played on Guitar R over the verse's bars
+    await queue(1);
+    r0 = await E(READ);
     await press(page, 'PageDown');
     await settle();
     r = await E(READ);
-    const tkR = r.calls.filter((c) => c[0] === 'take').at(-1)?.[1];
-    T.ok(tkR?.track === gR && json(tkR?.punch) === json({ from: 0, to: 32 }), `PageDown is the offered move: the other side, on Guitar R over bars 1-8 (${json(tkR?.punch)})`); // needs B (planDouble)
-    await E(() => window.__lrFake.finish());
-    await settle();
+    ci = r.counts.at(-1); tk = r.takes.at(-1);
     h = await history(page);
-    T.ok(h.at(-1).label === 'Verse, the other side' && h.at(-1).by === 'you', `the right side lands as one step by you: "${h.at(-1).label}"`);
-    // a sustain pedal (the input layer's expr event) is Space: Next part, then That's a take
-    r = await E(READ);
-    T.ok(r.primary === 'Next part', `with both sides in, the offered move is Next part (${r.primary})`);
-    await E(() => { window.overdub.input.emit('expr', { src: 'midi', sustain: true }); window.overdub.input.emit('expr', { src: 'midi', sustain: false }); });
-    await settle();
-    r = await E(READ);
-    const ciN = r.calls.filter((c) => c[0] === 'countIn').at(-1)?.[1], tkN = r.calls.filter((c) => c[0] === 'take').at(-1)?.[1];
-    T.ok(ciN?.from === 32 && ciN?.bars === 2 && ciN?.voice === 'none' && tkN?.from === 32 && tkN?.track === gL && r.run === 'take', `a sustain-pedal press is Space: the next part from beat 32, two bars of the verse before it as its pre-roll (countIn into ${ciN?.from}, ${ciN?.bars} bars of ${ciN?.voice})`); // needs A (countIn's from is the downbeat)
-    await E(() => { window.__lrFake.beat = 64.4; window.overdub.input.emit('expr', { src: 'midi', sustain: true }); window.overdub.input.emit('expr', { src: 'midi', sustain: false }); });
-    await settle();
+    T.ok(tk?.track === gR && json(tk?.punch) === json({ from: 0, to: 32 }) && ci?.bars === 1 && lined(ci) && h.at(-1).label === 'The other side’s set up' && h.at(-1).by === 'overdub' && any(saidSince(r0, r), /^Now the other side/),
+      `PageDown is the offered move: the other side set up by the house ("${h.at(-1).label}"), then played on Guitar R over bars 1-8 (${json(tk?.punch)}), counted in again`);
+    await labelled('Verse, the other side');
+    await waitFor(() => window.__lr.stageState()?.wide, null, 30000);
     r = await E(READ);
     h = await history(page);
-    const chorus = h.at(-1), csec = chorus.reason.slice('room:take:'.length);
-    T.ok(chorus.label === 'Chorus take 1' && json(r.sections) === json([['Verse', 0, 32], ['Chorus', 32, 32], ['End', 64, 4]]) && /^Chorus is in/.test(r.line), `…and the pedal again ends it: "${chorus.label}", the End after it (${json(r.sections)}); "${r.line}"`);
-    await learn(csec, 'chorus');
-    // Again on the chorus, an agent's edit, then the learning: ⌘Z undoes the learning alone
+    const side = h.find((x) => x.label === 'Verse, the other side');
+    const sideLine = any(saidSince(r0, r), /^Right side is in on the verse/);
+    const plays = await s.plays();
+    T.ok(side.by === 'you' && side.ops.includes('auto.write') && sideLine && r.run === 'play' && r.state.wide?.to === 32 && plays.at(-1)?.from === 0,
+      `the right side lands as one step by you with the guitars' pan lane ("${side.label}"), measured against the left: "${sideLine}"; then the verse plays back once, wide (from ${plays.at(-1)?.from} to ${r.state.wide?.to})`);
+    // a sustain pedal (the input layer's expr event) is Space: it stops the playback and does Next part
+    await queue(2);
+    await pedal();
+    await settle();
+    r = await E(READ);
+    ci = r.counts.at(-1); tk = r.takes.at(-1);
+    T.ok(!r.state.wide && ci?.from === 32 && ci?.bars === 2 && ci?.voice === 'none' && lined(ci) && tk?.from === 32 && tk?.track === gL && (r.run === 'take' || r.run === 'count'),
+      `a sustain-pedal press stops the wide playback and is Next part: from beat 32, two bars of the verse before it as its pre-roll (countIn into ${ci?.from}, ${ci?.bars} bars of ${ci?.voice})`);
+    await toBeat(64.4);
+    await pedal();
+    await labelled('Chorus take 1');
+    h = await history(page);
+    const chorus = h.find((x) => x.label === 'Chorus take 1'), csec = chorus.reason.slice('room:take:'.length);
+    await learned(csec);
+    r = await E(READ);
+    T.ok(json(r.sections) === json([['Verse', 0, 32], ['Chorus', 32, 32], ['End', 64, 4]]) && any(r.said, /^Chorus is in/), `…and the pedal again ends it: "${chorus.label}", the End after it (${json(r.sections)}); "${any(r.said, /^Chorus is in/)}"`);
+
+    // Again on the chorus, an agent's edit landing before the band's learning: ⌘Z undoes the learning alone
+    await E(async () => {
+      const o = window.overdub, { createDeck } = await import('/app/src/ui/liveroom/deck.js'), deck = createDeck(o);
+      const off = deck.on('take', () => { off(); const d = o.store.get().tracks.find((t) => t.name === 'Bass'); o.store.dispatch({ type: 'track.set', track: d.id, patch: { gain: -9 } }, { by: 'mcp:test', label: 'bass down' }); });
+    });
+    await queue(3);
+    r0 = await E(READ);
     await press(page, 'KeyR');
     await settle();
     r = await E(READ);
-    const ciA = r.calls.filter((c) => c[0] === 'countIn').at(-1)?.[1], tkA = r.calls.filter((c) => c[0] === 'take').at(-1)?.[1];
-    T.ok(ciA?.from === 32 && ciA?.bars === 1 && ciA?.voice === 'none' && json(tkA?.punch) === json({ from: 32, to: 64 }) && tkA?.track === gL,
-      `R is Again on the chorus: a bar of the verse as its pre-roll into beat ${ciA?.from}, the take ending itself at the chorus's end (${json(tkA?.punch)})`); // needs A
-    await E(() => window.__lrFake.finish());
-    await settle();
-    await E(() => { const o = window.overdub, d = o.store.get().tracks.find((t) => t.name === 'Bass'); o.store.dispatch({ type: 'track.set', track: d.id, patch: { gain: -9 } }, { by: 'mcp:test', label: 'bass down' }); });
-    await learn(csec, 'chorus');
+    ci = r.counts.at(-1); tk = r.takes.at(-1);
+    T.ok(ci?.from === 32 && ci?.bars === 1 && ci?.voice === 'none' && lined(ci) && json(tk?.punch) === json({ from: 32, to: 64 }) && tk?.track === gL,
+      `R is Again on the chorus: a bar of the verse as its pre-roll into beat ${ci?.from}, the take ending itself at the chorus's end (${json(tk?.punch)})`);
+    await labelled('Chorus take 2');
+    await learned(csec);
+    await waitFor(() => window.__lr.stageState()?.use2, null, 15000).catch(() => null);
+    r = await E(READ);
+    const use2 = any(saidSince(r0, r), /^You played the chorus twice/);
+    T.ok(use2 && r.primary === `Use take ${r.state.use2?.take} as the right side` && r.state.use2?.take === 1, `two takes of the chorus within the pair rule: "${use2}", and the primary reads ${r.primary}`);
     const n1 = (await history(page)).length;
     await press(page, 'Meta+KeyZ');
     await settle();
@@ -242,38 +276,47 @@ export async function run(T, ctx) {
     T.ok(h.length === n1 - 1 && h.at(-1).by === 'mcp:test' && h.at(-2).label === 'Chorus take 2' && /^Undone: what the band learned on the chorus/.test(r.line),
       `with an agent's edit between the take and the learning, ⌘Z undoes the learning alone: "${r.line}" (the take and the agent's edit stay)`);
     // ↑ ↓: which take plays in the chorus, one step by you
-    const playingC = () => E(() => { const o = window.overdub, t = o.store.get().tracks.find((x) => x.name === 'Guitar L'); return t.clips.filter((c) => !c.mute && c.start + c.length > 33 && c.start < 63).map((c) => c.name); });
+    const playingC = () => E(() => { const o = window.overdub, t = o.store.get().tracks.find((x) => x.name === 'Guitar L'); return t.clips.filter((c) => !c.mute && c.start + c.length > 33 && c.start < 63).map((c) => c.id); });
+    const takesC = await E(() => { const o = window.overdub, p = o.store.get(), keys = Object.keys(p.assets), t = p.tracks.find((x) => x.name === 'Guitar L'); return t.clips.filter((c) => c.start + c.length > 33 && c.start < 63 && c.length > 16).sort((a, b) => keys.indexOf(a.asset) - keys.indexOf(b.asset)).map((c) => c.id); });
     const before = await playingC();
     await press(page, 'ArrowUp');
     await settle();
     const after = await playingC();
     r = await E(READ);
-    T.ok(json(before) === json(['Take 4']) && json(after) === json(['Take 3']) && /^Take 1 plays on the chorus/.test(r.line), `↑ on the chorus plays its first take there (${before} → ${after}): "${r.line}"`);
+    T.ok(json(before) === json([takesC[1]]) && json(after) === json([takesC[0]]) && /^Take 1 plays on the chorus/.test(r.line), `↑ on the chorus plays its first take there (${before} → ${after}): "${r.line}"`);
     await press(page, 'ArrowDown');
     await settle();
-    T.ok(json(await playingC()) === json(['Take 4']), '↓ puts the second back');
+    T.ok(json(await playingC()) === json([takesC[1]]), '↓ puts the second back');
 
     // Esc during a pass: Not that one, nothing in History; ⇧R keeps it after all
     const n2 = (await history(page)).length;
+    await queue(4);
+    r0 = await E(READ);
     await press(page, 'KeyR');
-    await settle();
+    await toBeat(63);
     await press(page, 'Escape');
-    await settle();
+    await idle();
     r = await E(READ);
-    const capt = r.calls.filter((c) => c[0] === 'stop').at(-1)?.[1];
-    T.ok((await history(page)).length === n2 && capt?.keep === 'capture' && capt?.at === 'now' && r.run === 'idle' && /^Not that one/.test(r.line), `Esc during a pass stops at once into Capture, nothing in History: "${r.line}"`); // needs A
+    const capt = r.stops.at(-1);
+    T.ok((await history(page)).length === n2 && capt?.keep === 'capture' && capt?.at === 'now' && r.run === 'idle' && any(saidSince(r0, r), /^Not that one/), `Esc during a pass stops at once into Capture, nothing in History: "${any(saidSince(r0, r), /^Not that one/)}"`);
     await press(page, 'Shift+KeyR');
-    await settle();
+    await labelled('Chorus take 3');
+    await learned(csec);
     h = await history(page);
-    T.ok(h.length === n2 + 1 && h.at(-1).label === 'Chorus take 3', `⇧R puts it in after all: "${h.at(-1).label}"`);
+    T.ok(h.some((x) => x.label === 'Chorus take 3' && x.by === 'you'), '⇧R puts it in after all: "Chorus take 3", by you, and the band learns it');
 
-    // the other side on the chorus, then Lay it out: offered once, by the house, ⌘Z back
-    await press(page, 'PageDown');
-    await settle();
-    await E(() => window.__lrFake.finish());
-    await settle();
+    // the other side on the chorus; its wide playback moved on; then Lay it out, offered once, by the house, ⌘Z back
+    await queue(5);
+    await press(page, 'Space');
+    await labelled('Chorus, the other side');
+    await waitFor(() => window.__lr.stageState()?.wide, null, 30000);
+    const wide = await E(() => window.__lr.stageState().wide);
+    await E((to) => window.overdub.engine.seek(to - 1), wide.to);
+    await waitFor(() => !window.__lr.stageState()?.wide && window.overdub.ui.state.liveRoom.run === 'idle', null, 30000);
+    await settle(150);
     r = await E(READ);
-    T.ok(r.primary === 'Lay it out' && /lay them out as a song\? Intro, verse, chorus, verse, chorus, breakdown, chorus ×2, end: 61 bars, 1:51/.test(r.line), `two parts in, Lay it out is offered: "${r.line}"`);
+    const offerLine = any(r.said, /lay them out as a song\?/);
+    T.ok(wide.to === 64 && r.primary === 'Lay it out' && /Intro, verse, chorus, verse, chorus, breakdown, chorus ×2, end: 61 bars, 1:51/.test(offerLine || ''), `the chorus's other side plays back wide to beat ${wide.to}, then Lay it out is offered: "${offerLine}"`);
     const pre = await E(() => JSON.stringify(window.overdub.store.get().sections));
     await press(page, 'Space');
     await settle();
@@ -289,21 +332,50 @@ export async function run(T, ctx) {
     await settle();
     await s.shot('liveroom/stage-laidout');
 
-    // Hear it all: from the top, the end said with the empty part's name
+    // Hear it all: from the top (moved on to its last second), the end said with the empty part's name
+    const sendHidden0 = await E(() => document.querySelector('.lr-send')?.hidden);
     await press(page, 'Space');
     await settle();
     r = await E(READ);
-    const plays = await E(() => window.__lrFake.plays.slice());
-    T.ok(r.run === 'play' && plays.at(-1) === 0 && r.primary === 'Stop', `Hear it all plays from the top (${plays.at(-1)}), and Space is Stop`);
-    await E(() => { window.__lrFake.beat = 999; });
+    const playsH = await s.plays();
+    T.ok(r.run === 'play' && playsH.at(-1)?.from === 0 && r.primary === 'Stop' && sendHidden0 === true, `Hear it all plays from the top (${playsH.at(-1)?.from}), and Space is Stop; Send isn't offered before it (hidden: ${sendHidden0})`);
+    r0 = r;
+    await E(() => window.overdub.engine.seek(window.overdub.engine.songEnd() - 1.5));
+    await waitFor(() => window.overdub.ui.state.liveRoom.run === 'idle', null, 30000);
     await settle(100);
     r = await E(READ);
-    T.ok(r.run === 'idle' && /^That’s 1:51 top to bottom\. The breakdown’s still empty/.test(r.line), `at the end: "${r.line}"`);
+    const endLine = any(saidSince(r0, r), /top to bottom/);
+    T.ok(/^That’s 1:51 top to bottom\. The breakdown’s still empty/.test(endLine || '') && r.state.heard, `at the end: "${endLine}"`);
 
-    // the menu: every item one step by you, undone exactly (Simpler and Louder as part data until B's band) // needs B (planFeel)
+    // the finish: three chips once heard, the place's default on; each one's loudness measured on this song; a chip
+    // previews level-matched (the master trimmed by the difference); choosing one is a step by you, said with the
+    // measured difference; Send in the header
+    await waitFor(() => window.__lr.said.some((x) => /^Hear it with a finish\?/.test(x)), null, 10000).catch(() => null);
+    const fin0 = await E(() => ({ chips: [...document.querySelectorAll('.lr-finishes:not([hidden]) .lr-chip')].map((b) => `${b.textContent}${b.getAttribute('aria-pressed') === 'true' ? '*' : ''}`), send: !document.querySelector('.lr-send')?.hidden, line: window.__lr.said.find((x) => /^Hear it with a finish\?/.test(x)) || null }));
+    T.ok(json(fin0.chips) === json(['Tight*', 'Loud', 'Room']) && fin0.send && fin0.line === 'Hear it with a finish? Tight is on. Loud and Room are a press away.', `after the first time through: "${fin0.line}", the chips ${fin0.chips.join(' · ')}, and Send in the header (${fin0.send})`);
+    await waitFor(() => { const f = window.__lr.stageState()?.finishes?.lufs; return f && ['tight', 'loud', 'room'].every((k) => Number.isFinite(f[k])); }, null, 180000);
+    const L = (await E(() => window.__lr.stageState().finishes.lufs));
+    const g0 = await E(() => window.overdub.store.get().master.gain || 0);
+    await page.hover('.lr-chip[data-finish="loud"]');
+    await settle(150);
+    const pv = await E(() => ({ gain: window.overdub.store.get().master.gain || 0, hist: window.overdub.store.history.length, run: window.overdub.ui.state.liveRoom.run, limiter: window.overdub.store.get().master.inserts.find((x) => x.device === 'core.limiter')?.params?.gain }));
+    const nH = (await history(page)).length;
+    await page.click('.lr-chip[data-finish="loud"]');
+    await settle(150);
+    h = await history(page);
+    r = await E(READ);
+    const chosen = r.said.filter((x) => /^Loud/.test(x)).at(-1) || '';
+    const db = L.loud - L.tight;
+    T.ok(L.loud - L.tight >= 1 && Math.abs(pv.gain - (g0 - db)) < 0.02 && pv.hist === nH && pv.run === 'play' && pv.limiter === 14,
+      `measured on this song: Tight ${L.tight}, Loud ${L.loud}, Room ${L.room} LUFS; Loud focused plays it with the master ${(pv.gain - g0).toFixed(2)} dB (level-matched), nothing in History`);
+    T.ok(h.length === nH + 1 && h.at(-1).by === 'you' && h.at(-1).reason === 'room:finish' && chosen === `Loud: the same mix, pushed. About ${Math.round(db)} dB louder than Tight.` && (await E(() => window.overdub.store.get().room.finish)) === 'loud',
+      `choosing Loud is one step by you ("${h.at(-1).label}"): "${chosen}"`);
+    await press(page, 'Escape');
+    await settle();
+    // the menu: every item one step by you, undone exactly
     const songNow = () => E(() => { const p = JSON.parse(JSON.stringify(window.overdub.store.get())); delete p.meta.modified; delete p.meta.authors; return JSON.stringify(p); });
     const pick = (name) => E((name) => { const o = window.overdub, sec = o.store.get().sections.find((x) => x.name === name); o.ui.state.liveRoom.card = sec.id; return sec.id; }, name);
-    const items = [['simpler'], ['louder'], ['twice', (x) => /×2$/.test(x.label)], ['loop'], ['name:Pre-chorus'], ['earlier'], ['later'], ['shorter:4'], ['remove']];
+    const items = [['feel'], ['simpler'], ['louder'], ['twice'], ['loop'], ['name:Pre-chorus'], ['earlier'], ['later'], ['shorter:4'], ['remove'], ['bassYours']];
     const menuBad = [];
     for (const [id] of items) {
       await pick('Chorus 2');
@@ -369,18 +441,32 @@ export async function run(T, ctx) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await settle(100);
 
-    // reduced motion: the scene holds still
+    // reduced motion: the scene holds still (the stage's own view, the input moving and the kick on: the same pixels
+    // 600 ms apart, the lamps and meters still following their signals, which are held here)
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await settle(100);
     const still = await E(async () => {
-      const cv = document.querySelector('.lr-stage .lr-scene'), g = cv.getContext('2d');
-      const sum = () => { const d = g.getImageData(0, 0, cv.width, cv.height).data; let x = 0; for (let i = 0; i < d.length; i += 7) x = (x * 31 + d[i]) >>> 0; return x; };
+      const { W, H, sceneOf } = await import('/app/src/ui/liveroom/pixels/index.js');
+      const o = window.overdub;
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const { readRoom } = await import('/app/src/core/liveroom/session.js');
+      const v = { ...readRoom(o.store.get()), reduced, beat: 5.5, run: 'take', live: { input: 0.6, L: 0.5, kick: 1, snare: 0.4, master: [0.5, 0.5] } };
+      const cv = new OffscreenCanvas(W, H), g = cv.getContext('2d'), scene = sceneOf('metal');
+      const sum = () => { const d = g.getImageData(0, 0, W, H).data; let x = 0; for (let i = 0; i < d.length; i += 7) x = (x * 31 + d[i]) >>> 0; return x; };
+      scene.draw(g, { ...v, now: 1000 }, 1000);
       const a = sum();
       await new Promise((r) => setTimeout(r, 600));
-      return a === sum();
+      scene.draw(g, { ...v, now: 1600 }, 1600);
+      return reduced && a === sum();
     });
-    T.ok(still, 'under reduced motion the scene doesn’t move between frames');
+    T.ok(still, 'under reduced motion the scene doesn’t move between frames (the same view drawn 600 ms apart gives the same pixels)');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+    // Send: from the header, once heard top to bottom
+    await page.click('.lr-send');
+    await settle(200);
+    const sent = await E(() => ({ screen: window.overdub.ui.state.liveRoom.screen, up: !!document.querySelector('.lr-screen[data-screen="send"]') }));
+    T.ok(sent.screen === 'send' && sent.up, `Send in the header opens the send screen (${sent.screen})`);
 
     const errs = s.errors.filter((e) => !ignorable(e));
     T.ok(!errs.length, `no page errors on the stage${errs.length ? ': ' + errs.slice(0, 3).join(' | ').slice(0, 400) : ''}`);

@@ -338,9 +338,11 @@ export function takeOps(take, { part = null } = {}) {
   // the label: which take of the part this is, on its side
   const role = Object.entries(readRoom(p).roles).find(([, tid]) => tid === take.track)?.[0] || '';
   const sec = { start: from, length: to - from };
-  // (the takes of this part: the clips that start in it or cover most of it, the ring of the one before aside)
+  // (the takes of this part: the clips that start in it or cover most of it, the ring of the one before aside, and
+  // the piece of that ring the recorder's take folder keeps muted under this one: a muted clip shorter than half the
+  // part is a piece, not a take, as session.js readRoom has it)
   const ov = (c) => Math.min(c.start + c.length, sec.start + sec.length) - Math.max(c.start, sec.start);
-  const n = t ? new Set(t.clips.filter((c) => ov(c) > 0.25 && (c.start >= sec.start - 0.5 || ov(c) > sec.length / 2)).map((c) => c.take || c.id)).size : 1;
+  const n = t ? t.clips.filter((c) => c.kind === 'audio' && ov(c) > 0.25 && (c.start >= sec.start - 0.5 || ov(c) > sec.length / 2) && !(c.mute && c.length < sec.length / 2)).length : 1;
   const label = role === 'guitarR' ? `${name}, the other side${n > 1 ? ` (take ${n})` : ''}` : `${name} take ${Math.max(1, n)}`;
   return { ops, label, reason: `room:take:${id}`, section: id };
 }

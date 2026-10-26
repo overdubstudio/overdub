@@ -149,6 +149,8 @@ export default function installLiveRoom(app) {
       h('header.lr-top',
         h('span.lr-brand.disp-s', 'Overdub'), whereEl, h('span.lr-gap'),
         h('button.btn.btn-txt.lr-shelf', { type: 'button', onclick: () => press('shelf') }, 'Shelf'),
+        // (Send: the stage shows it once the song's been heard top to bottom, never after a first take alone, §3.14)
+        h('button.btn.btn-txt.lr-send', { type: 'button', hidden: true, onclick: () => press('send') }, 'Send'),
         h('button.btn.btn-txt.lr-glass', { type: 'button', onclick: () => close() }, 'Control room →')),
       body, talkback.el);
     el.__lrTalkback = talkback;
@@ -165,6 +167,8 @@ export default function installLiveRoom(app) {
   function go(id) {
     const def = screens.get(id) || screens.get('door');
     unmountScreen();
+    const send = el?.querySelector('.lr-send');
+    if (send) send.hidden = true;
     const box = h('div.lr-screen', { dataset: { screen: def ? def.id : id } });
     body.append(box);
     L.screen = def ? def.id : id;
@@ -246,6 +250,7 @@ export default function installLiveRoom(app) {
     if (r == null || r === false) {
       if (id === 'glass') r = L.open ? (close(), { ok: true }) : (open(), { ok: true });
       else if (id === 'shelf' && L.open && screens.has('shelf')) r = (open({ screen: 'shelf' }), { ok: true });
+      else if (id === 'send' && L.open && screens.has('send') && !el?.querySelector('.lr-send')?.hidden) r = (open({ screen: 'send' }), { ok: true });
       else r = { ok: false, error: L.open ? `Nothing in the room is called ${id}.` : 'The live room isn’t open.' };
     }
     if (r === true) r = { ok: true };

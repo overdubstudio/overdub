@@ -58,6 +58,10 @@ export const CSS = `
 .lr-secs { display: flex; flex-wrap: wrap; gap: 8px; }
 .lr-sec { display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; border-radius: var(--r-press); }
 .lr-sec[hidden], .lr-primary[hidden], .lr-steppers[hidden], .lr-rig[hidden] { display: none; }
+.lr-finishes { display: flex; flex-wrap: wrap; gap: 8px; }
+.lr-finishes[hidden] { display: none; }
+.lr-chip { min-height: 40px; padding: 0 12px; border-radius: var(--r-press); }
+.lr-chip[aria-pressed="true"] { border-color: currentColor; }
 .lr-steppers { display: flex; align-items: center; gap: 8px; }
 .lr-step { min-width: 44px; min-height: 44px; font-size: 20px; border-radius: var(--r-press); }
 .lr-step-val { min-width: 3.5ch; text-align: center; font-size: 18px; }
@@ -114,6 +118,8 @@ export const CSS = `
 .lr-stage.lr-phone .lr-secs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lr-stage.lr-phone .lr-sec { min-height: 44px; justify-content: center; padding: 0 6px; }
 .lr-stage.lr-phone .lr-sec .lr-kbd { display: none; }
+.lr-stage.lr-phone .lr-chip { min-height: 44px; }
+.lr-stage.lr-phone .lr-lamp, .lr-stage.lr-phone .lr-lamp-ask .btn, .lr-stage.lr-phone .lr-lamp-pick select { min-height: 44px; }
 .lr-stage.lr-phone .lr-rig-step { min-width: 44px; min-height: 44px; }
 .lr-stage.lr-phone .lr-cards { flex-direction: column; overflow: visible; background: none; padding: 0; gap: 0; }
 .lr-stage.lr-phone .lr-card { width: 100%; height: 64px; border-width: 0 0 1px; border-radius: 0; background: none; }

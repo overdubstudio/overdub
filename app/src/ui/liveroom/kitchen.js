@@ -11,7 +11,6 @@
 // player by you with its clip by the house. On speakers the band never plays during a take: every band track is held
 // muted in a preview for as long as the tape rolls.
 //
-//   setKitchenDeck(deck | null)   a stand-in for the room's deck (tools/liveroom/checks-kitchen.js), null: ctx.deck
 //   kitchenState()                the screen's run state, for checks and the agent ({ step, takes, ask, offer, done, ... })
 
 import { h, css } from '../dom.js';
@@ -25,7 +24,7 @@ import {
   takeNumber, chordsWords, PLAYERS, PLAYER_ORDER, fromTakeOps, after,
 } from '../../core/liveroom/kitchen-plans.js';
 import { capoChoices } from '../../core/liveroom/sheet-text.js';
-import { beatsPerBar } from '../../core/music.js';
+import { beatsPerBar, beatToSec, secToBeat } from '../../core/music.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
@@ -47,9 +46,7 @@ const CSS = `
 @media (max-width: 900px) { .kt { grid-template-columns: minmax(0, 1fr); } .kt-scene { max-width: 100%; aspect-ratio: 384 / 144; } .kt-right { max-height: none; } .kt-chip { min-height: 44px; } }
 `;
 
-let override = null;
 let current = null;
-export function setKitchenDeck(d) { override = d || null; }
 export function kitchenState() { return current ? current.state() : null; }
 
 // how long the shaker under a counted take runs (it stops with the tape): 128 bars, about six minutes at 84
@@ -73,7 +70,15 @@ screens.add({
   mount(el, ctx) {
     css('lr-kitchen', CSS);
     const { app, ui, store, say } = ctx;
-    const deck = () => override || ctx.deck;
+    const deck = () => ctx.deck;
+    // what the kitchen reads of the input, from the deck's state (ui/liveroom/deck.js: input { label, channels }) and the
+    // input layer's (the browser's settings for the track); both moving: two channels over -50 dBFS now
+    const inputNow = () => {
+      const i = deck()?.state?.input || {}, a = app.input?.audio?.state || {};
+      let both = false;
+      try { const chs = deck()?.level?.()?.channels || []; both = chs.filter((c) => Number.isFinite(c.db) && c.db > -50).length >= 2; } catch { both = false; }
+      return { device: String(i.label || a.label || ''), channels: i.channels || a.channels || 0, settings: a.settings || null, bothMoving: both };
+    };
     const run = {
       step: 'how', mic: null, micGuess: 'laptop', phones: null, balance: null, rolling: false, playing: false, reading: false,
       takes: 0, ask: null, offer: null, done: [], again: false, heard: false, sent: false, readings: null, chosen: 'found', form: null,
@@ -91,11 +96,12 @@ screens.add({
       const r = kitchenOps(store.get(), { mic });
       store.dispatch(r.ops, { by: 'overdub', label: r.label, reason: r.reason });
     }
-    function outputLabel() { const d = deck(); return String(d?.state?.output || d?.state?.outputLabel || 'default'); }
+    // (the output the engine plays to: its sink's id, the default one's 'default'; the answer is kept per output)
+    function outputLabel() { const sink = app.engine?.ctx?.sinkId; return String((typeof sink === 'string' && sink) || 'default'); }
 
     // what it is: from the room's input, the guess the room shows (§2.5: it picks and shows it)
     function guessMic() {
-      const d = deck(), label = String(d?.state?.device || d?.state?.inputLabel || '');
+      const label = inputNow().device;
       if (/scarlett|focusrite|interface|audient|motu|presonus|zoom|steinberg|behringer|usb audio/i.test(label)) return 'interface';
       return 'laptop';
     }
@@ -119,7 +125,9 @@ screens.add({
     /* ------------------------------------------------------------------------------------------- steps */
     const p0 = store.get();
     const r0 = roomOf(p0);
-    if (r0?.place === 'kitchen' && takeTrack()) {
+    const tapes = () => (store.get().tracks.find((t) => t.id === takeTrack())?.clips || []).filter((c) => c.kind === 'audio').length;
+    // (coming back: a kitchen song with its tape already rolled; a table the door just set has its tracks, no takes)
+    if (r0?.place === 'kitchen' && takeTrack() && tapes()) {
       run.mic = r0.mic === 'two' ? 'two' : 'laptop';
       const known = ctx.prefs.get().outputs[outputLabel()] || SAYS_OUTPUT(outputLabel());
       run.phones = known ? known === 'headphones' : null;
@@ -127,7 +135,7 @@ screens.add({
       for (const t of store.get().tracks) if (t.id === takeTrack()) run.takes = t.clips.filter((c) => c.kind === 'audio').length;
     } else {
       run.micGuess = guessMic();
-      setup('one');
+      if (r0?.place !== 'kitchen' || !takeTrack()) setup('one');
       run.mic = run.micGuess;
       const said = SAYS_OUTPUT(outputLabel()) || ctx.prefs.get().outputs[outputLabel()];
       if (said) { run.phones = said === 'headphones'; run.step = 'balance'; } else run.step = 'phones';
@@ -137,9 +145,9 @@ screens.add({
     if (run.step === 'balance') startBalance();
 
     function browserCheck() {
-      const s = deck()?.state?.settings;
+      const { settings: s, device } = inputNow();
       if (s && (s.echoCancellation || s.noiseSuppression || s.autoGainControl)) say('k.browser');
-      if (/scarlett solo/i.test(String(deck()?.state?.device || ''))) say('k.solo.direct');
+      if (/scarlett solo/i.test(device)) say('k.solo.direct');
     }
     function pickMic(id) {
       const m = MICS.find((x) => x.id === id);
@@ -148,7 +156,7 @@ screens.add({
       if ((roomNow().mic || 'one') !== m.mic) setup(m.mic);
       draw();
     }
-    const twoMoving = () => !!deck()?.state?.channels && deck().state.channels >= 2 && !!deck().state.bothMoving;
+    const twoMoving = () => { const i = inputNow(); return i.channels >= 2 && i.bothMoving; };
     function answerPhones(yes) {
       run.phones = !!yes;
       ctx.prefs.set({ outputs: { [outputLabel()]: yes ? 'headphones' : 'speakers' } });
@@ -317,13 +325,15 @@ screens.add({
       run.rolling = false;
       releaseHold();
       const fresh = clipsOn(track).filter((c) => !before.has(c.id) && c.kind === 'audio');
-      const clip = fresh[fresh.length - 1] || null;
+      let clip = fresh[fresh.length - 1] || null;
       if (!clip) { draw(); return res || { ok: false }; }
       run.takes = clipsOn(track).filter((c) => c.kind === 'audio').length;
       const n = run.takes, sh = sheetOf(store.get());
       const timed = run.counted || !!roomNow().master;
       const name = takeName(store.get(), n, { capo: sh?.capo || 0, bpm: timed ? store.get().tempo : null });
-      store.dispatch([{ type: 'clip.set', track, clip: clip.id, patch: { name } }], { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
+      const trim = run.counted ? null : await leadTrim(clip, { first: !roomNow().master });
+      store.dispatch([{ type: 'clip.set', track, clip: clip.id, patch: { name, ...(trim || {}) } }], { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
+      clip = clipsOn(track).find((c) => c.id === clip.id) || clip;
       const secs = await durationOf(clip);
       if (!live) return { ok: true, clip: clip.id };
       say('k.take.in', { n, time: mmss(secs) });
@@ -332,12 +342,41 @@ screens.add({
       return { ok: true, clip: clip.id };
     }
     const clipsOn = (track) => (store.get().tracks.find((t) => t.id === track)?.clips || []);
+    // what a clip plays: its recording from its offset (the read is of that, kitchen-plans.js)
     async function samplesOf(clip) {
       const buf = await app.engine.assets.get(clip.asset);
       if (!buf) return null;
-      return { x: buf.getChannelData(0), sr: buf.sampleRate };
+      const x = buf.getChannelData(0), at = Math.max(0, Math.min(x.length, Math.round((+clip.offset || 0) * buf.sampleRate)));
+      return { x: at ? x.subarray(at) : x, sr: buf.sampleRate };
     }
-    async function durationOf(clip) { const a = store.get().assets?.[clip.asset]; if (a && Number.isFinite(a.duration)) return a.duration; const s = await samplesOf(clip); return s ? s.x.length / s.sr : 0; }
+    async function durationOf(clip) { const a = store.get().assets?.[clip.asset]; if (a && Number.isFinite(a.duration)) return Math.max(0, a.duration - (+clip.offset || 0)); const s = await samplesOf(clip); return s ? s.x.length / s.sr : 0; }
+    // The work tape keeps two seconds before your first note and trims the silence before that (§6.3): the first 10 ms
+    // over -45 dBFS, or 30 dB under the take's peak when that's higher. The first tape (no time yet) starts the song
+    // there: its head goes, the clip still at the song's start. A tape on a song whose time is kept stays where it was
+    // played: its start moves up with the cut
+    const KEEP_S = 2, TRIM_MIN = 0.25;
+    async function leadTrim(clip, { first }) {
+      let s = null;
+      try { s = await samplesOf(clip); } catch { s = null; }
+      if (!s) return null;
+      const { x, sr } = s, W = Math.max(1, Math.round(0.01 * sr));
+      let pk = 0;
+      for (let i = 0; i < x.length; i++) { const v = Math.abs(x[i]); if (v > pk) pk = v; }
+      const lim = Math.max(10 ** (-45 / 20), pk * 10 ** (-30 / 20));
+      let at = -1;
+      for (let i = 0; i < x.length && at < 0; i += W) { for (let j = i; j < Math.min(x.length, i + W); j++) if (Math.abs(x[j]) > lim) { at = i; break; } }
+      if (at < 0) return null;
+      const cut = Math.round(Math.max(0, at / sr - KEEP_S) * 1000) / 1000;
+      if (cut < TRIM_MIN) return null;
+      const p = store.get(), off = Math.round(((+clip.offset || 0) + cut) * 1000) / 1000;
+      const r4 = (v) => Math.round(v * 1e4) / 1e4;
+      if (first && !p.tempoMap) {
+        const len = r4(clip.length - cut / (60 / (+p.tempo || 120)));
+        return len > 0.25 ? { offset: off, length: len } : null;
+      }
+      const s0 = beatToSec(p, clip.start), start = r4(secToBeat(p, s0 + cut)), end = clip.start + clip.length;
+      return end - start > 0.25 ? { offset: off, start, length: r4(end - start) } : null;
+    }
     async function readTake(clip, { first, counted = false }) {
       const s = await samplesOf(clip);
       if (!s) return;

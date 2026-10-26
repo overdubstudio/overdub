@@ -8,7 +8,7 @@
 //          it from coming back after a reload). Ids are unique across every lines/*.js file.
 //
 // The vars each takes (a part is its section's name as the song has it, "Verse"; the line lowercases it in a sentence):
-//   learn.got {}                       side.now {}                              side.tight { part, ms }
+//   learn.got {}                       side.now { place }                       side.tight { part, ms }
 //   learn.thin {}                      side.fine { part, ms }                   side.drift { part, bar, dir, ms }
 //   side.punched { bar, ms }           side.wander { part, bar }                side.use2 { part, count, take }
 //   side.intro {}                      side.both {}                             guide.held { take, ms }
@@ -29,7 +29,8 @@ export const LINES = {
   'learn.got': { text: () => 'They’ve got it: the kick’s on your chugs and the bass has your roots.' },
   'learn.thin': { text: () => 'The kick keeps its own pattern here: it didn’t hear clear low notes. The bass waits for them.' },
   // the other side (§3.7)
-  'side.now': { text: () => 'Now the other side.' },
+  // (the basement offers it once, after the second part, §2.4; elsewhere it's the next press)
+  'side.now': { text: (v) => (v?.place === 'basement' ? 'Now the other side? Punk doubles too.' : 'Now the other side.') },
   'side.tight': { text: ({ part, ms: m }) => `Right side is in on the ${lower(part)}: the guitars are wide now. Within ${ms(m)} ms of the left all the way.` },
   'side.fine': { text: ({ part, ms: m }) => `Right side is in on the ${lower(part)}: the guitars are wide now. Within ${ms(m)} ms of the left.` },
   'side.drift': { text: ({ part, bar, dir, ms: m }) => `Right side is in on the ${lower(part)}: bar ${bar} drifts ${dir === 'early' ? 'early' : 'late'} against the left, about ${ms5(m)} ms. Bar ${bar} again?` },

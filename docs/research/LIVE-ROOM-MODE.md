@@ -1247,12 +1247,12 @@ sheet: {
 | `sheet.line.add` | `section`, `line` (`{ id?, text }`), `index?` | inserts it, signed by the op's `by` | `sheet.line.remove` |
 | `sheet.line.set` | `section`, `line`, `patch` (`{ text }`) | sets the text and signs it by the op's `by` | the old text and the old `by` (a restore keeps the `by` it's given) |
 | `sheet.line.remove` | `section`, `line` | removes it | `sheet.line.add` with the line cloned, its `by` kept, at its index |
-| `section.move` | `section`, `before` (a section id, or `null` for the end) | moves the section and everything in its bars: planned as `time.insert` at the destination, the clips wholly inside moved (`clip.set { start }`, keeping their ids; clips across its edges split first, as `section.duplicate` does), `section.set { start }` (keeping its id and its `room.parts` entry) and `time.remove` of the old span; refuses inside a tempo map, as `section.duplicate` does (`app/src/core/arrangement.js:562`) | the primitives' own inverses, newest first, in one step |
+| `section.move` | `section`, `before` (a section id, or `null` for the end) | moves the section and everything in its bars, and the bars between close up behind it: planned in two steps, first the clips and take folders across the section's edges and the destination split there (as `section.duplicate` splits them), then every clip, section and lane stretch in the bars that move given its new start (`clip.set { start }`, `section.set { start }`: ids kept, so the section keeps its `room.parts` entry), and a loop inside them going with them; refuses inside a tempo map, as `section.duplicate` does (`app/src/core/arrangement.js:562`), and a move that changes nothing | the primitives' own inverses, newest first, in one step |
 
 Ids in `tracks`, `section`, `master` and `takes` may be `$ref`s made earlier in the same dispatch (`resolve`,
 `app/src/core/ops.js:20`), so picking a place makes its tracks and names their roles in one step. `room.*` and `sheet.*`
-live in `app/src/core/liveroom/room-ops.js` and `sheet-ops.js`, registered in `OPS` by the same loop that registers the
-arrangement planners (`app/src/core/ops.js:852`); `section.move` is a planner in
+live in `app/src/core/liveroom/room-ops.js` and `sheet-ops.js` (`ROOM_OPS`, `SHEET_OPS`), assigned into `OPS` as the
+automation ops are (`Object.assign`, `app/src/core/ops.js`); `section.move` is a planner in
 `app/src/core/arrangement.js` beside `section.duplicate`. They go into `OP_TYPES` (`app/src/core/ops.js:871`), the
 round-trip table in `test/unit/ops.test.js` and the trials in `tools/core-test.js` (both refuse an op type they don't
 cover), `describe` for History's labels, and the op table in `docs/ARCHITECTURE.md`. `section.duplicate`'s plan also
@@ -1651,11 +1651,11 @@ It lands the parts every stream shares, and nothing else:
 
 | Module (owner after the foundation) | Exports |
 |---|---|
-| `core/liveroom/model.js` (frozen) | `PLACE_IDS`, `RIG_IDS`, `FINISHES`, `FEEL_IDS`, `ROLES`, `ROOM_LIMITS`, `cleanRoom(x, { tracks, sections, warn })`, `cleanSheet(x, { warn })`, `roomOf(p)`, `partOf(p, section)`, `sheetOf(p)` |
-| `core/liveroom/room-ops.js`, `sheet-ops.js` (frozen) | the ops of §9.2, by `OPS` |
-| `core/liveroom/places.js` (B) | `PLACES`, `placeOf`, `RIGS`, `rigChain(rig, side)`, `rigLabel`, `setupOf(place, { tuning, finish })` → `{ tempo, meter, grid, count, tracks, master, feels, form, names }` for the three electric places (the kitchen's is D's `kitchenSetup`), `feelsOf(place, part, tempo)`, `finishChain(place, finish)` |
-| `core/liveroom/read.js` (B) | `readTake(samples, sr, { tempo, start, bars, grid, latency, place })` → `{ notes, chugs, roots, key, lean, cents, thin }`; `readInWorker(…)` → Promise of the same |
-| `core/liveroom/band.js` (B) | `guideOps(p, { section, from, bars, feel })` (the pass's preview band), `planLearn(p, { section, read })`, `planFeel(p, { section, feel, busy, loud })`, `planFinish(p, { finish })`, `planBassYours(p, { section })`, each → `{ ops, label, reason }` |
+| `core/liveroom/model.js` (frozen) | `PLACE_IDS`, `RIG_IDS`, `FINISHES`, `FEEL_IDS`, `ROLES`, `ROOM_LIMITS`, `cleanRoom(x, { tracks, sections, warn })`, `cleanSheet(x, { warn })`, `roomOf(p)`, `partOf(p, section)`, `sheetOf(p)`; and `NAMES` (each id's words: `{ place, feel, finish, rig }`), `ORDER` (the canonical key order of the room, a part, a take, a managed entry, the sheet, a sheet section, a line), `putKey(obj, key, value, order)`, `placeKey(obj, key, value, at)` (the ops' key order, so an inverse is exact) |
+| `core/liveroom/room-ops.js`, `sheet-ops.js` (frozen) | `ROOM_OPS` and `SHEET_OPS`: the ops of §9.2, assigned into `OPS` by `ops.js` |
+| `core/liveroom/places.js` (B) | `PLACES`, `placeOf`, `RIGS`, `rigChain(rig, side)`, `rigLabel`, `setupOf(place, { tuning, finish })` → `{ tempo, meter, grid, count, tracks, master, feels, form, names }` for the three electric places (the kitchen's is D's `kitchenSetup`), `feelsOf(place, part, tempo)`, `finishChain(place, finish)`; and the prototype's `earOf(sr)` (the note finder's options) and `chordAt(place, riff, beat, from)` (the twelve-bar at a beat) |
+| `core/liveroom/read.js` (B) | `readTake(samples, sr, { tempo, start, bars, grid, latency, place })` → `{ notes, chugs, roots, key, lean, cents, thin }`; `readInWorker(…)` → Promise of the same (`read-worker.js`, the module Worker, exports nothing) |
+| `core/liveroom/band.js` (B) | `guideOps(p, { section, from, bars, feel })` (the pass's preview band), `planLearn(p, { section, read })`, `planFeel(p, { section, feel, busy, loud })`, `planFinish(p, { finish })`, `planBassYours(p, { section })`, each → `{ ops, label, reason }`; and the prototype's `bandFor(place, riff, { from, length, seed })` → `{ drums, bass, from, length }` (the band's notes under a riff: the chug rule, the bass modes) |
 | `core/liveroom/tight.js` (B) | `measurePair(left, right, { sr, tempo, start, bars, grid })` → `{ perBar, median, drift, unmatched, verdict }` |
 | `core/liveroom/double.js` (B) | `planDouble(p, { section })`, `planUseAsRight(p, { section, clip })` |
 | `core/liveroom/session.js` (C) | `readRoom(p)` → the room's view; `offered(view, run)` → `{ id, label, key }`; `stopBeat(view, beat)`; `press(state, id)` (the reducer the press counts run on) |
@@ -1664,8 +1664,9 @@ It lands the parts every stream shares, and nothing else:
 | `core/liveroom/align.js`, `kitchen.js` (D) | `alignChords(chroma, beats, chords, opts)`; `kitchenSetup({ mic })`, `planRead`, `planTime`, `planPlayer`, `planMaster`, `planKitchenFinish`, `offeredKitchen(view, run)` |
 | `core/liveroom/label.js` (F) | `labelOf(p)` → `{ title, slate, parts, note, cover }`, `titleDice(p)` → three titles |
 | `core/liveroom/lines/*.js` (each its stream's) | `LINES`: `{ [id]: { text(vars), once? } }` |
-| `ui/liveroom/index.js` (C) | `app.liveRoom` = `{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }`; `screens.add({ id, mount(el, ctx) → { frame(now), unmount() } })`; `ctx` = `{ app, ui, store, deck, view(), say(lineId, vars), prefs, scene }` |
-| `ui/liveroom/prefs.js` (frozen) | `prefs.get()`, `prefs.set(patch)`, `prefs.said(song, id)`, `prefs.mark(song, id)` over `overdub:room` |
+| `ui/liveroom/index.js` (C) | the default export installs it (`app.liveRoom` = `{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }`); `screens`, re-exported; `ctx` = `{ app, ui, store, deck, view(), say(lineId, vars), prefs, scene }` |
+| `ui/liveroom/screens.js` (C) | `screens`: `add({ id, mount(el, ctx) → { frame(now), unmount(), press?(id) } })` → remove, `get(id)`, `has(id)`, `list()` (the registry `index.js` re-exports; a screen's optional `press(id)` is what `app.liveRoom.press` asks first) |
+| `ui/liveroom/prefs.js` (frozen) | `prefs.get()`, `prefs.set(patch)`, `prefs.said(song, id)`, `prefs.mark(song, id)` over `overdub:room` (`prefs.key`) |
 | `ui/liveroom/deck.js` (A) | `createDeck(app)` → `{ state, on(evt, fn), countIn({ from, bars, voice, hits, at }), take({ track, from, punch, tail }), stop({ at: 'bar' \| 'now', keep: 'song' \| 'capture' }), keepAfterAll(), level(), tuner(), latency }` |
 | `ui/liveroom/soundcheck.js` (A) | `mountLamps(el, ctx)` → `{ frame(now), unmount() }`, `lampsState()` |
 | `ui/liveroom/pixels/index.js` (E) | `W` 256, `H` 144, `LEDGE` 14, `sceneOf(place)` → `{ draw(ctx, view, now) }`, `drawCrop(ctx, place, size)`, `drawCover(ctx, cover, size)`, `windowFor(view)`; drawn with `fillStyle`, `fillRect` and `globalAlpha` only, as the prototype's are, so a Node check draws them into a buffer |

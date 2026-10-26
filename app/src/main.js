@@ -12,6 +12,8 @@ import { createTrust, heldIn, kernelHash, TRUST_KEY } from './devices/trust.js';
 import { createShell } from './ui/shell.js';
 import { decideView, WORKSPACE_KEY } from './ui/workspace-view.js';
 import { installWorkspace } from './ui/workspace.js';
+import { decideDoor } from './ui/liveroom/door-decide.js';
+import { prefs as roomPrefs } from './ui/liveroom/prefs.js';
 import { loadSiteConfig } from './site-config.js';
 
 const SAVE_KEY = 'overdub:project', PREV_KEY = 'overdub:previous';
@@ -38,7 +40,7 @@ const MODULES = [
   './ui/sounds.js', // the sound card (app.sounds: trying an instrument by ear, Keep and Back); after plugin.js and input/index.js
   './ui/grooves.js', // the Grooves tab (core/grooves.js) and the find_grooves, use_groove and drum_track tools; before the bridges too
   './ui/jam.js', // the Jam room beside Arrange, and its tools (get_jam, make_jam_track, set_tone, show_on_fretboard)
-  './ui/liveroom.js', // ?room only (a prototype): the live room in front of the glass; play a riff twice and the band comes in
+  './ui/liveroom/index.js', // the live room in front of the glass (app.liveRoom), over the studio when the door says so (decideDoor, below)
   './ui/community.js', // the community shelf (From the community, in the Browser) and find_community_device; off unless on a local host
   './agent/sounds-tool.js', // suggest_sounds (sounds on the card, app.sounds.suggest); before the panel and the bridges
   './agent/panel.js', './agent/history.js', './agent/presence.js', './agent/bridge.js',
@@ -130,6 +132,8 @@ let opened = 'demo'; // how the song was opened (app.opened): 'new' | 'demo' | '
 // Which view this load opens in (ui/workspace-view.js): decided before the song, since a first visit in the simple
 // view opens a blank song ("Take 1 is yours."), not the demo. Night Shift stays one click away.
 let workspace = { view: 'full', persist: false, from: 'default' };
+// Which side of the glass this load opens on (ui/liveroom/door-decide.js: app.door), asked before the shell is built
+let door = { side: 'control', song: 'demo' };
 // ?new and ?demo=… (the landing page's links) open another song over the one saved here. That one is kept as the
 // previous song (the key ui/export.js keepPrevious uses) and in Recent songs (app.exporter.putAside), and the studio
 // says so, with an Undo, once it's up; then the parameter leaves the address. A blank song, or the same demo unedited,
@@ -175,6 +179,11 @@ async function boot() {
     try { storage = window.localStorage; } catch { /* blocked */ }
     workspace = decideView({ search: location.search, storage, webdriver: !!navigator.webdriver });
     if (workspace.persist) { try { const cur = JSON.parse(storage?.getItem(WORKSPACE_KEY) || 'null'); storage?.setItem(WORKSPACE_KEY, JSON.stringify({ ...(cur && typeof cur === 'object' ? cur : {}), v: 1, view: workspace.view })); } catch { /* private mode */ } }
+    // the room's side: the studio stays out of sight (app.css, html[data-room]) until the room has mounted over it
+    let saved = false;
+    try { saved = !!storage?.getItem(SAVE_KEY); } catch { /* blocked */ }
+    try { door = decideDoor({ search: location.search, hash: location.hash, saved, room: roomPrefs.get(), webdriver: !!navigator.webdriver }); } catch (e) { console.error('overdub: the door', e); }
+    if (door.side === 'room') document.documentElement.dataset.room = '';
   }
   // Fetch every graph at once (an import runs nothing until default(app)); they start below, in order. One after
   // another, the panels' fetches took ~250 ms each and the studio ~12 s to finish booting.
@@ -216,7 +225,7 @@ async function boot() {
   const em = await engineLoading;
   const engine = em ? em.createEngine(store) : silentEngine(store);
 
-  const app = { store, engine, devices, music, summarize: (o) => summarize(store.get(), { ...o, devices: devices.getDevice, held: devices.heldDevice }), version: '0.1.0', agent: null, tools: null, input: null, opened, round: !!workspace.round };
+  const app = { store, engine, devices, music, summarize: (o) => summarize(store.get(), { ...o, devices: devices.getDevice, held: devices.heldDevice }), version: '0.1.0', agent: null, tools: null, input: null, opened, round: !!workspace.round, door };
   if (shared) app.share = { incoming: shared, listening: !!shared.ok };
   // app.trust: what's held, and the person's way to let it play (ui/share.js and the rack call play; no agent tool does)
   app.trust = {
@@ -270,6 +279,8 @@ async function boot() {
     const mod = await loading[i];
     if (mod?.default) { try { await mod.default(app); } catch (e) { console.error(`overdub: ${MODULES[i]} failed to start`, e); } }
   }
+  // (a room that didn't open, or didn't load: the studio comes out from under the anti-flash rule)
+  if (!app.liveRoom?.isOpen?.()) delete document.documentElement.dataset.room;
 
   // autosave (the song only; audio lives in IndexedDB)
   let saveT = 0;
@@ -294,8 +305,8 @@ async function boot() {
     else app.ui.toast(`${what} “${kept.title}” is kept: Undo brings it back.`, { kind: 'ok', ms: 9000, action: { label: 'Undo', run: () => { store.load(kept, { by: 'you' }); app.ui.toast(`Back to “${kept.title}”`); } } });
   }
   // ?new, ?demo= and ?room have done their job: off the address, so a reload (or a restored tab) opens the song saved
-  // here, not the demo again over your edits to it (the modules that read the address have read it by now; the live
-  // room keeps its own flag for the tab)
+  // here, not the demo again over your edits to it (the modules that read the address have read it by now; which side
+  // of the glass a reload opens on is the room's to remember, overdub:room)
   if (params.has('new') || params.has('demo') || params.has('room')) {
     try { const u = new URL(location.href); for (const k of ['new', 'demo', 'room']) u.searchParams.delete(k); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* fine */ }
   }

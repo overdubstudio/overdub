@@ -1,13 +1,16 @@
-// The live room's pictures [ui, a prototype: ?room]: the places as pixel rooms with their gear (your amp, the kit, the
-// bass amp, a tape deck that is always rolling), and the instruments you can bring. No people: the band is the gear,
-// and the gear moves with the real sound (your amp's cone with your level, the kick's head on the kick, the cymbals on
-// their hits, the bass cone with the bass). Drawn on a 256 x 144 canvas, scaled up whole pixels at a time.
+// The rooms in pixels [ui; stream E owns it after the foundation]: the prototype's scenes, kept. The places as pixel
+// rooms with their gear (your amp, the kit, the bass amp, a tape deck that is always rolling), and the instruments you
+// can bring. No people: the band is the gear, and the gear moves with the real sound (your amp's cone with your level,
+// the kick's head on the kick, the cymbals on their hits, the bass cone with the bass). Drawn on a 256 x 144 canvas,
+// scaled up whole pixels at a time. ui/liveroom/pixels/index.js is the room's door to them (docs/research/
+// LIVE-ROOM-MODE.md §14.2); nothing else imports this file.
 //
 //   W, H                                  the room's size in pixels
 //   drawRoom(g, place, S, t)              one frame of a place. S: { on, amp, hit, kick, snare, hat, crash, tom, bass,
 //                                         band, rolling, counter (s), heard } (levels and hit envelopes, 0..1); t: seconds
 //   drawThing(g, kind, { dim })           an instrument on a 64 x 64 canvas: 'electric' | 'acoustic' | 'keys' | 'voice'
 //   drawTape(g, { label, sub, t })        the tape box: a cassette on a 128 x 80 canvas with its label written on
+//   text(g, str, x, y, c, k), textWidth(str, k)   the 3 x 5 font
 
 export const W = 256, H = 144;
 

@@ -63,7 +63,10 @@ export async function openUrl(url, { width = 1440, height = 900, headed = !!proc
 }
 
 // Open a page on a fresh server. Collects console errors and page errors in `errors` (fail your test on them).
-export async function open(route = '/app/', { width = 1440, height = 900, headed = !!process.env.HEADED, fakeAudio = null, query = '' } = {}) {
+// init: a script run in the page before any of its own (context.addInitScript, so on every navigation too): a
+// function, [function, arg], or the script's text. A check uses it to stand something in for the browser before the
+// studio boots (a stored setting, a wrapped API).
+export async function open(route = '/app/', { width = 1440, height = 900, headed = !!process.env.HEADED, fakeAudio = null, query = '', init = null } = {}) {
   await ready;
   const srv = await startServer({ port: 0, quiet: true });
   const pw = findPlaywright();
@@ -72,6 +75,11 @@ export async function open(route = '/app/', { width = 1440, height = 900, headed
   const exe = headed ? undefined : findChromium();
   const browser = await pw.chromium.launch({ headless: !headed, executablePath: exe, args });
   const context = await browser.newContext({ viewport: { width, height }, permissions: ['microphone'] });
+  if (init) {
+    if (typeof init === 'string') await context.addInitScript({ content: init });
+    else if (Array.isArray(init)) await context.addInitScript(init[0], init[1]);
+    else await context.addInitScript(init);
+  }
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + (e && e.stack || e)));

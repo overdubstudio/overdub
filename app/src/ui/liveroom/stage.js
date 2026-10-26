@@ -593,6 +593,12 @@ screens.add({
         case 'loop': {
           const c = card();
           if (!c || c.end) return { ok: false };
+          // (L again on the part going round: it stops going round, so the song plays through to its end again)
+          const lp = song().loop || {};
+          if (lp.on && Math.abs(lp.start - c.start) < EPS && Math.abs(lp.end - (c.start + c.length)) < EPS) {
+            const r0 = dispatch({ type: 'project.set', patch: { loop: { ...lp, on: false } } }, { by: 'you', label: `The ${low(c.name)} plays through`, reason: `room:loop:${c.id}` });
+            return r0.ok ? { ok: true } : r0;
+          }
           const r = dispatch({ type: 'project.set', patch: { loop: { on: true, start: c.start, end: c.start + c.length } } }, { by: 'you', label: `Round and round on the ${low(c.name)}`, reason: `room:loop:${c.id}` });
           if (r.ok) say('loop.on', { part: c.name });
           return r.ok ? { ok: true } : r;

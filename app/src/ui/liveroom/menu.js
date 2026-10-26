@@ -91,7 +91,7 @@ export function openMenu({ host, anchor = null, title = '', items = [], onPick =
     else if (e.key === 'End') { e.preventDefault(); live[live.length - 1]?.focus(); }
     else if (e.key === 'Tab') { e.preventDefault(); close(); }
   });
-  setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
+  setTimeout(() => { if (open) document.addEventListener('pointerdown', away, true); }, 0);
   const focus = () => buttons.find((b) => !b.disabled)?.focus({ preventScroll: true });
   setTimeout(focus, 0);
   return { el, close, focus, get open() { return open; } };

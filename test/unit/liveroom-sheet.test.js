@@ -314,16 +314,47 @@ describe('lined up with a take', () => {
   // read as the guitar's bass note: the Bb came in half a bar early and the verse took the chorus's last bar.
   test("a voice over the chorus's last bars doesn't start the verse a bar early", () => {
     const bars = ['Bb', 'Gm', 'Eb', 'F', 'Eb', 'Bb', 'F', 'Bb', 'Bb', 'Gm', 'Eb', 'F'];
-    const SHAPE = { Bb: [46, 50, 53, 58, 62], Gm: [43, 50, 55, 58, 62], Eb: [51, 55, 58, 63, 67], F: [41, 48, 53, 57, 60, 65] };
+    const SHAPE = {
+      Bb: [46, 50, 53, 58, 62],
+      Gm: [43, 50, 55, 58, 62],
+      Eb: [51, 55, 58, 63, 67],
+      F: [41, 48, 53, 57, 60, 65],
+    };
     const TONE = { Bb: 62, Gm: 62, Eb: 63, F: 65 };
-    const bpm = 96, spb = 60 / bpm, lead = 1;
-    const g = strum(bars.map((c, i) => ({ beat: i * 4, notes: SHAPE[c], beats: 4 })), { bpm, seed: 31, tail: 0.5 });
-    const v = voice(bars.flatMap((c, i) => [[i * 4 + 0.5, TONE[c], 1.4], [i * 4 + 2.5, 58, 1.2]]), { bpm, seed: 7, tail: 0.5 });
-    const buf = mix([{ buf: g.buf, at: lead }, { buf: v.buf, at: lead, gain: 2 }], { peak: -14 });
+    const bpm = 96,
+      spb = 60 / bpm,
+      lead = 1;
+    const g = strum(
+      bars.map((c, i) => ({ beat: i * 4, notes: SHAPE[c], beats: 4 })),
+      { bpm, seed: 31, tail: 0.5 },
+    );
+    const v = voice(
+      bars.flatMap((c, i) => [
+        [i * 4 + 0.5, TONE[c], 1.4],
+        [i * 4 + 2.5, 58, 1.2],
+      ]),
+      { bpm, seed: 7, tail: 0.5 },
+    );
+    const buf = mix(
+      [
+        { buf: g.buf, at: lead },
+        { buf: v.buf, at: lead, gain: 2 },
+      ],
+      { peak: -14 },
+    );
     const beats = Array.from({ length: bars.length * 4 }, (_, k) => lead + k * spb);
-    const paper = sheetChords(parseSheet('Capo 3\n\n[Verse]\nG   Em\nSomewhere a paper moon\nC   D\nover the town\n\n[Chorus]\nC   G\nHold on\nD   G\nuntil the morning\n'), {});
+    const paper = sheetChords(
+      parseSheet(
+        'Capo 3\n\n[Verse]\nG   Em\nSomewhere a paper moon\nC   D\nover the town\n\n[Chorus]\nC   G\nHold on\nD   G\nuntil the morning\n',
+      ),
+      {},
+    );
     const changes = alignChords(tapeChroma(buf, SR), beats, paper, { bpb: 4, phase: 0 });
     const form = formOf(changes, beats).map((x) => `${x.name} ${x.from}-${x.to}`);
-    assert.deepEqual(form, ['Verse 0-16', 'Chorus 16-32', 'Verse 32-48'], changes.map((c) => `${c.sounding}@${c.beat}`).join(' '));
+    assert.deepEqual(
+      form,
+      ['Verse 0-16', 'Chorus 16-32', 'Verse 32-48'],
+      changes.map((c) => `${c.sounding}@${c.beat}`).join(' '),
+    );
   });
 });

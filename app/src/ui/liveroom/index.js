@@ -261,7 +261,7 @@ export default function installLiveRoom(app) {
   function showKey() {
     if (!key && wanted() && !studioG) {
       // G in the studio: back through the glass (a View key, there only once the Live room key is)
-      studioG = ui.keys.add({ key: 'KeyG', run: () => open(), when: () => !L.open && wanted() && !ui.covered, label: 'The live room', group: 'View' });
+      studioG = ui.keys.add({ key: 'KeyG', run: () => open(), when: () => !L.open && wanted() && !ui.covered && !app.input?.qwerty?.on, label: 'The live room', group: 'View' });
     }
     if (!key && wanted()) {
       ui.panel({
@@ -276,7 +276,11 @@ export default function installLiveRoom(app) {
     }
     if (panelEl) { const show = wanted(); panelEl.hidden = !show; panelEl.style.display = show ? '' : 'none'; }
   }
-  store.on('change', (e) => { if (e?.kind === 'load' || key || roomOf(store.get())) showKey(); });
+  store.on('change', (e) => {
+    // (another song loaded behind the glass: what the room remembered of the last one isn't this one's to read back)
+    if (e?.kind === 'load') left = null;
+    if (e?.kind === 'load' || key || roomOf(store.get())) showKey();
+  });
   function frame(now) {
     if (!L.open) return;
     if (whereEl) {

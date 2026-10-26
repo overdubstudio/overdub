@@ -71,7 +71,15 @@ export function createSetlist({ app = null, onPick = () => {}, onMenu = () => {}
       else kids.push(card(c, view, sel === c.id, playing === c.id));
     }
     kids.push(h('button.lr-next', { type: 'button', onclick: () => onNext() }, '+ Next part'));
+    // (the row is drawn again: a card that had the keyboard's focus keeps it, on its new self)
+    const had = row.contains(document.activeElement) ? document.activeElement : null;
+    const was = had ? { card: had.closest('[data-card]')?.dataset.card || null, cls: ['lr-card-main', 'lr-card-more', 'lr-end', 'lr-next'].find((k) => had.classList.contains(k)) || null } : null;
     row.replaceChildren(...kids);
+    if (was?.cls) {
+      const sel = was.card ? `[data-card="${CSS.escape(was.card)}"]` : '';
+      const back = was.cls === 'lr-end' || was.cls === 'lr-next' ? row.querySelector(`.${was.cls}`) : row.querySelector(`${sel} .${was.cls}`);
+      try { back?.focus({ preventScroll: true }); } catch { /* fine */ }
+    }
     const s = row.querySelector('.lr-sel');
     if (s?.scrollIntoView) { try { s.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch { /* ok */ } }
   }

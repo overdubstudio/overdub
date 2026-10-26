@@ -301,7 +301,7 @@ export function press(state, id) {
           const src = played[a];
           if (!src) continue;
           const reps = b || 1;
-          if (!used.has(src.id)) { used.add(src.id); src.bars *= reps; out.push(src); } else out.push({ ...src, id: `c${++seq}`, bars: src.bars / (src.part.reps || 1) * reps, part: { ...src.part, reps } });
+          if (!used.has(src.id)) { used.add(src.id); src.bars *= reps; src.part = { ...src.part, reps }; out.push(src); } else out.push({ ...src, id: `c${++seq}`, bars: src.bars / (src.part.reps || 1) * reps, part: { ...src.part, reps } });
         } else if (b === 0) out.push({ ...played[0], id: `c${++seq}`, name: a, bars: Math.min(n, played[0].bars), part: { oneSide: !!one } });
         else out.push(card(a, n, bpb));
       }

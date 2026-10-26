@@ -32,7 +32,7 @@
 //       deck.stopBeat(beat, { from, bpb }) -> beat, when the stage sets it, decides instead (the blues bar's chorus
 //       rule). The recorder runs on `tail` past the line and the take goes in then: one step by you, its txn in the
 //       result so the stage joins the part's ops to it. A take with less than a bar over -42 dBFS goes back out (its
-//       step undone): { empty, line: 'take.short' }. quietLead: the whole bars at its head under -50 dBFS (the first
+//       step undone): { empty, line: 'take.short' } (a punch: less than half its length, when that's under a bar). quietLead: the whole bars at its head under -50 dBFS (the first
 //       part drops them, §3.6). 'now' stops at once (Esc); keep: 'capture' puts nothing in the song, the pass kept in
 //       Capture ({ kept, line: 'take.esc' }). During the count either one stops it: { cancelled }.
 //   keepAfterAll() -> the take, as stop's   ⇧R: the pass stopped with keep: 'capture' put in the song after all, at
@@ -167,7 +167,7 @@ export function createDeck(app) {
     const bpb = bpbNow();
     // the count: the one being started, or the defaults now
     if (pending) { const c = await pending; if (!c.ok) return c; }
-    else if (!e.playing) { const c = await countIn({ from: from ?? 0 }); if (!c.ok) return c; }
+    else if (!e.playing) { const c = await countIn({ from: Number.isFinite(+punch?.from) ? +punch.from : from ?? 0 }); if (!c.ok) return c; }
     const f = Number.isFinite(+punch?.from) ? +punch.from : Number.isFinite(+from) && from != null ? +from : state.from ?? 0;
     const to = Number.isFinite(+punch?.to) ? +punch.to : null;
     armed = { track: t.id, from: f, punch: to != null ? { from: f, to } : null, tail: Number.isFinite(+tail) && tail != null ? Math.max(0, +tail) : bpb, id: null };
@@ -224,8 +224,10 @@ export function createDeck(app) {
         }
       }
     } catch (err) { console.error('deck: reading the take', err); bars = []; over = Infinity; }
-    // under a bar over -42 dBFS: not kept (its step undone, nothing left in History)
-    if (over < bpb * spb - 1e-3) {
+    // under a bar over -42 dBFS: not kept (its step undone, nothing left in History). A punch is held to half its
+    // length when that's less: a one-bar punch (Bar 5 again) is a bar long, so a bar of it would need no rest at all
+    const need = a?.punch ? Math.min(bpb * spb, ((a.punch.to - a.punch.from) * spb) / 2) : bpb * spb;
+    if (over < need - 1e-3) {
       try { if (res.txn) store().undo({ id: res.txn, redo: false }); } catch (err) { console.error('deck: taking the take back out', err); }
       setRun('idle');
       const out = { ok: true, empty: true, why: 'under a bar', line: 'take.short' };

@@ -352,6 +352,31 @@ async function deckPage(T, ctx) {
     else T.ok(gone.during.run === 'count' && gone.after.run === 'idle' && gone.after.rec === 'idle' && gone.next.ok && gone.next.run === 'count' && gone.cancelled,
       `a take let go under its count (the transport stopped by something else): the deck is ${gone.after.run} again, and the next take starts (${gone.next.ok ? gone.next.run : gone.next.error}); a stop in its count cancels it (${gone.cancelled})`);
 
+    // a punch (the other side, Bar 5 again) with the transport stopped: counted in to its start, it ends itself at its
+    // end, keeping only that range (from 30 ms before its 1), one step by you, and the band plays a bar on, then stops
+    const pun = await E(async () => {
+      const app = window.overdub, { store, engine } = app, { deck, until, sleep, G } = window.__lr;
+      const h0 = store.history.length;
+      let got = null;
+      const off = deck.on('take', (x) => { got = x; });
+      const t = await deck.take({ track: G, punch: { from: 16, to: 20 } });
+      if (!t.ok) { off(); return { error: t.error }; }
+      const counted = engine.beat;
+      let last = null;
+      await until(() => { if (engine.playing) last = engine.beat; return !!got && !engine.playing; }, 20000).catch(() => {});
+      off();
+      await sleep(50);
+      const H = store.history.slice(h0);
+      const c = got?.take ? store.track(got.take.track)?.clips.find((x) => x.id === got.take.clip) : null;
+      return { counted, from: t.from, last, res: got && { from: got.from, to: got.to, bars: got.bars }, clip: c ? { start: c.start, length: c.length } : null, H: H.map((x) => x.by), playing: engine.playing };
+    });
+    if (pun.error) T.ok(false, `a punch: ${pun.error}`);
+    else {
+      const end = pun.clip ? pun.clip.start + pun.clip.length : null, lead = pun.clip ? (16 - pun.clip.start) * spb * 1000 : null;
+      T.ok(pun.counted < 16 && pun.res?.from === 16 && pun.res.to === 20 && pun.res.bars === 1 && Math.abs(end - 20) < 1e-3 && lead > 25 && lead < 35 && pun.H.length === 1 && pun.H[0] === 'you' && !pun.playing && Math.abs(pun.last - 24) < 0.3,
+        `a punch of bar 5 with the transport stopped: counted in to it (beat ${fmt(pun.counted, 2)} as the take armed), a ${pun.res?.bars}-bar take ending itself at beat ${fmt(end, 3)}, its clip from ${fmt(lead)} ms before the 1, ${pun.H.length} step by ${pun.H[0]}, the band stopping a bar on (beat ${fmt(pun.last, 2)})`);
+    }
+
     // a stop pressed, and then the tab hidden and starved of frames: it still ends on the bar line
     landed('stop at beat 2 of bar 5, the tab then hidden and stalled for 2.6 s', await takeAt(18.05, { stall: true }), 20);
 

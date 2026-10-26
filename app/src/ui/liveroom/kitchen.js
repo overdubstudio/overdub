@@ -36,16 +36,17 @@ const CSS = `
 .kt-scene { width: 100%; max-width: 512px; aspect-ratio: 16 / 9; image-rendering: pixelated; display: block; background: var(--bg-2, #111); }
 .kt-right { min-width: 0; max-height: calc(100vh - 140px); overflow: auto; }
 .kt-go { width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 600 17px/1.2 var(--font-ui);
-  background: var(--accent); color: var(--accent-ink, #111); border: 0; padding: 0 16px; cursor: pointer; }
-.kt-go kbd { font: 400 12px/1 var(--font-mono); color: inherit; background: none; opacity: .7; border: 1px solid currentColor; border-radius: var(--r-press); padding: 3px 5px; box-shadow: none; }
-@media (hover: none) { .kt-go kbd { display: none; } }
+  background: var(--accent); color: var(--bg); border: 0; border-radius: var(--r-press); padding: 0 16px; cursor: pointer; }
+/* (the key's hint is the stage's: style.js .lr-kbd, printed in the button's own ink) */
+.kt-go .lr-kbd { border-color: currentColor; }
 .kt-break { flex-basis: 100%; height: 0; }
 .kt-go:disabled { opacity: 0.5; cursor: default; }
 .kt-go:disabled kbd, .kt-go[hidden] { display: none; }
 .kt-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .kt-row > span { color: var(--text-3); font-size: 13px; }
 .kt-chip { min-height: 36px; padding: 0 12px; font: 400 14px/1 var(--font-ui); background: none; color: var(--text); border: 1px solid var(--line-2); cursor: pointer; }
-.kt-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+/* (pressed is reverse print, BRAND.md: leader green is only the one primary action) */
+.kt-chip[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
 .kt-chip:disabled { opacity: 0.45; cursor: default; }
 .kt-q { margin: 0; font: 400 17px/1.4 var(--font-ui); }
 /* (the paper stays as it is while the tape rolls: it's what you sing from) */
@@ -145,7 +146,7 @@ screens.add({
     /* ------------------------------------------------------------------------------------------- the layout */
     const canvas = h('canvas.kt-scene', { width: W, height: H, 'aria-hidden': 'true' });
     const g = canvas.getContext('2d');
-    const go = h('button.kt-go', { type: 'button', onclick: () => press(offered()?.id) }, h('span.kt-go-label', ''), h('kbd', 'Space'));
+    const go = h('button.kt-go', { type: 'button', onclick: () => press(offered()?.id) }, h('span.kt-go-label', ''), h('kbd.lr-kbd', 'Space'));
     const q = h('p.kt-q', { 'aria-live': 'polite' });
     const choices = h('div.kt-row.kt-choices');
     const takesRow = h('div.kt-row.kt-takes');
@@ -679,12 +680,11 @@ screens.add({
         for (const c of capoChoices(k)) choices.append(chip(c.capo ? `${c.shapes} shapes, capo ${c.capo}` : 'No capo', () => writeFromTake(c.capo), { id: `fromtake.${c.capo}` }));
       }
       if (run.ask === 'form' && run.form) choices.append(chip(`Write it as ${String(run.form.name).replace(/\s+\d+$/, '')} ×${run.form.times}`, writeForm, { id: 'form' }), chip('Leave it as played', leaveForm, { id: 'form.no' }));
-      // the takes: whole passes, the master marked
+      // the takes: whole passes, "Take 1", the master pressed
       takesRow.replaceChildren();
       const cl = takeTrack() ? clipsOn(takeTrack()).filter((c) => c.kind === 'audio') : [];
       if (cl.length) {
-        takesRow.append(h('span', 'Takes'));
-        cl.forEach((c, i) => takesRow.append(chip(`${i + 1}${roomNow().master === c.id ? ' ·' : ''}`, () => { run.heardTake = i; hearTake(0); }, { pressed: roomNow().master === c.id, id: `take.${i + 1}` })));
+        cl.forEach((c, i) => { const m = roomNow().master === c.id; takesRow.append(chip(`Take ${i + 1}`, () => { run.heardTake = i; hearTake(0); }, { pressed: m, id: `take.${i + 1}`, aria: m ? `Take ${i + 1}, the master` : null })); });
         const sel = run.heardTake != null ? cl[run.heardTake] : null;
         if (sel && roomNow().master !== sel.id) takesRow.append(chip('Use this one', () => useTake(sel.id), { id: `use.${sel.id}` }));
       }

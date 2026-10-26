@@ -162,6 +162,10 @@ export async function run(T, ctx) {
     await openShelf(s);
     const over = await s.E(() => document.querySelector('.lrsh-space')?.textContent || '');
     T.ok(!under && over === 'This browser has room for about 8 more minutes of takes.', `past 80% of the estimate the shelf says how much is left: “${over}” (under it: “${under}”)`);
+    // Send, from the shelf: the box's song, and the send screen on it
+    await s.page.click('.lrsh-box[data-id="p_a"] .lrsh-send');
+    const sentFrom = await until(s, () => window.overdub.store.get().id === 'p_a' && window.overdub.ui.state.liveRoom.screen === 'send');
+    T.ok(sentFrom, `Send on a tape box opens the send screen on its song (${(await state(s)).screen}, “${(await state(s)).title}”)`);
     T.ok(!s.errors.length, `no page errors on the shelf${s.errors.length ? ': ' + s.errors.slice(0, 2).join(' | ') : ''}`);
   } finally { await s.close(); }
 }

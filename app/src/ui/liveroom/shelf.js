@@ -15,7 +15,7 @@
 //
 // A box: the title (the display face, or the house's "Untitled · 132 · drop C"), the slate, the parts as words, the day,
 // the size of its takes, the engineer's note, the cover; a die on an untitled box offers three titles (a press names
-// the song, a step by you); a press opens it in the room. Take it off the shelf asks first, plainly, and deletes only
+// the song, a step by you); a press opens it in the room, and Send opens the send screen on it. Take it off the shelf asks first, plainly, and deletes only
 // the recordings no other song here uses (the song on the stage can't be taken off: it's the one you're on).
 
 import { h, css } from '../dom.js';
@@ -36,8 +36,9 @@ const MB = (b) => Math.round(b / 1e6);
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const dayOf = (at) => { const d = new Date(at); return `${DAYS[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const COVER = { w: 128, h: 80 };
-// the once-per-browser lines (shelf.backup) are kept under this name in overdub:room said, not under a song
-const BROWSER = 'browser';
+// once per browser, in overdub:room beside its own fields (prefs keeps a newer studio's keys): the backup offered,
+// persist() asked. (Not in said, which keeps the last 50 songs' lines and would let the offer come back.)
+const OFFERED = 'backupOffered';
 const PERSIST = 'persistAsked';
 const SPACE_AT = 0.8;
 // a minute of a take as the asset store keeps it: mono 32-bit float at 48 kHz
@@ -206,8 +207,10 @@ screens.add({
     }
     function sayTop() {
       const xs = [];
-      if (!prefs.said(BROWSER, 'shelf.backup') && (records.length || plain.length)) {
-        prefs.mark(BROWSER, 'shelf.backup');
+      let offered = false;
+      try { offered = !!prefs.get()[OFFERED]; } catch { /* storage: prefs remembers it for the visit */ }
+      if (!offered && (records.length || plain.length)) {
+        try { prefs.set({ [OFFERED]: true }); } catch { /* fine */ }
         xs.push(h('p.lrsh-said.lrsh-backup', line('shelf.backup'), h('button.btn.btn-small', { type: 'button', onclick: () => backup() }, 'Back it up'), safari() ? ` ${line('shelf.safari')}` : null));
         showCorner(false);
       } else showCorner(!!(records.length || plain.length));
@@ -223,6 +226,12 @@ screens.add({
       if (!ok) return false;
       // (openSong opens the room on a song with one, and installShelf's listener says where you left it)
       if (roomy(store.get())) app.liveRoom.open({ screen: stageOf(store.get()) });
+      return true;
+    }
+    // Send, from the shelf (§3.14): the box's song on the stage, then the send screen
+    async function send(rec) {
+      if (rec.id !== store.get().id && !(await open(rec))) return false;
+      app.liveRoom.open({ screen: 'send' });
       return true;
     }
     function openPlain(i) {
@@ -289,6 +298,7 @@ screens.add({
           h('span.lrsh-meta', meta),
           h('span.lrsh-note', L.note)),
         h('div.lrsh-acts',
+          h('button.lrsh-act.lrsh-send', { type: 'button', onclick: () => send(rec) }, 'Send'),
           dice ? h('button.lrsh-act.lrsh-die', { type: 'button', 'aria-expanded': 'false', onclick: (e) => { dice.hidden = !dice.hidden; e.currentTarget.setAttribute('aria-expanded', String(!dice.hidden)); } }, 'Name it') : null,
           here ? h('span.lrsh-here', line('shelf.here')) : h('button.lrsh-act.lrsh-off', { type: 'button', onclick: () => ask(rec) }, 'Take it off the shelf')),
         dice, asked);

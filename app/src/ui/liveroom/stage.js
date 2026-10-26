@@ -110,11 +110,18 @@ screens.add({
     const S = { last: null, drift: null, pass: null, preview: null, taps: [], feelAsk: null, menu: null, from: null, top: false, ended: false, nameBox: null };
     const song = () => store.get();
     const view = () => ctx.view();
+    // (read from storage once per song and again after the stage marks one: the frame asks every time it paints)
+    let saidMemo = null;
     const saidFor = () => {
-      const p = song(), out = [];
+      const p = song();
+      if (saidMemo && saidMemo.id === p?.id) return saidMemo.out;
+      const out = [];
       try { if (prefs.said(p, 'layout.answered')) out.push('layout.offer'); if (prefs.said(p, 'basement.other')) out.push('basement.other'); } catch { /* storage: fine */ }
+      saidMemo = { id: p?.id, out };
       return out;
     };
+    const mark = (id) => { saidMemo = null; try { prefs.mark(song(), id); } catch { /* storage: fine */ } };
+    offs.push(store.on('change', (e) => { if (e?.kind === 'load') saidMemo = null; }));
     const runState = () => ({ run: L.run, last: S.last, drift: S.drift, said: saidFor(), heard: heardOf.get(songKey(song())) || null });
     const offer = () => offered(view(), runState());
     const card = (id = L.card) => view().cards.find((c) => c.id === id) || null;
@@ -568,7 +575,7 @@ screens.add({
           if (v.place === 'bluesbar' || v.place === 'kitchen') return { ok: false, error: 'This room has no other side.' };
           const c = (typeof anchor === 'string' ? v.cards.find((x) => x.id === anchor) : null) || card() || v.parts.find((x) => x.id === S.last);
           if (!c || c.empty || c.end) return { ok: false, error: 'Play the part first.' };
-          if (v.place === 'basement') { try { prefs.mark(song(), 'basement.other'); } catch { /* fine */ } }
+          if (v.place === 'basement') mark('basement.other');
           const d = planDouble(song(), { section: c.id });
           if (d?.ops?.length) { const r = runPlan(store, d, { by: 'overdub' }); if (!r.ok) return r; }
           if (!say('side.now')) say('other.now');
@@ -577,7 +584,7 @@ screens.add({
         }
         case 'layout': {
           const pl = planLayout(song());
-          try { prefs.mark(song(), 'layout.answered'); } catch { /* fine */ }
+          mark('layout.answered');
           if (!pl?.ops?.length) return { ok: false, error: 'Two parts first.' };
           const r = runPlan(store, pl, { by: 'overdub' });
           if (!r.ok) return r;
@@ -585,7 +592,7 @@ screens.add({
           L.card = view().parts[0]?.id || null;
           return { ok: true };
         }
-        case 'notyet': try { prefs.mark(song(), 'layout.answered'); } catch { /* fine */ } return { ok: true };
+        case 'notyet': mark('layout.answered'); return { ok: true };
         case 'hear': case 'home': return L.run === 'play' ? stopPlay(false) : busy() ? { ok: false } : hearFrom(true);
         case 'from': return L.run === 'play' ? stopPlay(false) : busy() ? { ok: false } : hearFrom(false);
         case 'feel': case 'simpler': case 'busier': case 'softer': case 'louder': return feel(s);

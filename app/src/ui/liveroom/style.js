@@ -10,19 +10,23 @@ export const CSS = `
 .lr { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column; background: var(--bg); color: var(--text); overflow-x: hidden; overflow-y: auto; outline: none;
   padding: 0 clamp(16px, 2.4vw, 32px) 12px; }
 .lr[hidden] { display: none; }
+/* (a hidden element in the room stays hidden: .btn and the room's flex rows would otherwise show it) */
+.lr [hidden] { display: none !important; }
 .lr-top { display: flex; align-items: center; gap: 12px; min-height: 48px; flex: none; }
 .lr-brand { font-size: 18px; }
 .lr-where { color: var(--text-3); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .lr-gap { flex: 1; }
 .lr-top .btn { min-height: 36px; }
-.lr-body { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 14px; padding-top: 8px; min-height: 0; }
+.lr-body { flex: none; display: flex; flex-direction: column; align-items: center; gap: 14px; padding-top: 8px; min-height: 0; }
 .lr-screen { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; min-width: 0; }
 .lr-h { margin: 0; font-size: clamp(28px, 4.2vw, 46px); text-align: center; }
 .lr-sub { margin: 0; color: var(--text-2); font-size: 15px; text-align: center; max-width: 60ch; }
 .lr-scene { width: min(100%, 1024px); height: auto; aspect-ratio: 16 / 9; image-rendering: pixelated; display: block; }
-.lr-talkback { display: flex; align-items: baseline; gap: 10px; width: min(100%, 1024px); margin: 8px auto 0; min-height: 1.5em; }
+.lr-talkback { display: flex; align-items: baseline; gap: 10px; width: min(100%, 1180px); margin: 8px auto 0; min-height: 1.5em; }
 .lr-tb-lamp { flex: none; width: 8px; height: 8px; background: var(--line-2); align-self: center; }
 .lr-tb-lamp.lr-on { background: var(--accent-2); }
+/* (no line yet: no lamp, so an empty strip isn't a stray square) */
+.lr-talkback:not(.lr-said) .lr-tb-lamp { visibility: hidden; }
 .lr-tb-text { margin: 0; font: 400 18px/1.4 var(--font-ui); max-width: 70ch; }
 .lr-tb-text .mono, .lr-tb-text kbd { font-family: var(--font-mono); }
 .lr-tb-ask { flex: 1; display: flex; }

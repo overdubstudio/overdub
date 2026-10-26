@@ -47,7 +47,7 @@ export const LAYOUT = Object.freeze({
   metal: Object.freeze({ ampL: box(34, 18, 58, 91), ampR: box(164, 18, 58, 91), kit: box(84, 70, 88, 46), bass: box(224, 38, 30, 72), focus: box(84, 12, 88, 107) }),
   basement: Object.freeze({ ampL: box(40, 64, 44, 48), ampR: box(172, 64, 44, 48), kit: box(84, 68, 88, 46), bass: box(220, 62, 34, 48), focus: box(84, 26, 88, 90) }),
   bluesbar: Object.freeze({ ampL: box(16, 60, 46, 54), ampR: box(66, 80, 26, 26), kit: box(84, 66, 88, 48), bass: box(196, 66, 32, 42), focus: box(84, 18, 88, 96) }),
-  kitchen: Object.freeze({ ampL: box(52, 62, 144, 34), ampR: box(52, 62, 144, 34), kit: box(160, 96, 32, 32), bass: box(200, 56, 20, 66), focus: box(28, 26, 166, 102) }),
+  kitchen: Object.freeze({ ampL: box(52, 62, 144, 34), ampR: box(52, 62, 144, 34), kit: box(160, 96, 32, 32), bass: box(200, 56, 20, 66), focus: box(64, 26, 128, 102) }),
 });
 
 /* ------------------------------------------------------------------------------------------------ the signals */

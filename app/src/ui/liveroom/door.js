@@ -132,7 +132,6 @@ function createPreviews(app) {
 /* ------------------------------------------------------------------------------------------------ the screen */
 const CSS = `
 .lrd { width: min(100%, 1180px); display: flex; flex-direction: column; align-items: center; gap: 18px; }
-.lrd-top { width: 100%; display: flex; justify-content: flex-end; min-height: 40px; }
 .lrd-cards { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
 .lrd-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; min-width: 0; text-align: left; cursor: pointer;
   background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-press, 2px); font: inherit; }
@@ -216,7 +215,9 @@ screens.add({
       try { await app.engine.start?.(); await app.engine.play(0); } catch (e) { console.warn('overdub: playing the house’s song', e); }
     }
 
-    const shelfKey = h('button.btn.btn-txt.lrd-shelf', { type: 'button', hidden: true, style: { display: 'none' }, onclick: () => app.liveRoom.open({ screen: 'shelf' }) }, 'Shelf');
+    // the room's own Shelf key in its header, shown on the door once there's a song on the shelf (§3.1)
+    const shelfKey = el.closest('.lr')?.querySelector('.lr-shelf') || null;
+    if (shelfKey) shelfKey.hidden = true;
     const cards = order.map((place, i) => {
       const crop = h('canvas.lrd-crop', { width: CROP.w, height: CROP.h, 'aria-hidden': 'true' });
       try { const g = crop.getContext('2d'); if (g) { g.imageSmoothingEnabled = false; drawCrop(g, place, CROP); } } catch (e) { console.warn('overdub: the door’s crop', place, e); }
@@ -240,7 +241,6 @@ screens.add({
       return card;
     });
     const root = h('div.lrd',
-      h('div.lrd-top', shelfKey),
       h('h1.lr-h.disp', say('door.ask')),
       h('div.lrd-cards', { role: 'group', 'aria-label': say('door.ask') }, cards),
       h('div.lrd-quiet',
@@ -254,7 +254,7 @@ screens.add({
       let n = 0;
       try { const db = await import('./shelf-db.js'); n = (await db.list()).length; } catch { n = 0; }
       if (!n) n = app.exporter?.recent?.().length || 0;
-      if (!gone) { shelfKey.hidden = !n; shelfKey.style.display = n ? '' : 'none'; }
+      if (!gone && shelfKey) shelfKey.hidden = !n;
     })();
     // on a phone: the electric cards' line goes once an interface shows up
     let offDev = null;

@@ -333,6 +333,8 @@ async function sending(T, ctx) {
     await s.E(() => { navigator.canShare = (d) => !!(d && d.files && d.files.length); navigator.share = async (d) => { window.__lrShared = { n: d.files.length, name: d.files[0].name, type: d.files[0].type, size: d.files[0].size }; }; });
     const shared = await s.E(async () => { const m = await import('/app/src/ui/liveroom/send.js'); const r = await m.sendMix(window.overdub); return { r, sh: window.__lrShared, files: window.__lrFiles.length }; });
     T.ok(shared.r.ok && shared.r.via === 'share' && shared.sh?.name === 'Void Weather.wav' && shared.sh.type === 'audio/wav' && shared.files === 1, `where navigator.canShare takes the file, Send a mix goes through the share sheet (${shared.sh?.name}, ${shared.sh?.size} bytes) and saves nothing`);
+    // (straight after the Saved line, with no press between: it waits its turn in the talkback, up to 2.6 s)
+    await s.page.waitForFunction(() => /^Sent /.test(document.querySelector('.lr-tb-line')?.textContent || ''), null, { timeout: 6000 }).catch(() => null);
     const said = await s.E(() => document.querySelector('.lr-tb-line')?.textContent || '');
     T.ok(/^Sent “Void Weather\.wav”: 0:\d\d, \d+ MB\. It’s the mix; the takes stay in this browser\.$/.test(said), `…and says what it sent: “${said}”`);
     // the send screen renders the mix as it opens, so a press hands the file to the share sheet at once (a share sheet

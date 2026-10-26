@@ -325,6 +325,7 @@ screens.add({
       const name = takeName(store.get(), n, { capo: sh?.capo || 0, bpm: timed ? store.get().tempo : null });
       store.dispatch([{ type: 'clip.set', track, clip: clip.id, patch: { name } }], { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
       const secs = await durationOf(clip);
+      if (!live) return { ok: true, clip: clip.id };
       say('k.take.in', { n, time: mmss(secs) });
       draw();
       readTake(clip, { first: !roomNow().master, counted: run.counted });
@@ -343,7 +344,9 @@ screens.add({
       run.reading = true;
       draw();
       let read;
-      try { read = await readTapeInWorker(s.x, s.sr); } catch (e) { run.reading = false; console.warn('overdub kitchen read:', e); draw(); return; }
+      try { read = await readTapeInWorker(s.x, s.sr); } catch (e) { run.reading = false; console.warn('overdub kitchen read:', e); if (live) draw(); return; }
+      // (a read that comes back after the screen has gone says nothing)
+      if (!live) return;
       // (a counted take's read is marked: its time is the count's, never the analyser's)
       reads.set(clip.id, counted ? { ...read, counted: true } : read);
       run.reading = false;

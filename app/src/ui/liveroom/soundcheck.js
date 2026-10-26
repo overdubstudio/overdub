@@ -25,6 +25,7 @@
 import { h, css } from '../dom.js';
 import { pickChannel, inputKind } from '../../input/audioin.js';
 import { levelVerdict, tuningsFor, NOTE } from './lamps.js';
+import { TUNINGS } from '../../core/fretboard.js';
 import { roomOf } from '../../core/liveroom/model.js';
 import { rigLabel, lowCut } from '../../core/liveroom/places.js';
 import { LINES } from '../../core/liveroom/lines/soundcheck.js';
@@ -36,6 +37,9 @@ const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length;
 
 // the lamps mounted last (lampsState reads them)
 let current = null;
+// what the lamps last said, for the page's life: mounted again on the same input (back from the shelf, the send screen
+// or the control room) they light at once and don't say it all again
+const SAID = { device: null, plug: null, level: null };
 const DARK = () => ({ plug: null, level: null, tune: null, lineup: null });
 
 export function lampsState() {
@@ -47,7 +51,9 @@ export function lampsState() {
 
 const CSS = `
 .lr-lamps { display: flex; flex-direction: column; gap: 8px; width: min(100%, 1024px); }
-.lr-lamp-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.lr-lamp-row { display: flex; flex-direction: column; gap: 6px; }
+.lr-lamp-row .lr-lamp { width: 100%; }
+.lr-stage .lr-lamp-rig { display: none; }
 .lr-lamp { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line-2); background: var(--bg-2, transparent);
   color: var(--text); font: 600 13px/1.2 var(--font-ui); text-align: left; cursor: pointer; max-width: 100%; }
 .lr-lamp:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -147,7 +153,10 @@ export function mountLamps(el, ctx) {
     const saved = a.state.deviceId && list.some((d) => d.id === a.state.deviceId) ? a.state.deviceId : '';
     if (saved) return { device: saved, channel: a.state.channel || '1', saved: true };
     const kinds = list.map((d) => ({ d, k: inputKind(d.label, { isDefault: d.id === 'default' }) }));
-    const want = kitchen ? kinds.find((x) => x.k === 'mic') : kinds.find((x) => x.k === 'interface');
+    // (an interface by its own id, not the browser's "Default - …" entry for it: the input layer turns monitoring on
+    // through the amp only for an interface the person picked, never for the browser's own default)
+    const own = (k) => kinds.find((x) => x.k === k && x.d.id !== 'default') || kinds.find((x) => x.k === k);
+    const want = kitchen ? own('mic') : own('interface');
     return { device: want ? want.d.id : '', channel: '1', saved: false };
   }
   async function openInput({ device = null, channel = null, by = 'room' } = {}) {
@@ -186,7 +195,8 @@ export function mountLamps(el, ctx) {
     // (a mic at an electric place stays said: it plays, but it's no interface)
     if (!(L.plug?.line === 'plug.mic')) set('plug', 'ok', 'plug.ok', vars, { device: st.label, input: picked || +st.channel || 1, channels: st.channels });
     // (and said once: not after the mic's line, which it would contradict)
-    if (!okSaid) { okSaid = true; if (L.plug?.line !== 'plug.mic') say('plug.ok', vars); if (st.inputKind === 'interface' && st.monitoring) say('plug.direct'); }
+    if (!okSaid && SAID.device === (st.deviceId || st.label) && SAID.plug) okSaid = true;
+    if (!okSaid) { okSaid = true; SAID.device = st.deviceId || st.label; SAID.plug = 'plug.ok'; if (L.plug?.line !== 'plug.mic') say('plug.ok', vars); if (st.inputKind === 'interface' && st.monitoring) say('plug.direct'); }
     if (!L.tune) { set('tune', 'ask', 'tune.ask'); }
   }
   function framePlug(now) {
@@ -231,7 +241,7 @@ export function mountLamps(el, ctx) {
     if (wasOk && v === 'quiet') return;
     const id = `level.${v}`, vars = { db: Math.round(db), input: picked };
     set('level', v === 'ok' ? 'ok' : 'warn', id, vars, { db: Math.round(db * 10) / 10 });
-    if (saidLevel !== id) { saidLevel = id; say(id, vars); }
+    if (saidLevel !== id) { saidLevel = id; if (SAID.level !== id) say(id, vars); SAID.level = id; }
     if (v === 'ok') wasOk = true;
   }
 
@@ -279,6 +289,8 @@ export function mountLamps(el, ctx) {
     say('tune.ok', vars);
     // the answer is the song's tuning (the bass's range, the guitar's low cut and the key's root follow it): a step by you
     const p = store.get(), room = roomOf(p);
+    // (the song's tuning is the person's now: the lamp comes back lit with it, §2.6)
+    try { ctx.prefs?.mark?.(p, 'tuned'); } catch { /* storage: it asks again next time */ }
     if (room && room.tuning !== t.id) {
       try { store.dispatch([{ type: 'room.set', patch: { tuning: t.id } }, ...lowCutOps(p, t.id)], { by: 'you', label: `Tuned to ${t.name}`, reason: 'room:tuning' }); } catch (e) { console.error('lamps: the tuning', e); }
     }
@@ -318,6 +330,15 @@ export function mountLamps(el, ctx) {
     else if (k === 'level') { peaks = []; verdict = null; saidLevel = null; wasOk = false; }
     else if (k === 'tune') { lowSeen = null; notes = []; offSaid = false; set('tune', 'ask', 'tune.ask'); paintAsk(); say('tune.ask'); }
     else if (k === 'lineup') lineUp();
+  }
+
+  // (a song whose tuning you've chosen, coming back to it: the lamp is lit with it, and the low string isn't asked
+  // again until the lamp is pressed. The place's own tuning, never confirmed, still asks)
+  {
+    let tuned = false;
+    try { tuned = !!ctx.prefs?.said?.(store.get(), 'tuned'); } catch { tuned = false; }
+    const t = tuned ? roomOf(store.get())?.tuning : null, known = t ? tuningsFor(TUNINGS[t]?.strings?.[0] ?? -1).find((x) => x.id === t) : null;
+    if (known) set('tune', 'ok', 'tune.ok', { name: known.name }, { id: known.id, note: NOTE(TUNINGS[t].strings[0]), midi: TUNINGS[t].strings[0] });
   }
 
   /* ---- start: the input opened by itself when the browser already allows it; else the lamp asks */

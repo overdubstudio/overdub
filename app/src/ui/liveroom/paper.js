@@ -177,7 +177,9 @@ export function createPaper({ app, store, say = () => {} }) {
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter') { e.preventDefault(); commit(sec.id, line.id, input.value, { next: true, at: input.selectionStart }); }
-      else if (e.key === 'Escape') { e.preventDefault(); editing = null; draw(); }
+      // (Esc stops editing and keeps what was typed: it's a sheet of words, and a line typed and then lost is worse
+      // than one to take out again with ⌘Z)
+      else if (e.key === 'Escape') { e.preventDefault(); commit(sec.id, line.id, input.value, {}); }
       else if (e.key === 'Backspace' && !input.value) { e.preventDefault(); removeLine(sec.id, line.id); }
       else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); move(sec.id, line.id, input.value, e.key === 'ArrowUp' ? -1 : 1); }
     });

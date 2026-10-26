@@ -37,7 +37,9 @@ const CSS = `
 .kt-right { min-width: 0; max-height: calc(100vh - 140px); overflow: auto; }
 .kt-go { width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 600 17px/1.2 var(--font-ui);
   background: var(--accent); color: var(--accent-ink, #111); border: 0; padding: 0 16px; cursor: pointer; }
-.kt-go kbd { font: 600 12px/1 var(--font-mono); opacity: 0.75; }
+.kt-go kbd { font: 400 12px/1 var(--font-mono); color: inherit; background: none; opacity: .7; border: 1px solid currentColor; border-radius: var(--r-press); padding: 3px 5px; box-shadow: none; }
+@media (hover: none) { .kt-go kbd { display: none; } }
+.kt-break { flex-basis: 100%; height: 0; }
 .kt-go:disabled { opacity: 0.5; cursor: default; }
 .kt-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .kt-row > span { color: var(--text-3); font-size: 13px; }
@@ -45,7 +47,8 @@ const CSS = `
 .kt-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .kt-chip:disabled { opacity: 0.45; cursor: default; }
 .kt-q { margin: 0; font: 400 17px/1.4 var(--font-ui); }
-.kt-dim .kt-row, .kt-dim .kt-right { opacity: 0.5; }
+/* (the paper stays as it is while the tape rolls: it's what you sing from) */
+.kt-dim .kt-row { opacity: 0.5; }
 .kt-counter { font: 600 13px/1 var(--font-mono); color: var(--text-3); }
 @media (max-width: 900px) { .kt { grid-template-columns: minmax(0, 1fr); } .kt-scene { max-width: 100%; aspect-ratio: 384 / 144; } .kt-right { max-height: none; } .kt-chip { min-height: 44px; } }
 `;
@@ -174,13 +177,19 @@ screens.add({
       if (said) { run.phones = said === 'headphones'; run.step = 'balance'; } else run.step = 'phones';
     }
     // (the guess and the browser's settings are the input's: read once it's open, if the browser lets it open now)
+    // (the guess is said once the input is open, so it's the input's: on a first visit that's after the headphones
+    // answer, the press the browser asks on)
+    let howSaid = false;
+    function sayHow() {
+      if (howSaid || !fresh || !app.input?.audio?.state?.open) return;
+      howSaid = true;
+      if (!run.picked) run.mic = run.micGuess = guessMic();
+      say('k.how', { mic: MICS.find((m) => m.id === run.mic).label });
+      browserCheck();
+    }
     openMic({ ask: false }).then(() => {
       if (!live) return;
-      if (fresh) {
-        if (!run.picked) run.mic = run.micGuess = guessMic();
-        say('k.how', { mic: MICS.find((m) => m.id === run.mic).label });
-      }
-      browserCheck();
+      sayHow();
       if (run.step === 'balance' && !run.balance) startBalance();
       draw();
     });
@@ -206,7 +215,7 @@ screens.add({
       run.step = 'balance';
       draw();
       // (the press the browser asks for the input on, when it hasn't been allowed yet)
-      openMic().then(() => { if (live && run.step === 'balance' && !run.balance) { startBalance(); draw(); } });
+      openMic().then(() => { if (!live) return; sayHow(); if (run.step === 'balance' && !run.balance) startBalance(); draw(); });
     }
     // the balance: three seconds of strumming, three of a voice; the voice wanted 3-8 dB over the guitar
     function startBalance() {
@@ -632,12 +641,15 @@ screens.add({
       go.dataset.act = o ? o.id : '';
       choices.replaceChildren();
       q.textContent = '';
+      // (the question's answers first, under it; how it's miked after them, on its own row)
+      const mics = [];
       if (run.step === 'phones' || run.step === 'balance' || run.step === 'how') {
-        for (const m of MICS) choices.append(chip(m.id === 'two' && !twoMoving() ? `${m.label} · needs a guitar with a pickup` : m.label, () => pickMic(m.id), { pressed: run.mic === m.id, disabled: m.id === 'two' && !twoMoving(), id: `mic.${m.id}`, aria: m.id === 'two' && !twoMoving() ? words('k.pickup.needed') : null }));
+        mics.push(h('span.kt-break'), h('span', 'Miked'));
+        for (const m of MICS) mics.push(chip(m.id === 'two' && !twoMoving() ? `${m.label} · needs a guitar with a pickup` : m.label, () => pickMic(m.id), { pressed: run.mic === m.id, disabled: m.id === 'two' && !twoMoving(), id: `mic.${m.id}`, aria: m.id === 'two' && !twoMoving() ? words('k.pickup.needed') : null }));
       }
       if (run.step === 'phones') {
         q.textContent = words('k.phones');
-        choices.append(h('br'), chip('Yes', () => answerPhones(true), { id: 'phones.yes' }), chip('No, speakers', () => answerPhones(false), { id: 'phones.no' }));
+        choices.append(chip('Yes', () => answerPhones(true), { id: 'phones.yes' }), chip('No, speakers', () => answerPhones(false), { id: 'phones.no' }));
       } else if (run.step === 'balance') {
         q.textContent = run.balance?.phase === 'sing' ? 'Sing a line, or speak one.' : 'Strum the way you’ll play.';
         choices.append(chip(words('k.balance.skip'), skipBalance, { id: 'balance.skip' }));
@@ -649,6 +661,7 @@ screens.add({
       } else if (run.offer) {
         choices.append(chip('No thanks', noThanks, { id: 'nothanks' }));
       }
+      if (mics.length) choices.append(...mics);
       // on headphones, beside the bare tape: Count me in, at a tempo set first (− +, ← →, T)
       if (canCount()) {
         choices.append(

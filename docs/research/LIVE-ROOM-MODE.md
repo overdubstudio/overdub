@@ -1301,7 +1301,12 @@ and tuning ids are forever.
   `track.getSettings()` exposed in its state; two channels to two tracks at once (`audio.open({ split: { 1: trackA, 2:
   trackB } })`, the capture worklet already takes `channels: 2`, `app/src/input/cap-worklet.js`), with monitoring and
   the feedback guard per channel; the audio-clock frame of the first captured block in its state (a check uses it to
-  line a fake guitar up with the count).
+  line a fake guitar up with the count). As built (stream A): `pickChannel(levels, { over, floor })` (pure, exported),
+  `audio.levels()`, `audio.useChannel(ch)`, `open`'s `capture: true` and `split`, and `state.firstFrame` and
+  `state.split`; the engine's `lastCount` (the last count-in: its beats, voice, hits, start on the audio clock and the
+  beats that sounded); the recorder's `record({ punch, lead, quiet })`, `stop({ at, tail, keep })` and its `scheduled`
+  and `thrown` getters. The lamps' readings (`levelVerdict`, `tuningsFor`, `tuningName`, `leanLine`, `NOTE`) are pure,
+  in `ui/liveroom/lamps.js`.
 - **The deck** (`app/src/ui/liveroom/deck.js`) is the room's one door to all of it: `countIn`, `take`, `stop({ at:
   'bar' | 'now' })`, `keepAfterAll` (⇧R), the soundcheck's lamps and the state the stage paints from. Every musical
   decision is made on the audio clock when the key is pressed (start and stop beats passed to the engine and the
@@ -1667,7 +1672,7 @@ It lands the parts every stream shares, and nothing else:
 | `ui/liveroom/index.js` (C) | the default export installs it (`app.liveRoom` = `{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }`); `screens`, re-exported; `ctx` = `{ app, ui, store, deck, view(), say(lineId, vars), prefs, scene }` |
 | `ui/liveroom/screens.js` (C) | `screens`: `add({ id, mount(el, ctx) → { frame(now), unmount(), press?(id) } })` → remove, `get(id)`, `has(id)`, `list()` (the registry `index.js` re-exports; a screen's optional `press(id)` is what `app.liveRoom.press` asks first) |
 | `ui/liveroom/prefs.js` (frozen) | `prefs.get()`, `prefs.set(patch)`, `prefs.said(song, id)`, `prefs.mark(song, id)` over `overdub:room` (`prefs.key`) |
-| `ui/liveroom/deck.js` (A) | `createDeck(app)` → `{ state, on(evt, fn), countIn({ from, bars, voice, hits, at }), take({ track, from, punch, tail }), stop({ at: 'bar' \| 'now', keep: 'song' \| 'capture' }), keepAfterAll(), level(), tuner(), latency }` |
+| `ui/liveroom/deck.js` (A) | `createDeck(app)` → `{ state, on(evt, fn), countIn({ from, bars, voice, hits, at }), take({ track, from, punch, tail }), stop({ at: 'bar' \| 'now', keep: 'song' \| 'capture' }), keepAfterAll(), level(), tuner(), latency }`; stream A's additions: `take`'s `lead` (s kept before `from`) and `join` (a step the take's commit joins), `stop`'s `beat` (a beat to use instead of the key's), and `stopBeat`, null or the stage's stop rule `(beat, { from, bpb }) → beat`, which C sets (one deck per app: `createDeck(app)` again gives the same one) |
 | `ui/liveroom/soundcheck.js` (A) | `mountLamps(el, ctx)` → `{ frame(now), unmount() }`, `lampsState()` |
 | `ui/liveroom/pixels/index.js` (E) | `W` 256, `H` 144, `LEDGE` 14, `sceneOf(place)` → `{ draw(ctx, view, now) }`, `drawCrop(ctx, place, size)`, `drawCover(ctx, cover, size)`, `windowFor(view)`; drawn with `fillStyle`, `fillRect` and `globalAlpha` only, as the prototype's are, so a Node check draws them into a buffer |
 | `ui/liveroom/door-decide.js` (F) | `decideDoor({ search, hash, saved, room, webdriver })` → `{ side, song }` |

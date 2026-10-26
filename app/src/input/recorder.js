@@ -44,19 +44,40 @@
 //                                         you played most often stays, input/rounds.js foldRounds), or stacks a new take
 //                                         (everything else, audio always); a choice sticks per track
 //   recorder.countIn / setCountIn(bars)   0, 1 (default) or 2 bars (localStorage overdub:record)
-//   recorder.record({ countIn?, audio?, quantize?, join? }) -> Promise<take | null>   stopped: the count-in from the playhead;
+//   recorder.record({ countIn?, audio?, quantize?, join?, punch?, lead?, quiet? }) -> Promise<take | null>   stopped: the count-in from the playhead;
 //                                         playing: recording starts at a bar line with a whole bar to come in on (a loop
 //                                         of 2 bars or less: its top; quantize: false, now), the wait counted ('count',
 //                                         live().counting); before the loop, at its start. join: a transaction (by you)
-//                                         the take's commit is one undo step with, while it is still the newest
-//   recorder.stop({ keepPlaying?, why?, at? }) -> Promise<commit | null>  the take into the song (R punches out and
-//                                         keeps playing; Space stops; the killswitch, a seek or a hidden tab commit too;
-//                                         a seek ends the take where it was, not where the playhead jumped: at)
+//                                         the take's commit is one undo step with, while it is still the newest.
+//                                         punch: { from, to? } (song beats): recording starts at `from` (the transport
+//                                         playing up to it, or started there with the count-in), and with `to` the take
+//                                         ends itself there and keeps only that range, the transport playing on (the live
+//                                         room's other side and its one-bar punch). lead: seconds of what came in
+//                                         before the take's first beat kept at the head of its audio clip (the room's
+//                                         30 ms seam, docs/research/LIVE-ROOM-MODE.md §7.2; never before beat 0).
+//                                         quiet: no toasts and no offers (the room says its own lines)
+//   recorder.stop({ keepPlaying?, why?, at?, tail?, keep? }) -> Promise<commit | null>  the take into the song (R punches
+//                                         out and keeps playing; Space stops; the killswitch, a seek or a hidden tab
+//                                         commit too; a seek ends the take where it was, not where the playhead jumped:
+//                                         at). at: the grid it ends at (in a take with no loop, the song beat). An `at`
+//                                         plus `tail` (beats) still to come is a stop scheduled on the audio clock: the
+//                                         take records on to at + tail (the ring after the last chord) and goes in then,
+//                                         its result saying end: at and tail; a hidden tab doesn't cut it short.
+//                                         keep: 'capture' (Esc in the live room) puts nothing in the song: the pass is
+//                                         kept in capture ({ thrown: take id }) and the result says { kept: 'capture',
+//                                         capture: [phrase ids] }; recorder.capture(that id) puts it in after all, at
+//                                         the bars it was played, as the commit would have (Shift+R in the room).
+//                                         An audio take's commit describes its recording (asset.add: name, rate,
+//                                         channels, length) in the same step, and its result has txn (the step's id:
+//                                         the room joins its part to it) and takes: [{ track, clip, asset, start,
+//                                         length }] (each audio take that plays). With the input split (audioin open's
+//                                         split), one take per channel, each onto its track, in that one step.
 //   recorder.toggle()                     R: idle -> record, count -> cancel, rec -> punch out
 //   recorder.cancel()                     during the count-in: nothing is recorded (a hum R started stops; one you started
 //                                         with H is yours again)
 //   recorder.capture(id?) -> result       Shift+R, Put it in the song: a captured phrase onto its target, at the beats
-//                                         it was played on (free time: the playhead's bar)
+//                                         it was played on (free time: the playhead's bar); an audio pass stopped with
+//                                         stop({ keep: 'capture' }) goes in as its commit would have
 //   recorder.live() -> { state, track, tracks, from, now, pass, counting, passes: [{ n, track, notes, raw }], peaks, trace }
 //   recorder.passes() -> the passes so far ; recorder.undoPass() takes the last completed one out (kept in capture):
 //                                         ⌘Z while a take runs (input/index.js), never the song's undo
@@ -862,19 +883,27 @@ export function createRecorder(app, input, opts = {}) {
   /* ---- the mic: blocks from the capture worklet, placed by a (ctx time, grid) pair */
   async function startAudio(r, track) {
     const audio = input.audio;
-    try { await audio.openFor(track); } catch (e) {
-      const blocked = /allow|NotAllowed/i.test(String(e && e.message));
-      app.ui?.toast?.(blocked ? 'The mic is blocked. Allow it from the address bar, then press R again. Keys and pads still record.' : e.message, { kind: 'bad' });
-      return;
+    // (the input split two channels to two tracks, this one among them: a take on each, the input as it is)
+    const sp = audio.state.open && audio.state.split ? Object.entries(audio.state.split).sort((x, y) => +x[0] - +y[0]).map((x) => x[1]) : null;
+    const split = sp && sp.includes(track.id) && sp.every((id) => store.track(id)) ? sp : null;
+    if (!split) {
+      try { await audio.openFor(track); } catch (e) {
+        const blocked = /allow|NotAllowed/i.test(String(e && e.message));
+        if (!r.quiet) app.ui?.toast?.(blocked ? 'The mic is blocked. Allow it from the address bar, then press R again. Keys and pads still record.' : e.message, { kind: 'bad' });
+        return;
+      }
     }
     if (R !== r) return;
-    r.audioTrack = track.id;
-    const a = r.audio = { track: track.id, chunks: [], len: 0, f0: null, sr: audio.ctx.sampleRate, snap: null, peaks: [] };
+    r.audioTrack = split ? split[0] : track.id;
+    r.audioTracks = split || [track.id];
+    const a = r.audio = { track: r.audioTrack, tracks: r.audioTracks, chunks: [], chs: null, len: 0, f0: null, sr: audio.ctx.sampleRate, snap: null, peaks: [] };
+    a.chs = r.audioTracks.map((_, i) => (i === 0 ? a.chunks : []));
     a.off = audio.listen((blk) => {
       if (R !== r || r.audio !== a) return;
       if (a.f0 == null) a.f0 = blk.f;
       const d = blk.d[0];
       a.chunks.push(d); a.len += d.length;
+      for (let k = 1; k < a.chs.length; k++) a.chs[k].push(blk.d[k] || new Float32Array(d.length));
       let pk = 0; for (let i = 0; i < d.length; i++) { const x = Math.abs(d[i]); if (x > pk) pk = x; }
       a.peaks.push(Math.round(pk * 1000) / 1000);
       snapAudio(r);
@@ -890,15 +919,24 @@ export function createRecorder(app, input, opts = {}) {
     if (Math.abs(engine.beat - a.b1) > 0.02) a.snap = { ctxT: c.currentTime, g: engine.gridBeat - (r.offset ?? 0) };
   }
   // the take's audio, cut into its passes: one asset, each pass a clip at its offset
-  async function finishAudio(r, stopG) {
+  async function finishAudio(r, stopG, { wait = false } = {}) {
     const a = r.audio;
     if (!a) return null;
+    // A stop on a beat (scheduled, or at a line): the input's blocks up to it may still be queued behind the stop (a tab
+    // starved of frames runs its timers before the worklet's messages), so they're waited for, up to 2 s
+    if (wait && a.f0 != null && fin(stopG)) {
+      const snap0 = a.snap || { ctxT: a.f0 / a.sr, g: r.span.g0 };
+      const need = Math.round((snap0.ctxT + (stopG - snap0.g) * spbNow() + input.audio.latency.get() - input.audio.outLatency()) * a.sr) - a.f0;
+      const t0 = performance.now();
+      while (a.len < need && input.audio.state.open && performance.now() - t0 < 2000) await new Promise((res) => setTimeout(res, 20));
+    }
     a.off && a.off();
     r.audio = null;
     input.audio._recording(false);
-    if (!a.len || a.f0 == null) { app.ui?.toast?.('Nothing was recorded (the input sent no audio).', { kind: 'bad' }); return null; }
+    if (!a.len || a.f0 == null) { if (!r.quiet) app.ui?.toast?.('Nothing was recorded (the input sent no audio).', { kind: 'bad' }); return null; }
     const sr = a.sr, spb = spbNow(), L = input.audio.latency.get(), out = input.audio.outLatency();
-    const x = new Float32Array(a.len); let w = 0; for (const c of a.chunks) { x.set(c, w); w += c.length; }
+    const join = (chunks) => { const y = new Float32Array(a.len); let w = 0; for (const c of chunks) { y.set(c.subarray(0, Math.min(c.length, a.len - w)), w); w += c.length; if (w >= a.len) break; } return y; };
+    const xs = a.chs.map((chunks) => join(chunks)), x = xs[0];
     // the grid of input frame f: played to what was scheduled L earlier, heard `out` after that
     const snap = a.snap || { ctxT: a.f0 / sr, g: r.span.g0 };
     // On a mapped song (a flip) the transport plays the map, so the seconds between two grid beats are the map's, pass
@@ -909,12 +947,14 @@ export function createRecorder(app, input, opts = {}) {
     const beatsFor = (b, secs) => (tOf ? secToBeat(p, beatToSec(p, b) + secs) - b : secs / spb);
     const passes = [];
     let quiet = 0;
+    // (lead: the take's first clip starts that much before its first beat, never before the song's beat 0)
+    const leadF = !tOf && r.lead > 0 ? Math.round(Math.min(r.lead, Math.max(0, r.span.b0) * spb) * sr) : 0;
     for (let n = 0; n < 4096; n++) {
       const [g0, g1raw] = passGrid(n, r.span);
       if (g0 >= stopG - 1e-6) break;
       const g1 = Math.min(g1raw, stopG);
-      const i0 = Math.max(0, frameOf(g0)), i1 = Math.min(x.length, frameOf(g1));
-      let pk = 0; for (let i = i0; i < i1; i++) { const v = Math.abs(x[i]); if (v > pk) pk = v; }
+      const i0 = Math.max(0, frameOf(g0) - (n === 0 ? leadF : 0)), i1 = Math.min(x.length, frameOf(g1));
+      let pk = 0; for (const y of xs) for (let i = i0; i < i1; i++) { const v = Math.abs(y[i]); if (v > pk) pk = v; }
       if (r.dropped?.has(n)) continue;   // (taken out with ⌘Z while it recorded)
       // (a pass with nothing in it adds nothing: shorter than 50 ms, or under -80 dBFS throughout)
       if (i1 - i0 >= sr * 0.05 && pk > 1e-4) passes.push({ n, g0, g1, i0, i1 });
@@ -923,23 +963,30 @@ export function createRecorder(app, input, opts = {}) {
     }
     if (!passes.length) {
       const st = input.audio.state;
-      app.ui?.toast?.(quiet ? `Nothing came in on input ${st.channel} of ${st.label || 'the interface'}. Check the cable and the input's gain, or pick another input.` : 'That take was too short to keep.', { kind: quiet ? 'bad' : 'info' });
+      if (!r.quiet) app.ui?.toast?.(quiet ? `Nothing came in on input ${st.channel} of ${st.label || 'the interface'}. Check the cable and the input's gain, or pick another input.` : 'That take was too short to keep.', { kind: quiet ? 'bad' : 'info' });
+      r.nothing = quiet ? 'quiet' : 'short';
       return null;
     }
     const first = passes[0].i0, lastI = passes[passes.length - 1].i1;
-    // a pass that starts later than its grid (the first frames were before the mic opened) starts its clip later too
-    const data = Float32Array.from(x.subarray(first, lastI));
-    const asset = 'a_' + Date.now().toString(36).slice(-6) + Math.floor(performance.now() % 1296).toString(36);
-    try { await engine.assets.put(asset, { sr, channels: [data] }); } catch (e) { app.ui?.toast?.('Could not keep the audio: ' + e.message, { kind: 'bad' }); return null; }
-    return {
-      asset, seconds: data.length / sr, latency: L,
-      passes: passes.map((ps) => {
-        const late = Math.max(0, ps.i0 - frameOf(ps.g0)) / sr;
-        const startG = ps.g0 + (tOf ? beatsFor(where(ps.g0, r).beat, late) : late / spb);
-        const w0 = where(startG, r);
-        return { n: ps.n, audio: { asset, offset: (ps.i0 - first) / sr, start: r4(w0.beat), length: r4(Math.max(MIN_CLIP, beatsFor(w0.beat, (ps.i1 - ps.i0) / sr))) } };
-      }),
-    };
+    // a pass that starts later than its grid (the first frames were before the mic opened) starts its clip later too;
+    // the first one starts earlier by its lead. A split's channels share those frames: one asset each, lined up
+    const stamp = Date.now().toString(36).slice(-6) + Math.floor(performance.now() % 1296).toString(36);
+    const takes = [];
+    for (let k = 0; k < xs.length; k++) {
+      const data = Float32Array.from(xs[k].subarray(first, lastI));
+      const asset = 'a_' + stamp + (k ? String.fromCharCode(97 + k) : '');
+      try { await engine.assets.put(asset, { sr, channels: [data] }); } catch (e) { if (!r.quiet) app.ui?.toast?.('Could not keep the audio: ' + e.message, { kind: 'bad' }); return null; }
+      takes.push({
+        track: a.tracks[k], asset, seconds: data.length / sr, sr,
+        passes: passes.map((ps) => {
+          const dt = (ps.i0 - frameOf(ps.g0)) / sr;
+          const startG = ps.g0 + (tOf ? beatsFor(where(ps.g0, r).beat, dt) : dt / spb);
+          const w0 = where(startG, r);
+          return { n: ps.n, audio: { asset, offset: (ps.i0 - first) / sr, start: r4(w0.beat), length: r4(Math.max(MIN_CLIP, beatsFor(w0.beat, (ps.i1 - ps.i0) / sr))) } };
+        }),
+      });
+    }
+    return { asset: takes[0].asset, seconds: takes[0].seconds, latency: L, sr, passes: takes[0].passes, more: takes.slice(1) };
   }
 
   /* ---- the count-in and the transport */
@@ -973,6 +1020,13 @@ export function createRecorder(app, input, opts = {}) {
         while (r.pass < n) { closePass(r, r.pass); r.pass++; emit('pass', { n: r.pass, take: r.id }); }
       }
       snapAudio(r);
+      // a stop scheduled at a beat (and its tail) still to come: once the grid is past it, and the input has had time to
+      // bring in what was played there (the round trip, and a block or two), the take goes in, ending exactly there
+      const sc = r.sched;
+      if (sc && !r.closing && g >= sc.end + (input.audio.latency.get() + 0.15) / spbNow()) {
+        r.sched = null;
+        stop({ keepPlaying: sc.keepPlaying, why: sc.why, at: sc.end, keep: sc.keep, end: sc.at, tail: 0, ring: sc.tail });
+      }
     }
   }
   // a completed pass goes to capture now (never lose one, even if the tab dies before the stop)
@@ -1034,8 +1088,11 @@ export function createRecorder(app, input, opts = {}) {
     const h = store.history, lastTx = h[h.length - 1], t = store.track(m.track);
     if (lastTx && lastTx.id === m.txn && t && !t.clips.length) { try { store.undo({ id: m.txn, redo: false }); } catch { /* ok */ } }
   }
-  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null } = {}) {
+  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null, punch = null, lead = 0, quiet = false } = {}) {
     if (R) return R;
+    // (a new take: the pass Esc kept out is no longer the one ⇧R puts in, "right after")
+    thrown = null;
+    const pf = punch && fin(+punch.from) ? Math.max(0, +punch.from) : null, pt = punch && fin(+punch.to) && pf != null && +punch.to > pf + EPS ? +punch.to : null;
     const au = audio ? store.track(audio) : targetFor('audio');
     // A sound on trial on a track this take records onto is kept first, said before it happens (the instrument change
     // and the take are two undo steps, in that order: docs/INSTRUMENTS-UX.md 1.3)
@@ -1078,7 +1135,7 @@ export function createRecorder(app, input, opts = {}) {
     if (isFree) return recordFree({ hum, made });
     const p = P();
     const bpb = beatsPerBar(p.meter), playing = !!engine.playing;
-    const b0 = playing ? engine.beat : Math.max(0, +(engine.beat ?? 0) || 0);
+    const b0 = playing ? engine.beat : pf != null ? pf : Math.max(0, +(engine.beat ?? 0) || 0);
     const lp = p.loop && p.loop.on && p.loop.end - p.loop.start >= 1 / 64 && b0 < p.loop.end - EPS ? { start: +p.loop.start, end: +p.loop.end } : null;
     // where recording starts (start, a song beat) and how far ahead that is as heard (ahead, beats): the loop is the
     // punch range, so before it, its start; R while playing (a quantized launch, like a clip in Ableton), a bar line
@@ -1086,7 +1143,9 @@ export function createRecorder(app, input, opts = {}) {
     // that bar), the loop's start after its end. It used to count only what was left of this bar: 171 ms of warning
     // when R came late in the bar, and none in its last sixteenth
     let start = b0, ahead = 0;
-    if (lp && b0 < lp.start - EPS) { start = lp.start; ahead = lp.start - b0; }
+    // (a punch: recording starts at its `from`, the transport playing up to it)
+    if (playing && pf != null && pf >= b0 - EPS) { start = pf; ahead = Math.max(0, pf - b0); }
+    else if (lp && b0 < lp.start - EPS) { start = lp.start; ahead = lp.start - b0; }
     else if (playing && quantize) {
       const want = Math.max(0, (+countIn || 0) * bpb - 0.25);
       // (a loop of 2 bars or less, the first minute's: the take starts at its top, so what you play first is its first
@@ -1112,7 +1171,10 @@ export function createRecorder(app, input, opts = {}) {
       span: { g0, b0: start, loop: lp, wrap: lp ? g0 + (lp.end - start) : Infinity },
       startBeat: b0, tempo: p.tempo, meter: p.meter.join('/'), loopKey: JSON.stringify(p.loop || null),
       offset: playing ? 0 : null, started: playing, wasPlaying: playing, newSpan: () => newSpan(r), keeps, humOn, made, capture,
+      lead: Math.max(0, Math.min(0.25, +lead || 0)), quiet: !!quiet, punch: pf != null ? { from: pf, to: pt } : null, sched: null, waiters: [],
     };
+    // (a punch with an end: the take ends itself there, the transport playing on)
+    if (pt != null) r.sched = { at: pt, tail: 0, end: pt, keepPlaying: true, why: 'punch', keep: 'song' };
     R = r;
     const beats = playing ? 0 : Math.max(0, (+countIn || 0) * bpb);   // (whole bars: 3.5 beats a bar in 7/8, not 4)
     if ((playing || !beats) && ahead <= EPS) setState(r, 'rec'); else emit('state', { state: 'count', take: r.id });
@@ -1263,12 +1325,22 @@ export function createRecorder(app, input, opts = {}) {
 
   // at: the grid it stopped at, when the transport has already moved on (a seek or a play() jumps the grid to the new
   // place before its event: the take ends where it was, not where the playhead went)
-  async function stop({ keepPlaying = false, why = 'stop', at = null } = {}) {
+  async function stop({ keepPlaying = false, why = 'stop', at = null, tail = 0, keep = 'song', end = null, ring = 0, past = false } = {}) {
     const r = R;
     if (!r) return null;
     if (r.closing) return r.closing;
     if (r.free) { r.closing = finishFree(r, why); return r.closing; }
-    if (r.state === 'count') { cancel({ stopTransport: !keepPlaying }); return null; }
+    if (r.state === 'count' && !(fin(at) && at > r.span.g0 + EPS)) { cancel({ stopTransport: !keepPlaying }); return null; }
+    // a stop at a beat still to come (its tail included): scheduled on the grid, so it ends there whenever this page
+    // next gets to run (tick: a frame-starved or hidden tab still ends on that line); a later stop replaces it
+    const tl = Math.max(0, +tail || 0);
+    // (past: `at` is where the take was before the grid jumped, a seek's, never a stop to wait for)
+    if (!past && fin(at) && engine.playing && at + tl > (gridNow(r) ?? -Infinity) + 1e-3) {
+      r.sched = { at, tail: tl, end: at + tl, keepPlaying, why, keep };
+      return new Promise((res) => r.waiters.push(res));
+    }
+    if (fin(at) && tl > 0) { end = at; ring = tl; at += tl; }
+    r.sched = null;
     r.closing = (async () => {
       if (!fin(at)) tick();
       const stopG = fin(at) ? at : engine.playing ? gridNow(r) : (r.stopG ?? r.lastG ?? r.span.g0);
@@ -1283,19 +1355,45 @@ export function createRecorder(app, input, opts = {}) {
       // the sources that finish on their own: the hum (transcribed now), the beatbox (its hits found now)
       try { if (input.hum?.active && input.hum.recording) await input.hum.stop(); } catch { /* ok */ }
       try { if (input.tap?.beatboxing && input.tap.recording) await input.tap.stopBeatbox(); } catch { /* ok */ }
-      const audioRes = await finishAudio(r, stopG);
+      const audioRes = await finishAudio(r, stopG, { wait: fin(at) });
       r.leaned = relean(r);
       for (const pt of r.parts.values()) settleMisses(r, pt, r.stopPass ?? r.pass);   // (the pass it stopped in)
       R = null;
       try { engine.recording = false; } catch { /* ok */ }
       releasePreviews(r);
       setState(r, 'idle');
-      const res = commit(r, audioRes, why);
-      if (!res || !res.ok || res.empty) unmake(r);
+      r.end = fin(end) ? end : stopG; r.ring = ring || 0;
+      const res = keep === 'capture' ? throwAway(r, audioRes, why) : commit(r, audioRes, why);
+      if (res && keep !== 'capture') { res.end = r.end; res.tail = r.ring; }
+      if (!res || !res.ok || res.empty || res.kept === 'capture') unmake(r);
       emit('commit', res);
+      for (const w of r.waiters.splice(0)) w(res);
       return res;
     })();
     return r.closing;
+  }
+
+  // Not that one (Esc in the live room): the pass is kept in capture and nothing goes in the song. Its audio is kept
+  // as the commit would have placed it, so recorder.capture(its phrase) puts it in after all, as that commit.
+  let thrown = null;
+  function throwAway(r, audioRes, why) {
+    try { input.capture.flush?.(); } catch { /* ok */ }
+    if (!audioRes) {
+      const res = { ok: true, take: r.id, why, kept: 'capture', empty: true, capture: [], end: r.end, nothing: r.nothing || null };
+      last = res;
+      return res;
+    }
+    const ids = [];
+    for (const tk of [{ track: r.audioTrack, asset: audioRes.asset, seconds: audioRes.seconds, passes: audioRes.passes }, ...(audioRes.more || [])]) {
+      try {
+        const c = input.capture.add({ src: 'rec', kind: 'audio', audio: tk.asset, seconds: tk.seconds, beat: tk.passes[0]?.audio.start ?? r.span.b0, track: tk.track || null, tempo: P().tempo, notes: [], take: r.id, pass: 0, thrown: r.id });
+        if (c?.id) ids.push(c.id);
+      } catch { /* ok */ }
+    }
+    thrown = { r, audioRes, ids, at: Date.now() };
+    const res = { ok: true, take: r.id, why, kept: 'capture', capture: ids, end: r.end, audio: { asset: audioRes.asset, seconds: audioRes.seconds } };
+    last = res;
+    return res;
   }
 
   function commit(r, audioRes, why) {
@@ -1331,15 +1429,31 @@ export function createRecorder(app, input, opts = {}) {
       const end = r.span.loop ? sp.end : Math.max(Math.ceil((lastOn + MIN_NOTE) / bpb - 1e-9) * bpb, Math.floor(sp.end / bpb + 1e-9) * bpb, sp.start + bpb);
       take.parts.push({ track: pt.track, kind: 'notes', mode: pt.mode, name: pt.name || undefined, drums: pt.drums, newTrack: pt.newTrack, kinds: kindsOf(pt), span: { start: sp.start, end }, loop: r.span.loop ? { start: r.span.loop.start, end: r.span.loop.end } : null, passes, active: pick.n, natural: pick.natural, joins });
     }
+    // (an audio take: one part per channel recorded, each its own take folder, all in this one step)
+    const audioTakes = [];
     if (audioRes) {
-      const t = store.track(r.audioTrack) || targetFor('audio');
       const done = audioRes.passes.filter((ps) => r.span.loop && ps.n < (r.stopPass ?? 0));
-      if (t) take.parts.push({ track: t.id, kind: 'audio', mode: 'take', passes: audioRes.passes, active: (done.length ? done[done.length - 1] : audioRes.passes[audioRes.passes.length - 1])?.n });
-      try { input.capture.add({ src: 'rec', kind: 'audio', audio: audioRes.asset, seconds: audioRes.seconds, beat: audioRes.passes[0]?.audio.start ?? r.span.b0, track: t ? t.id : null, tempo: P().tempo, notes: [], take: r.id, pass: 0, rec: true }); } catch { /* ok */ }
+      const active = (done.length ? done[done.length - 1] : audioRes.passes[audioRes.passes.length - 1])?.n;
+      const t0 = store.track(r.audioTrack) || targetFor('audio');
+      for (const tk of [{ track: t0 ? t0.id : null, asset: audioRes.asset, seconds: audioRes.seconds, passes: audioRes.passes }, ...(audioRes.more || [])]) {
+        const t = tk.track && store.track(tk.track);
+        if (t) { take.parts.push({ track: t.id, kind: 'audio', mode: 'take', passes: tk.passes, active }); audioTakes.push({ ...tk, track: t.id }); }
+        if (r.reuse) { try { input.capture.update(r.reuse[tk.asset], { rec: true, thrown: undefined }); } catch { /* ok */ } continue; }
+        try { input.capture.add({ src: 'rec', kind: 'audio', audio: tk.asset, seconds: tk.seconds, beat: tk.passes[0]?.audio.start ?? r.span.b0, track: t ? t.id : null, tempo: P().tempo, notes: [], take: r.id, pass: 0, rec: true }); } catch { /* ok */ }
+      }
     }
     // the knobs and faders moved while it recorded (input/autorec.js): their lanes go in with the take, one undo step
-    const auto = input.autorec ? input.autorec.finish(r) : null;
+    const auto = input.autorec && !r.reuse ? input.autorec.finish(r) : null;
     const plan = planTake(P(), take);
+    // the song describes its own recordings: each audio take's asset (name, rate, channels, length), ahead of its clips
+    if (plan.ops.length && audioTakes.length) {
+      const adds = audioTakes.map((tk) => {
+        const info = plan.parts.find((x) => x.track === tk.track);
+        const name = `${info?.name || store.track(tk.track)?.name || 'Audio'}, take ${info?.takes || 1}`;
+        return { type: 'asset.add', asset: { id: tk.asset, kind: 'audio', name, sr: audioRes.sr, channels: 1, duration: Math.round(tk.seconds * 1e6) / 1e6 } };
+      });
+      plan.ops.unshift(...adds);
+    }
     // a lean taken out (relean): said, with the number, and that As played puts it back
     const lean = r.leaned && (r.leaned.lean || r.leaned.opening) ? r.leaned : null;
     if (lean && plan.ops.length) plan.summary = `${plan.summary} ${leanWords(lean)}`;
@@ -1355,6 +1469,8 @@ export function createRecorder(app, input, opts = {}) {
       const res = { ok: true, take: r.id, empty: true, why, parts: merged, summary: merged.length ? plan.summary : '' };
       last = res;
       const text = merged.length ? `${plan.summary} Nothing new to add.` : 'Nothing played in that take, so the song is as it was.';
+      if (r.nothing) res.nothing = r.nothing;
+      if (r.quiet) return res;
       if (!(r.audioTrack && !audioRes)) { try { app.ui?.toast?.(text, { ms: 4000 }); } catch { /* ok */ } }   // (the mic said why already)
       try { app.ui?.announce?.(text); } catch { /* ok */ }
       return res;
@@ -1362,7 +1478,7 @@ export function createRecorder(app, input, opts = {}) {
     // (a track made for this take at its start, and the take, are one undo step)
     const d = store.dispatch(plan.ops, { by: 'you', label: plan.label, join: r.made?.txn || null });
     if (!d.ok) {
-      app.ui?.toast?.('The take could not go in: ' + d.error + '. Sketch kept it.', { kind: 'bad' });
+      if (!r.quiet) app.ui?.toast?.('The take could not go in: ' + d.error + '. Sketch kept it.', { kind: 'bad' });
       const res = { ok: false, take: r.id, error: d.error, why, parts: plan.parts };
       last = res;
       return res;
@@ -1381,6 +1497,13 @@ export function createRecorder(app, input, opts = {}) {
       }
     } catch { /* best effort: the take is in */ }
     const res = { ok: true, take: r.id, why, label: plan.label, summary: plan.summary, parts: made, clips, lanes: plan.lanes || [], txn: d.txn?.id, audio: audioRes ? { asset: audioRes.asset, seconds: audioRes.seconds } : null, ...(lean ? { lean: { beats: lean.lean, ms: lean.ms, by: lean.by, moved: lean.moved, opening: lean.opening, words: leanWords(lean) } } : {}) };
+    // each audio take that plays: its clip, where it sits (the room's part is joined to it by txn)
+    if (audioTakes.length) {
+      res.takes = audioTakes.map((tk) => {
+        const t = store.track(tk.track), c = t ? t.clips.filter((x) => x.kind === 'audio' && x.asset === tk.asset && !x.mute).pop() || t.clips.filter((x) => x.asset === tk.asset).pop() : null;
+        return c ? { track: t.id, clip: c.id, asset: tk.asset, start: c.start, length: c.length, offset: c.offset || 0, seconds: tk.seconds } : null;
+      }).filter(Boolean);
+    }
     // the notes a source moved on their way in (a hum snapped into the key), found in the song now, and the ops that put
     // them back as played (one notes.set per clip, one undo step): input/hum.js says how many, with Undo
     const sung = sungOf(plan.parts, made, d.created);
@@ -1402,6 +1525,7 @@ export function createRecorder(app, input, opts = {}) {
     // (a take of only automation, a knob moved while it recorded, has no part: the selection stays)
     if (playing) ownSelect({ track: playing.track, clip: clips[clips.length - 1] || null, notes: [] });
     for (const x of made) for (const k of x.kinds || []) took(k, x.track);
+    if (r.quiet) return res;
     try { app.arranger?.show?.(clips, 'you'); } catch { /* no arranger */ }
     // a take that muted what played under it: "Put it on its own track" (both play, each on its own sound)
     const st = made.find((x) => x.stacked && x.mode === 'take' && store.track(x.track)?.kind === 'instrument');
@@ -1492,6 +1616,7 @@ export function createRecorder(app, input, opts = {}) {
     if (!r) return;
     R = null;
     clearInterval(r.timer);
+    for (const w of r.waiters?.splice(0) || []) w(null);
     if (r.free) {
       try { if (r.hum) Promise.resolve(r.humStart).then(() => { if (!R && input.hum?.active) input.hum.cancel(); }).catch(() => {}); } catch { /* ok */ }
       try { input.tap?.discard?.(); } catch { /* ok */ }
@@ -1527,7 +1652,7 @@ export function createRecorder(app, input, opts = {}) {
         // (the grid has already jumped to where the playhead went: the take ends where it was, the last tick's grid
         // moved on by the time since it)
         const at = fin(r.lastG) && fin(r.lastT) ? r.lastG + Math.max(0, Math.min(0.5, (performance.now() - r.lastT) / 1000 / spbNow())) : null;
-        stop({ keepPlaying: true, why: 'seek', at });
+        stop({ keepPlaying: true, why: 'seek', at, past: true });
       }
       else tick();
     });
@@ -1552,11 +1677,24 @@ export function createRecorder(app, input, opts = {}) {
     if (r.free) return;   // (a free take has no timeline to move under it)
     if (p.tempo !== r.tempo || p.meter.join('/') !== r.meter || JSON.stringify(p.loop || null) !== r.loopKey) stop({ keepPlaying: true, why: 'time' });
   });
-  try { document.addEventListener('visibilitychange', () => { if (document.hidden && R) (R.state === 'count' ? cancel() : stop({ why: 'hidden' })); }); } catch { /* node */ }
+  // (a stop already scheduled at a bar line ends the take there: a hidden tab doesn't cut it short)
+  try { document.addEventListener('visibilitychange', () => { if (document.hidden && R && !R.sched) (R.state === 'count' ? cancel() : stop({ why: 'hidden' })); }); } catch { /* node */ }
 
   /* ---- Shift+R: Put it in the song */
   function captureToSong(id = null) {
     const cap = input.capture;
+    // a pass stopped with keep: 'capture' (Esc in the room): in as its commit would have been, at the bars it was played
+    const th = id && thrown && thrown.ids.includes(id) ? thrown : null;
+    if (th && !R) {
+      thrown = null;
+      const r = th.r;
+      r.reuse = Object.fromEntries([[th.audioRes.asset, th.ids[0]], ...(th.audioRes.more || []).map((m, i) => [m.asset, th.ids[i + 1]])]);
+      r.made = null;
+      const res = commit(r, th.audioRes, 'kept');
+      if (res && res.ok) { res.end = r.end; res.tail = r.ring; }
+      emit('commit', res);
+      return res;
+    }
     cap.flush?.();
     try { if (input.tap?.take) input.tap.flush(); } catch { /* ok */ }
     const ph = id ? cap.get(id) : [...cap.phrases].reverse().find((x) => !x.hidden && !x.rec && x.kind !== 'audio' && (x.notes || []).length);
@@ -1605,7 +1743,11 @@ export function createRecorder(app, input, opts = {}) {
     select: (x) => ownSelect(x),
     setMode(track, mode) { const t = typeof track === 'string' ? store.track(track) : track; if (t && (mode === 'fold' || mode === 'layer' || mode === 'take')) modes.set(t.id, mode); return t ? modeFor(t) : null; },
     // the tracks a take in progress records onto
-    get tracks() { return R ? [...new Set([...[...R.parts.values()].map((x) => x.track), R.audioTrack].filter(Boolean))] : []; },
+    get tracks() { return R ? [...new Set([...[...R.parts.values()].map((x) => x.track), ...(R.audioTracks || [R.audioTrack])].filter(Boolean))] : []; },
+    // a stop scheduled and not yet reached: { at, tail, end } (grid), or null
+    get scheduled() { return R && R.sched ? { at: R.sched.at, tail: R.sched.tail, end: R.sched.end } : null; },
+    // the pass Esc kept out of the song, while recorder.capture can still put it in: { take, capture: [ids], at } | null
+    get thrown() { return thrown ? { take: thrown.r.id, capture: [...thrown.ids], at: thrown.at } : null; },
     record: (o) => record(o),
     stop: (o) => stop(o),
     cancel: () => cancel(),

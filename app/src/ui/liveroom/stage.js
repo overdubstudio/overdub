@@ -72,7 +72,9 @@ screens.add({
     const eng = () => app.engine || null;
     const offs = [];
     const has = (id) => Object.hasOwn(STAGE, id) || Object.hasOwn(DOUBLE, id) || Object.hasOwn(SOUNDCHECK, id);
-    const say = (id, vars) => (has(id) ? ctx.say(id, vars) : false);
+    // (the stage gone, Send or the shelf up: a line that comes in late, a measurement's number, isn't said over them)
+    let gone = false;
+    const say = (id, vars) => (!gone && has(id) ? ctx.say(id, vars) : false);
 
     /* --------------------------------------------------------------------------------------------- the layout */
     const sceneCv = h('canvas.lr-scene', { width: W, height: H, 'aria-hidden': 'true' });
@@ -1066,6 +1068,7 @@ screens.add({
         setlist.unmount();
         if (tb && room && tb.parentNode === tbSlot) room.append(tb);
         el.replaceChildren();
+        gone = true;
       },
     };
   },

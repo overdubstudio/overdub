@@ -27,6 +27,8 @@
 import { PLACE_IDS, RIG_IDS, FINISHES, FEEL_IDS, ROLES, ORDER, putKey, placeKey } from './model.js';
 
 const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
+// (what isn't plain text: control characters and bidi overrides or isolates, core/project.js plainText's rule)
+const UNSEEN = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 const fin = (x) => typeof x === 'number' && Number.isFinite(x);
 const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
@@ -113,7 +115,8 @@ function roomValue(p, ctx, k, v) {
           if (!ORDER.managed.includes(kk)) throw new Error(`managed is { gain, pan, chain } per track: not "${kk}"`);
           if (kk === 'gain' && !(fin(vv) && vv >= -96 && vv <= 24)) throw new Error('managed gain is in dB, -96..24');
           if (kk === 'pan' && !(fin(vv) && vv >= -1 && vv <= 1)) throw new Error('managed pan is -1..1');
-          if (kk === 'chain' && !(typeof vv === 'string' && vv.length <= 64 && !/[\u0000-\u001f]/.test(vv))) throw new Error('managed chain is a short hash (text, 64 characters at most)');
+          // (plain text, as the song keeps it: a character cleanRoom takes out would change it on the next load)
+          if (kk === 'chain' && !(typeof vv === 'string' && vv.length <= 64 && !UNSEEN.test(vv))) throw new Error('managed chain is a short hash (plain text, 64 characters at most)');
         }
         for (const kk of ORDER.managed) if (e[kk] != null) x[kk] = e[kk];
         if (Object.keys(x).length) out[id] = x;

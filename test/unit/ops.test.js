@@ -539,6 +539,11 @@ describe('ops refuse bad input and say why', () => {
     ['a room key that is not one', () => ({ type: 'room.set', patch: { colour: 'red' } }), /can't change "colour"/],
     ['clearing no room', () => ({ type: 'room.set', clear: true }), /no room/],
     [
+      'a chain a reload would change',
+      (i) => ({ type: 'room.set', patch: { managed: { [i.keys]: { chain: 'h_1f\u202e2e' } } } }),
+      /managed chain is a short hash/,
+    ],
+    [
       'a part for no section',
       () => ({ type: 'room.part.set', section: 's_none', patch: { feel: 'open' } }),
       /no section/,

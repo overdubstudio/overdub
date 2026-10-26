@@ -6,11 +6,13 @@
 // ends. / opens the strip for typing to the agent, when there is one (app.agent.send): the answer comes back as the
 // agent's own lines (app.liveRoom.say with its byline), never as the room's.
 //
-//   createTalkback({ app }) -> { el, say(text, { by }), frame(now), clear(), hold(on), ask(), asking(), pressed(), text, by }
+//   createTalkback({ app }) -> { el, say(text, { by, wait }), frame(now), clear(), hold(on), ask(), asking(), pressed(), text,
+//       by }
 //       say: the line now ('overdub', the house, by default), or when the hold lifts; frame dims the lamp a few seconds
 //       after; clear empties it; hold(true) while a count or a take runs; ask() opens the field (false: no agent here);
 //       text and by: what it says now
-// A line stays up long enough to read: when the house says one line straight after another (no key or tap between),
+// A line stays up long enough to read: when the room says one of its lines (wait: true, the room's own sayLine) straight
+// after another (no key or tap between),
 // the next waits until the last has been up DWELL_MS, three at most in line; anything you press shows the next at once,
 // and an agent's line is never kept waiting.
 
@@ -59,14 +61,14 @@ export function createTalkback({ app = null } = {}) {
     el,
     get text() { return now.text; },
     get by() { return now.by; },
-    say(t, { by: who = 'overdub' } = {}) {
+    say(t, { by: who = 'overdub', wait = false } = {}) {
       if (held) { waiting = { t, who }; return; }
       // (a press since the last line was said: this one answers it, and what was waiting is old news)
       const answer = pressedAt > saidAt;
       saidAt = ++seq;
       if (answer) queue = [];
       // (an agent's line is an answer: it shows at once, and the house's waiting lines follow it)
-      if (who === 'overdub' && !answer && (queue.length || soon())) { queue.push({ t, who }); if (queue.length > 3) queue.shift(); return; }
+      if (wait && who === 'overdub' && !answer && (queue.length || soon())) { queue.push({ t, who }); if (queue.length > 3) queue.shift(); return; }
       show(t, who);
     },
     hold(on) {

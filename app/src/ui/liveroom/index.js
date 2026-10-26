@@ -94,8 +94,9 @@ export default function installLiveRoom(app) {
   let sceneFor = null, scene = null;
   const sceneNow = () => { const pl = view().place || null; if (!scene || sceneFor !== pl) { sceneFor = pl; scene = sceneOf(pl); } return scene; };
 
-  const say = (text, { by = 'overdub' } = {}) => {
-    talkback.say(text, { by });
+  // (app.liveRoom.say shows its line at once; the room's own lines, sayLine, wait their turn: talkback.js)
+  const say = (text, { by = 'overdub', wait = false } = {}) => {
+    talkback.say(text, { by, wait });
     emit('say', { text: String(text ?? ''), by });
   };
   // a line of the room's by id (core/liveroom/lines/*.js); a once-only one is said once per song
@@ -107,7 +108,7 @@ export default function installLiveRoom(app) {
     let text = '';
     try { text = String(line.text(vars || {}) ?? ''); } catch (e) { console.error('liveroom line', id, e); return false; }
     if (!text) return false;
-    say(text);
+    say(text, { wait: true });
     if (line.once) prefs.mark(song, id);
     return true;
   }
@@ -317,21 +318,21 @@ export default function installLiveRoom(app) {
   /* ------------------------------------------------------------------------------------------- the held keys */
   // Declared while the room is open, and only then: ahead of every key the studio has (its modes too), and the
   // screen's own come in ahead of them as it mounts (first: true, in the group 'Live room'). A global key is held as
-  // one, so it's held in a field too, unless only a mode makes it global. (A dialog over the room, the keys sheet,
-  // keeps its keys: Esc closes it.)
+  // one, so it's held on a focused button too, but never in a field of the room's own. (A dialog over the room, the
+  // keys sheet, keeps its keys: Esc closes it.)
   const isOpen = () => L.open;
   const holding = () => L.open && !document.querySelector('body > [aria-modal=true]:not(.ew-region)');
+  // (a field in the room, the kitchen's paper: its keys are its own, a global key held or not; Space and Enter type)
+  const typing = () => { const a = document.activeElement; return !!a && L.open && !!el?.contains(a) && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)); };
   const held = new Map();
   function hold() {
     const want = new Map();
     for (const k of ui.keys.list()) {
       const s = sig(k);
       if (k.group === 'Live room' || KEEP.has(s) || held.has(s)) continue;
-      // (held in a field too only for a key that's global everywhere: a mode's global key, the sounds panel's Space,
-      // held as global would take Space and Enter from the kitchen's paper)
-      want.set(s, { key: k.key, mod: k.mod || null, global: (!!k.global && !k.when) || !!want.get(s)?.global, job: want.get(s)?.job || jobOf(k) });
+      want.set(s, { key: k.key, mod: k.mod || null, global: !!k.global || !!want.get(s)?.global, job: want.get(s)?.job || jobOf(k) });
     }
-    for (const [s, { job, ...k }] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: holding, run: () => { if (job) sayJob(job); }, label: 'Held while the live room is open', group: 'Live room' }));
+    for (const [s, { job, ...k }] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: () => holding() && !typing(), run: () => { if (job) sayJob(job); }, label: 'Held while the live room is open', group: 'Live room' }));
   }
   // a studio key that does what the room leaves to the control room: the room points through the glass, once per job
   // and song, never mid-take (§3.15)

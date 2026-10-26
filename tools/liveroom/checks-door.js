@@ -353,6 +353,20 @@ async function sending(T, ctx) {
     T.ok(shared.r.ok && shared.r.via === 'share' && shared.sh?.name === 'Void Weather.wav' && shared.sh.type === 'audio/wav' && shared.files === 1, `where navigator.canShare takes the file, Send a mix goes through the share sheet (${shared.sh?.name}, ${shared.sh?.size} bytes) and saves nothing`);
     const said = await s.E(() => document.querySelector('.lr-tb-line')?.textContent || '');
     T.ok(/^Sent “Void Weather\.wav”: 0:\d\d, \d+ MB\. It’s the mix; the takes stay in this browser\.$/.test(said), `…and says what it sent: “${said}”`);
+    // the send screen renders the mix as it opens, so a press hands the file to the share sheet at once (a share sheet
+    // wants the press it came from); a change to the song renders it again
+    await s.E(() => { const x = window.overdub.exporter, r = x.releaseRender; window.__lrRenders = 0; x.releaseRender = (o) => { window.__lrRenders++; return r(o); }; window.overdub.liveRoom.open({ screen: 'send' }); });
+    await until(s, () => /^Send a mix: \d+:\d\d, about \d+ MB\.$/.test(document.querySelector('.lrs-mix')?.textContent || '') && window.__lrRenders === 1, null, 30000);
+    const choices = await s.E(() => [...document.querySelectorAll('.lrs-choice')].map((b) => b.textContent));
+    await s.page.click('.lrs-mix');
+    await until(s, () => window.__lrShared && document.querySelector('.lrs-mix') && !document.querySelector('.lrs-mix').disabled, null, 30000);
+    const pressed = await s.E(() => window.__lrRenders);
+    await s.E(() => window.overdub.store.dispatch({ type: 'project.set', patch: { title: 'Void Weather 2' } }, { by: 'you', label: 'name' }));
+    await s.E(async () => { const m = await import('/app/src/ui/liveroom/send.js'); return m.sendMix(window.overdub); });
+    const changed = await s.E(() => window.__lrRenders);
+    T.ok(/^Send a mix: 0:1\d, about \d+ MB\.$/.test(choices[0]) && /^Send the song: to open in Overdub, with your recordings \(\d+ MB\)\.$/.test(choices[1]), `the send screen’s two choices say what each sends: “${choices.join('” “')}”`);
+    T.ok(pressed === 1 && changed === 2, `the send screen renders the mix as it opens, and a press shares that one (${pressed} render${pressed === 1 ? '' : 's'}; after a change ${changed})`);
+    await s.E(() => window.overdub.store.dispatch({ type: 'project.set', patch: { title: 'Void Weather' } }, { by: 'you', label: 'name' }));
 
     // Send the song: the song and its recordings, 32-bit float
     const sent = await s.E(async () => { const m = await import('/app/src/ui/liveroom/send.js'); return m.sendSong(window.overdub); });

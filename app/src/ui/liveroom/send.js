@@ -16,6 +16,9 @@
 // without you.
 //
 //   sizes(app) -> Promise of { seconds, mixBytes, songBytes, recordings }   what the screen's two choices say
+//   mixFor(app) -> Promise of releaseRender's result                    the mix of the song as it is now: the screen
+//       starts it as it opens, so a press shares the file at once (a share sheet wants the press it came from, and a
+//       render takes seconds); a change to the song starts again
 
 import { h, css } from '../dom.js';
 import { screens } from './screens.js';
@@ -30,6 +33,17 @@ function tell(app, text, kind = 'ok') {
   else app.ui?.toast?.(text, { kind, ms: 7000 });
 }
 let sending = null;
+// the mix the send screen made ahead: { app, ver, p } (ver: the song's changes, counted while the screen is up, which
+// is the only time one is kept: with no screen to count them, every send renders the song as it is)
+let ahead = null, ver = 0, watching = 0;
+export function mixFor(app) {
+  if (ahead && ahead.app === app && ahead.ver === ver) return ahead.p;
+  const p = Promise.resolve().then(() => app.exporter.releaseRender({ bits: 16 }));
+  if (!watching) return p;
+  const mine = (ahead = { app, ver, p });
+  p.catch(() => { if (ahead === mine) ahead = null; });
+  return p;
+}
 
 export async function sendMix(app) {
   if (sending) return { ok: false, error: `Still sending the ${sending}.` };
@@ -37,7 +51,7 @@ export async function sendMix(app) {
   sending = 'mix';
   try {
     let r;
-    try { r = await app.exporter.releaseRender({ bits: 16 }); } catch (e) { const t = line('send.didnt', { why: String(e?.message || e) }); tell(app, t, 'bad'); return { ok: false, error: t }; }
+    try { r = await mixFor(app); } catch (e) { const t = line('send.didnt', { why: String(e?.message || e) }); tell(app, t, 'bad'); return { ok: false, error: t }; }
     if (r.error === 'empty') { const t = line('send.nothing'); tell(app, t, 'info'); return { ok: false, error: t }; }
     if (r.error === 'silent') { const t = line('send.silent'); tell(app, t, 'info'); return { ok: false, error: t }; }
     if (r.error) { const t = line('send.didnt', { why: r.error }); tell(app, t, 'bad'); return { ok: false, error: t }; }
@@ -69,7 +83,7 @@ export async function sendSong(app) {
   sending = 'song';
   try {
     let r;
-    try { r = await app.exporter.songZip(); } catch (e) { const t = line('send.didnt', { why: String(e?.message || e) }); tell(app, t, 'bad'); return { ok: false, error: t }; }
+    try { r = await app.exporter.songZip(); } catch (e) { const t = line('send.song.didnt', { why: String(e?.message || e) }); tell(app, t, 'bad'); return { ok: false, error: t }; }
     download(r.name, r.zip, 'application/zip');
     tell(app, line('send.song.saved', { name: r.name, mb: MB(r.bytes), n: r.recordings }) + (r.missing ? ` ${line('send.song.missing', { n: r.missing })}` : ''));
     return { ok: true, name: r.name, bytes: r.bytes, recordings: r.recordings, missing: r.missing };
@@ -112,23 +126,33 @@ const CSS = `
 screens.add({
   id: 'send',
   mount(el, ctx) {
-    const { app, ui } = ctx;
+    const { app, ui, store } = ctx;
     css('liveroom-send', CSS);
     let gone = false;
-    const mixSays = h('span', '…'), songSays = h('span', '…');
-    const mixBtn = h('button.lrs-choice.lrs-mix', { type: 'button', onclick: () => go('mix') }, h('b', 'Send a mix'), mixSays);
-    const songBtn = h('button.lrs-choice.lrs-song', { type: 'button', onclick: () => go('song') }, h('b', 'Send the song'), songSays);
-    const back = () => app.liveRoom.open({ screen: app.store.get().room ? 'stage' : 'door' });
+    // (each choice is its line, "Send a mix: 1:51, about 21 MB.", once the sizes are known)
+    const mixSays = h('b', 'Send a mix'), songSays = h('b', 'Send the song');
+    const mixBtn = h('button.lrs-choice.lrs-mix', { type: 'button', onclick: () => go('mix') }, mixSays);
+    const songBtn = h('button.lrs-choice.lrs-song', { type: 'button', onclick: () => go('song') }, songSays);
+    const stage = () => (!store.get().room ? 'door' : store.get().room.place === 'kitchen' ? 'kitchen' : 'stage');
+    const back = () => app.liveRoom.open({ screen: stage() });
     el.append(h('div.lrs',
       h('h1.lr-h.disp', 'Send'),
       mixBtn, songBtn,
-      h('button.btn.btn-txt.lrs-back', { type: 'button', onclick: back }, 'Back to the stage')));
+      h('button.btn.btn-txt.lrs-back', { type: 'button', onclick: back }, stage() === 'door' ? 'Back to the door' : stage() === 'kitchen' ? 'Back to the table' : 'Back to the stage')));
+    // the mix starts rendering now, so a press can hand it to the share sheet at once; a change starts it again
+    const offChange = store.on('change', () => { ver++; });
+    watching++;
+    const sayMix = (seconds, bytes) => { if (!gone) mixSays.textContent = line('send.mix', { time: fmtTime(seconds), mb: MB(bytes) }); };
     (async () => {
       const s = await sizes(app);
       if (gone) return;
-      mixSays.textContent = line('send.mix', { time: fmtTime(s.seconds), mb: MB(s.mixBytes) });
+      if (mixSays.textContent === 'Send a mix') sayMix(s.seconds, s.mixBytes);
       songSays.textContent = line('send.song', { mb: MB(s.songBytes) });
     })();
+    if (app.exporter?.releaseRender && store.get().tracks.some((t) => t.clips.length)) {
+      const v = ver;
+      mixFor(app).then((r) => { if (r && !r.error && v === ver) sayMix(r.seconds, r.bytes); }).catch(() => { /* said when pressed */ });
+    }
     async function go(what) {
       mixBtn.disabled = songBtn.disabled = true;
       try { return await (what === 'mix' ? sendMix(app) : sendSong(app)); } finally { if (!gone) mixBtn.disabled = songBtn.disabled = false; }
@@ -144,7 +168,7 @@ screens.add({
         if (id === 'back') { back(); return { ok: true }; }
         return false;
       },
-      unmount() { gone = true; for (const off of offs) off(); el.replaceChildren(); },
+      unmount() { gone = true; offChange(); watching--; ver++; ahead = null; for (const off of offs) off(); el.replaceChildren(); },
     };
   },
 });

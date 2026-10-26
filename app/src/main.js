@@ -190,8 +190,13 @@ async function boot() {
     // door reads whether the saved song has a room (a room song comes back to the room, §2.1)
     try { const raw = storage?.getItem(SAVE_KEY); if (raw) { savedRaw = true; savedSong = cleanProject(JSON.parse(raw)); } } catch { savedSong = null; /* blocked, or unreadable */ }
     const saved = savedSong ? { room: !!(savedSong.room && typeof savedSong.room === 'object'), blank: (savedSong.title || 'Untitled') === 'Untitled' && savedSong.tracks.every((t) => !(t.clips || []).length) } : false;
-    try { door = decideDoor({ search: location.search, hash: location.hash, saved, room: roomPrefs.get(), webdriver: !!navigator.webdriver }); } catch (e) { console.error('overdub: the door', e); }
+    let room = null;
+    try { room = roomPrefs.get(); } catch { /* storage: none */ }
+    try { door = decideDoor({ search: location.search, hash: location.hash, saved, room, webdriver: !!navigator.webdriver }); } catch (e) { console.error('overdub: the door', e); }
     if (door.side === 'room') document.documentElement.dataset.room = '';
+    // a load the address sent to the control room (?studio, ?demo, ?device=...) is the side you were last on: a reload
+    // stays there (the room writes its own side as it opens and closes; a share link's listener is someone else's song)
+    else if (door.song !== 'shared' && !navigator.webdriver && room && room.side !== 'control') { try { roomPrefs.set({ side: 'control' }); } catch { /* storage */ } }
   }
   // Fetch every graph at once (an import runs nothing until default(app)); they start below, in order. One after
   // another, the panels' fetches took ~250 ms each and the studio ~12 s to finish booting.

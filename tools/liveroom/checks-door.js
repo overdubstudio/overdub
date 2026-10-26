@@ -268,6 +268,10 @@ async function frontDoor(T, ctx) {
     await go(s, '/app/?studio');
     st = await state(s);
     T.ok(!st.open && st.opened === 'new' && st.door.side === 'control' && st.studioVisible, `?studio opens a new song in the control room (${JSON.stringify(st.door)})`);
+    // (the last side is the control room now: a reload stays there, though the song saved is a blank one)
+    await go(s, '/app/');
+    st = await state(s);
+    T.ok(!st.open && st.door.side === 'control' && st.studioVisible, `a reload after ?studio stays in the control room (${JSON.stringify(st.door)})`);
     await go(s, '/app/?demo=lido');
     st = await state(s);
     T.ok(!st.open && st.door.side === 'control' && st.door.song === 'demo' && st.tracks > 0, `?demo opens the demo in the control room (“${st.title}”)`);

@@ -19,8 +19,8 @@ import { TRANSFORMS } from '../core/transforms.js';
 import { library as grooveLibrary, PARTS as GROOVE_PARTS } from '../core/grooves.js';
 import { JAM_STYLES, JAM_STYLE_IDS } from '../core/jam.js';
 import { RIFF_STYLES, RIFF_STYLE_IDS, DIFFICULTIES } from '../core/riff.js';
-import { TUNINGS, TUNING_IDS } from '../core/fretboard.js';
-const TUNING_LIST = TUNING_IDS.map((id) => `${id}: ${TUNINGS[id].notes}`).join(', ');
+import { TUNING_IDS } from '../core/fretboard.js';
+const TUNING_LIST = TUNING_IDS.join(', ');
 
 export const TRANSFORM_SCHEMA = {
   name: 'transform',

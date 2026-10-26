@@ -161,6 +161,7 @@ export function lineParts(text) {
 
 export const lineWords = (text) => (isBars(text) ? '' : String(text ?? '').replace(CHORD_TOKEN, ''));
 
+/** @returns {{ sym: string, at: number, bar?: number }[]} */
 export function chordsOf(text) {
   if (isBars(text)) return (barsOf(text) || []).flatMap((bar, i) => bar.filter((t) => t !== '%' && t !== '/' && t !== '-' && t !== '.').map((sym) => ({ sym, at: 0, bar: i })));
   const out = [];
@@ -188,29 +189,37 @@ function withChords(words, chords) {
   return out + words.slice(i);
 }
 
-// setWords(text, words): new words under the same chords. Each chord stays on its syllable: the common start and end
-// of the old and the new words keep their places, and a chord inside the changed middle goes to the same share of it
-// (on a word's start where the middle has one near).
+// setWords(text, words): new words under the same chords, each chord kept on its syllable. The two lines' words are
+// lined up (their longest common run, word by word): a chord on a word that's still there stays on it (at the same
+// letter, when the word is long enough); a chord on a word that was changed goes to the word in its place (the same
+// share of the words written between the two kept words around it), or, with none there, onto the next kept word.
+const wordsOf = (s) => { const out = []; const re = /\S+/g; for (let m; (m = re.exec(s)); ) out.push({ w: m[0], at: m.index }); return out; };
 export function setWords(text, words) {
   if (isBars(text)) return String(words ?? '');
   const old = lineWords(text), nw = String(words ?? '');
   const chords = chordsOf(text);
   if (!chords.length) return nw;
-  let pre = 0;
-  while (pre < old.length && pre < nw.length && old[pre] === nw[pre]) pre++;
-  let suf = 0;
-  while (suf < old.length - pre && suf < nw.length - pre && old[old.length - 1 - suf] === nw[nw.length - 1 - suf]) suf++;
-  const oldMid = old.length - pre - suf, newMid = nw.length - pre - suf;
+  const A = wordsOf(old), B = wordsOf(nw);
+  // the longest common subsequence of the words (lines are short: 200 characters at most)
+  const L = Array.from({ length: A.length + 1 }, () => new Int16Array(B.length + 1));
+  for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) L[i][j] = A[i].w === B[j].w ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const match = new Array(A.length).fill(-1);
+  for (let i = 0, j = 0; i < A.length && j < B.length; ) {
+    if (A[i].w === B[j].w) { match[i] = j; i++; j++; } else if (L[i + 1][j] >= L[i][j + 1]) i++; else j++;
+  }
   const moved = chords.map((c) => {
-    if (c.at <= pre) return c;
-    if (c.at >= old.length - suf) return { ...c, at: c.at - old.length + nw.length };
-    let at = pre + (oldMid > 0 ? Math.round(((c.at - pre) / oldMid) * newMid) : 0);
-    // onto the start of the word it falls in, when there's one within a few characters
-    for (let k = 0; k <= 3; k++) {
-      if (at - k > 0 && /\s/.test(nw[at - k - 1]) && !/\s/.test(nw[at - k] || ' ')) { at -= k; break; }
-      if (at + k < nw.length && (at + k === 0 || /\s/.test(nw[at + k - 1])) && !/\s/.test(nw[at + k])) { at += k; break; }
-    }
-    return { ...c, at };
+    // the word the chord is on (the first one starting at or after it, when it sits between words)
+    let wi = A.findIndex((x) => c.at >= x.at && c.at < x.at + x.w.length);
+    const into = wi >= 0 ? c.at - A[wi].at : 0;
+    if (wi < 0) wi = A.findIndex((x) => x.at >= c.at);
+    if (wi < 0) return { ...c, at: nw.length };
+    if (match[wi] >= 0) { const b = B[match[wi]]; return { ...c, at: b.at + (into < b.w.length ? into : 0) }; }
+    // a changed word: between the kept words around it
+    let lo = wi - 1; while (lo >= 0 && match[lo] < 0) lo--;
+    let hi = wi + 1; while (hi < A.length && match[hi] < 0) hi++;
+    const a0 = lo + 1, a1 = hi, b0 = lo >= 0 ? match[lo] + 1 : 0, b1 = hi < A.length ? match[hi] : B.length;
+    if (b1 > b0) { const k = b0 + Math.min(b1 - b0 - 1, Math.floor(((wi - a0) / Math.max(1, a1 - a0)) * (b1 - b0))); return { ...c, at: B[k].at }; }
+    return { ...c, at: b1 < B.length ? B[b1].at : nw.length };
   });
   return withChords(nw, moved);
 }
@@ -427,7 +436,7 @@ export function parseSheet(text) {
     const first = lines.findIndex((l) => l.trim());
     if (first >= 0) {
       const t = lines[first].trim(), next = lines.slice(first + 1).find((l) => l.trim()) || '';
-      const isHead = (l) => /^\s*\[[^\]]+\]\s*$/.test(l) || looksLikeSection(l.replace(/[:\[\]()]/g, '')) || /^\s*(capo|key|tempo|bpm|time)\b/i.test(l) || !!chordLineTokens(l);
+      const isHead = (l) => /^\s*\[[^\]]+\]\s*$/.test(l) || looksLikeSection(l.replace(/[:[\]()]/g, '')) || /^\s*(capo|key|tempo|bpm|time)\b/i.test(l) || !!chordLineTokens(l);
       const rest = lines.slice(first + 1).filter((l) => l.trim());
       const plainLine = (l) => l.trim().length <= 80 && !chordLineTokens(l) && !isHead(l) && !/\[/.test(l);
       if (plainLine(t) && isHead(next)) { out.title = t.replace(/\s+(chords|tabs?|lyrics)(\s+by\s+.*)?$/i, '').trim(); i = first + 1; }
@@ -463,14 +472,14 @@ export function parseSheet(text) {
     // a heading: [Verse 1], Chorus:, (Bridge), VERSE
     const br = /^\s*[[(]([^\])]{1,40})[\])]\s*:?\s*$/.exec(line);
     if (br && !readChord(br[1].trim())) { open(br[1]); continue; }
-    const colon = /^\s*([A-Za-z][A-Za-z0-9 '\-]{0,30}?)\s*:\s*(.*)$/.exec(line);
+    const colon = /^\s*([A-Za-z][A-Za-z0-9 '-]{0,30}?)\s*:\s*(.*)$/.exec(line);
     if (colon && looksLikeSection(colon[1])) {
       open(colon[1]);
       const rest = colon[2].trim();
       if (rest) { const toks = chordLineTokens(rest); if (toks) add(asBars(toks)); else add(rest); }
       continue;
     }
-    if (looksLikeSection(line) && !chordLineTokens(line) && line.trim().split(/\s+/).length <= 3 && /^[A-Za-z][A-Za-z0-9 \-]*$/.test(line.trim())) { open(line); continue; }
+    if (looksLikeSection(line) && !chordLineTokens(line) && line.trim().split(/\s+/).length <= 3 && /^[A-Za-z][A-Za-z0-9 -]*$/.test(line.trim())) { open(line); continue; }
     // the header, in words
     const cap = /^\s*capo\s*(?::|on|at)?\s*(.*)$/i.exec(line);
     if (cap && capoNum(cap[1]) != null && line.trim().length <= 30) { out.capo = capoNum(cap[1]); continue; }
@@ -486,7 +495,7 @@ export function parseSheet(text) {
     const toks = chordLineTokens(line);
     if (toks) {
       const next = lines[i + 1] != null ? lines[i + 1].replace(/\s+$/, '') : '';
-      const nextIsWords = next.trim() && !DIRECTIVE.test(next) && !chordLineTokens(next) && !/\[[^\]]*\]/.test(next) && !isBars(next) && !/^\s*[[(][^\])]+[\])]\s*:?\s*$/.test(next) && !(/^\s*([A-Za-z][A-Za-z0-9 '\-]{0,30}?)\s*:/.test(next) && looksLikeSection(next.split(':')[0]));
+      const nextIsWords = next.trim() && !DIRECTIVE.test(next) && !chordLineTokens(next) && !/\[[^\]]*\]/.test(next) && !isBars(next) && !/^\s*[[(][^\])]+[\])]\s*:?\s*$/.test(next) && !(/^\s*([A-Za-z][A-Za-z0-9 '-]{0,30}?)\s*:/.test(next) && looksLikeSection(next.split(':')[0]));
       if (nextIsWords) { add(overWords(line, next)); i++; } else add(asBars(toks));
       continue;
     }

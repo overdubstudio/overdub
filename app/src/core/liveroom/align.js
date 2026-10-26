@@ -80,37 +80,56 @@ function template(ch) {
   for (let p = 0; p < 12; p++) T[p] /= n;
   return T;
 }
+// A beat's treble chroma, compressed (the square root) and to unit length: a sung note is one strong pitch class over
+// the strum's spread of chord tones, and compressed it can't outvote the chord
 function unit(v) {
   let n = 0;
-  for (let p = 0; p < 12; p++) n += v[p] * v[p];
+  const c = Array.from(v, (x) => Math.sqrt(Math.max(0, x)));
+  for (let p = 0; p < 12; p++) n += c[p] * c[p];
   n = Math.sqrt(n);
-  return n > 0 ? Array.from(v, (x) => x / n) : null;
+  return n > 0 ? c.map((x) => x / n) : null;
 }
-// how well a beat's chroma fits a chord: the treble against the template, the bass on the chord's bass note
+// how well a beat's chroma fits a chord: the treble against the template, and the bass (40-250 Hz, the guitar's low
+// strings, under a voice) against it too, with the chord's bass note on top. The bass weighs as much as the treble:
+// a voice singing over the strum fills the treble with one note, and never reaches down there
 function fitOf(tv, bv, T, bassPc, root) {
   if (!tv) return 0;
   let s = 0;
   for (let p = 0; p < 12; p++) s += tv[p] * T[p];
-  let bmax = 0;
-  for (let p = 0; p < 12; p++) bmax = Math.max(bmax, bv[p]);
-  const bs = bmax > 0 ? Math.max(bv[bassPc], 0.6 * bv[root]) / bmax : 0;
-  return s + 0.3 * bs;
+  const bu = unit(bv);
+  let sb = 0, bmax = 0;
+  if (bu) for (let p = 0; p < 12; p++) { sb += bu[p] * T[p]; bmax = Math.max(bmax, bu[p]); }
+  const bs = bmax > 0 ? Math.max(bu[bassPc], 0.6 * bu[root]) / bmax : 0;
+  return W_TREBLE * s + W_BASS * sb + W_NOTE * bs;
 }
+const W_TREBLE = 0.55, W_BASS = 0.45, W_NOTE = 0.2;
 
 // The costs, in units of one beat's fit (a fit runs about 0.5 for a wrong chord to 1.2 for a right one).
 const W = 5;                                   // a beat's fit, weighted against the moves
-const MOVE = { bar: 0.4, half: 1.6, beat: 4.5 };   // a change on a bar line, a half bar, any other beat
+const MOVE = { bar: 0.4, half: 2.4, beat: 4.5 };   // a change on a bar line, a half bar, any other beat
 const SECTION = { next: 0.6, again: 1.2, back: 1.4, skip: 2.6, offBar: 6 };   // into a section: the next, the same one again, one before, one past the next; not on a bar line
-const NONE = { fit: 0.58, into: 1.2, out: 2, mid: 5 };   // no chord: its fit, starting a section from it, ending one into it, stopping mid-section
+const NONE = { fit: 0.58, into: 1.2, out: 2, mid: 5, margin: 0.05 };   // no chord: its fit, starting a section from it, ending one into it, stopping mid-section; how far a chord off the paper must fit over it
 
 export function alignChords(chroma, beats, chords, opts = {}) {
   const bpb = Math.max(1, Math.round(opts.bpb || 4)), phase = Math.round(opts.phase || 0);
   const B = Array.isArray(beats) ? beats.length : 0;
   if (!B || !chroma) return [];
   // the paper as sections of playable chords (a symbol nobody can read is left out: nobody plays it)
+  /** @type {any[]} */
   const secs = (Array.isArray(chords) && chords.length && isObj(chords[0]) && Array.isArray(chords[0].chords) ? chords : [{ section: null, name: null, chords: (chords || []).map((sym) => ({ sym, chord: readChord(sym) })) }])
     .map((s, si) => ({ id: s.section ?? null, name: s.name ?? null, si, chords: (s.chords || []).filter((c) => c && c.chord).map((c) => ({ sym: c.sym, chord: c.chord, T: template(c.chord) })) }))
     .filter((s) => s.chords.length);
+  // sections with the same chords in the same order are one in the model (a second verse is the verse again), and
+  // each time through it is the next of them on the paper: Verse 1, then Verse 2
+  const groups = [];
+  for (const s of secs) {
+    const sig = s.chords.map((c) => c.chord.name).join(' ');
+    const g = groups.find((x) => x.sig === sig);
+    if (g) g.members.push({ id: s.id, name: s.name });
+    else groups.push({ ...s, si: groups.length, sig, members: [{ id: s.id, name: s.name }] });
+  }
+  secs.length = 0;
+  secs.push(...groups);
   if (!secs.length) return [];
   // the states: every chord of every section in order, then no chord
   const states = [];
@@ -122,11 +141,21 @@ export function alignChords(chroma, beats, chords, opts = {}) {
   // what each beat sounds like
   const bc = beatChroma(chroma, beats);
   const med = bc.energy.slice().sort((a, b) => a - b)[Math.floor(B / 2)] || 1e-9;
+  // the chords that aren't on the paper: the triads that share at most one note with every chord it has. When one of
+  // them fits a beat clearly, something else is playing there (a chord the paper doesn't have): no chord
+  const paperPcs = states.map((st) => new Set((QUALITIES[st.c.chord.quality] || QUALITIES['']).iv.map((x) => (st.c.chord.root + x) % 12)));
+  const foreign = [];
+  for (let r = 0; r < 12; r++) for (const q of ['', 'm']) {
+    const pcs = (QUALITIES[q].iv).map((x) => (r + x) % 12);
+    if (paperPcs.every((P) => pcs.filter((x) => P.has(x)).length <= 1)) foreign.push({ root: r, T: template({ root: r, quality: q }) });
+  }
   const fit = new Float64Array(B * (N + 1));
   for (let b = 0; b < B; b++) {
     const tv = unit(bc.treble[b]), bv = bc.bass[b], quiet = Math.min(1, bc.energy[b] / (0.25 * med));
     for (let i = 0; i < N; i++) { const c = states[i].c.chord; fit[b * (N + 1) + i] = fitOf(tv, bv, states[i].c.T, c.bass ?? c.root, c.root) * quiet; }
-    fit[b * (N + 1) + NC] = NONE.fit + 0.6 * (1 - quiet);
+    let other = 0;
+    for (const f of foreign) other = Math.max(other, fitOf(tv, bv, f.T, f.root, f.root) * quiet);
+    fit[b * (N + 1) + NC] = Math.max(NONE.fit + 0.6 * (1 - quiet), other - NONE.margin);
   }
   const posOf = (b) => ((((b - phase) % bpb) + bpb) % bpb);
   const moveCost = (b) => { const q = posOf(b); return q === 0 ? MOVE.bar : bpb % 2 === 0 && q === bpb / 2 ? MOVE.half : MOVE.beat; };
@@ -178,17 +207,18 @@ export function alignChords(chroma, beats, chords, opts = {}) {
     const st = states[i];
     const firstOf = st.k === 0 && (was === NC || was === -1 || states[was].last);
     if (firstOf) passes.set(st.s, (passes.get(st.s) ?? -1) + 1);
-    const pass = passes.get(st.s) ?? 0;
+    const n = passes.get(st.s) ?? 0, ms = st.sec.members, m = ms[n % ms.length];
+    const pass = Math.floor(n / ms.length);
     // (the same chord carried over a line, or from one section into the next, isn't a change, but a section start is)
     if (!firstOf && was >= 0 && was !== NC && states[was].c.chord.name === st.c.chord.name) continue;
-    out.push({ chord: st.c.sym, sounding: st.c.chord.name, beat: b, sure: true, section: st.sec.id, name: st.sec.name, pass, at: st.k, first: firstOf });
+    out.push({ chord: st.c.sym, sounding: st.c.chord.name, beat: b, sure: true, section: m.id, name: m.name, pass, at: st.k, first: firstOf, _g: st.sec });
   }
   // sure: the chord fits its beats clearly better than the others its section has
   for (let j = 0; j < out.length; j++) {
     const ch = out[j];
     if (ch.chord == null) continue;
     const end = j + 1 < out.length ? out[j + 1].beat : B;
-    const sec = secs.find((s) => s.id === ch.section && s.chords.some((c) => c.sym === ch.chord)) || secs[0];
+    const sec = ch._g || secs[0];
     const mine = sec.chords.find((c) => c.sym === ch.chord);
     let margin = 0, n = 0;
     for (let b = ch.beat; b < end; b++) {
@@ -202,6 +232,7 @@ export function alignChords(chroma, beats, chords, opts = {}) {
     }
     ch.sure = n > 0 && margin / n > 0.04;
   }
+  for (const ch of out) delete ch._g;
   return out;
 }
 

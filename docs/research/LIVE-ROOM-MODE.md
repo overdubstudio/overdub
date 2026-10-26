@@ -1274,7 +1274,7 @@ and tuning ids are forever.
 | `planRead(p, { take, sheet })` | the kitchen's sections, the Chords track and its clips | the house | kitchen |
 | `planTime(p, { take, reading })` | `tempo.map` from the chosen reading (as the analyser's `readingOps` does), the band re-timed | you | kitchen |
 | `planPlayer(p, { player, section })` | the player's track (once) and clip | you, the clip by the house | kitchen |
-| `planMaster(p, { clip })` | `room.set { master }`, the time from that take, the band re-timed | the house | kitchen |
+| `planMaster(p, { clip, read })` | `room.set { master }`, the time from that take, the band re-timed | the house | kitchen |
 | `readRoom(p)` | the room's view: place, roles (re-bound by name when a track went), cards in order with their takes per side, the playing take, the guide, the band's clips and whether they're still the house's, `managed` differences, the paper's mapping | (a read) | foundation, then stage |
 
 ### 9.4 The engine, the recorder and the input
@@ -1660,8 +1660,8 @@ It lands the parts every stream shares, and nothing else:
 | `core/liveroom/double.js` (B) | `planDouble(p, { section })`, `planUseAsRight(p, { section, clip })` |
 | `core/liveroom/session.js` (C) | `readRoom(p)` → the room's view; `offered(view, run)` → `{ id, label, key }`; `stopBeat(view, beat)`; `press(state, id)` (the reducer the press counts run on) |
 | `core/liveroom/plans.js` (C) | `planPlace`, `takeOps`, `planLayout`, `planTwice`, `planMove`, `planShorter`, `planRemove`, `planEnd` |
-| `core/liveroom/sheet.js` (D) | `parseSheet(text)`, `formatSheet(sheet, { as: 'chordpro' \| 'text' })`, `lineParts(text)`, `soundingKey(sheet, p)`, `transposeChord(sym, semis)` |
-| `core/liveroom/align.js`, `kitchen.js` (D) | `alignChords(chroma, beats, chords, opts)`; `kitchenSetup({ mic })`, `planRead`, `planTime`, `planPlayer`, `planMaster`, `planKitchenFinish`, `offeredKitchen(view, run)` |
+| `core/liveroom/sheet.js` (D) | `parseSheet(text)` (also `title`, `artist`, `key` (the shapes'), `tempo` from the file's header), `formatSheet(sheet, { as: 'chordpro' \| 'text', title, artist, key, tempo })`, `lineParts(text)`, `soundingKey(sheet, p)`, `transposeChord(sym, semis, key?)` (key: the key to spell in); added: `sheetChords`, `setWords`, `chordRow`, `capoChoices`, `pasteOps`, `newVerse` |
+| `core/liveroom/align.js`, `kitchen.js` (D) | `alignChords(chroma, beats, chords, opts)` (each change also carries `sounding`, `section`, `name`, `pass`, `at`, `first`), `readTape(samples, sr)`, `readTapeInWorker`; `kitchenSetup({ mic })` (tracks: `[{ role, name, kind: 'audio', inserts, gain, pan, input }]`, the take track or Voice and Guitar; the players' tracks come with `planPlayer`), `kitchenOps(p, { mic })` (the setup as ops, for `planPlace`), `planRead(p, { take: { track, clip, read }, sheet })`, `planTime(p, { take, reading })`, `planPlayer(p, { player, section })`, `planMaster(p, { clip, read? })` (with that take's read, the time and the band from it), `planKitchenFinish`, `offeredKitchen(view, run)` (run: the screen's `{ rolling, playing, reading, takes, ask, offer, done, again }`) |
 | `core/liveroom/label.js` (F) | `labelOf(p)` → `{ title, slate, parts, note, cover }`, `titleDice(p)` → three titles |
 | `core/liveroom/lines/*.js` (each its stream's) | `LINES`: `{ [id]: { text(vars), once? } }` |
 | `ui/liveroom/index.js` (C) | the default export installs it (`app.liveRoom` = `{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }`); `screens`, re-exported; `ctx` = `{ app, ui, store, deck, view(), say(lineId, vars), prefs, scene }` |

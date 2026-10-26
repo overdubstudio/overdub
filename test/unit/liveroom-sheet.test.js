@@ -88,7 +88,10 @@ describe('parse', () => {
     const s = parseSheet(UG);
     assert.equal(s.title, 'Paper Moon');
     assert.equal(s.capo, 3);
-    assert.deepEqual(s.sections.map((x) => x.name), ['Verse 1', 'Chorus', 'Verse 2', 'Bridge']);
+    assert.deepEqual(
+      s.sections.map((x) => x.name),
+      ['Verse 1', 'Chorus', 'Verse 2', 'Bridge'],
+    );
     assert.equal(s.sections[0].lines[0].text, '[G]Somewhere [Em]a paper moon is hanging');
     assert.equal(s.sections[0].lines[1].text, '[C]over the roofs of the [D]town');
     // a chord line with no words under it is bars
@@ -107,13 +110,19 @@ describe('parse', () => {
     assert.deepEqual(s.time, [3, 4]);
     assert.equal(s.tempo, 84);
     assert.equal(s.notes, 'written at the table');
-    assert.deepEqual(s.sections.map((x) => x.name), ['Verse 1', 'Chorus', 'Bridge']);
+    assert.deepEqual(
+      s.sections.map((x) => x.name),
+      ['Verse 1', 'Chorus', 'Bridge'],
+    );
     assert.equal(s.sections[0].lines[1].text, 'over the [C]roofs of the [D]town');
     assert.ok(!JSON.stringify(s).includes('e|---'));
   });
   test('two different sections of one name are numbered', () => {
     const s = parseSheet('[Verse]\n[G]one\n[Verse]\n[C]two\n');
-    assert.deepEqual(s.sections.map((x) => x.name), ['Verse 1', 'Verse 2']);
+    assert.deepEqual(
+      s.sections.map((x) => x.name),
+      ['Verse 1', 'Verse 2'],
+    );
   });
   test('a long line is split at a space, a chord kept whole', () => {
     const long = Array.from({ length: 40 }, (_, i) => (i % 5 === 0 ? '[G]word' : 'word')).join(' ');
@@ -131,7 +140,10 @@ describe('parse', () => {
 });
 
 describe('format', () => {
-  for (const [name, src] of [['chords over words', UG], ['ChordPro', CHO]]) {
+  for (const [name, src] of [
+    ['chords over words', UG],
+    ['ChordPro', CHO],
+  ]) {
     for (const as of ['text', 'chordpro']) {
       test(`${name} -> ${as} -> parse is stable`, () => {
         const a = parseSheet(src);
@@ -162,20 +174,37 @@ describe('a line', () => {
       { text: 'moon', chord: 'Em' },
     ]);
     assert.deepEqual(lineParts('[G]Hold'), [{ text: 'Hold', chord: 'G' }]);
-    assert.deepEqual(lineParts('| G | Em | C D |').map((x) => [x.chord, x.bar]), [['G', 0], ['Em', 1], ['C', 2], ['D', 2]]);
+    assert.deepEqual(
+      lineParts('| G | Em | C D |').map((x) => [x.chord, x.bar]),
+      [
+        ['G', 0],
+        ['Em', 1],
+        ['C', 2],
+        ['D', 2],
+      ],
+    );
     assert.ok(isBars('| G |'));
     assert.deepEqual(barsOf('| G | Em |'), [['G'], ['Em']]);
   });
   test('an edit keeps each chord on its syllable', () => {
     const line = 'Somewhere a [G]paper [Em]moon is hanging';
     // a word put in before the chords
-    assert.equal(setWords(line, 'Somewhere out there a paper moon is hanging'), 'Somewhere out there a [G]paper [Em]moon is hanging');
+    assert.equal(
+      setWords(line, 'Somewhere out there a paper moon is hanging'),
+      'Somewhere out there a [G]paper [Em]moon is hanging',
+    );
     // a word changed between them
     assert.equal(setWords(line, 'Somewhere a silver moon is hanging'), 'Somewhere a [G]silver [Em]moon is hanging');
     // words after them
-    assert.equal(setWords(line, 'Somewhere a paper moon was hanging low'), 'Somewhere a [G]paper [Em]moon was hanging low');
+    assert.equal(
+      setWords(line, 'Somewhere a paper moon was hanging low'),
+      'Somewhere a [G]paper [Em]moon was hanging low',
+    );
     assert.equal(lineWords(line), 'Somewhere a paper moon is hanging');
-    assert.deepEqual(chordsOf(line), [{ sym: 'G', at: 12 }, { sym: 'Em', at: 18 }]);
+    assert.deepEqual(chordsOf(line), [
+      { sym: 'G', at: 12 },
+      { sym: 'Em', at: 18 },
+    ]);
     assert.equal(insertChord('Hold on', 5, 'C'), 'Hold [C]on');
   });
 });
@@ -204,24 +233,39 @@ describe('chords and keys', () => {
     assert.equal(readChord('1/5', k).name, 'G/D');
     const s = parseSheet('{key: G}\n[Verse]\n1 4 6- 5\n');
     assert.equal(s.sections[0].lines[0].text, '| 1 | 4 | 6- | 5 |');
-    assert.deepEqual(sheetChords(s, {})[0].chords.map((c) => c.chord.name), ['G', 'C', 'Em', 'D']);
+    assert.deepEqual(
+      sheetChords(s, {})[0].chords.map((c) => c.chord.name),
+      ['G', 'C', 'Em', 'D'],
+    );
   });
   test('a chord nobody can read is kept as text and plays nothing', () => {
     const s = parseSheet(CHO);
     const bridge = sheetChords(s, {}).find((x) => x.name === 'Bridge');
-    assert.deepEqual(bridge.chords.map((c) => c.sym), ['Am', 'Hm7']);
+    assert.deepEqual(
+      bridge.chords.map((c) => c.sym),
+      ['Am', 'Hm7'],
+    );
     assert.equal(bridge.chords[1].chord, null);
     assert.ok(s.sections[2].lines[0].text.includes('[Hm7]'));
   });
   test('the chord row and the capo choices', () => {
     assert.deepEqual(chordRow(parseSheet(UG), {}).slice(0, 6), ['G', 'Am', 'Bm', 'C', 'D', 'Em']);
-    assert.deepEqual(capoChoices({ root: 'Bb', scale: 'major' }).map((c) => `${c.shapes} ${c.capo}`), ['A 1', 'G 3', 'E 6']);
+    assert.deepEqual(
+      capoChoices({ root: 'Bb', scale: 'major' }).map((c) => `${c.shapes} ${c.capo}`),
+      ['A 1', 'G 3', 'E 6'],
+    );
     assert.deepEqual(capoChoices({ root: 'G', scale: 'major' })[0], { capo: 0, shapes: 'G' });
   });
   test('a new verse has the last verse chords and no words', () => {
     const v = newVerse(parseSheet(UG));
     assert.equal(v.name, 'Verse 3');
-    assert.deepEqual(v.lines.map((l) => chordsOf(l.text).map((c) => c.sym)), [['G', 'Em'], ['C', 'D']]);
+    assert.deepEqual(
+      v.lines.map((l) => chordsOf(l.text).map((c) => c.sym)),
+      [
+        ['G', 'Em'],
+        ['C', 'D'],
+      ],
+    );
     assert.equal(lineWords(v.lines[0].text).trim(), '');
   });
   test('describeSheet', () => {
@@ -238,7 +282,10 @@ describe('into the song', () => {
     assert.ok(r.ok, r.error);
     const p = store.get();
     assert.equal(p.sheet.capo, 3);
-    assert.deepEqual(p.sheet.sections.map((x) => x.name), ['Verse 1', 'Chorus', 'Verse 2', 'Bridge']);
+    assert.deepEqual(
+      p.sheet.sections.map((x) => x.name),
+      ['Verse 1', 'Chorus', 'Verse 2', 'Bridge'],
+    );
     assert.ok(p.sheet.sections.every((s) => s.lines.every((l) => l.by === 'you')));
     assert.deepEqual(p.key, { root: 'Bb', scale: 'major' });
     assert.equal(p.title, 'Paper Moon');

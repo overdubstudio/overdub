@@ -192,7 +192,7 @@ export async function run(T, ctx) {
   /* ---------------------------------------------------------------------------------------------- 1. every scene draws */
   {
     const rows = [], badCalls = [];
-    for (const place of [...PLACES, null, 'nowhere']) {
+    for (const place of [...PLACES, null, 'nowhere', '__proto__', 'toString']) {
       for (const [vn, v] of views(place)) {
         const b = look(draw(place, v));
         if (b.bad.size) badCalls.push(`${place} ${vn}: ${[...b.bad.keys()].join(', ')}`);
@@ -202,7 +202,7 @@ export async function run(T, ctx) {
         if (vn === 'quiet') rows.push([place, colours(b).size, b.calls]);
       }
     }
-    T.ok(!badCalls.length, `every scene (the four places, the bare room, an unknown place) paints all ${px.W} x ${px.H} with fillStyle, globalAlpha and whole-pixel fillRect only, in ${views('metal').length} views each${badCalls.length ? ': ' + badCalls.slice(0, 6).join('; ') : ''}`);
+    T.ok(!badCalls.length, `every scene (the four places, the bare room, an unknown place, '__proto__' and 'toString') paints all ${px.W} x ${px.H} with fillStyle, globalAlpha and whole-pixel fillRect only, in ${views('metal').length} views each${badCalls.length ? ': ' + badCalls.slice(0, 6).join('; ') : ''}`);
     T.ok(rows.every(([p, n]) => n >= (PLACES.includes(p) ? 40 : 8)), `each is a room, not a fill: ${rows.map(([p, n, c]) => `${p ?? 'none'} ${n} colours in ${c} rects`).join(', ')}`);
     const heads = PLACES.map((p) => { const b = draw(p, {}); return [p, findWords(b, sc.KICKS[p], sc.LOOK[p].headInk)]; });
     T.ok(heads.every(([, n]) => n >= 1), `each kick head carries its word: ${heads.map(([p, n]) => `${sc.KICKS[p]} (${p}, ${n ? 'found' : 'missing'})`).join(', ')}`);
@@ -280,8 +280,8 @@ export async function run(T, ctx) {
     T.ok(!wrong.length, `each signal moves what it drives and nothing else: ${lines.join(', ')}${wrong.length ? '; ' + wrong.slice(0, 6).join('; ') : ''}`);
     const counts = PLACES.map((p) => findText(draw(p, { count: 3 }), '3', p === 'kitchen' ? '#d9f36a' : sc.LOOK[p].headInk, 2).length);
     T.ok(counts.every((n) => n >= 1), `the count is on the kick head while it counts (a 3 on ${PLACES.slice(0, 3).map((p, i) => `${sc.KICKS[p]} ${counts[i] ? 'yes' : 'no'}`).join(', ')}; the kitchen's on the laptop ${counts[3] ? 'yes' : 'no'})`);
-    const loads = PLACES.slice(0, 3).map((p) => findText(draw(p, { loading: 0.7 }), '70%', sc.LOOK[p].headInk).length > 0 && same(draw(p, { loading: 1 }), draw(p, {})));
-    T.ok(loads.every(Boolean), `while the kit loads its kick head says how much is in (70% on ${PLACES.slice(0, 3).map((p, i) => `${sc.KICKS[p]} ${loads[i] ? 'yes' : 'no'}`).join(', ')}), and its word comes back once it's in`);
+    const loads = PLACES.slice(0, 3).map((p) => findWords(draw(p, { loading: 0.7 }), 'KIT 70%', sc.LOOK[p].headInk) && same(draw(p, { loading: 1 }), draw(p, {})));
+    T.ok(loads.every(Boolean), `while the kit loads its kick head says how much is in (KIT 70% on ${PLACES.slice(0, 3).map((p, i) => `${sc.KICKS[p]} ${loads[i] ? 'yes' : 'no'}`).join(', ')}), and its word comes back once it's in`);
     const flyer = findText(draw('basement', { title: 'Void Weather' }), 'VOID', '#16130f').length;
     T.ok(flyer >= 1, `the basement's flyer carries the song's title once it has one (VOID ${flyer ? 'found' : 'missing'}), and 'Untitled' is no title: ${same(draw('basement', { title: 'Untitled' }), draw('basement', {})) ? 'the same flyer' : 'a different flyer'}`);
     const cover = PLACES.slice(0, 2).map((p) => {
@@ -403,9 +403,17 @@ export async function run(T, ctx) {
       const k = px.windowFor({ place, step: 'feel', reduced: true });
       if (k.y !== px.H - 108) bad.push(`${place}: the kit's window leaves the ledge out (y ${k.y})`);
     }
+    for (const place of [null, 'nowhere', '__proto__', 'toString']) {
+      try {
+        const w = px.windowFor({ place, step: 'double', reduced: true });
+        if (w.w !== 192 || w.h !== 108) bad.push(`${place}: ${JSON.stringify(w)}`);
+        const c = pixelBuffer(168, 96);
+        px.drawCrop(c, place, { w: 168, h: 96 });
+      } catch (e) { bad.push(`${place} threw: ${e.message}`); }
+    }
     const kw = px.windowFor({ place: 'kitchen', reduced: true }), K = sc.LAYOUT.kitchen;
     if (!(kw.w === 192 && kw.h === 72 && kw.y === 72 && fits(kw, K.kit))) bad.push(`kitchen: ${JSON.stringify(kw)}`);
-    T.ok(!bad.length, `the phone's window is 192 x 108 (the kitchen's strip 192 x 72), whole pixels, framed on all of what the step is about: your amp and its lamps in the soundcheck, both amps for the other side, the kit for a feel (with the ledge), the bass${bad.length ? ': ' + bad.join('; ') : ''}`);
+    T.ok(!bad.length, `the phone's window is 192 x 108 (the kitchen's strip 192 x 72), whole pixels, framed on all of what the step is about: your amp and its lamps in the soundcheck, both amps for the other side, the kit for a feel (with the ledge), the bass; no place, or a place that isn't one, the whole room's middle${bad.length ? ': ' + bad.join('; ') : ''}`);
     px.windowFor({ place: 'metal', step: 'soundcheck', now: 1000, reduced: false });
     const xs = [], ys = [];
     for (let t = 1000; t <= 1240; t += 20) { const w = px.windowFor({ place: 'metal', step: 'feel', now: t, reduced: false }); xs.push(w.x); ys.push(w.y); }

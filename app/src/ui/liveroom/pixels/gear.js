@@ -10,7 +10,7 @@
 //   bassRig(g, x, y, w, h, P, rig, kind)   'fridge' (a head on eight small speakers) or 'combo'. rig: { level, lamp,
 //                                reduced }; lamp 0..1, how warm its light is
 //   kit(g, cx, base, P, s, { double, name })   the kit, its name on the front kick head (the count while it counts,
-//                                how much of the kit is in while it loads)
+//                                KIT 70% while it loads: §4.1)
 //   cassette(g, x, y, s, look)   a cassette machine, its two reels turning while the tape rolls
 //   reels(g, x, y, s)            the reel-to-reel on the console ledge
 //   laptop(g, x, y, s)           the kitchen's laptop: the counter (or the count) and the input's level on its screen
@@ -153,10 +153,8 @@ export function kit(g, cx, base, P, s, { double = false, name = '' } = {}) {
       if (s.count != null) {
         const n = String(s.count), tw = textWidth(n, 2);
         text(g, n, kx - Math.floor(tw / 2), ky - 5, P.headInk, 2);
-      } else if (s.loading != null) {
-        const n = `${Math.floor(s.loading * 100)}%`;
-        text(g, n, kx - Math.floor(textWidth(n) / 2), ky - 2, P.headInk);
-      } else headName(g, name, kx, ky, r, P.headInk);
+      } else if (s.loading != null) headName(g, `KIT ${Math.floor(s.loading * 100)}%`, kx, ky, r, P.headInk);
+      else headName(g, name, kx, ky, r, P.headInk);
     }
     rect(g, kx - r + 2, base - 1, 2, 1, STAND); rect(g, kx + r - 3, base - 1, 2, 1, STAND);
   });

@@ -19,7 +19,7 @@ import { h, css } from '../dom.js';
 import { screens } from './screens.js';
 import { createPaper } from './paper.js';
 import { W, H } from './pixels/index.js';
-import { roomOf, sheetOf } from '../../core/liveroom/model.js';
+import { roomOf, sheetOf, NAMES } from '../../core/liveroom/model.js';
 import { readTapeInWorker } from '../../core/liveroom/tape.js';
 import {
   kitchenOps, planTime, planRead, planPlayer, planMaster, planKitchenFinish, offeredKitchen, offerSections, takeName,
@@ -29,6 +29,9 @@ import { capoChoices } from '../../core/liveroom/sheet-text.js';
 import { beatsPerBar, beatToSec, secToBeat } from '../../core/music.js';
 import { inputKind } from '../../input/audioin.js';
 import { LINES } from '../../core/liveroom/lines/kitchen.js';
+import { createStore } from '../../core/store.js';
+import { renderProject } from '../../engine/render.js';
+import { lufs } from '../../audio/measure.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
@@ -36,16 +39,17 @@ const CSS = `
 .kt-scene { width: 100%; max-width: 512px; aspect-ratio: 16 / 9; image-rendering: pixelated; display: block; background: var(--bg-2, #111); }
 .kt-right { min-width: 0; max-height: calc(100vh - 140px); overflow: auto; }
 .kt-go { width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 600 17px/1.2 var(--font-ui);
-  background: var(--accent); color: var(--accent-ink, #111); border: 0; padding: 0 16px; cursor: pointer; }
-.kt-go kbd { font: 400 12px/1 var(--font-mono); color: inherit; background: none; opacity: .7; border: 1px solid currentColor; border-radius: var(--r-press); padding: 3px 5px; box-shadow: none; }
-@media (hover: none) { .kt-go kbd { display: none; } }
+  background: var(--accent); color: var(--bg); border: 0; border-radius: var(--r-press); padding: 0 16px; cursor: pointer; }
+/* (the key's hint is the stage's: style.js .lr-kbd, printed in the button's own ink) */
+.kt-go .lr-kbd { border-color: currentColor; }
 .kt-break { flex-basis: 100%; height: 0; }
 .kt-go:disabled { opacity: 0.5; cursor: default; }
 .kt-go:disabled kbd, .kt-go[hidden] { display: none; }
 .kt-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .kt-row > span { color: var(--text-3); font-size: 13px; }
 .kt-chip { min-height: 36px; padding: 0 12px; font: 400 14px/1 var(--font-ui); background: none; color: var(--text); border: 1px solid var(--line-2); cursor: pointer; }
-.kt-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+/* (pressed is reverse print, BRAND.md: leader green is only the one primary action) */
+.kt-chip[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
 .kt-chip:disabled { opacity: 0.45; cursor: default; }
 .kt-q { margin: 0; font: 400 17px/1.4 var(--font-ui); }
 /* (the paper stays as it is while the tape rolls: it's what you sing from) */
@@ -101,7 +105,10 @@ screens.add({
 
     // the room in the song: the kitchen's tracks when the song has none yet (the house's), else what it has
     const roomNow = () => roomOf(store.get()) || {};
-    const takeTrack = () => { const r = roomNow(); return r.tracks?.take || r.tracks?.kguitar || null; };
+    // (two inputs: the Guitar track is the take the band reads, the Voice track beside it; one mic: Guitar & voice)
+    const two = () => roomNow().mic === 'two' && !!roomNow().tracks?.voice && !!roomNow().tracks?.kguitar;
+    const takeTrack = () => { const r = roomNow(); return (two() ? r.tracks.kguitar : r.tracks?.take || r.tracks?.kguitar) || null; };
+    const voiceTrack = () => (two() ? roomNow().tracks.voice : null);
     function setup(mic) {
       const r = kitchenOps(store.get(), { mic });
       store.dispatch(r.ops, { by: 'overdub', label: r.label, reason: r.reason });
@@ -125,7 +132,8 @@ screens.add({
         const list = await a.devices().catch(() => []);
         const saved = a.state.deviceId && list.some((d) => d.id === a.state.deviceId) ? a.state.deviceId : '';
         const mic = saved ? null : list.find((d) => inputKind(d.label, { isDefault: d.id === 'default' }) === 'mic');
-        await a.open({ device: saved || mic?.id || '', channel: a.state.channel || '1', capture: true });
+        if (two()) await openTwo({ device: saved || mic?.id || '' });
+        else await a.open({ device: saved || mic?.id || '', channel: a.state.channel || '1', capture: true });
         return true;
       } catch (e) {
         micAsked = false;
@@ -145,7 +153,7 @@ screens.add({
     /* ------------------------------------------------------------------------------------------- the layout */
     const canvas = h('canvas.kt-scene', { width: W, height: H, 'aria-hidden': 'true' });
     const g = canvas.getContext('2d');
-    const go = h('button.kt-go', { type: 'button', onclick: () => press(offered()?.id) }, h('span.kt-go-label', ''), h('kbd', 'Space'));
+    const go = h('button.kt-go', { type: 'button', onclick: () => press(offered()?.id) }, h('span.kt-go-label', ''), h('kbd.lr-kbd', 'Space'));
     const q = h('p.kt-q', { 'aria-live': 'polite' });
     const choices = h('div.kt-row.kt-choices');
     const takesRow = h('div.kt-row.kt-takes');
@@ -161,7 +169,10 @@ screens.add({
     /* ------------------------------------------------------------------------------------------- steps */
     const p0 = store.get();
     const r0 = roomOf(p0);
-    const tapes = () => (store.get().tracks.find((t) => t.id === takeTrack())?.clips || []).filter((c) => c.kind === 'audio').length;
+    // the takes on a track: one a recording (a take that stopped short of one before it leaves that one's tail as a clip
+    // of its own, on the same recording), the first clip of each, in the order they went in
+    const passesOn = (track) => { const seen = new Set(); return (store.get().tracks.find((t) => t.id === track)?.clips || []).filter((c) => c.kind === 'audio' && !seen.has(c.asset) && seen.add(c.asset)); };
+    const tapes = () => passesOn(takeTrack()).length;
     // (coming back: a kitchen song with its tape already rolled; a table the door just set has its tracks, no takes)
     let fresh = false;
     if (r0?.place === 'kitchen' && takeTrack() && tapes()) {
@@ -169,7 +180,7 @@ screens.add({
       const known = ctx.prefs.get().outputs[outputLabel()] || SAYS_OUTPUT(outputLabel());
       run.phones = known ? known === 'headphones' : null;
       run.step = run.phones == null ? 'phones' : 'paper';
-      for (const t of store.get().tracks) if (t.id === takeTrack()) run.takes = t.clips.filter((c) => c.kind === 'audio').length;
+      run.takes = tapes();
     } else {
       fresh = true;
       if (r0?.place !== 'kitchen' || !takeTrack()) setup('one');
@@ -205,10 +216,29 @@ screens.add({
       if (!m || (m.mic === 'two' && !twoMoving())) return;
       run.mic = id;
       run.picked = true;
-      if ((roomNow().mic || 'one') !== m.mic) setup(m.mic);
+      if ((roomNow().mic || 'one') !== m.mic) { setup(m.mic); reopen(); }
       draw();
     }
-    const twoMoving = () => { const i = inputNow(); return i.channels >= 2 && i.bothMoving; };
+    // the option says it needs a pickup until a device shows both channels moving, once (§6.2 c)
+    const twoMoving = () => { if (!run.bothSeen) { const i = inputNow(); if (i.channels >= 2 && i.bothMoving) run.bothSeen = true; } return !!run.bothSeen; };
+    // Two inputs: one stream, the mic's channel to Voice and the pickup's to Guitar, recorded together (audio/audioin.js
+    // split). Nothing is monitored through the room (as with one mic: you hear yourself in the air, or by the
+    // interface's direct monitor). voiceOnly: input 1 alone, for a pass on Voice over the master's guitar
+    async function openTwo({ device = app.input?.audio?.state?.deviceId || '', voiceOnly = false } = {}) {
+      const a = app.input?.audio, r = roomNow().tracks || {};
+      if (!a) return;
+      if (voiceOnly) { await a.open({ device, channel: '1', capture: true, monitor: false }); return; }
+      await a.open({ device, split: { 1: { track: r.voice, mic: true, monitor: false }, 2: { track: r.kguitar, monitor: false } }, capture: true, monitor: false });
+    }
+    // the input again for how it's miked now: both channels split, or the one mic
+    async function reopen({ voiceOnly = false } = {}) {
+      const a = app.input?.audio;
+      if (!a?.state?.open) return;
+      try {
+        if (two()) await openTwo({ voiceOnly });
+        else await a.open({ device: a.state.deviceId || '', channel: '1', capture: true });
+      } catch (e) { console.warn('overdub kitchen input:', e?.message || e); }
+    }
     function answerPhones(yes) {
       run.phones = !!yes;
       ctx.prefs.set({ outputs: { [outputLabel()]: yes ? 'headphones' : 'speakers' } });
@@ -257,6 +287,8 @@ screens.add({
       if (!id) return { ok: false, error: 'nothing to press' };
       if (id === 'phones.yes') { answerPhones(true); return { ok: true }; }
       if (id === 'phones.no') { answerPhones(false); return { ok: true }; }
+      if (id === 'again' && two() && run.phones) { stopPreview(); run.offer = null; run.ask = 'both'; say('k.both.or.voice'); draw(); return { ok: true }; }
+      if (id === 'again.both' || id === 'again.voice') { run.ask = null; return startTape(true, { voiceOnly: id === 'again.voice' }); }
       if (id === 'tape' || id === 'again') return startTape(id === 'again');
       if (id === 'count') return startTape(run.takes > 0, { counted: true });
       if (id === 'tempo.down' || id === 'tempo.up') { nudgeTempo(id === 'tempo.up' ? 1 : -1); return { ok: true }; }
@@ -333,11 +365,16 @@ screens.add({
       const bpb = beatsPerBar(p.meter || [4, 4]);
       later(() => { if (gen === hearGen && preview) { stopPreview(); draw(); } }, ((bpb * 60) / tempo) * 1000 + 250);
     }
-    async function startTape(again, { counted = false } = {}) {
-      const d = deck(), track = takeTrack();
+    // voiceOnly (two inputs, on headphones): a whole pass on Voice alone, over the master's guitar, which keeps playing
+    async function startTape(again, { counted = false, voiceOnly = false } = {}) {
+      const d = deck(), track = voiceOnly ? voiceTrack() : takeTrack();
       if (!d || !track) return { ok: false, error: 'no deck' };
       if (counted && !run.phones) return { ok: false, error: 'a count needs headphones: on speakers the band waits' };
+      if (voiceOnly && !run.phones) return { ok: false, error: 'just the voice needs headphones: on speakers the guitar would be in the mic' };
       stopPreview();
+      // (the input as this take wants it: input 1 alone for the voice, both channels split for a whole take)
+      if (two() && voiceOnly !== !!run.voiceOnly) await reopen({ voiceOnly });
+      run.voiceOnly = voiceOnly;
       paper.markTake();
       // on speakers the band sits out: every band track held muted while the tape rolls (a preview, never the song)
       const band = PLAYER_ORDER.map((id) => roomNow().tracks?.[PLAYERS[id].role]).filter(Boolean);
@@ -351,9 +388,9 @@ screens.add({
         if (sh.length) { const r = store.preview(sh, { by: 'overdub' }); takeHold = r.ok ? r : null; }
       }
       const c = await d.countIn(counted ? { from: 0, bars: 1, voice: 'sticks' } : { from: 0, bars: 0, voice: 'none' });
-      if (c && c.ok === false) { releaseHold(); say('k.tape.start'); return c; }
+      if (c && c.ok === false) { releaseHold(); say('k.tape.start'); await backToBoth(); return c; }
       const t = await d.take({ track, from: 0 });
-      if (t && t.ok === false) { releaseHold(); return t; }
+      if (t && t.ok === false) { releaseHold(); await backToBoth(); return t; }
       run.rolling = true;
       run.counted = counted;
       run.again = run.again || again;
@@ -367,34 +404,74 @@ screens.add({
       run.rolling = false;
       releaseHold();
       try { await d?.stop?.({ at: 'now', keep: 'capture' }); } catch (e) { console.warn('overdub kitchen stop:', e?.message || e); }
+      await backToBoth();
       draw();
     }
+    // after a pass on the voice alone, the input goes back to both channels for the next whole take
+    async function backToBoth() { if (run.voiceOnly) { run.voiceOnly = false; if (two()) await reopen(); } }
     function releaseHold() { if (takeHold) { try { takeHold.release(); } catch { /* gone */ } takeHold = null; } }
     async function stop() {
       if (run.playing && !run.rolling) { stopPreview(); draw(); return { ok: true }; }
-      const d = deck(), track = takeTrack();
-      const before = new Set(clipsOn(track).map((c) => c.id));
+      if (run.voiceOnly) return stopVoice();
+      const d = deck(), track = takeTrack(), vt = voiceTrack();
+      const before = new Set([...clipsOn(track), ...(vt ? clipsOn(vt) : [])].map((c) => c.id));
       const res = await d.stop({ at: 'now', keep: 'song' });
       run.rolling = false;
       releaseHold();
-      const fresh = clipsOn(track).filter((c) => !before.has(c.id) && c.kind === 'audio');
-      let clip = fresh[fresh.length - 1] || null;
+      let clip = landed(res, track, before);
       if (!clip) { draw(); return res || { ok: false }; }
-      run.takes = clipsOn(track).filter((c) => c.kind === 'audio').length;
+      // (two inputs: the voice's take, lined up with the guitar's, goes in with it, named and trimmed the same)
+      const vclip = vt ? landed(res, vt, before) : null;
+      run.takes = tapes();
       const n = run.takes, sh = sheetOf(store.get());
       const timed = run.counted || !!roomNow().master;
       const name = takeName(store.get(), n, { capo: sh?.capo || 0, bpm: timed ? store.get().tempo : null });
-      const trim = run.counted ? null : await leadTrim(clip, { first: !roomNow().master });
-      store.dispatch([{ type: 'clip.set', track, clip: clip.id, patch: { name, ...(trim || {}) } }], { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
+      let trim = run.counted ? null : await leadTrim(clip, { first: !roomNow().master });
+      // (the cut both can take: the first note on either, a voice's pickup before the first strum among them)
+      if (trim && vclip) { const vt2 = await leadTrim(vclip, { first: !roomNow().master }); trim = vt2 && vt2.offset < trim.offset ? vt2 : vt2 ? trim : null; }
+      const ops = [{ type: 'clip.set', track, clip: clip.id, patch: { name, ...(trim || {}) } }];
+      if (vclip) ops.push({ type: 'clip.set', track: vt, clip: vclip.id, patch: { name: `${name} · voice`, ...(trim || {}) } });
+      store.dispatch(ops, { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
       clip = clipsOn(track).find((c) => c.id === clip.id) || clip;
       const secs = await durationOf(clip);
       if (!live) return { ok: true, clip: clip.id };
       say('k.take.in', { n, time: mmss(secs) });
       draw();
       readTake(clip, { first: !roomNow().master, counted: run.counted });
+      return { ok: true, clip: clip.id, ...(vclip ? { voice: vclip.id } : {}) };
+    }
+    // a pass on the voice alone: it goes in on Voice where it was sung (the song's time is the master's), the guitar from
+    // the take before kept under it; nothing to read (the band reads the guitar)
+    async function stopVoice() {
+      const d = deck(), vt = voiceTrack();
+      const before = new Set(clipsOn(vt).map((c) => c.id));
+      const res = await d.stop({ at: 'now', keep: 'song' });
+      run.rolling = false;
+      releaseHold();
+      await backToBoth();
+      let clip = landed(res, vt, before);
+      if (!clip) { draw(); return res || { ok: false }; }
+      const n = passesOn(vt).length, m = roomNow().master;
+      const of = m ? takeNumber(store.get(), m) : run.takes;
+      const trim = await leadTrim(clip, { first: false });
+      store.dispatch([{ type: 'clip.set', track: vt, clip: clip.id, patch: { name: `${takeName(store.get(), n, { capo: sheetOf(store.get())?.capo || 0 })} · voice`, ...(trim || {}) } }], { by: 'you', label: `Voice take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
+      clip = clipsOn(vt).find((c) => c.id === clip.id) || clip;
+      const secs = await durationOf(clip);
+      if (!live) return { ok: true, clip: clip.id };
+      say('k.take.voice', { n, time: mmss(secs), take: of });
+      draw();
       return { ok: true, clip: clip.id };
     }
     const clipsOn = (track) => (store.get().tracks.find((t) => t.id === track)?.clips || []);
+    // the clip a stop put on a track: the deck's take there (not the tail of an older take it left as its own clip), else
+    // the new clip on a recording that wasn't there before
+    function landed(res, track, before) {
+      const tk = (res?.takes || []).find((x) => x.track === track) || (res?.take?.track === track ? res.take : null);
+      const c = tk ? clipsOn(track).find((x) => x.id === tk.clip) : null;
+      if (c) return c;
+      const old = new Set(clipsOn(track).filter((x) => before.has(x.id)).map((x) => x.asset));
+      return clipsOn(track).filter((x) => x.kind === 'audio' && !before.has(x.id) && !old.has(x.asset)).pop() || null;
+    }
     // what a clip plays: its recording from its offset (the read is of that, kitchen-plans.js)
     async function samplesOf(clip) {
       const buf = await app.engine.assets.get(clip.asset);
@@ -560,7 +637,48 @@ screens.add({
       return d;
     }
     function noThanks() { if (!run.offer) return { ok: false }; stopPreview(); run.done.push(run.offer); run.offer = null; draw(); return { ok: true }; }
-    function finish(f) { const r = planKitchenFinish(store.get(), { finish: f }); if (!r.ops.length) return { ok: false }; return store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason }); }
+    // A finish chosen is a step by you, and said with its number: each finish's loudness on this song, measured as the
+    // stage does (the busiest part, the chorus else the first, eight bars of it at most, rendered offline through each
+    // finish on a copy of the song), the one chosen against the one it replaced
+    const FINISHES = ['bare', 'warm', 'close'];
+    let levels = null;
+    const levelsKey = (p) => JSON.stringify([p.tempo, p.tempoMap?.anchors?.length || 0, p.sections.map((x) => [x.start, x.length]), p.tracks.map((t) => [t.id, t.mute, t.gain, t.clips.map((c) => [c.id, c.mute, c.start, c.length])])]);
+    async function finishLevels() {
+      const p = store.get(), key = levelsKey(p), assets = app.engine?.assets;
+      if (levels?.key === key) return levels.p;
+      if (!assets) return null;
+      const bpb = beatsPerBar(p.meter || [4, 4]), secs = p.sections.slice().sort((a, b) => a.start - b.start);
+      const c = secs.find((x) => /^chorus/i.test(x.name)) || secs[0] || { start: 0, length: 8 * bpb };
+      const range = { from: c.start, to: c.start + Math.min(c.length, 8 * bpb) };
+      const mine = { key, p: (async () => {
+        const out = {};
+        for (const f of FINISHES) {
+          try {
+            const st = createStore(structuredClone(p));
+            const pl = planKitchenFinish(st.get(), { finish: f });
+            if (pl.ops.length) st.dispatch(pl.ops, { by: 'you' });
+            out[f] = Math.round(lufs(await renderProject(st.get(), { ...range, tail: 0, assets })) * 10) / 10;
+          } catch (e) { console.warn('overdub kitchen finish level:', f, e?.message || e); }
+        }
+        return out;
+      })() };
+      levels = mine;
+      return mine.p;
+    }
+    function finish(f) {
+      const than = FINISHES.includes(roomNow().finish) ? roomNow().finish : 'bare';
+      if (f === than) return { ok: true };
+      const r = planKitchenFinish(store.get(), { finish: f });
+      if (!r.ops.length) return { ok: false };
+      // (measured on the song as it was played, before the step: the finish is the only change between the two)
+      const measured = finishLevels();
+      const d = store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
+      if (d.ok) {
+        const words = (m) => { if (!live || roomNow().finish !== f) return; const db = m && Number.isFinite(m[f]) && Number.isFinite(m[than]) ? Math.round((m[f] - m[than]) * 10) / 10 : null; say('k.finish', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db }); };
+        Promise.race([Promise.resolve(measured), new Promise((res) => setTimeout(() => res(null), 8000))]).then(words, () => words(null));
+      }
+      return d;
+    }
     function send() {
       stopPreview();
       run.sent = true;
@@ -599,13 +717,13 @@ screens.add({
       return d;
     }
     function hearTake(dir) {
-      const cl = clipsOn(takeTrack()).filter((c) => c.kind === 'audio');
+      const cl = passesOn(takeTrack());
       if (!cl.length) return;
       run.heardTake = Math.max(0, Math.min(cl.length - 1, (run.heardTake ?? cl.length - 1) + dir));
       const want = cl[run.heardTake];
       // a take from the top, bare: that one heard, the others and the band quiet
       const band = PLAYER_ORDER.map((id) => roomNow().tracks?.[PLAYERS[id].role]).filter(Boolean);
-      const ops = [...cl.map((c) => ({ type: 'clip.set', track: takeTrack(), clip: c.id, patch: { mute: c.id !== want.id } })), ...band.map((t) => ({ type: 'track.set', track: t, patch: { mute: true } }))];
+      const ops = [...clipsOn(takeTrack()).filter((c) => c.kind === 'audio').map((c) => ({ type: 'clip.set', track: takeTrack(), clip: c.id, patch: { mute: c.asset !== want.asset } })), ...band.map((t) => ({ type: 'track.set', track: t, patch: { mute: true } }))];
       hearOps(ops, want.start);
       draw();
     }
@@ -662,6 +780,9 @@ screens.add({
           if (!reads.get(run.readClip)?.result.readings.some((r) => r.id === id)) continue;
           choices.append(chip(label, () => hearReading(id), { pressed: run.chosen === id, id: `time.${id}` }));
         }
+      } else if (run.ask === 'both') {
+        // (the question's in the talkback, as the form's is: k.both.or.voice)
+        choices.append(chip('Both', () => press('again.both'), { id: 'again.both' }), chip('Just the voice', () => press('again.voice'), { id: 'again.voice' }));
       } else if (run.offer) {
         choices.append(chip('No thanks', noThanks, { id: 'nothanks' }));
       }
@@ -679,12 +800,11 @@ screens.add({
         for (const c of capoChoices(k)) choices.append(chip(c.capo ? `${c.shapes} shapes, capo ${c.capo}` : 'No capo', () => writeFromTake(c.capo), { id: `fromtake.${c.capo}` }));
       }
       if (run.ask === 'form' && run.form) choices.append(chip(`Write it as ${String(run.form.name).replace(/\s+\d+$/, '')} ×${run.form.times}`, writeForm, { id: 'form' }), chip('Leave it as played', leaveForm, { id: 'form.no' }));
-      // the takes: whole passes, the master marked
+      // the takes: whole passes, "Take 1", the master pressed
       takesRow.replaceChildren();
-      const cl = takeTrack() ? clipsOn(takeTrack()).filter((c) => c.kind === 'audio') : [];
+      const cl = takeTrack() ? passesOn(takeTrack()) : [];
       if (cl.length) {
-        takesRow.append(h('span', 'Takes'));
-        cl.forEach((c, i) => takesRow.append(chip(`${i + 1}${roomNow().master === c.id ? ' ·' : ''}`, () => { run.heardTake = i; hearTake(0); }, { pressed: roomNow().master === c.id, id: `take.${i + 1}` })));
+        cl.forEach((c, i) => { const m = roomNow().master === c.id; takesRow.append(chip(`Take ${i + 1}`, () => { run.heardTake = i; hearTake(0); }, { pressed: m, id: `take.${i + 1}`, aria: m ? `Take ${i + 1}, the master` : null })); });
         const sel = run.heardTake != null ? cl[run.heardTake] : null;
         if (sel && roomNow().master !== sel.id) takesRow.append(chip('Use this one', () => useTake(sel.id), { id: `use.${sel.id}` }));
       }
@@ -725,7 +845,7 @@ screens.add({
     const keys = [
       { key: 'Space', label: 'The offered move', run: () => { press(offered()?.id); } },
       { key: 'PageDown', label: 'The offered move', run: () => { press(offered()?.id); } },
-      { key: 'Escape', label: 'Not that one', run: () => { if (run.rolling) notThatOne(); else if (run.offer) noThanks(); else if (run.playing) { stopPreview(); draw(); } } },
+      { key: 'Escape', label: 'Not that one', run: () => { if (run.rolling) notThatOne(); else if (run.ask === 'both') { run.ask = null; draw(); } else if (run.offer) noThanks(); else if (run.playing) { stopPreview(); draw(); } } },
       { key: 'ArrowLeft', label: 'Slower, for the count', run: () => nudgeTempo(-1) },
       { key: 'ArrowRight', label: 'Faster, for the count', run: () => nudgeTempo(1) },
       { key: 'ArrowLeft', mod: 'shift', label: 'Ten slower, for the count', run: () => nudgeTempo(-10) },
@@ -745,6 +865,8 @@ screens.add({
     return {
       frame(now) {
         balanceFrame(now);
+        // (the two-input option comes in once both channels have moved)
+        if (!run.bothSeen && (run.step === 'phones' || run.step === 'balance' || run.step === 'how') && twoMoving()) draw();
         paper.frame(now);
         if (run.rolling) counter.textContent = mmss((performance.now() - rollStart) / 1000);
         else if (!run.playing) counter.textContent = '';

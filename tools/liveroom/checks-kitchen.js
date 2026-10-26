@@ -16,9 +16,14 @@
 //      speakers the band is held muted for the whole take, with no count and no click
 //   6. signing: an mcp:test sheet.line.set shows its byline in --ink-agent; the house's chord lines are unsigned; every
 //      step's author in History
+//   7. two inputs (muted Chromium, a stereo fake: a voice on 1, a guitar on 2): the option says it needs a pickup until
+//      both channels move, one mic is the default; picked, a take is two takes lined up on Voice and Guitar in one step
+//      by you; Again asks Both, or just the voice?, and just the voice is a pass on Voice alone over the guitar from the
+//      take before. If Chromium's fake capture gives one channel, the page part is skipped and said (the plans in Node)
 import { parseSheet, formatSheet, soundingKey, sheetChords, setWords, pasteOps } from '../../app/src/core/liveroom/sheet-text.js';
 import { readTape, alignChords, timeWords } from '../../app/src/core/liveroom/tape.js';
 import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, offeredKitchen, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen-plans.js';
+import { LINES as KLINES } from '../../app/src/core/liveroom/lines/kitchen.js';
 import { createStore } from '../../app/src/core/store.js';
 import { createProject } from '../../app/src/core/project.js';
 import '../../app/src/devices/builtin/index.js';
@@ -154,8 +159,9 @@ function changesHit(changes, beats, played) {
 
 /* ------------------------------------------------------------------------------------------------ the checks */
 export async function run(T, ctx) {
-  // (KITCHEN_ONLY=flow: the browser part alone, while working on it)
+  // (KITCHEN_ONLY=flow: the browser part alone, while working on it; KITCHEN_ONLY=two: the two inputs' alone)
   if (process.env.KITCHEN_ONLY === 'flow') { if (ctx.pages) await flow(T, ctx); return; }
+  if (process.env.KITCHEN_ONLY === 'two') { if (ctx.pages) await twoFlow(T); return; }
   // 1. the paper
   {
     const ug = parseSheet(UG), cho = parseSheet(CHO);
@@ -340,6 +346,18 @@ export async function run(T, ctx) {
     T.ok(offeredKitchen({ cards: [{ name: 'Verse' }] }, { takes: 1, done: ['shaker', 'cajon', 'bass'] })?.id === 'again', 'the offered move: strings only with a bridge');
     const form = offeredKitchen(v, { takes: 1, ask: 'form', offer: null })?.id, bare = offeredKitchen({ cards: [] }, { takes: 1 })?.id, noChorus = offeredKitchen({ cards: [{ name: 'Verse 1' }] }, { takes: 1 })?.id;
     T.ok(form === 'form' && bare === 'again' && noChorus === 'offer.cajon', `the offered move: the form asked before the players (${form}); no parts, no players (${bare}); no chorus, no shaker (${noChorus})`);
+    const both = offeredKitchen(v, { takes: 1, done: PLAYER_ORDER, again: true, ask: 'both' })?.id;
+    T.ok(both === 'again.both', `the offered move: with two inputs, Again's question offers both again first (${both})`);
+  }
+  {
+    // two inputs (§6.2 c): Voice on input 1 and Guitar on input 2, each with its chain; one mic is the default setup
+    const st = createStore(createProject({ tempo: 84 }), { getDevice });
+    ok(st.dispatch(kitchenOps(st.get(), { mic: 'one' }).ops, { by: 'overdub' }));
+    const one = structuredClone(st.get().room);
+    ok(st.dispatch(kitchenOps(st.get(), { mic: 'two' }).ops, { by: 'overdub' }));
+    const p = st.get(), R = p.room, tr = (id) => p.tracks.find((t) => t.id === id);
+    T.ok(one.mic === 'one' && one.tracks.take && R.mic === 'two' && tr(R.tracks.voice)?.input?.channel === 1 && tr(R.tracks.kguitar)?.input?.channel === 2 && tr(R.tracks.voice).name === 'Voice' && tr(R.tracks.kguitar).name === 'Guitar',
+      `two inputs: one mic is the default (${one.mic}); picked, Voice on input ${tr(R.tracks.voice)?.input?.channel} and Guitar on input ${tr(R.tracks.kguitar)?.input?.channel}`);
   }
 
   if (!ctx.pages) { T.note('the flow: skipped (PAGES=0)'); return; }
@@ -530,6 +548,121 @@ async function flow(T, ctx) {
     }
   }
   await countedFlow(T);
+  await twoFlow(T);
+}
+
+// Two inputs (§6.2 c, §13): a stereo fake, a voice on channel 1 from the start and a guitar on channel 2 from 4 s, both
+// to the end. The option says it needs a pickup until both move, then it's picked: a take is two takes, lined up, one
+// step by you; Again asks Both, or just the voice?, and just the voice records input 1 alone onto Voice, the guitar from
+// the take before kept under it, and the input goes back to both channels after.
+function twoTape() {
+  const bpm = 96, spb = 60 / bpm, bars = [];
+  while (bars.length < 48) bars.push(...V, ...C);
+  const lead = 4, guitar = strum(bars.map((c, i) => ({ beat: i * 4, notes: VOICINGS[c], beats: 4 })), { bpm, seed: 51, peak: -14, tail: 1 });
+  const notes = [];
+  for (let k = 0; k < 52; k++) { const c = bars[k] || 'Bb'; notes.push([k * 4 + 0.5, TONES[c][k % TONES[c].length], 1.4], [k * 4 + 2.5, SCALE[(k * 3) % SCALE.length], 1.2]); }
+  const sung = voice(notes, { bpm, seed: 53, peak: -16, tail: 1 });
+  const len = Math.round((lead + bars.length * 4 * spb + 2) * SR);
+  return { wav: { sr: SR, channels: [mix([{ buf: sung.buf, at: 1 }], { length: len }), mix([{ buf: guitar.buf, at: lead }], { length: len })] }, T: { guitar: lead } };
+}
+
+async function twoFlow(T) {
+  const tape = twoTape();
+  let S;
+  try { S = await openRoom('/app/?room', { name: 'kitchen-two', fake: tape }); } catch (e) { T.ok(false, `two inputs: the room opened (${e.message})`); return; }
+  const { page, E } = S;
+  const lines = () => E(() => window.__k.lines.slice());
+  const room = () => E(() => {
+    const o = window.overdub, p = o.store.get(), R = p.room || {}, st = o.input.audio.state;
+    const clips = (id) => (p.tracks.find((t) => t.id === id)?.clips || []).filter((c) => c.kind === 'audio').map((c) => ({ id: c.id, start: c.start, length: c.length, offset: c.offset || 0, mute: !!c.mute, name: c.name, by: c.by }));
+    return { mic: R.mic, voice: clips(R.tracks?.voice), guitar: clips(R.tracks?.kguitar), master: R.master, split: st.split, channel: st.channel, channels: st.channels, steps: o.store.history.length, k: window.__kstate() };
+  });
+  try {
+    await E(INSTALL);
+    await page.waitForSelector('.lrd-card', { timeout: 15000 });
+    await page.keyboard.press('Digit4');
+    await page.waitForSelector('.kt', { timeout: 10000 });
+    await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
+    await E(() => { window.__k.deck.latency = 0; });
+    const chip = () => E(() => { const b = document.querySelector('[data-act="mic.two"]'); return b ? { text: b.textContent, disabled: b.disabled, aria: b.getAttribute('aria-label') || '' } : null; });
+    const r0 = await room(), c0 = await chip(), pos0 = await E(() => window.__k.pos());
+    if (r0.channels < 2) {
+      T.note(`two inputs: Chromium's fake capture gave ${r0.channels} channel${r0.channels === 1 ? '' : 's'}, so the page part is skipped; the split is held in Node (the setup above, and checks-input's deck)`);
+      return;
+    }
+    T.ok(r0.mic === 'one' && r0.k.mic !== 'two' && pos0 < tape.T.guitar && c0?.disabled && /needs a guitar with a pickup/.test(c0.text) && c0.aria === KLINES['k.pickup.needed'].text(),
+      `two inputs: with only the voice moving, one mic is the default (${r0.k.mic}) and the option says “${c0?.text}” (${pos0.toFixed(1)} s in, ${r0.channels} channels)`);
+    await page.waitForFunction(() => { const b = document.querySelector('[data-act="mic.two"]'); return b && !b.disabled; }, null, { timeout: 15000 });
+    const c1 = await chip();
+    await page.click('[data-act="mic.two"]');
+    await page.waitForFunction(() => window.overdub.input.audio.state.split && window.overdub.store.get().room?.mic === 'two', null, { timeout: 10000 });
+    await E(() => { window.__k.deck.latency = 0; });
+    const r1 = await room();
+    T.ok(c1.text === 'A mic and a pickup' && r1.mic === 'two' && Object.keys(r1.split || {}).join() === '1,2', `two inputs: once both channels move it's “${c1.text}”; picked, the input splits 1 and 2 to Voice and Guitar (${JSON.stringify(r1.split)})`);
+    await page.keyboard.press('Space');   // Headphones on? Yes
+    await page.waitForFunction(() => window.__kstate()?.step === 'balance', null, { timeout: 10000 });
+    await page.click('[data-act="balance.skip"]');
+    await page.waitForFunction(() => window.__kstate()?.step === 'paper', null, { timeout: 10000 });
+    await E(async (text) => {
+      const app = window.overdub;
+      const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
+      app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
+    }, PAPER);
+    // the take: both channels, 12 s or so
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 10000 });
+    await page.waitForTimeout(12000);
+    const h0 = (await room()).steps;
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.__k.lines.some((x) => /^Take 1 is in/.test(x)), null, { timeout: 20000 });
+    const r2 = await room(), H2 = (await history(page)).slice(h0);
+    const [v1] = r2.voice, [g1] = r2.guitar;
+    const lined = v1 && g1 && v1.start === g1.start && v1.offset === g1.offset && v1.length === g1.length;
+    T.ok(r2.voice.length === 1 && r2.guitar.length === 1 && lined && H2.length === 1 && H2[0].by === 'you' && /· voice$/.test(v1.name),
+      `two inputs: a take is two takes, Voice and Guitar lined up (from beat ${g1?.start}, offset ${g1?.offset} s, ${g1?.length} beats each), in ${H2.length} step by ${H2[0]?.by} (“${H2[0]?.label}”)`);
+    // the read is of the Guitar track; then on to Again (the players declined)
+    await page.waitForFunction(() => window.__kstate()?.ask === 'time', null, { timeout: 60000 });
+    await page.keyboard.press('Space');
+    // (each player offered, Space, then No thanks, Esc)
+    for (let i = 0; i < 12; i++) {
+      const o = await E(() => window.__kstate()?.offered?.id);
+      if (o === 'again') break;
+      if (o === 'keep') await page.keyboard.press('Escape');
+      else if (/^offer\./.test(o || '')) await page.keyboard.press('Space');
+      await page.waitForTimeout(300);
+    }
+    const r3 = await room();
+    T.ok(r3.master === g1?.id, `two inputs: the band reads the Guitar take, the master (${r3.master === g1?.id ? 'Guitar' : r3.master})`);
+    await page.keyboard.press('Space');   // Again
+    await page.waitForFunction(() => window.__kstate()?.ask === 'both', null, { timeout: 10000 });
+    const asked = (await lines()).at(-1), offeredNow = await E(() => window.__kstate()?.offered?.id), chips = await E(() => [...document.querySelectorAll('.kt-choices .kt-chip')].map((b) => b.textContent));
+    T.ok(asked === KLINES['k.both.or.voice'].text() && offeredNow === 'again.both' && chips.includes('Both') && chips.includes('Just the voice'), `two inputs: Again asks “${asked}” (${chips.join(' · ')}; Space is ${offeredNow})`);
+    // just the voice: input 1 alone onto Voice, the guitar from take 1 playing under it
+    await page.click('[data-act="again.voice"]');
+    await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 15000 });
+    await page.waitForTimeout(600);
+    const during = await room();
+    await page.waitForTimeout(5000);
+    const h1 = (await room()).steps;
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => window.__k.lines.some((x) => /^Voice take \d+ is in/.test(x)), null, { timeout: 20000 });
+    await page.waitForFunction(() => !!window.overdub.input.audio.state.split, null, { timeout: 10000 }).catch(() => {});
+    const r4 = await room(), H4 = (await history(page)).slice(h1), said = (await lines()).find((x) => /^Voice take 2 is in/.test(x));
+    // (the new pass from the top; take 1's voice muted under it, and its tail past where the pass stopped playing on)
+    const v2 = r4.voice.find((c) => c.id !== v1.id && c.name === 'Take 2' || /take 2 .*· voice$/.test(c.name || ''));
+    T.ok(!during.split && during.channel === '1' && r4.guitar.length === 1 && r4.guitar[0].id === g1.id && !r4.guitar[0].mute && v2 && !v2.mute && v2.start === 0 && r4.voice.find((c) => c.id === v1.id)?.mute
+      && H4.length === 1 && H4[0].by === 'you' && /^Voice take 2 is in: \d+:\d\d, over the guitar from take 1\.$/.test(said || '') && Object.keys(r4.split || {}).join() === '1,2',
+      `two inputs: just the voice records input ${during.channel} alone (split ${during.split ? 'on' : 'off'}) onto Voice, the guitar from take 1 kept (${r4.guitar.length} Guitar take, playing), voice take 1 muted under it; ${H4.length} step by ${H4[0]?.by} (“${H4[0]?.label}”); “${said}”; both channels split again after (${JSON.stringify(r4.split)})`);
+    await S.shot?.('kitchen-two');
+    const errs = (S.errors || []).map((x) => String(x.message || x).split('\n')[0]);
+    T.ok(!errs.length, `two inputs: no page errors${errs.length ? `: ${errs.slice(0, 3).join(' | ')}` : ''}`);
+  } catch (e) {
+    let why = '';
+    try { const k = await E(() => { const s = window.__kstate(); return s && { step: s.step, ask: s.ask, offer: s.offer, rolling: s.rolling, reading: s.reading, offered: s.offered?.id, mic: s.mic, pos: +window.__k.pos().toFixed(2), log: window.__k.log, lines: window.__k.lines.slice(-3), split: window.overdub.input.audio.state.split }; }); why = ` ${JSON.stringify(k)}`; } catch { /* the page is gone */ }
+    T.ok(false, `two inputs: ${e.message.split('\n')[0]}${why}`);
+  } finally {
+    await S.close();
+  }
 }
 
 // Count me in (§6.3), the other way in on headphones: the tempo set first with → and ⇧→, one bar of sticks, the

@@ -27,6 +27,8 @@ export const LINES = {
   'shelf.here': { text: () => 'On the stage now.' },
   // sending
   'send.mix': { text: ({ time = '0:00', mb = 0 } = {}) => `Send a mix: ${time}, about ${mb} MB.` },
+  // (before the mix has rendered: its length from the song's, an estimate)
+  'send.mix.about': { text: ({ time = '0:00', mb = 0 } = {}) => `Send a mix: about ${time} and ${mb} MB.` },
   'send.song': { text: ({ mb = 0 } = {}) => `Send the song: to open in Overdub, with your recordings (${mb} MB).` },
   'send.saved': { text: ({ name = 'the mix', time = '0:00', mb = 0 } = {}) => `Saved “${name}”: ${time}, ${mb} MB. It’s the mix; the takes stay in this browser.` },
   'send.shared': { text: ({ name = 'the mix', time = '0:00', mb = 0 } = {}) => `Sent “${name}”: ${time}, ${mb} MB. It’s the mix; the takes stay in this browser.` },

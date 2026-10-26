@@ -5,7 +5,8 @@
 // Then each peak goes to its pitch class, shifted by the tuning, weighed by cos² of how far off the semitone it is.
 // Chroma sums are kept as running totals, so any span's chroma is two lookups.
 //
-//   chromaOf(x22, sr22) -> { tuning (cents), treble, bass: { fps, frames, sum(t0, t1) -> Float64Array(12) } }
+//   chromaOf(x22, sr22, { bassHi }) -> { tuning (cents), treble, bass: { fps, frames, sum(t0, t1) -> Float64Array(12) } }
+//       bassHi: the bass band's top (250 Hz); the live room's work tape reads it to 200, under a voice (core/liveroom/tape.js)
 // Pure, Float64, fixed order.
 import { fft } from '../../input/pitch.js';
 import { resample } from './resample.js';
@@ -88,11 +89,11 @@ function chromaTrack({ peaks, frames, fps }, tuning) {
   return { fps, frames, sum };
 }
 
-export function chromaOf(x22, sr22) {
+export function chromaOf(x22, sr22, { bassHi = 250 } = {}) {
   const x11 = resample(x22, sr22, sr22 / 2);
   const xb = resample(x11, sr22 / 2, sr22 / 8);
   const tp = peaksOf(x11, sr22 / 2, 512, 250, 2000);
-  const bp = peaksOf(xb, sr22 / 8, 256, 40, 250);
+  const bp = peaksOf(xb, sr22 / 8, 256, 40, bassHi);
   const tuning = tuningOf(tp.peaks);
   return { tuning, treble: chromaTrack(tp, tuning), bass: chromaTrack(bp, tuning) };
 }

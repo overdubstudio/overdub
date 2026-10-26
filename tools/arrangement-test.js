@@ -303,6 +303,33 @@ function stretch(p, a, b) {
   s7.dispatch({ type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat: 16, sec: 8.2 }, { beat: 32, sec: 16.1 }] } }, { by: 'you' });
   const tm = s7.dispatch({ type: 'section.move', section: 'Chorus', before: 'Verse' }, { by: 'you' });
   T.ok(!tm.ok && /follows a recording/.test(tm.error), `inside a tempo map it is refused, as a duplicate is ("${tm.error}")`);
+  // a pickup goes with the bars it leads into; landing on the song's first beat, what would come before it is trimmed
+  // off first (a take's clip starts 30 ms before its part: the room moves parts to the top), whichever way the bars
+  // get there, so the rest stays on the beat
+  const pickup = () => {
+    const x = song();
+    const pk = x.s.dispatch([
+      { type: 'clip.add', track: 'Keys', ref: 'pk', clip: { start: 15.8, length: 1.2, name: 'Pickup', notes: 'G4@0:0.2 C5@0.2:1' } },
+      { type: 'clip.add', track: 'Vox', ref: 'vk', clip: { kind: 'audio', asset: 'a_take01', start: 15.94, length: 8.06, offset: 2, name: 'Take 2' } },
+    ], { by: 'you' }).created;
+    return { ...x, pk };
+  };
+  for (const [op, what] of [[{ type: 'section.move', section: 'Chorus', before: 'Verse' }, 'the Chorus to the top'], [{ type: 'section.move', section: 'Verse', before: null }, 'the Verse away from under the Chorus']]) {
+    const { s: s8, C: C8, pk } = pickup();
+    const r8 = roundTrip(s8, op, 'you', `move ${what}, with a pickup into the Chorus`);
+    const k = C8(pk.pk), v = C8(pk.vk);
+    T.ok(k.start === 0 && k.length === 1 && JSON.stringify(k.notes.map((n) => [n.t, n.d])) === '[[0,1]]' && v.start === 0 && near(v.length, 8) && near(v.offset, 2 + 0.06 * 0.5) && s8.get().sections.find((x) => x.name === 'Chorus').start === 0,
+      `moving ${what}: the pickups are trimmed to start on the song's first beat, the note before it gone and the take's offset moved on 30 ms, the rest where it sounded (${k.start}+${k.length}, ${v.start}+${v.length} at ${v.offset}): "${r8.ok ? planSectionMove(pickup().s.get(), op).summary : ''}"`);
+  }
+  {
+    const { s: s8, C: C8, pk } = pickup();
+    roundTrip(s8, { type: 'section.move', section: 'Chorus', before: null }, 'you', 'move the Chorus, its pickups with it, to the end');
+    T.ok(C8(pk.pk).start === 23.8 && C8(pk.vk).start === 23.94 && C8(pk.pk).notes.length === 2, `elsewhere the pickups go with the Chorus whole, a hair before it (${C8(pk.pk).start}, ${C8(pk.vk).start})`);
+    const { s: s9 } = song();
+    s9.dispatch({ type: 'clip.add', track: 'Keys', clip: { start: 15.8, length: 0.3, name: 'Sliver', notes: 'G4@0:0.2' } }, { by: 'you' });
+    const p9 = canon(s9.get()), sl = s9.dispatch({ type: 'section.move', section: 'Chorus', before: 'Verse' }, { by: 'you' });
+    T.ok(!sl.ok && /nearly all a pickup into Chorus/.test(sl.error) && canon(s9.get()) === p9, `a clip that is nearly all a pickup can't go to the top of the song, and nothing changes ("${sl.error}")`);
+  }
   T.ok(/^Moved Chorus \(4 bars\) before Verse/.test(planSectionMove(song().s.get(), { section: 'Chorus', before: 'Verse' }).summary), 'its summary says what moved where: ' + planSectionMove(song().s.get(), { section: 'Chorus', before: 'Verse' }).summary);
 }
 

@@ -635,8 +635,11 @@ export function planSectionDuplicate(p, op = {}, ctx = null) {
 //      across one becomes two folders; then the move again (this op, by ids), planned on the song with the halves in it
 //   2. with nothing across an edge: every clip and section in the bars that move gets its new start (clip.set,
 //      section.set: they keep their ids), the lanes over them are rewritten (each stretch of a lane goes with its
-//      bars), and a loop wholly inside the section or the bars between goes with them
-// Refused in bars a tempo map follows (as a duplicate is) and for a move that changes nothing.
+//      bars), and a loop wholly inside the section or the bars between goes with them. A pickup into bars that land on
+//      the song's first beat is trimmed to start on it first (what came before beat 0 cut off, its notes there with it),
+//      then the move again
+// Refused in bars a tempo map follows (as a duplicate is), for a move that changes nothing, and for a clip that is
+// nearly all such a pickup (less than a quarter beat would be left).
 export function planSectionMove(p, op = {}, ctx = null) {
   const sec = findSection(p, op.section, ctx);
   const a = sec.start, L = sec.length, b = a + L;
@@ -674,6 +677,26 @@ export function planSectionMove(p, op = {}, ctx = null) {
   const lo = Math.min(a, d), hi = Math.max(b, d);
   const inSec = (c) => how(c, a) === 'moves' && how(c, b) === 'stays';
   const inOther = (c) => (back ? how(c, d) === 'moves' && how(c, a) === 'stays' : how(c, b) === 'moves' && how(c, d) === 'stays');
+  // (a pickup goes with the bars it leads into, and bars landing on the song's first beat leave no room for it: what
+  // would come before beat 0 is cut off first, as a trim cuts it, and the move planned again. Started at 0 instead,
+  // everything in it would play late)
+  const heads = [];
+  let trimmed = 0;
+  for (const t of p.tracks) for (const c of t.clips) {
+    const k = inSec(c) ? by : inOther(c) ? other : 0;
+    // (on the grid the song keeps starts on, so a trim always gets there and the move planned again has none to make)
+    if (!k || r4(c.start + k) >= 0) continue;
+    if (c.start + c.length + k < MIN_CLIP - EPS) {
+      const into = k === by ? sec.name : p.sections.find((x) => Math.abs(x.start - b) < EPS)?.name || `the bars after ${sec.name}`;
+      throw new Error(`${t.name} has a clip that is nearly all a pickup into ${into}, before its first beat, and at the top of the song there's no room for it: trim it first, or move ${sec.name} somewhere else`);
+    }
+    heads.push(...windowOps(p, t, c, -k, c.start + c.length));
+    trimmed++;
+  }
+  if (trimmed) {
+    heads.push({ type: 'section.move', section: sec.id, before: target ? target.id : null });
+    return { ops: heads, section: sec.id, from: r4(a), to: r4(a + by), length: L, trimmed, summary: `Moved ${sec.name} (${spanLabel(p, L)}) ${where}, ${plural(trimmed, 'pickup')} trimmed to the song's first beat first.` };
+  }
   let moved = 0, passed = 0;
   for (const t of p.tracks) for (const c of t.clips) {
     const k = inSec(c) ? by : inOther(c) ? other : 0;

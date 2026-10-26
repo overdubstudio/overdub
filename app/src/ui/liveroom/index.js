@@ -155,6 +155,17 @@ export default function installLiveRoom(app) {
       body, talkback.el);
     el.__lrTalkback = talkback;
     document.body.append(el);
+    // A button pressed with the mouse or a finger gives the keys back to the room: Enter and Space are the room's
+    // (Hear it all, the offered move), not a second press of the lamp or the card just clicked. One reached with Tab
+    // keeps its focus; a menu or a field the press opened keeps theirs.
+    el.addEventListener('click', (e) => {
+      const b = e.detail > 0 && e.target instanceof Element ? e.target.closest('button') : null;
+      if (!b || b.closest('[role=menu], [role=dialog], form')) return;
+      setTimeout(() => {
+        const a = document.activeElement;
+        if (L.open && (a === b || !a || a === document.body)) el.focus({ preventScroll: true });
+      }, 0);
+    });
   }
   function unmountScreen() {
     const was = current;

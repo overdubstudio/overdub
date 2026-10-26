@@ -110,7 +110,7 @@ function fakeGuitar(file, level = 0.6) {
 {
   // every tuning's open strings are its places at fret 0, and a few notes known by heart
   const open = FB.TUNING_IDS.every((id) => FB.TUNINGS[id].strings.every((p, s) => FB.positionsOf(p, id).some((x) => x.s === s && x.f === 0)));
-  T.ok(open && FB.TUNING_IDS.length === 5, `5 tunings, each open string found at fret 0 (${FB.TUNING_IDS.join(', ')})`);
+  T.ok(open && FB.TUNING_IDS.length === 10, `10 tunings, each open string found at fret 0 (${FB.TUNING_IDS.join(', ')})`);
   const cases = [
     ['standard', 'A4', [[5, 5], [4, 10], [3, 14], [2, 19]]],
     ['standard', 'E2', [[0, 0]]],

@@ -206,6 +206,26 @@ describe('cleanRoom', () => {
     assert.equal('notes' in r2, false, 'an unknown key goes first');
     assert.match(said2.at(-1).message, /64 KB/);
   });
+
+  test("roles count toward the 64 KB too: the ones it doesn't know go first, the known ones last", () => {
+    const long = `t_${'g'.repeat(60)}`;
+    const roles = { guitarL: long };
+    for (let i = 0; i < 1200; i++) roles[`role${String(i).padStart(28, '0')}`] = long;
+    roles.drums = long;
+    const song = [{ id: long, clips: [] }];
+    const said = [];
+    const r = cleanRoom({ place: 'metal', tracks: roles }, { tracks: song, warn: (w) => said.push(w) });
+    assert.ok(JSON.stringify(r).length <= ROOM_LIMITS.roomBytes, `${JSON.stringify(r).length} bytes`);
+    assert.equal(r.tracks.guitarL, long);
+    assert.equal(r.tracks.drums, long);
+    assert.match(said.at(-1).message, /it keeps 64 KB/);
+    assert.equal(JSON.stringify(cleanRoom(r, { tracks: song, warn: quiet })), JSON.stringify(r));
+    const p = cleanProject(
+      { ...createProject(), tracks: [{ id: long, name: 'Guitar', kind: 'audio', clips: [] }], room: { tracks: roles } },
+      { warn: quiet },
+    );
+    assert.equal(sizeError(songSize(p), null, { loaded: true }), null, 'a link holding it comes in, cut');
+  });
 });
 
 describe('cleanSheet', () => {
@@ -292,6 +312,19 @@ describe('cleanSheet', () => {
     assert.match(said[0].message, /left out/);
     const size = songSize({ ...createProject(), sheet: s });
     assert.equal(sizeError(size), null, "a cleaned sheet is within the song's caps");
+  });
+
+  test("its sections' names count toward the 24,000 characters", () => {
+    const said = [];
+    const full = { name: 'A'.repeat(100), lines: Array.from({ length: 120 }, () => ({ text: 'x'.repeat(200) })) };
+    const names = Array.from({ length: 63 }, (_, i) => ({ name: String(i).padEnd(100, 'n'), lines: [] }));
+    const s = cleanSheet({ sections: [full, ...names] }, { warn: (w) => said.push(w) });
+    const size = songSize({ ...createProject(), sheet: s });
+    assert.equal(size.sheetChars, 24000);
+    assert.equal(sizeError(size, null, { loaded: true }), null, 'a link holding it comes in, cut');
+    assert.equal(s.sections.length, 2, "the first name that doesn't fit goes, and every section after it");
+    assert.match(said[0].message, /62 sections and 1 line left out/);
+    assert.equal(JSON.stringify(cleanSheet(s, { warn: quiet })), JSON.stringify(s));
   });
 
   test("a sheet that isn't an object is left out, and says so", () => {

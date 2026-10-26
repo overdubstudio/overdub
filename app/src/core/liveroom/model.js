@@ -177,7 +177,8 @@ export function cleanRoom(x, { tracks = null, sections = null, warn = null } = {
   k.takes = cleanMap(x.takes, has(clipIds), cleanTake);
   k.managed = cleanMap(x.managed, (id) => id === 'master' || has(trackIds)(id), cleanManaged);
   const out = ordered(k, ORDER.room, x);
-  // the caps: parts, then the whole room as JSON (what goes first: unknown keys, then the last entries of the maps)
+  // the caps: parts, then the whole room as JSON (what goes first: unknown keys and roles, then the last entries of the
+  // maps, the known roles last)
   if (out.parts && Object.keys(out.parts).length > ROOM_LIMITS.roomParts) {
     const ids = Object.keys(out.parts);
     for (const id of ids.slice(ROOM_LIMITS.roomParts)) delete out.parts[id];
@@ -192,10 +193,13 @@ function fitRoom(out, warn) {
   const was = size;
   for (const k of Object.keys(out)) if (!ORDER.room.includes(k)) delete out[k];
   size = JSON.stringify(out).length;
-  for (const m of ['managed', 'takes', 'parts']) {
+  // (any camelCase role naming a real track is kept, so the roles can be most of a room)
+  const steps = [{ m: 'tracks', only: (role) => !ROLES.includes(role) }, { m: 'managed' }, { m: 'takes' }, { m: 'parts' }, { m: 'tracks' }];
+  for (const { m, only } of steps) {
     if (size <= ROOM_LIMITS.roomBytes || !out[m]) continue;
     const ids = Object.keys(out[m]);
     for (let i = ids.length - 1; i >= 0 && size > ROOM_LIMITS.roomBytes; i--) {
+      if (only && !only(ids[i])) continue;
       size -= JSON.stringify(ids[i]).length + JSON.stringify(out[m][ids[i]]).length + 2;
       delete out[m][ids[i]];
     }
@@ -217,11 +221,13 @@ export function cleanSheet(x, { warn = null } = {}) {
   const mint = (prefix, n) => { let id = `${prefix}_${n.toString(36)}`; for (let j = 2; used.has(id); j++) id = `${prefix}_${n.toString(36)}_${j}`; used.add(id); return id; };
   const take = (v) => (isSheetId(v) && !used.has(v) ? (used.add(v), v) : null);
   const secs = [], dropped = { sections: 0, lines: 0 };
-  let lines = 0, n = 0, full = false;
+  let lines = 0, n = 0, full = false, stopped = false;
   const list = Array.isArray(x.sections) ? x.sections.filter(isObj) : [];
   for (const s of list) {
-    if (secs.length >= ROOM_LIMITS.sheetSections) { dropped.sections++; continue; }
+    if (stopped || secs.length >= ROOM_LIMITS.sheetSections) { dropped.sections++; continue; }
     const name = cut(plain(typeof s.name === 'string' ? s.name : typeof s.name === 'number' && Number.isFinite(s.name) ? String(s.name) : ''), ROOM_LIMITS.nameChars) || 'Section';
+    // (a name counts toward the characters too: the first that doesn't fit goes, and every section after it)
+    if (chars + name.length > ROOM_LIMITS.sheetChars) { stopped = full = true; dropped.sections++; continue; }
     const sec = { id: take(s.id) || mint('ss', secs.length), name, lines: [] };
     chars += name.length;
     for (const l of Array.isArray(s.lines) ? s.lines.filter(isObj) : []) {

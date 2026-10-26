@@ -130,7 +130,8 @@ screens.add({
     const { app, ui, store } = ctx;
     css('liveroom-send', CSS);
     let gone = false;
-    // (each choice is its line, "Send a mix: 1:51, about 21 MB.", once the sizes are known)
+    // (each choice is its line once the sizes are known: "Send a mix: about 1:51 and 21 MB." from the song's length, then
+    // "Send a mix: 1:51, about 21 MB." once the mix has rendered)
     const mixSays = h('b', 'Send a mix'), songSays = h('b', 'Send the song');
     const mixBtn = h('button.lrs-choice.lrs-mix', { type: 'button', onclick: () => go('mix') }, mixSays);
     const songBtn = h('button.lrs-choice.lrs-song', { type: 'button', onclick: () => go('song') }, songSays);
@@ -143,11 +144,12 @@ screens.add({
     // the mix starts rendering now, so a press can hand it to the share sheet at once; a change starts it again
     const offChange = store.on('change', () => { ver++; });
     watching++;
-    const sayMix = (seconds, bytes) => { if (!gone) mixSays.textContent = line('send.mix', { time: fmtTime(seconds), mb: MB(bytes) }); };
+    let rendered = false;
+    const sayMix = (seconds, bytes, { about = false } = {}) => { if (!gone && !(about && rendered)) { rendered = !about; mixSays.textContent = line(about ? 'send.mix.about' : 'send.mix', { time: fmtTime(seconds), mb: MB(bytes) }); } };
     (async () => {
       const s = await sizes(app);
       if (gone) return;
-      if (mixSays.textContent === 'Send a mix') sayMix(s.seconds, s.mixBytes);
+      sayMix(s.seconds, s.mixBytes, { about: true });
       songSays.textContent = line('send.song', { mb: MB(s.songBytes) });
     })();
     if (app.exporter?.releaseRender && store.get().tracks.some((t) => t.clips.length)) {

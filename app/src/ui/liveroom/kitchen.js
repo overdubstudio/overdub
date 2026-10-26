@@ -1,16 +1,555 @@
-// The kitchen table [ui; stream D fills it in] (docs/research/LIVE-ROOM-MODE.md §2.5, §6): the paper, the work tape
-// and the players. It adds the 'kitchen' screen to the registry (ui/liveroom/screens.js) when it's imported, and
-// records through the deck (ui/liveroom/deck.js).
+// The kitchen table [ui] (docs/research/LIVE-ROOM-MODE.md §2.5, §3.18, §6): how it's miked, the headphones question,
+// the balance, the paper, the work tape, the band's read of it, the players offered one at a time, the takes. It adds
+// the 'kitchen' screen to the registry (ui/liveroom/screens.js) when it's imported, and records through the deck
+// (ui/liveroom/deck.js: countIn({ voice: 'none' }) for the work tape, take, stop).
 //
-// Until stream D lands, the screen is its name.
+// What the musician hears before they choose is a preview (store.preview: nothing in the song, nothing in History);
+// what they keep is one step: the time (tempo.map) by you, the read (sections, the Chords track) by the house, a
+// player by you with its clip by the house. On speakers the band never plays during a take: every band track is held
+// muted in a preview for as long as the tape rolls.
+//
+//   setKitchenDeck(deck | null)   a stand-in for the room's deck (tools/liveroom/checks-kitchen.js), null: ctx.deck
+//   kitchenState()                the screen's run state, for checks and the agent ({ step, takes, ask, offer, done, ... })
 
-import { h } from '../dom.js';
+import { h, css } from '../dom.js';
 import { screens } from './screens.js';
+import { createPaper } from './paper.js';
+import { W, H } from './pixels/index.js';
+import { roomOf, sheetOf } from '../../core/liveroom/model.js';
+import { readTapeInWorker } from '../../core/liveroom/align.js';
+import {
+  kitchenOps, planTime, planRead, planPlayer, planMaster, planKitchenFinish, offeredKitchen, offerSections, takeName,
+  takeNumber, chordsWords, PLAYERS, PLAYER_ORDER, fromTakeOps, after,
+} from '../../core/liveroom/kitchen.js';
+import { capoChoices } from '../../core/liveroom/sheet.js';
+
+const CSS = `
+.kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
+.kt-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.kt-scene { width: 100%; max-width: 512px; aspect-ratio: 16 / 9; image-rendering: pixelated; display: block; background: var(--bg-2, #111); }
+.kt-right { min-width: 0; max-height: calc(100vh - 140px); overflow: auto; }
+.kt-go { width: 100%; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font: 600 17px/1.2 var(--font-ui);
+  background: var(--accent); color: var(--accent-ink, #111); border: 0; padding: 0 16px; cursor: pointer; }
+.kt-go kbd { font: 600 12px/1 var(--font-mono); opacity: 0.75; }
+.kt-go:disabled { opacity: 0.5; cursor: default; }
+.kt-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.kt-row > span { color: var(--text-3); font-size: 13px; }
+.kt-chip { min-height: 36px; padding: 0 12px; font: 400 14px/1 var(--font-ui); background: none; color: var(--text); border: 1px solid var(--line-2); cursor: pointer; }
+.kt-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.kt-chip:disabled { opacity: 0.45; cursor: default; }
+.kt-q { margin: 0; font: 400 17px/1.4 var(--font-ui); }
+.kt-dim .kt-row, .kt-dim .kt-right { opacity: 0.5; }
+.kt-counter { font: 600 13px/1 var(--font-mono); color: var(--text-3); }
+@media (max-width: 900px) { .kt { grid-template-columns: minmax(0, 1fr); } .kt-scene { max-width: 100%; aspect-ratio: 384 / 144; } .kt-right { max-height: none; } .kt-chip { min-height: 44px; } }
+`;
+
+let override = null;
+let current = null;
+export function setKitchenDeck(d) { override = d || null; }
+export function kitchenState() { return current ? current.state() : null; }
+
+const MICS = [
+  { id: 'laptop', mic: 'one', label: 'The laptop’s mic' },
+  { id: 'interface', mic: 'one', label: 'A mic on the interface' },
+  { id: 'two', mic: 'two', label: 'A mic and a pickup' },
+];
+const SAYS_OUTPUT = (label) => (/headphone|airpods|earbud|buds|headset/i.test(label) ? 'headphones' : /speaker/i.test(label) ? 'speakers' : null);
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const dbOf = (lv) => {
+  if (lv == null) return null;
+  if (typeof lv === 'number') return lv;
+  for (const k of ['short', 'lufs', 'db', 'rms', 'peak']) if (Number.isFinite(lv[k])) return lv[k];
+  return null;
+};
 
 screens.add({
   id: 'kitchen',
-  mount(el) {
-    el.append(h('h1.lr-h.disp', 'The kitchen table'));
-    return { frame() {}, unmount() { el.replaceChildren(); } };
+  mount(el, ctx) {
+    css('lr-kitchen', CSS);
+    const { app, ui, store, say } = ctx;
+    const deck = () => override || ctx.deck;
+    const run = {
+      step: 'how', mic: null, micGuess: 'laptop', phones: null, balance: null, rolling: false, playing: false, reading: false,
+      takes: 0, ask: null, offer: null, done: [], again: false, heard: false, sent: false, readings: null, chosen: 'found', form: null,
+    };
+    const reads = new Map();   // clip id -> the tape's read
+    let preview = null, takeHold = null, rollStart = 0, lastCanvas = 0;
+
+    // the room in the song: the kitchen's tracks when the song has none yet (the house's), else what it has
+    const roomNow = () => roomOf(store.get()) || {};
+    const takeTrack = () => { const r = roomNow(); return r.tracks?.take || r.tracks?.kguitar || null; };
+    function setup(mic) {
+      const r = kitchenOps(store.get(), { mic });
+      store.dispatch(r.ops, { by: 'overdub', label: r.label, reason: r.reason });
+    }
+    function outputLabel() { const d = deck(); return String(d?.state?.output || d?.state?.outputLabel || 'default'); }
+
+    // what it is: from the room's input, the guess the room shows (§2.5: it picks and shows it)
+    function guessMic() {
+      const d = deck(), label = String(d?.state?.device || d?.state?.inputLabel || '');
+      if (/scarlett|focusrite|interface|audient|motu|presonus|zoom|steinberg|behringer|usb audio/i.test(label)) return 'interface';
+      return 'laptop';
+    }
+
+    /* ------------------------------------------------------------------------------------------- the layout */
+    const canvas = h('canvas.kt-scene', { width: W, height: H, 'aria-hidden': 'true' });
+    const g = canvas.getContext('2d');
+    const go = h('button.kt-go', { type: 'button', onclick: () => press(offered()?.id) }, h('span.kt-go-label', ''), h('kbd', 'Space'));
+    const q = h('p.kt-q', { 'aria-live': 'polite' });
+    const choices = h('div.kt-row.kt-choices');
+    const takesRow = h('div.kt-row.kt-takes');
+    const bandRow = h('div.kt-row.kt-band');
+    const finishRow = h('div.kt-row.kt-finish');
+    const counter = h('span.kt-counter', '');
+    const left = h('div.kt-left', canvas, q, choices, go, counter, takesRow, bandRow, finishRow);
+    const paper = createPaper({ app, store, say });
+    const right = h('div.kt-right', paper.el);
+    const root = h('div.kt', { dataset: { step: run.step } }, left, right);
+    el.append(root);
+
+    /* ------------------------------------------------------------------------------------------- steps */
+    const p0 = store.get();
+    const r0 = roomOf(p0);
+    if (r0?.place === 'kitchen' && takeTrack()) {
+      run.mic = r0.mic === 'two' ? 'two' : 'laptop';
+      const known = ctx.prefs.get().outputs[outputLabel()] || SAYS_OUTPUT(outputLabel());
+      run.phones = known ? known === 'headphones' : null;
+      run.step = run.phones == null ? 'phones' : 'paper';
+      for (const t of store.get().tracks) if (t.id === takeTrack()) run.takes = t.clips.filter((c) => c.kind === 'audio').length;
+    } else {
+      run.micGuess = guessMic();
+      setup('one');
+      run.mic = run.micGuess;
+      const said = SAYS_OUTPUT(outputLabel()) || ctx.prefs.get().outputs[outputLabel()];
+      if (said) { run.phones = said === 'headphones'; run.step = 'balance'; } else run.step = 'phones';
+      say('k.how', { mic: MICS.find((m) => m.id === run.mic).label });
+    }
+    browserCheck();
+    if (run.step === 'balance') startBalance();
+
+    function browserCheck() {
+      const s = deck()?.state?.settings;
+      if (s && (s.echoCancellation || s.noiseSuppression || s.autoGainControl)) say('k.browser');
+      if (/scarlett solo/i.test(String(deck()?.state?.device || ''))) say('k.solo.direct');
+    }
+    function pickMic(id) {
+      const m = MICS.find((x) => x.id === id);
+      if (!m || (m.mic === 'two' && !twoMoving())) return;
+      run.mic = id;
+      if ((roomNow().mic || 'one') !== m.mic) setup(m.mic);
+      draw();
+    }
+    const twoMoving = () => !!deck()?.state?.channels && deck().state.channels >= 2 && !!deck().state.bothMoving;
+    function answerPhones(yes) {
+      run.phones = !!yes;
+      ctx.prefs.set({ outputs: { [outputLabel()]: yes ? 'headphones' : 'speakers' } });
+      if (!yes) say('k.speakers.wait');
+      run.step = 'balance';
+      startBalance();
+      draw();
+    }
+    // the balance: three seconds of strumming, three of a voice; the voice wanted 3-8 dB over the guitar
+    function startBalance() {
+      const d = deck();
+      if (!d || typeof d.level !== 'function') { run.step = 'paper'; return; }
+      say('k.balance.strum');
+      run.balance = { phase: 'strum', heard: [], since: 0, strum: null };
+    }
+    function balanceFrame(now) {
+      const B = run.balance;
+      if (!B || run.step !== 'balance') return;
+      const db = dbOf(deck()?.level?.());
+      if (db == null || db < -50) { if (!B.heard.length) B.since = now; return; }
+      B.heard.push(db);
+      if (now - B.since < 3000) return;
+      const mean = 10 * Math.log10(B.heard.reduce((a, x) => a + 10 ** (x / 10), 0) / B.heard.length);
+      if (B.phase === 'strum') { B.strum = mean; B.phase = 'sing'; B.heard = []; B.since = now; say('k.balance.sing'); return; }
+      const over = Math.round(mean - B.strum);
+      if (over < 3) say('k.balance.guitar');
+      else if (over > 8) say('k.balance.voice');
+      else say('k.balance.ok', { db: over });
+      run.balance = null;
+      run.step = 'paper';
+      draw();
+    }
+    function skipBalance() { run.balance = null; run.step = 'paper'; say('k.paper.blank'); draw(); }
+
+    /* ------------------------------------------------------------------------------------------- the offered move */
+    const view = () => ctx.view();
+    const offered = () => {
+      if (run.step === 'phones') return { id: 'phones.yes', label: 'Yes, headphones', key: 'Space' };
+      if (run.step === 'how' || run.step === 'balance') return null;
+      return offeredKitchen(view(), run);
+    };
+    async function press(id) {
+      if (!id) return { ok: false, error: 'nothing to press' };
+      if (id === 'phones.yes') { answerPhones(true); return { ok: true }; }
+      if (id === 'phones.no') { answerPhones(false); return { ok: true }; }
+      if (id === 'tape' || id === 'again') return startTape(id === 'again');
+      if (id === 'stop') return stop();
+      if (id === 'time') { try { return keepTime(run.chosen); } catch (e) { console.warn('overdub kitchen time:', e?.message || e); return { ok: false }; } }
+      if (id.startsWith('time.')) return hearReading(id.slice(5));
+      if (id === 'keep') return keepPlayer();
+      if (id === 'nothanks') return noThanks();
+      if (id.startsWith('offer.')) return offerPlayer(id.slice(6));
+      if (id === 'hear') { stopPreview(); try { app.engine.play(0); } catch { /* silent engine */ } run.playing = true; run.heard = true; draw(); return { ok: true }; }
+      if (id === 'send') return send();
+      if (id.startsWith('finish.')) return finish(id.slice(7));
+      if (id.startsWith('mic.')) { pickMic(id.slice(4)); return { ok: true }; }
+      if (id === 'balance.skip') { skipBalance(); return { ok: true }; }
+      if (id === 'form') return writeForm();
+      if (id.startsWith('use.')) return useTake(id.slice(4));
+      return false;
+    }
+
+    /* ------------------------------------------------------------------------------------------- previews */
+    function stopPreview() {
+      if (preview) { try { preview.release(); } catch { /* gone */ } preview = null; }
+      try { if (app.engine?.playing) app.engine.stop(); } catch { /* silent engine */ }
+      run.playing = false;
+    }
+    function hearOps(ops, from) {
+      stopPreview();
+      if (!ops.length) return false;
+      const r = store.preview(ops, { by: 'overdub' });
+      if (!r.ok) { console.warn('overdub kitchen preview:', r.error); return false; }
+      preview = r;
+      try { app.engine.play(Math.max(0, from)); run.playing = true; } catch { /* silent engine */ }
+      return true;
+    }
+
+    /* ------------------------------------------------------------------------------------------- the tape */
+    async function startTape(again) {
+      const d = deck(), track = takeTrack();
+      if (!d || !track) return { ok: false, error: 'no deck' };
+      stopPreview();
+      paper.markTake();
+      // on speakers the band sits out: every band track held muted while the tape rolls (a preview, never the song)
+      const band = PLAYER_ORDER.map((id) => roomNow().tracks?.[PLAYERS[id].role]).filter(Boolean);
+      if (!run.phones && band.length) { const r = store.preview(band.map((t) => ({ type: 'track.set', track: t, patch: { mute: true } })), { by: 'overdub' }); takeHold = r.ok ? r : null; }
+      const counted = await d.countIn({ from: 0, bars: 0, voice: 'none' });
+      if (counted && counted.ok === false) { releaseHold(); say('k.tape.start'); return counted; }
+      const t = await d.take({ track, from: 0 });
+      if (t && t.ok === false) { releaseHold(); return t; }
+      run.rolling = true;
+      run.again = run.again || again;
+      rollStart = performance.now();
+      draw();
+      return { ok: true };
+    }
+    function releaseHold() { if (takeHold) { try { takeHold.release(); } catch { /* gone */ } takeHold = null; } }
+    async function stop() {
+      if (run.playing && !run.rolling) { stopPreview(); draw(); return { ok: true }; }
+      const d = deck(), track = takeTrack();
+      const before = new Set(clipsOn(track).map((c) => c.id));
+      const res = await d.stop({ at: 'now', keep: 'song' });
+      run.rolling = false;
+      releaseHold();
+      const fresh = clipsOn(track).filter((c) => !before.has(c.id) && c.kind === 'audio');
+      const clip = fresh[fresh.length - 1] || null;
+      if (!clip) { draw(); return res || { ok: false }; }
+      run.takes = clipsOn(track).filter((c) => c.kind === 'audio').length;
+      const n = run.takes, sh = sheetOf(store.get());
+      const name = takeName(store.get(), n, { capo: sh?.capo || 0 });
+      store.dispatch([{ type: 'clip.set', track, clip: clip.id, patch: { name } }], { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
+      const secs = await durationOf(clip);
+      say('k.take.in', { n, time: mmss(secs) });
+      draw();
+      readTake(clip, { first: !roomNow().master });
+      return { ok: true, clip: clip.id };
+    }
+    const clipsOn = (track) => (store.get().tracks.find((t) => t.id === track)?.clips || []);
+    async function samplesOf(clip) {
+      const buf = await app.engine.assets.get(clip.asset);
+      if (!buf) return null;
+      return { x: buf.getChannelData(0), sr: buf.sampleRate };
+    }
+    async function durationOf(clip) { const a = store.get().assets?.[clip.asset]; if (a && Number.isFinite(a.duration)) return a.duration; const s = await samplesOf(clip); return s ? s.x.length / s.sr : 0; }
+    async function readTake(clip, { first }) {
+      const s = await samplesOf(clip);
+      if (!s) return;
+      run.reading = true;
+      draw();
+      let read;
+      try { read = await readTapeInWorker(s.x, s.sr); } catch (e) { run.reading = false; console.warn('overdub kitchen read:', e); draw(); return; }
+      reads.set(clip.id, read);
+      run.reading = false;
+      if (!first) { draw(); return; }
+      run.readClip = clip.id;
+      // a blank paper: the take's own chords offered to write down, in the shapes a capo gives
+      const sh = sheetOf(store.get());
+      const blank = !sh || !sh.sections.some((x) => x.lines.some((l) => /\[|\|/.test(l.text)));
+      if (blank) {
+        const f = fromTakeOps(store.get(), { take: { clip: clip.id, read }, capo: 0 });
+        if (f.line) { run.fromTake = { clip: clip.id }; say('k.paper.fromtake', { chords: f.line.split(' in the ')[0], section: f.line.split(' in the ')[1] }); }
+      }
+      // the time, confirmed by ear: the found reading with a shaker on it, at once
+      const tw = planTime(store.get(), { take: { track: takeTrack(), clip: clip.id, read }, reading: 'found' });
+      run.ask = 'time';
+      run.chosen = 'found';
+      const t = tw.time || { tempo: Math.round(read.result.tempo) };
+      if (tw.moves) say(run.phones ? 'k.time.moves' : 'k.time.speakers', { tempo: t.tempo });
+      else say('k.time.read', { tempo: t.tempo, lo: t.lo, hi: t.hi, player: 'the shaker' });
+      hearReading('found');
+      draw();
+    }
+    // a reading heard at once: the take on that grid with a shaker over it (a preview)
+    function hearReading(id) {
+      const clip = run.readClip, read = reads.get(clip);
+      if (!read) return { ok: false };
+      stopPreview();
+      run.chosen = id;
+      const take = { track: takeTrack(), clip, read };
+      const t = planTime(store.get(), { take, reading: id });
+      if (!t.ops.length) return { ok: false };
+      // the shaker over the whole take, on the song as the time would make it
+      const s = previewShaker(t.ops, clip);
+      hearOps([...t.ops, ...s], 0);
+      draw();
+      return { ok: true };
+    }
+    function previewShaker(timeOps, clip) {
+      try {
+        const p1 = afterOps(store.get(), timeOps);
+        const c = p1.tracks.flatMap((t) => t.clips).find((x) => x.id === clip);
+        if (!c) return [];
+        const p2 = afterOps(p1, [{ type: 'section.add', section: { id: 'kt_tmp', name: 'Chorus', start: Math.ceil(c.start), length: Math.max(4, Math.floor(c.length)) } }]);
+        return planPlayer(p2, { player: 'shaker', section: 'kt_tmp' }).ops;
+      } catch (e) { console.warn('overdub kitchen shaker:', e); return []; }
+    }
+    const afterOps = (p, ops) => after(p, ops);
+    function keepTime(id) {
+      const clip = run.readClip, read = reads.get(clip);
+      if (!read) return { ok: false };
+      stopPreview();
+      const take = { track: takeTrack(), clip, read };
+      const t = planTime(store.get(), { take, reading: id });
+      const r1 = store.dispatch(t.ops, { by: 'you', label: t.label, reason: t.reason });
+      if (!r1.ok) { console.warn('overdub kitchen time:', r1.error); return r1; }
+      run.ask = null;
+      const rd = planRead(store.get(), { take });
+      if (rd.ops.length) {
+        const r2 = store.dispatch(rd.ops, { by: 'overdub', label: rd.label, reason: rd.reason });
+        if (!r2.ok) console.warn('overdub kitchen read:', r2.error);
+        if (r2.ok) {
+          const w = chordsWords(rd);
+          if (w) say('k.chords', w);
+          if (rd.unknown?.length) setTimeout(() => say('k.unknown'), 0);
+          run.form = rd.form?.length ? rd.form[rd.form.length - 1] : null;
+        }
+      }
+      // the first player's offer, played in at once; its line once the chords line has been read
+      const next = nextPlayer();
+      if (next) offerPlayer(next, { lineAfter: 2500 });
+      draw();
+      return { ok: true };
+    }
+    function nextPlayer() {
+      const o = offeredKitchen(view(), { ...run, offer: null, ask: null });
+      return o && o.id.startsWith('offer.') ? o.id.slice(6) : null;
+    }
+    function offerPlayer(id, { lineAfter = 0 } = {}) {
+      stopPreview();
+      const where = offerSections(store.get(), id);
+      if (!where.length) { run.done.push(id); draw(); return { ok: false }; }
+      const r = planPlayer(store.get(), { player: id, section: where });
+      run.offer = id;
+      if (lineAfter) setTimeout(() => { if (run.offer === id) say(`k.offer.${id}`); }, lineAfter);
+      else say(`k.offer.${id}`);
+      const from = store.get().sections.find((s) => s.id === where[0])?.start ?? 0;
+      hearOps(r.ops, from);
+      draw();
+      return { ok: true };
+    }
+    function keepPlayer() {
+      const id = run.offer;
+      if (!id) return { ok: false };
+      stopPreview();
+      const r = planPlayer(store.get(), { player: id, section: offerSections(store.get(), id) });
+      const d = store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
+      run.done.push(id);
+      run.offer = null;
+      if (d.ok) say('k.player.in', { player: PLAYERS[id].name, where: r.where });
+      draw();
+      return d;
+    }
+    function noThanks() { if (!run.offer) return { ok: false }; stopPreview(); run.done.push(run.offer); run.offer = null; draw(); return { ok: true }; }
+    function finish(f) { const r = planKitchenFinish(store.get(), { finish: f }); if (!r.ops.length) return { ok: false }; return store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason }); }
+    function send() {
+      stopPreview();
+      run.sent = true;
+      if (screens.has('send') && app.liveRoom?.open) app.liveRoom.open({ screen: 'send' });
+      draw();
+      return { ok: true };
+    }
+    // "You played the chorus twice at the end. Write it as Chorus ×2?": the two passes one section of the song
+    function writeForm() {
+      const f = run.form;
+      if (!f) return { ok: false };
+      const p = store.get(), secs = p.sections.slice().sort((a, b) => a.start - b.start);
+      const runOf = secs.filter((s) => roomOf(p)?.parts?.[s.id]?.sheet === f.section);
+      const group = [];
+      for (const s of runOf) { if (group.length && Math.abs(group[group.length - 1].start + group[group.length - 1].length - s.start) > 0.5) { if (group.length >= 2) break; group.length = 0; } group.push(s); }
+      if (group.length < 2) return { ok: false };
+      const ops = [{ type: 'section.set', section: group[0].id, patch: { length: group.reduce((a, s) => a + s.length, 0) } }, { type: 'room.part.set', section: group[0].id, patch: { reps: group.length } }];
+      for (const s of group.slice(1)) ops.push({ type: 'room.part.set', section: s.id, remove: true }, { type: 'section.remove', section: s.id });
+      run.form = null;
+      const r = store.dispatch(ops, { by: 'you', label: `${f.name} ×${group.length}` });
+      draw();
+      return r;
+    }
+    async function useTake(clipId) {
+      let read = reads.get(clipId);
+      if (!read) { const c = clipsOn(takeTrack()).find((x) => x.id === clipId); const s = c && (await samplesOf(c)); if (s) { read = await readTapeInWorker(s.x, s.sr); reads.set(clipId, read); } }
+      const r = planMaster(store.get(), { clip: clipId, read });
+      if (!r.ops.length) return { ok: false };
+      const d = store.dispatch(r.ops, { by: 'overdub', label: r.label, reason: r.reason });
+      if (d.ok) say('k.master', { n: takeNumber(store.get(), clipId), tempo: r.tempo });
+      draw();
+      return d;
+    }
+    function hearTake(dir) {
+      const cl = clipsOn(takeTrack()).filter((c) => c.kind === 'audio');
+      if (!cl.length) return;
+      run.heardTake = Math.max(0, Math.min(cl.length - 1, (run.heardTake ?? cl.length - 1) + dir));
+      const want = cl[run.heardTake];
+      // a take from the top, bare: that one heard, the others and the band quiet
+      const band = PLAYER_ORDER.map((id) => roomNow().tracks?.[PLAYERS[id].role]).filter(Boolean);
+      const ops = [...cl.map((c) => ({ type: 'clip.set', track: takeTrack(), clip: c.id, patch: { mute: c.id !== want.id } })), ...band.map((t) => ({ type: 'track.set', track: t, patch: { mute: true } }))];
+      hearOps(ops, want.start);
+      draw();
+    }
+    // a player in or out of the selected section (the band chips)
+    function togglePlayer(id) {
+      const p = store.get(), P = PLAYERS[id];
+      const sel = ui.state.liveRoom?.card || null;
+      const secs = sel ? [sel] : offerSections(p, id);
+      const tid = roomNow().tracks?.[P.role];
+      const t = tid ? p.tracks.find((x) => x.id === tid) : null;
+      const inIt = t && secs.some((sid) => { const s = p.sections.find((x) => x.id === sid); return s && t.clips.some((c) => c.start < s.start + s.length && c.start + c.length > s.start); });
+      if (inIt) {
+        const ops = [];
+        for (const sid of secs) { const s = p.sections.find((x) => x.id === sid); if (s) for (const c of t.clips) if (c.start < s.start + s.length && c.start + c.length > s.start) ops.push({ type: 'clip.remove', track: t.id, clip: c.id }); }
+        store.dispatch(ops, { by: 'you', label: `${P.name} out` });
+      } else {
+        const r = planPlayer(p, { player: id, section: secs });
+        if (r.ops.length) store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
+        if (!run.done.includes(id)) run.done.push(id);
+      }
+      draw();
+    }
+
+    /* ------------------------------------------------------------------------------------------- drawing */
+    function chip(label, onclick, { pressed = null, disabled = false, id = null } = {}) {
+      return h('button.kt-chip', { type: 'button', onclick, disabled, 'aria-pressed': pressed == null ? null : String(pressed), dataset: id ? { act: id } : {} }, label);
+    }
+    function draw() {
+      root.dataset.step = run.step;
+      root.classList.toggle('kt-dim', run.rolling);
+      const o = offered();
+      go.querySelector('.kt-go-label').textContent = o ? o.label : run.reading ? 'The band’s reading it' : '';
+      go.disabled = !o;
+      go.dataset.act = o ? o.id : '';
+      choices.replaceChildren();
+      q.textContent = '';
+      if (run.step === 'phones' || run.step === 'balance' || run.step === 'how') {
+        for (const m of MICS) choices.append(chip(m.id === 'two' && !twoMoving() ? `${m.label} · needs a guitar with a pickup` : m.label, () => pickMic(m.id), { pressed: run.mic === m.id, disabled: m.id === 'two' && !twoMoving(), id: `mic.${m.id}` }));
+      }
+      if (run.step === 'phones') {
+        q.textContent = 'Headphones on?';
+        choices.append(h('br'), chip('Yes', () => answerPhones(true), { id: 'phones.yes' }), chip('No, speakers', () => answerPhones(false), { id: 'phones.no' }));
+      } else if (run.step === 'balance') {
+        q.textContent = run.balance?.phase === 'sing' ? 'Sing a line, or speak one.' : 'Strum the way you’ll play.';
+        choices.append(chip('No singing? Skip.', skipBalance, { id: 'balance.skip' }));
+      } else if (run.ask === 'time') {
+        for (const [id, label] of [['found', 'On the beat'], ['double', 'Twice as fast'], ['half', 'Half as fast'], ['downbeat', 'The 1’s a beat later']]) {
+          if (!reads.get(run.readClip)?.result.readings.some((r) => r.id === id)) continue;
+          choices.append(chip(label, () => hearReading(id), { pressed: run.chosen === id, id: `time.${id}` }));
+        }
+      } else if (run.offer) {
+        choices.append(chip('No thanks', noThanks, { id: 'nothanks' }));
+      }
+      if (run.fromTake && run.ask !== 'time') {
+        const k = store.get().key;
+        for (const c of capoChoices(k)) choices.append(chip(c.capo ? `${c.shapes} shapes, capo ${c.capo}` : 'No capo', () => writeFromTake(c.capo), { id: `fromtake.${c.capo}` }));
+      }
+      if (run.form && !run.offer && run.ask == null) choices.append(chip(`Write it as ${run.form.name} ×${run.form.times}`, writeForm, { id: 'form' }));
+      // the takes: whole passes, the master marked
+      takesRow.replaceChildren();
+      const cl = takeTrack() ? clipsOn(takeTrack()).filter((c) => c.kind === 'audio') : [];
+      if (cl.length) {
+        takesRow.append(h('span', 'Takes'));
+        cl.forEach((c, i) => takesRow.append(chip(`${i + 1}${roomNow().master === c.id ? ' ·' : ''}`, () => { run.heardTake = i; hearTake(0); }, { pressed: roomNow().master === c.id, id: `take.${i + 1}` })));
+        const sel = run.heardTake != null ? cl[run.heardTake] : null;
+        if (sel && roomNow().master !== sel.id) takesRow.append(chip('Use this one', () => useTake(sel.id), { id: `use.${sel.id}` }));
+      }
+      // the band: in or out of the selected section
+      bandRow.replaceChildren();
+      if (store.get().sections.length) {
+        bandRow.append(h('span', 'Band'));
+        for (const id of PLAYER_ORDER) {
+          const tid = roomNow().tracks?.[PLAYERS[id].role];
+          const has = !!tid && store.get().tracks.some((t) => t.id === tid && t.clips.length);
+          bandRow.append(chip(PLAYERS[id].name.toLowerCase(), () => togglePlayer(id), { pressed: has, id: `band.${id}` }));
+        }
+      }
+      // the finish, and Send a mix once there's a band to send
+      finishRow.replaceChildren();
+      if (roomNow().master) {
+        const f = roomNow().finish || 'bare';
+        for (const id of ['bare', 'warm', 'close']) finishRow.append(chip(id[0].toUpperCase() + id.slice(1), () => { finish(id); draw(); }, { pressed: f === id, id: `finish.${id}` }));
+        if (run.done.length || run.heard) finishRow.append(chip('Send a mix', send, { id: 'send' }));
+      }
+    }
+    function writeFromTake(capo) {
+      const clip = run.fromTake?.clip, read = reads.get(clip);
+      if (!read) return;
+      const f = fromTakeOps(store.get(), { take: { clip, read }, capo });
+      if (f.ops.length) store.dispatch(f.ops, { by: 'overdub', label: f.label, reason: f.reason });
+      run.fromTake = null;
+      draw();
+    }
+    draw();
+
+    /* ------------------------------------------------------------------------------------------- keys */
+    const editing = () => paper.editing() || (document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) || document.activeElement?.isContentEditable;
+    const when = () => ui.state.liveRoom?.open && ui.state.liveRoom.screen === 'kitchen' && !editing();
+    const keys = [
+      { key: 'Space', label: 'The offered move', run: () => { press(offered()?.id); } },
+      { key: 'PageDown', label: 'The offered move', run: () => { press(offered()?.id); } },
+      { key: 'Escape', label: 'Not that one', run: () => { if (run.offer) noThanks(); else if (run.playing) { stopPreview(); draw(); } } },
+      { key: 'ArrowUp', label: 'The take before', run: () => hearTake(-1) },
+      { key: 'ArrowDown', label: 'The next take', run: () => hearTake(1) },
+      { key: 'KeyY', label: 'Headphones on', run: () => { if (run.step === 'phones') answerPhones(true); } },
+      { key: 'KeyN', label: 'Speakers', run: () => { if (run.step === 'phones') answerPhones(false); } },
+    ];
+    const offs = [];
+    for (const k of keys) {
+      try { offs.push(ui.keys.add({ ...k, first: true, when, group: 'Live room' })); } catch (e) { console.warn('overdub kitchen key', k.key, e); }
+    }
+
+    current = { state: () => ({ ...run, done: run.done.slice(), offered: offered(), reads: reads.size, preview: !!preview, hold: !!takeHold }) };
+    return {
+      frame(now) {
+        balanceFrame(now);
+        paper.frame(now);
+        if (run.rolling) counter.textContent = mmss((performance.now() - rollStart) / 1000);
+        else if (!run.playing) counter.textContent = '';
+        if (run.playing && app.engine && !app.engine.playing && !run.rolling) { run.playing = false; draw(); }
+        if (now - lastCanvas > 66) {
+          lastCanvas = now;
+          try { ctx.scene?.draw?.(g, { ...view(), place: 'kitchen', rolling: run.rolling }, now); } catch { /* the scene is E's */ }
+        }
+      },
+      press,
+      unmount() {
+        stopPreview();
+        releaseHold();
+        for (const off of offs) { try { off?.(); } catch { /* gone */ } }
+        paper.unmount();
+        current = null;
+        el.replaceChildren();
+      },
+    };
   },
 });

@@ -36,6 +36,7 @@
 //   playerNotes(p, player, section) -> notes             what a player plays over a section (beats from its start)
 //   finishChain(finish) -> [{ device, params, on }]
 //   takeName(p, n, { capo, bpm }) -> 'Paper Moon · take 1 · capo 2'
+//   after(p, ops) -> p'                                    a copy of the song with ops applied (nothing dispatched)
 //   fromTakeOps(p, { take, capo }) -> { ops, label, reason, line }   a blank paper written from the take's own chords
 //       (chords-only lines under section headings, the house's), in the shapes the capo gives
 
@@ -288,7 +289,7 @@ function gridOps(p, R, take) {
   return ops;
 }
 // a throwaway copy of the song with ops applied (the plans read the grid they make before the step is taken)
-function after(p, ops) {
+export function after(p, ops) {
   if (!ops.length) return p;
   const s = createStore(structuredClone(p));
   const r = s.dispatch(ops, { by: HOUSE });
@@ -571,12 +572,13 @@ export function fromTakeOps(p, { take = null, capo = 0 } = {}) {
 export function offeredKitchen(view, run) {
   const r = isObj(run) ? run : {};
   if (r.rolling) return { id: 'stop', label: 'That’s a take', key: 'Space' };
-  if (r.playing) return { id: 'stop', label: 'Stop', key: 'Space' };
   if (r.reading) return null;
+  // (the read's question and a player's offer are heard as they're asked: keeping it is the move, not stopping it)
+  if (r.takes && r.ask === 'time') return { id: 'time', label: 'On the beat', key: 'Space' };
+  if (r.takes && r.ask === 'form') return { id: 'form', label: 'Write it that way', key: 'Space' };
+  if (r.takes && r.offer) return { id: 'keep', label: 'Keep it', key: 'Space' };
+  if (r.playing) return { id: 'stop', label: 'Stop', key: 'Space' };
   if (!r.takes) return { id: 'tape', label: 'Start the tape', key: 'Space' };
-  if (r.ask === 'time') return { id: 'time', label: 'On the beat', key: 'Space' };
-  if (r.ask === 'form') return { id: 'form', label: 'Write it that way', key: 'Space' };
-  if (r.offer) return { id: 'keep', label: 'Keep it', key: 'Space' };
   const cards = Array.isArray(view?.cards) ? view.cards : [];
   const done = new Set(Array.isArray(r.done) ? r.done : []);
   const hasBridge = cards.some((c) => /^bridge/i.test(String(c.name || '')));

@@ -166,6 +166,13 @@ export async function run(T, ctx) {
     await s.page.click('.lrsh-box[data-id="p_a"] .lrsh-send');
     const sentFrom = await until(s, () => window.overdub.store.get().id === 'p_a' && window.overdub.ui.state.liveRoom.screen === 'send');
     T.ok(sentFrom, `Send on a tape box opens the send screen on its song (${(await state(s)).screen}, “${(await state(s)).title}”)`);
+    // the room songs the shelf switched between are in Recent songs too, and give way there first: four more control
+    // room songs put aside, and none of the six falls off for them
+    const roomInRecent = await s.E(() => JSON.parse(localStorage.getItem('overdub:recent') || '[]').filter((e) => e.song?.room).length);
+    await s.E((songs) => { for (const p of songs) window.overdub.exporter.putAside(p, `${p.title} put aside`); }, [3, 4, 5, 6].map((i) => ({ ...createProject({ id: `p_c${i}`, title: `Control ${i}` }), tracks: [{ id: 't1', name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys', params: {} }, inserts: [], clips: [{ id: 'k1', kind: 'notes', start: 0, length: 4, notes: [{ t: 0, d: 1, p: 60, v: 0.8 }] }], gain: 0, pan: 0 }] })));
+    const kept = await s.E(() => window.overdub.exporter.recent().map((e) => e.title));
+    const control = ['One', 'Two', '3', '4', '5', '6'].map((x) => `Control ${x}`);
+    T.ok(roomInRecent > 0 && control.every((t) => kept.includes(t)), `room songs in Recent give way to the control room’s (${roomInRecent} room songs were there; now ${kept.join(', ')})`);
     T.ok(!s.errors.length, `no page errors on the shelf${s.errors.length ? ': ' + s.errors.slice(0, 2).join(' | ') : ''}`);
   } finally { await s.close(); }
 }

@@ -374,13 +374,17 @@ export default function (app) {
     try { localStorage.setItem(RECENT, '[]'); } catch { /* storage blocked */ }
     return list;
   };
-  // a song the studio can make again exactly: a demo untouched since the shelf made it, or a blank untitled one
+  // a song the studio can make again exactly (a demo untouched since the shelf made it, or a blank untitled one), or a
+  // live room song, which the room's shelf keeps
   let demoIds = null;
   const sameBody = (a, b) => JSON.stringify(a, (k, v) => (k === 'meta' || k === 'created' || k === 'modified' ? undefined : v)) === JSON.stringify(b, (k, v) => (k === 'meta' || k === 'created' || k === 'modified' ? undefined : v));
   // (untitled with nothing in it: no track, or only empty ones, as Make your own leaves it before a take)
   const blank = (song) => (!song.title || song.title === 'Untitled') && song.tracks.every((t) => !(t.clips || []).length);
   function spare(song) {
     if (blank(song)) return true;
+    // (a live room song is kept on the room's shelf, ui/liveroom/shelf.js: in Recent it gives way first, so switching
+    // between room songs never pushes a control room song, kept nowhere else, off the end)
+    if (song.room && typeof song.room === 'object' && !Array.isArray(song.room)) return true;
     if (!demoIds) demoIds = new Map(DEMOS.map((d) => [stableIds({ tracks: [] }, d.id).id, d.id]));
     const d = demoIds.get(song.id);
     if (!d) return false;

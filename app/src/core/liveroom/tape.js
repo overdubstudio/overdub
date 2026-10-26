@@ -90,9 +90,9 @@ function unit(v) {
   n = Math.sqrt(n);
   return n > 0 ? c.map((x) => x / n) : null;
 }
-// how well a beat's chroma fits a chord: the treble against the template, and the bass (40-250 Hz, the guitar's low
-// strings, under a voice) against it too, with the chord's bass note on top. The bass weighs as much as the treble:
-// a voice singing over the strum fills the treble with one note, and never reaches down there
+// how well a beat's chroma fits a chord: the treble against the template, and the bass (40-200 Hz on a work tape, the
+// guitar's low strings, under a voice: BASS_HI) against it too, with the chord's bass note on top. The bass weighs as
+// much as the treble: a voice singing over the strum fills the treble with one note, and stays above the bass band
 function fitOf(tv, bv, T, bassPc, root) {
   if (!tv) return 0;
   let s = 0;
@@ -291,9 +291,13 @@ function frames(track) {
   }
   return { fps: track.fps, data };
 }
+// The work tape's bass band stops at 200 Hz (G3): a guitar's low strings are under it, a capo's bass notes among them,
+// and most of what a voice in the same mic sings is over it. At 250 a sung Bb3 over the chorus's F was read as the
+// guitar's bass note, drew the change to the Bb half a bar early, and the verse took the chorus's last bar of Bb
+const BASS_HI = 200;
 export function tapeChroma(samples, sr) {
   const x22 = resample(downmix(samples), sr, 22050);
-  const c = chromaOf(x22, 22050);
+  const c = chromaOf(x22, 22050, { bassHi: BASS_HI });
   return { tuning: c.tuning, treble: frames(c.treble), bass: frames(c.bass) };
 }
 export function readTape(samples, sr) {

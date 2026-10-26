@@ -8,13 +8,17 @@
 // last one opened; localStorage overdub:input). An interface is opened with all its channels (a 4- or 8-input one
 // included) and the chosen one split off. A device plugged in or out shows up without a reload ('devices').
 //
-//   audio.devices() -> Promise<[{ id, label }]>        audio.open({ device, channel, monitor }) / close() / ensureOpen()
+//   audio.devices() -> Promise<[{ id, label }]>        audio.open({ device, channel, monitor, capture, split }) / close() / ensureOpen()
 //   audio.openFor(track) -> state                       the track's input (or Sketch's picker), opened if it isn't
 //   audio.inputOf(track) -> { device, channel, from: 'track' | 'picker' }
 //   audio.state  { open, deviceId, label, channel ('1'…'32' | 'both' | 'stereo'), channels (the device's), settings,
 //                  inputKind ('interface' | 'mic' | 'virtual' | ''), monitoring, monitorAuto (it started by itself),
 //                  monitorOff ('' | 'mic' | 'feedback': why it's off), monitorLine (the sentence that says why, or ''),
-//                  monitorTrack (the id it plays through), monitorWaiting, recording, countIn, error, sr }
+//                  monitorTrack (the id it plays through), monitorWaiting, recording, countIn, error, sr, firstFrame
+//                  (the audio-clock frame the first captured block began on, once one has: a check lines a fake guitar
+//                  up with the count by it), split ({ [channel]: track id } while two channels record at once, or null) }
+//   settings is the track's getSettings() as the browser opened it (echoCancellation, noiseSuppression,
+//   autoGainControl, channelCount, latency, ...): the kitchen table reads whether the browser kept cleaning the mic up.
 //
 // Monitoring is decided for each input as it opens (open's monitor: 'auto', the default): an instrument interface or
 // line input the person picked (now, or last time) turns it on by itself, ramped in over 150 ms (a guitar through an
@@ -24,6 +28,16 @@
 // (createFeedbackGuard) listens to any input but an interface: a tone that rings up on its own turns monitoring off
 // with a fast fade and one toast (FEEDBACK_LINE). inputKind(label) and createFeedbackGuard() are pure: tools/input-test.js checks both.
 //   audio.level() -> { peak, db, clip }   (read it in a frame)
+//   audio.levels() -> [{ ch, peak, db }]   each of the device's channels (up to 8) as it is now, whichever one is
+//                  picked: the live room picks the one that moves on the first strum (pickChannel, pure)
+//   audio.useChannel(ch)   pick another channel of the device open now, in place (no reopen: monitoring and the
+//                  capture carry on); a channel it doesn't have, or a split, goes the setChannel way
+//   open's capture: true attaches the capture at once (its module loaded before the browser is asked), so
+//                  state.firstFrame is the input's first block; split: { 1: trackA, 2: trackB } (or { track,
+//                  monitor, mic } per channel) records two channels to two tracks at once: one stream, a pick per
+//                  channel, the capture two channels wide (the recorder makes a take on each), monitoring per channel
+//                  through each track's strip (monitor: false keeps a channel out of it), and the feedback guard on a
+//                  mic channel (mic: true) whatever the device is, an interface too
 //   audio.tune({ lo, hi }?) -> { hz, midi, p, cents, stable, conf } | null   lo/hi: the instrument's range in Hz (default
 //                  38-1400); cents only once the note has settled (stable), else null
 //   audio.listen(fn({ f, d: [Float32Array] })) -> off    raw blocks with their audio-clock frame (hum, beatbox, latency)
@@ -42,6 +56,19 @@ import { createTuner, fft } from './pitch.js';
 const CAP_WORKLET = new URL('./cap-worklet.js', import.meta.url).href;
 
 const SAVE = 'overdub:input';
+
+// The channel that moves: levels in dB per channel (index 0 is input 1) as the first strum peaks; the one at least
+// `over` dB over every other and over `floor`, as a channel number (1-based), else null. The live room plugs in by it
+// (docs/research/LIVE-ROOM-MODE.md §3.3: a guitar on input 2 and nothing on 1 is input 2).
+export function pickChannel(levels, { over = 12, floor = -50 } = {}) {
+  const L = (Array.isArray(levels) ? levels : []).map((x) => (Number.isFinite(+x) ? +x : -Infinity));
+  if (!L.length) return null;
+  let k = 0;
+  for (let i = 1; i < L.length; i++) if (L[i] > L[k]) k = i;
+  if (!(L[k] >= floor)) return null;
+  for (let i = 0; i < L.length; i++) if (i !== k && !(L[k] - L[i] >= over)) return null;
+  return k + 1;
+}
 const dB = (d) => Math.pow(10, d / 20);
 
 // What monitoring says when it's off for a reason (state.monitorLine; the feedback one is a toast too)
@@ -129,7 +156,7 @@ export function createAudioIn(app, input) {
   const engine = app.engine, store = app.store;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(SAVE) || '{}') || {}; } catch { saved = {}; }
-  const state = { open: false, deviceId: saved.deviceId || '', label: '', channel: saved.channel || '1', channels: 0, settings: {}, inputKind: '', monitoring: false, monitorAuto: false, monitorOff: '', monitorLine: '', monitorTrack: null, monitorWaiting: false, recording: false, countIn: saved.countIn !== false, error: '', sr: 0, opening: false };
+  const state = { open: false, deviceId: saved.deviceId || '', label: '', channel: saved.channel || '1', channels: 0, settings: {}, inputKind: '', monitoring: false, monitorAuto: false, monitorOff: '', monitorLine: '', monitorTrack: null, monitorWaiting: false, recording: false, countIn: saved.countIn !== false, error: '', sr: 0, opening: false, firstFrame: null, split: null };
   let ctx = null, ownCtx = null, rig = null, cap = null, capReady = null, mon = null, monDest = null, recording = false;
   let warned = false, syncT = 0;   // (the monitor: said once that it waits for a track; a sync queued)
   // the input monitoring was decided for (null: none yet; PENDING: turned on or off by hand before one was open), the
@@ -167,13 +194,17 @@ export function createAudioIn(app, input) {
       return all.filter((d) => d.kind === 'audioinput').map((d, i) => ({ id: d.deviceId, label: d.label || (d.deviceId === 'default' ? 'Default input' : `Input ${i + 1}`) }));
     },
     // monitor: 'auto' (decide for this input: see below), true or false (turn it on or off for it), 'keep'
-    async open({ device = picker.deviceId, channel = picker.channel, forTrack = null, monitor = 'auto' } = {}) {
+    async open({ device = picker.deviceId, channel = picker.channel, forTrack = null, monitor = 'auto', capture = false, split = null } = {}) {
       const md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) { state.error = 'Can’t open an audio input here: the page needs https (or localhost) and a browser that allows audio input.'; changed(); throw new Error(state.error); }
       state.opening = true; changed();
       const c = await ensureCtx();
+      // two channels to two tracks (split), each [{ ch, track, monitor, mic }], low channel first
+      const parts = splitOf(split);
+      // (the capture's module first, so it attaches as the stream comes in: state.firstFrame is the input's first block)
+      if (capture || parts) { try { await capModule(c); } catch { /* attachCap says why */ } }
       // ask for at least the channel wanted (an 8-input interface offers 8); then all the device has (below)
-      const chN = Math.max(2, Math.min(32, parseInt(channel, 10) || 2));
+      const chN = Math.max(2, Math.min(32, parts ? Math.max(...parts.map((x) => x.ch)) : parseInt(channel, 10) || 2));
       const want = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: chN }, latency: { ideal: 0 } };
       const plain = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
       if (device) { want.deviceId = { exact: device }; plain.deviceId = { exact: device }; }
@@ -202,16 +233,28 @@ export function createAudioIn(app, input) {
       const n = Math.max(1, Math.min(32, st.channelCount || 1)), ch = parseInt(channel, 10);
       // one channel of the interface (a guitar is on one input; a stereo downmix would halve it), both summed, or a pair
       const pick = c.createGain(); pick.channelCount = channel === 'stereo' ? 2 : 1; pick.channelCountMode = 'explicit'; pick.channelInterpretation = 'speakers';
-      if (channel === 'both' || channel === 'stereo' || !(ch >= 1) || (n < 2 && ch <= 1)) src.connect(pick);
+      let sp = null, picks = null;
+      if (parts) {
+        // a pick per channel, each with its own analyser (its meter and its feedback guard); the first is the input's
+        sp = c.createChannelSplitter(Math.max(2, n, ...parts.map((x) => x.ch))); src.connect(sp);
+        picks = parts.map((x, i) => {
+          const g = i === 0 ? pick : c.createGain();
+          g.channelCount = 1; g.channelCountMode = 'explicit'; g.channelInterpretation = 'speakers';
+          sp.connect(g, x.ch - 1);
+          const a = c.createAnalyser(); a.fftSize = 4096; g.connect(a);
+          return { ...x, pick: g, an: a, buf: new Float32Array(a.fftSize), mon: null, dest: null };
+        });
+      } else if (channel === 'both' || channel === 'stereo' || !(ch >= 1) || (n < 2 && ch <= 1)) src.connect(pick);
       else {
         // (a splitter as wide as the channel asked for: a channel the device doesn't have is silence, not channel 1)
-        const sp = c.createChannelSplitter(Math.max(2, n, ch)); src.connect(sp); sp.connect(pick, ch - 1);
+        sp = c.createChannelSplitter(Math.max(2, n, ch)); src.connect(sp); sp.connect(pick, ch - 1);
       }
-      const an = c.createAnalyser(); an.fftSize = 4096; pick.connect(an);
-      rig = { stream, src, pick, an, track, buf: new Float32Array(an.fftSize), peak: 0, clipAt: 0 };
+      const an = picks ? picks[0].an : c.createAnalyser();
+      if (!picks) { an.fftSize = 4096; pick.connect(an); }
+      rig = { stream, src, pick, an, track, sp, picks, lv: null, buf: new Float32Array(an.fftSize), peak: 0, clipAt: 0 };
       if (track) track.addEventListener('ended', () => { audio.close(); app.ui?.toast?.('The input went away (unplugged or switched off).', { kind: 'bad' }); });
-      Object.assign(state, { open: true, deviceId: device || st.deviceId || '', asked: device || '', forTrack, label: (track && track.label) || 'Input', channel: String(channel), channels: n, settings: st, error: '', sr: c.sampleRate });
-      if (!forTrack) { picker = { deviceId: device || '', channel: String(channel) }; persist(); }
+      Object.assign(state, { open: true, deviceId: device || st.deviceId || '', asked: device || '', forTrack, label: (track && track.label) || 'Input', channel: picks ? String(picks[0].ch) : String(channel), channels: n, settings: st, error: '', sr: c.sampleRate, firstFrame: null, split: picks ? Object.fromEntries(picks.map((x) => [String(x.ch), x.track])) : null });
+      if (!forTrack && !picks) { picker = { deviceId: device || '', channel: String(channel) }; persist(); }
       // Monitoring for this input, decided when it isn't the input it was decided for (the same one reopened, or another
       // of its channels, keeps it as it was). On by itself, ramped in, for an instrument interface the person picked
       // (now, or last time: the device remembered); off for a microphone, with the line that says why; off for anything
@@ -224,7 +267,7 @@ export function createAudioIn(app, input) {
         if (state.inputKind === 'interface' && device && device !== 'default') decide(true, { auto: true, id: openId });
         else decide(false, { off: state.inputKind === 'mic' ? 'mic' : '', id: openId });
       }
-      if (listeners.size) await attachCap();
+      if (listeners.size || capture || picks) await attachCap();
       syncMonitor();
       changed();
       return state;
@@ -247,15 +290,54 @@ export function createAudioIn(app, input) {
       if (recording) { try { recorder()?.stop({ keepPlaying: true }); } catch { /* ok */ } }
       if (cap) { try { cap.port.postMessage('off'); cap.disconnect(); } catch { /* ok */ } cap = null; capReady = null; }
       unwireMonitor();
-      if (rig) { for (const t of rig.stream.getTracks()) t.stop(); try { rig.src.disconnect(); rig.pick.disconnect(); } catch { /* ok */ } rig = null; }
+      unwireSplit();
+      if (rig) { for (const t of rig.stream.getTracks()) t.stop(); try { rig.src.disconnect(); rig.pick.disconnect(); for (const x of rig.picks || []) x.pick.disconnect(); } catch { /* ok */ } rig = null; }
       const was = state.open;
       state.open = false;
+      state.split = null;
+      state.firstFrame = null;
       // (quiet: open() is about to reopen and wire the monitor again)
       if (!quiet) report(false);
       if (was && !quiet) changed();
     },
     setChannel(ch) { picker.channel = state.channel = String(ch); persist(); if (state.open) return audio.open({ channel: picker.channel }); changed(); return null; },
     setDevice(id) { picker.deviceId = state.deviceId = id; persist(); if (state.open) return audio.open({ device: id }); changed(); return null; },
+    // another channel of the device open now, picked in place: the stream, the monitor and the capture carry on
+    useChannel(ch) {
+      const c = String(ch), k = parseInt(c, 10);
+      if (!rig || rig.picks || !/^\d+$/.test(c) || !(k >= 1) || k > state.channels || !ctx) return audio.setChannel(c);
+      if (String(state.channel) === c) return state;
+      try { rig.src.disconnect(rig.pick); } catch { /* not wired that way */ }
+      if (rig.sp) { try { rig.sp.disconnect(rig.pick); } catch { /* not wired that way */ } }
+      else { rig.sp = ctx.createChannelSplitter(Math.max(2, state.channels)); rig.src.connect(rig.sp); }
+      rig.sp.connect(rig.pick, k - 1);
+      rig.peak = 0;
+      state.channel = c;
+      if (!state.forTrack) { picker.channel = c; persist(); }
+      changed();
+      return state;
+    },
+    // every channel of the device, as it is now (an analyser on each, made the first time it's asked)
+    levels() {
+      if (!rig || !ctx) return [];
+      if (!rig.lv) {
+        const n = Math.max(1, Math.min(8, state.channels || 1));
+        if (n < 2) rig.lv = { an: [rig.an], buf: rig.buf };
+        else {
+          const sp = ctx.createChannelSplitter(Math.max(2, n));
+          rig.src.connect(sp);
+          const an = [];
+          for (let i = 0; i < n; i++) { const a = ctx.createAnalyser(); a.fftSize = 2048; sp.connect(a, i); an.push(a); }
+          rig.lv = { sp, an, buf: new Float32Array(2048) };
+        }
+      }
+      return rig.lv.an.map((a, i) => {
+        const b = rig.lv.buf.length === a.fftSize ? rig.lv.buf : new Float32Array(a.fftSize);
+        a.getFloatTimeDomainData(b);
+        let pk = 0; for (let j = 0; j < b.length; j++) { const v = Math.abs(b[j]); if (v > pk) pk = v; }
+        return { ch: i + 1, peak: pk, db: 20 * Math.log10(pk + 1e-9) };
+      });
+    },
 
     level() {
       if (!rig) return { peak: 0, db: -120, clip: false, lvl: 0 };
@@ -353,17 +435,32 @@ export function createAudioIn(app, input) {
     return store.track(t.id);
   }
 
+  // the capture's module, loaded once per context
+  function capModule(c) {
+    if (!c.__ewCap) c.__ewCap = c.audioWorklet.addModule(CAP_WORKLET).then(() => true, () => false);
+    return c.__ewCap;
+  }
   async function attachCap() {
     if (!rig) return null;
     if (cap) return cap;
     if (!capReady) {
       capReady = (async () => {
-        const c = ctx;
-        if (!c.__ewCap) c.__ewCap = c.audioWorklet.addModule(CAP_WORKLET).then(() => true, () => false);
-        if (!(await c.__ewCap)) throw new Error('This browser can’t capture audio (no AudioWorklet).');
-        const node = new AudioWorkletNode(c, 'ew-cap', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit', processorOptions: { channels: 1 } });
-        node.port.onmessage = (e) => { for (const fn of [...listeners]) { try { fn(e.data); } catch (err) { console.error('input listener', err); } } };
-        rig.pick.connect(node);
+        const c = ctx, r = rig;
+        if (!(await capModule(c))) throw new Error('This browser can’t capture audio (no AudioWorklet).');
+        if (rig !== r) return null;
+        // (a split: each channel's pick, side by side, into a capture as wide)
+        const w = r.picks ? r.picks.length : 1;
+        const node = new AudioWorkletNode(c, 'ew-cap', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: w, channelCountMode: 'explicit', channelInterpretation: 'discrete', processorOptions: { channels: w } });
+        node.port.onmessage = (e) => {
+          if (state.firstFrame == null && e.data && Number.isFinite(e.data.f)) state.firstFrame = e.data.f;
+          for (const fn of [...listeners]) { try { fn(e.data); } catch (err) { console.error('input listener', err); } }
+        };
+        if (r.picks) {
+          const m = c.createChannelMerger(w);
+          r.picks.forEach((x, i) => x.pick.connect(m, 0, i));
+          m.connect(node);
+          r.merge = m;
+        } else r.pick.connect(node);
         cap = node;
         return node;
       })();
@@ -378,6 +475,7 @@ export function createAudioIn(app, input) {
   // by itself it comes in over 150 ms; by hand, at once. While it's wired the feedback guard listens to the input.
   function syncMonitor({ fast = false } = {}) {
     clearTimeout(syncT); syncT = 0;
+    if (rig && rig.picks) { syncSplit(fast); return; }
     const want = state.monitoring && rig && ctx ? recordTrack(false) : null;
     const dest = want && engine.inputNode ? engine.inputNode(want.id) : null;
     const ok = !!dest && dest.context === ctx;
@@ -442,11 +540,75 @@ export function createAudioIn(app, input) {
     try { const t = ctx.currentTime, v = m.gain.value; m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(v, t); m.gain.setTargetAtTime(0, t, fast ? 0.004 : 0.01); } catch { /* ok */ }
     setTimeout(() => { try { m.disconnect(); } catch { /* ok */ } }, 80);
   }
+  // A split's monitoring: each channel through its own track's strip while monitoring is on and that channel isn't kept
+  // out of it (monitor: false: a mic on speakers), and the feedback guard on each mic channel that plays, whatever the
+  // device is (a mic on an interface's input 1 hears the speakers as any mic does). A trip takes that channel out.
+  function syncSplit(fast = false) {
+    if (stopGuard) { stopGuard(); stopGuard = null; }
+    if (mon) unwireMonitor(fast);
+    let first = null;
+    for (const x of rig.picks) {
+      const t = state.monitoring && x.monitor !== false && x.track ? store.track(x.track) : null;
+      const dest = t && engine.inputNode ? engine.inputNode(t.id) : null;
+      const ok = !!dest && dest.context === ctx;
+      if (ok && x.mon && x.dest === dest) { first = first || t.id; continue; }
+      fadeOut(x, fast);
+      if (!ok) continue;
+      x.mon = ctx.createGain(); x.mon.gain.value = 0;
+      x.pick.connect(x.mon); x.mon.connect(dest);
+      x.mon.gain.setTargetAtTime(1, ctx.currentTime, 0.015);
+      x.dest = dest;
+      first = first || t.id;
+    }
+    const mics = rig.picks.filter((x) => x.mic && x.mon);
+    if (mics.length && !rig.stopGuards) {
+      for (const x of mics) { x.guard = x.guard || createFeedbackGuard(); x.guard.reset(); }
+      rig.stopGuards = ticker(() => {
+        if (!rig || !rig.picks || !ctx) return;
+        for (const x of rig.picks) {
+          if (!x.mic || !x.mon || !x.guard) continue;
+          x.an.getFloatTimeDomainData(x.buf);
+          if (!x.guard.push(x.buf, ctx.sampleRate, ctx.currentTime)) continue;
+          x.monitor = false;
+          fadeOut(x, true);
+          state.monitorOff = 'feedback';
+          changed();
+          app.ui?.toast?.(FEEDBACK_LINE, { kind: 'bad' });
+        }
+      }, 50);
+    } else if (!mics.length && rig.stopGuards) { rig.stopGuards(); rig.stopGuards = null; }
+    if ((state.monitorTrack ?? null) !== first) { state.monitorTrack = first; state.monitorWaiting = false; input.emit('monitor', { track: first, waiting: false }); changed(); }
+  }
+  function fadeOut(x, fast) {
+    if (!x.mon) return;
+    const m = x.mon;
+    x.mon = null; x.dest = null;
+    try { const t = ctx.currentTime, v = m.gain.value; m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(v, t); m.gain.setTargetAtTime(0, t, fast ? 0.004 : 0.01); } catch { /* ok */ }
+    setTimeout(() => { try { m.disconnect(); } catch { /* ok */ } }, 80);
+  }
+  function unwireSplit() {
+    if (!rig || !rig.picks) return;
+    if (rig.stopGuards) { rig.stopGuards(); rig.stopGuards = null; }
+    for (const x of rig.picks) fadeOut(x, false);
+  }
+  // split's channels: [{ ch, track, monitor, mic }] from { 1: track | { track, monitor, mic }, ... }, or null
+  function splitOf(split) {
+    if (!split || typeof split !== 'object') return null;
+    const out = [];
+    for (const [k, v] of Object.entries(split)) {
+      const ch = parseInt(k, 10), o = v && typeof v === 'object' ? v : { track: v };
+      if (!(ch >= 1 && ch <= 32) || !o.track) continue;
+      out.push({ ch, track: String(o.track), monitor: o.monitor !== false, mic: !!o.mic });
+    }
+    out.sort((a, b) => a.ch - b.ch);
+    return out.length >= 2 ? out : null;
+  }
   // (after the engine has caught up with the change: one sync for a burst of them)
   const later = () => { if (!syncT) syncT = setTimeout(syncMonitor, 0); };
   // keep the monitor on the right track: another armed, one made or deleted, a new song, the engine rebuilding its strip
   store.on('change', () => {
     if (!state.monitoring || !rig) return;
+    if (rig.picks) { later(); return; }
     const t = recordTrack(false), id = t ? t.id : null;
     if (id !== (monDest ? monDest.track : null) || (t && monDest && engine.inputNode && monDest.node !== engine.inputNode(t.id))) later();
   });

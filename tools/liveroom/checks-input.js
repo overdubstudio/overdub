@@ -6,7 +6,8 @@
 //      (seeded, measured against the click)
 //   2. The soundcheck (muted Chromium): a stereo fake, silence on input 1 and a guitar on input 2, into the lamps:
 //      input 2 picked; Quiet, Loud and clear, Hot and That clipped as the fake gets louder; the open low strings E2, D2,
-//      C2, B1 named or asked about (as the fretboard's tunings have them); six notes of a C2 20 cents flat say so, and
+//      C2, B1 named or asked about (as the fretboard's tunings have them, the Tune lamp pressed before C2 and B1); the
+//      D2 after E2 has been named, with no press, names nothing; six notes of a C2 20 cents flat say so, and
 //      not before the sixth
 //   3. The count (muted Chromium, the speakers' feed captured): four sticks at 132, eight at 160, the basement's two
 //      bars with its hits, each on its beat within a render quantum (128 samples), the silent ones silent, `at` kept
@@ -123,9 +124,12 @@ async function soundcheck(T, ctx) {
     // the input opens by itself (the browser allows it): wait for the fake to start
     await page.waitForFunction(() => window.overdub.input.audio.state.open && window.overdub.input.audio.state.firstFrame != null, null, { timeout: 15000 });
     const ch = await E(() => window.overdub.input.audio.state.channels);
-    await page.waitForFunction((t) => (window.__sc.fileT() ?? 0) > t, REDO_AT, { timeout: 60000 });
-    // the tuner asked again (the lamp pressed) before the flat notes
-    await E(() => document.querySelector('.lr-lamp[data-lamp="tune"]').click());
+    // the Tune lamp pressed before C2 and B1 (a guitar retuned) and before the flat notes, not before D2: once the lamp
+    // has named a tuning, a low note is a note (a riff's D on the low string isn't drop D) until it's pressed again
+    for (const at of [...OPENS.slice(2).map(([, t]) => t - 0.6), REDO_AT]) {
+      await page.waitForFunction((t) => (window.__sc.fileT() ?? 0) > t, at, { timeout: 60000 });
+      await E(() => document.querySelector('.lr-lamp[data-lamp="tune"]').click());
+    }
     const flatEnd = FLAT0 + 2 * (FLATN - 1) + 1.5;
     await page.waitForFunction((t) => (window.__sc.fileT() ?? 0) > t, flatEnd + 1, { timeout: 30000 });
     const r = await E(() => ({ said: window.__sc.said, lamps: window.__sc.lampsState(), st: { channel: window.overdub.input.audio.state.channel, channels: window.overdub.input.audio.state.channels, label: window.overdub.input.audio.state.label } }));
@@ -143,14 +147,15 @@ async function soundcheck(T, ctx) {
     T.ok(lv.every((x) => x.okT), `level: the fake at −31, −11, −2 and 0 dBFS says ${lv.map((x) => `${x.k}@${fmt(x.t)}`).join(', ')}, each in its 4 s (“${LINES['level.quiet'].text(line('level.quiet')?.vars || {})}” … “${LINES['level.clip'].text(line('level.clip')?.vars || {})}”)`);
 
     // the open low strings
-    const tune = OPENS.map(([m, at]) => {
-      const c = tuningsFor(m), x = said.find((s) => (s.id === 'tune.ok' || s.id === 'tune.which') && s.t > at - 0.2 && s.t < at + 3);
+    const tune = OPENS.map(([m, at], i) => {
+      const c = i === 1 ? [] : tuningsFor(m), x = said.find((s) => (s.id === 'tune.ok' || s.id === 'tune.which') && s.t > at - 0.2 && s.t < at + 3);
       const want = c.length >= 2 ? `tune.which:${c[0].name} or ${c[1].name}` : c.length === 1 ? `tune.ok:${c[0].name}` : 'none';
       const have = x ? (x.id === 'tune.which' ? `tune.which:${x.vars.a} or ${x.vars.b}` : `tune.ok:${x.vars.name}`) : 'none';
       return { m, want, have };
     });
     T.ok(tune[0].have === 'tune.ok:E standard', `tune: the open E2 says “${LINES['tune.ok'].text({ name: 'E standard' })}” (${tune[0].have})`);
-    T.ok(tune.every((x) => x.have === x.want), `tune: the open low strings ${tune.map((x) => `${x.m} → ${x.have}`).join('; ')} (as the fretboard's tunings have them: ${tune.map((x) => x.want).join('; ')})`);
+    T.ok(tune[1].have === 'none', `tune: a low D after the lamp has named E standard names nothing (${tune[1].have}): it's a note, not a retune, until the lamp is pressed`);
+    T.ok(tune.every((x) => x.have === x.want), `tune: the open low strings ${tune.map((x) => `${x.m} → ${x.have}`).join('; ')} (as the fretboard's tunings have them, the lamp pressed before C2 and B1: ${tune.map((x) => x.want).join('; ')})`);
     const offL = said.find((s) => s.id === 'tune.off'), sixth = FLAT0 + 2 * (FLATN - 1);
     T.ok(offL && offL.vars.flat === true && Math.abs(offL.vars.cents - 20) <= 5 && offL.t > sixth && offL.t < sixth + 2, `tune: six notes of a C2 20 cents flat say “${offL ? LINES['tune.off'].text(offL.vars) : '(nothing)'}” at ${fmt(offL?.t)} s, after the sixth (${sixth} s)`);
     const errs = errors.filter((e) => !IGNORE(e));
@@ -325,6 +330,27 @@ async function deckPage(T, ctx) {
       T.ok(esc.res.kept === 'capture' && esc.res.line === 'take.esc' && esc.hEsc === 0 && esc.caps >= 1 && !esc.playing, `Esc during a take: nothing in History (${esc.hEsc} steps), the pass in Capture (${esc.caps}), the talkback's line “${LINES['take.esc'].text({})}”`);
       T.ok(esc.back?.ok && esc.H.length === 1 && esc.H[0].by === 'you' && esc.clip?.start === 0 && esc.clip.length >= 8.5, `⇧R puts it in after all, at its bars: one step by you (${esc.H.map((x) => `${x.label} [${x.ops.join(', ')}]`).join('; ')}), the clip from beat ${esc.clip?.start}, ${fmt(esc.clip?.length, 2)} beats`);
     }
+
+    // the transport stopped under a take's count by something else (the recorder lets the take go by itself): the deck
+    // is idle again, and the next take starts
+    const gone = await E(async () => {
+      const app = window.overdub, { engine } = app, { deck, until, sleep, G } = window.__lr;
+      const t = await deck.take({ track: G, from: 0 });
+      if (!t.ok) return { error: t.error };
+      const during = { run: deck.state.run, rec: app.input.recorder.state };
+      engine.stop();
+      await until(() => app.input.recorder.state === 'idle', 5000).catch(() => {});
+      await sleep(50);
+      const after = { run: deck.state.run, rec: app.input.recorder.state };
+      const t2 = await deck.take({ track: G, from: 0 });
+      const next = { ok: t2.ok, error: t2.error || null, run: deck.state.run };
+      const c = await deck.stop({ at: 'now', keep: 'capture' });
+      await until(() => !engine.playing, 5000).catch(() => {});
+      return { during, after, next, cancelled: !!c.cancelled };
+    });
+    if (gone.error) T.ok(false, `a take let go under its count: ${gone.error}`);
+    else T.ok(gone.during.run === 'count' && gone.after.run === 'idle' && gone.after.rec === 'idle' && gone.next.ok && gone.next.run === 'count' && gone.cancelled,
+      `a take let go under its count (the transport stopped by something else): the deck is ${gone.after.run} again, and the next take starts (${gone.next.ok ? gone.next.run : gone.next.error}); a stop in its count cancels it (${gone.cancelled})`);
 
     // a stop pressed, and then the tab hidden and starved of frames: it still ends on the bar line
     landed('stop at beat 2 of bar 5, the tab then hidden and stalled for 2.6 s', await takeAt(18.05, { stall: true }), 20);

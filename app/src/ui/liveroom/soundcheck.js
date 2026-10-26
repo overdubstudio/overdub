@@ -172,7 +172,8 @@ export function mountLamps(el, ctx) {
     const vars = { device: st.label, input: st.channels >= 2 ? picked || +st.channel || 1 : null, amp: !!st.monitoring };
     // (a mic at an electric place stays said: it plays, but it's no interface)
     if (!(L.plug?.line === 'plug.mic')) set('plug', 'ok', 'plug.ok', vars, { device: st.label, input: picked || +st.channel || 1, channels: st.channels });
-    if (!okSaid) { say('plug.ok', vars); okSaid = true; if (st.inputKind === 'interface' && st.monitoring) say('plug.direct'); }
+    // (and said once: not after the mic's line, which it would contradict)
+    if (!okSaid) { okSaid = true; if (L.plug?.line !== 'plug.mic') say('plug.ok', vars); if (st.inputKind === 'interface' && st.monitoring) say('plug.direct'); }
     if (!L.tune) { set('tune', 'ask', 'tune.ask'); }
   }
   function framePlug(now) {
@@ -233,7 +234,9 @@ export function mountLamps(el, ctx) {
       lastMidi = Math.round(tu.midi);
       notes.push(tu.cents);
       if (notes.length > 6) notes.shift();
-      if (lastMidi <= 44) lowString(lastMidi);
+      // (the open low string, while the lamp listens for one: once it has named the tuning or asked, the riffs' low
+      // notes are notes, never a new tuning, until the lamp is pressed again; nothing is read during a count or a take)
+      if (lastMidi <= 44 && !(L.tune && (L.tune.lit || L.tune.ask)) && deck.state.run === 'idle') lowString(lastMidi);
       if (!offSaid && notes.length >= 6) {
         const c = median(notes);
         if (Math.abs(c) > 15) { offSaid = true; say('tune.off', { cents: Math.round(Math.abs(c) / 5) * 5, flat: c < 0 }); }
@@ -243,7 +246,6 @@ export function mountLamps(el, ctx) {
   }
   let lowSeen = null;
   function lowString(m) {
-    if (lowSeen === m && L.tune && (L.tune.lit || L.tune.ask)) return;
     lowSeen = m;
     const cands = tuningsFor(m);
     if (cands.length === 1) chooseTuning(cands[0], { said: true });

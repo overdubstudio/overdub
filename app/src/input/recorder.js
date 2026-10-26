@@ -1323,7 +1323,7 @@ export function createRecorder(app, input, opts = {}) {
 
   // at: the grid it stopped at, when the transport has already moved on (a seek or a play() jumps the grid to the new
   // place before its event: the take ends where it was, not where the playhead went)
-  async function stop({ keepPlaying = false, why = 'stop', at = null, tail = 0, keep = 'song', end = null, ring = 0 } = {}) {
+  async function stop({ keepPlaying = false, why = 'stop', at = null, tail = 0, keep = 'song', end = null, ring = 0, past = false } = {}) {
     const r = R;
     if (!r) return null;
     if (r.closing) return r.closing;
@@ -1332,7 +1332,8 @@ export function createRecorder(app, input, opts = {}) {
     // a stop at a beat still to come (its tail included): scheduled on the grid, so it ends there whenever this page
     // next gets to run (tick: a frame-starved or hidden tab still ends on that line); a later stop replaces it
     const tl = Math.max(0, +tail || 0);
-    if (fin(at) && engine.playing && at + tl > (gridNow(r) ?? -Infinity) + 1e-3) {
+    // (past: `at` is where the take was before the grid jumped, a seek's, never a stop to wait for)
+    if (!past && fin(at) && engine.playing && at + tl > (gridNow(r) ?? -Infinity) + 1e-3) {
       r.sched = { at, tail: tl, end: at + tl, keepPlaying, why, keep };
       return new Promise((res) => r.waiters.push(res));
     }
@@ -1649,7 +1650,7 @@ export function createRecorder(app, input, opts = {}) {
         // (the grid has already jumped to where the playhead went: the take ends where it was, the last tick's grid
         // moved on by the time since it)
         const at = fin(r.lastG) && fin(r.lastT) ? r.lastG + Math.max(0, Math.min(0.5, (performance.now() - r.lastT) / 1000 / spbNow())) : null;
-        stop({ keepPlaying: true, why: 'seek', at });
+        stop({ keepPlaying: true, why: 'seek', at, past: true });
       }
       else tick();
     });

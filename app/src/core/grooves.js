@@ -412,7 +412,7 @@ const PHI = 0.86, INNOV = Math.sqrt(1 - PHI * PHI), PHI_V = 0.96, INNOV_V = Math
 export function realize(groove, { tempo = 120, seed = 1, human = 1, length = null, offset = 0, swing = true, articulations = false, rules = null } = {}) {
   const g = getGroove(groove);
   if (!g) throw new Error(`no groove "${groove}"`);
-  if (rules === 'band') return bandRules(g, realize(g.id, { tempo, seed, human: g.part === 'fill' ? human * 1.5 : human, length, offset, swing, articulations }), { seed, tempo });
+  if (rules === 'band') return bandRules(g, realize(g.id, { tempo, seed, human: g.part === 'fill' ? human * 1.5 : human, length, offset, swing, articulations }), { seed, offset });
   const L = g.length, total = length == null ? L : Math.max(0, Number(length));
   const R = rng(`${g.id}:${seed}`);
   const sw = swing ? swingAt(g, tempo) : null;
@@ -457,13 +457,13 @@ export function realize(groove, { tempo = 120, seed = 1, human = 1, length = nul
 // way, and a fill's first hit full with the rest a touch softer (realize plays a fill half as loose again in time).
 // Seeded on its own stream (`<groove>:<seed>:band`), so a realize without it is the same as it always was.
 const FULL = 0.95, GHOST = [0.15, 0.4];
-function bandRules(g, notes, { seed }) {
+function bandRules(g, notes, { seed, offset = 0 }) {
   const R = rng(`${g.id}:${seed}:band`);
   const blast = /blast/.test(g.id), fill = g.part === 'fill';
   // which notes were written as ghosts: the grid's own soft marks, matched by piece and by time within a 48th of a
   // beat or so (the humanising moves a note a few ms)
   const ghosts = g.hits.filter((h) => h.v <= MARKS.o + EPS), L = g.length;
-  const isGhost = (n) => ghosts.some((h) => { if (h.p !== n.p) return false; const d = Math.abs((((n.t - h.t) % L) + L) % L); return Math.min(d, L - d) < 0.06; });
+  const isGhost = (n) => ghosts.some((h) => { if (h.p !== n.p) return false; const d = Math.abs((((n.t + offset - h.t) % L) + L) % L); return Math.min(d, L - d) < 0.06; });
   const first = notes.length ? notes[0].t : 0;
   return notes.map((n) => {
     let v = n.v;

@@ -71,6 +71,7 @@ export function createDeck(app) {
 
   const state = { run: 'idle', from: null, track: null, punch: null, stopping: null, kit: null, kitPct: null, last: null, thrown: null, input: { open: false } };
   let pending = null;      // the count being started (take() waits on it)
+  let countGen = 0;        // (a stop during the count's wait for the kit makes that count stale: it never plays)
   let armed = null;        // the take in progress: { track, from, punch, tail, id }
   let afterPunch = null;   // the transport stop a bar after a punch's end
   const changed = () => { readInput(); emit('state', state); };
@@ -85,7 +86,7 @@ export function createDeck(app) {
     const e = engine();
     try {
       const ev = globalThis.event, ts = ev && ev.timeStamp, now = performance.now();
-      if (Number.isFinite(ts) && ts > 0 && now - ts >= 0 && now - ts < 150 && typeof e.beatAt === 'function') return e.beatAt(ts);
+      if (Number.isFinite(ts) && ts > 0 && now - ts >= 0 && now - ts < 2000 && typeof e.beatAt === 'function') return e.beatAt(ts);
     } catch { /* no event */ }
     return e.beat;
   }
@@ -140,9 +141,10 @@ export function createDeck(app) {
     const f = Math.max(0, Number.isFinite(+from) ? +from : 0);
     state.from = f;
     setRun('count');
+    const my = ++countGen;
     const job = (async () => {
       await waitKit();
-      if (state.run !== 'count') return { ok: false, error: 'stopped' };
+      if (my !== countGen || state.run !== 'count') return { ok: false, error: 'stopped' };
       const opts = n > 0 ? { countIn: { beats: n * bpb, preroll: preroll !== false, voice, hits: Array.isArray(hits) ? hits : null } } : {};
       if (Number.isFinite(+at) && at != null) opts.at = +at;
       try { await e.play(f, opts); } catch (err) { setRun('idle'); return { ok: false, error: String(err?.message || err) }; }
@@ -164,7 +166,7 @@ export function createDeck(app) {
     if (!t || t.kind !== 'audio') return { ok: false, error: 'No audio track to record onto.' };
     const bpb = bpbNow();
     // the count: the one being started, or the defaults now
-    if (pending) await pending;
+    if (pending) { const c = await pending; if (!c.ok) return c; }
     else if (!e.playing) { const c = await countIn({ from: from ?? 0 }); if (!c.ok) return c; }
     const f = Number.isFinite(+punch?.from) ? +punch.from : Number.isFinite(+from) && from != null ? +from : state.from ?? 0;
     const to = Number.isFinite(+punch?.to) ? +punch.to : null;
@@ -259,6 +261,8 @@ export function createDeck(app) {
     const capture = keep === 'capture';
     // during the count (the deck's, or the recorder's wait for the take's 1): it stops, nothing recorded
     if (pending || (state.run === 'count' && r.state !== 'rec') || r.state === 'count') {
+      countGen++;
+      pending = null;
       state.run = 'idle';
       if (r.state !== 'idle') r.cancel();
       armed = null;
@@ -301,6 +305,12 @@ export function createDeck(app) {
       if (!armed) return;
       if (s === 'rec') setRun('take');
       else if (s === 'count') setRun('count');
+      else if (s === 'idle') {
+        // (the recorder let the take go by itself, with nothing to commit: the transport stopped under its count, a
+        // hidden tab, another song. A take that commits lands first, in the same turn, so this one is armed still)
+        const a = armed;
+        setTimeout(() => { if (armed === a && rec().state === 'idle') { armed = null; state.stopping = null; state.run = 'idle'; changed(); } }, 0);
+      }
     });
     rec().on('commit', (res) => {
       // (a take that ended itself: a punch's end, the tempo moving, a seek)

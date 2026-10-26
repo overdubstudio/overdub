@@ -29,6 +29,7 @@
 //   redo.pair      { part, take }                           ⇧⌘Z put them back
 //   undo.alone     { part }                                 ⌘Z took the learning out alone (something landed between)
 //   take.none      {}                                       a pass ended with nothing to keep
+//   learn.wait     {}                                       a press while the band's still learning a take
 //   pass.capture   {}                                       Esc in a pass: nothing went in, it's in Capture
 //   other.now      {}                                       the other side's pass is next
 //   take.pick      { part, take }                           ↑ ↓: which take plays in a part
@@ -41,6 +42,7 @@ const bars = (n) => `${n} bar${n === 1 ? '' : 's'}`;
 
 export const LINES = {
   'before.tempo': { text: ({ bpm }) => `The drummer’s at ${bpm}: ← → moves it, T four times taps it. Space and you’re counted in.` },
+  'learn.wait': { text: () => 'The band’s still learning that take: a second.' },
   'part.in': { text: ({ part, bars: n, bpm, tuning }) => `${cap(part)} is in: ${bars(n)} at ${bpm}${tuning ? `, ${tuning}` : ''}. The band’s learning it.` },
   'next.in': { text: ({ part, bars: n, what }) => `${cap(part)} is in${what ? `: ${what}` : ''}. ${cap(bars(n))}.` },
   'again.in': { text: ({ part, take, was }) => `Take ${take} is in on the ${low(part)}: the drummer follows it now. Take ${was} is a key away: ↓.` },

@@ -137,7 +137,11 @@ screens.add({
       return out;
     };
     const mark = (id) => { saidMemo = null; try { prefs.mark(song(), id); } catch { /* storage: fine */ } };
-    offs.push(store.on('change', (e) => { if (e?.kind === 'load') saidMemo = null; }));
+    offs.push(store.on('change', (e) => {
+      if (e?.kind === 'load') saidMemo = null;
+      // (⌘Z or ⇧⌘Z before a part's wide playback started: the part it was for may be gone, so it doesn't start)
+      if (e?.kind === 'undo' || e?.kind === 'redo') S.widePending = null;
+    }));
     current = () => ({ wide: S.wide ? { ...S.wide } : null, use2: S.use2 ? { ...S.use2 } : null, drift: S.drift ? { ...S.drift } : null, finishes: S.finishes ? JSON.parse(JSON.stringify(S.finishes)) : null, heard: heardOf.has(songKey(song())), leans: [...S.leans] });
     const runState = () => ({ run: L.run, last: S.last, drift: S.drift, use2: S.use2, said: saidFor(), heard: heardOf.get(songKey(song())) || null });
     const offer = () => offered(view(), runState());
@@ -157,10 +161,13 @@ screens.add({
       return t.clips.map((c, i) => ({ c, i })).filter((x) => ids.includes(x.c.id)).sort((a, b) => at(a.c) - at(b.c) || a.i - b.i).map((x) => x.c);
     };
     const dispatch = (ops, o) => store.dispatch(ops, o);
+    // (a press that would play while the band learns a take: said, not swallowed)
+    const waitLearn = () => { if (L.run === 'learn') say('learn.wait'); return { ok: false }; };
     const err = (e) => ({ ok: false, error: String(e?.message || e || 'That didn’t work.') });
 
     // a pass: the count (or the pre-roll) and the take, from the deck, the band's guide heard over it as a preview
     function pass(kind, cardId = null, { bar = null } = {}) {
+      if (L.run === 'learn') { say('learn.wait'); return { ok: false, error: 'The band’s still learning.' }; }
       if (L.run !== 'idle') return { ok: false, error: 'Something’s already running.' };
       const v = view();
       const c = cardId ? v.cards.find((x) => x.id === cardId) : null;
@@ -797,8 +804,8 @@ screens.add({
           return { ok: true };
         }
         case 'notyet': mark('layout.answered'); return { ok: true };
-        case 'hear': case 'home': return L.run === 'play' ? stopPlay(false) : busy() ? { ok: false } : hearFrom(true);
-        case 'from': return L.run === 'play' ? stopPlay(false) : busy() ? { ok: false } : hearFrom(false);
+        case 'hear': case 'home': return L.run === 'play' ? stopPlay(false) : busy() ? waitLearn() : hearFrom(true);
+        case 'from': return L.run === 'play' ? stopPlay(false) : busy() ? waitLearn() : hearFrom(false);
         case 'feel': case 'simpler': case 'busier': case 'softer': case 'louder': return feel(s);
         case 'twice': { const c = card(); if (!c || c.end) return { ok: false }; const pl = planTwice(song(), { section: c.id }); return step(pl, { line: 'twice.in', vars: { part: c.name, bars: (c.bars || 0) * 2 } }); }
         case 'loop': {

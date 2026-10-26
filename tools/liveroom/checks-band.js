@@ -9,7 +9,8 @@
 //      clips only, the same read and seed the same band, one dispatch
 //   4. the read (read.js readTake) on fixture riffs: chugs, chords and tremolo at 90, 132, 160 and 200 BPM in E
 //      standard, drop C and B standard, ±10 ms of seeded jitter and an 8 ms latency error: the kick on 95% of chugs or
-//      more and never on a note that isn't one, the root on 90% of beats or more, the key's root on every one
+//      more and never on a note that isn't one, the root on 90% of beats or more, the key's root on every one; and
+//      readInWorker in muted Chromium (PAGES=0 skips it): the module Worker loads and reads what readTake reads
 //   5. the pair (tight.js measurePair): known per-bar offsets give the right line, naming the bar and the ms within 5
 //   6. the double (double.js): the right side's chain and cab per rig, the pans, the pan lane, the intro on one side
 //   7. the prototype's band (band.js bandFor): the metal club's kick and bass, the blues bar's twelve-bar
@@ -38,9 +39,10 @@ import { checkTargets, TARGETS } from '../../app/src/audio/targets.js';
 import { run as runAmp, metalDI, guitarBands } from '../amp-scenes.js';
 import { riffDI, riffOf, SR } from './fake.js';
 import { roomSong, clean, stem, fixtureRiff, readFixtures, bareSong } from './band-scene.js';
+import { open } from '../pw.js';
 
 export const name = 'band';
-export const pages = false;
+export const pages = true;
 
 const f1 = (x) => (x == null || !Number.isFinite(x) ? String(x) : (x >= 0 ? '+' : '') + x.toFixed(1));
 const n1 = (x) => (x == null || !Number.isFinite(x) ? String(x) : x.toFixed(1));
@@ -184,6 +186,30 @@ export async function run(T, ctx) {
   for (const x of readFixtures()) {
     T.ok(x.kick >= 0.95 && x.wrong === 0 && x.roots / x.beats >= 0.9 && x.key === x.want,
       `the read, ${x.kind} at ${x.bpm} in ${x.tuning}: the kick within 15 ms on ${x.ok} of ${x.n} chugs (${(x.kick * 100).toFixed(0)}%), on ${x.wrong} that aren't; the root on ${x.roots} of ${x.beats} beats; the key's root ${x.key} (want ${x.want}); read in ${x.ms} ms`);
+  }
+
+  // off the main thread (§4.2): the page's readInWorker against its own readTake on the same samples (a seeded pluck
+  // on each eighth), and the Worker's module fetched (not the idle-callback fallback)
+  if (ctx.pages) {
+    const { page, close, errors } = await open('/');
+    try {
+      const r = await page.evaluate(async () => {
+        const R = await import('/app/src/core/liveroom/read.js');
+        const sr = 48000, bpm = 132, spb = 60 / bpm, x = new Float32Array(Math.round(sr * (spb * 8 + 0.5)));
+        let h = 1;
+        const rnd = () => { h = (Math.imul(h, 1664525) + 1013904223) >>> 0; return (h / 4294967296) * 2 - 1; };
+        for (let k = 0; k < 16; k++) {
+          const a = Math.round((k * spb * sr) / 2);
+          for (let i = 0; i < sr * 0.2 && a + i < x.length; i++) x[a + i] += 0.4 * Math.exp(-i / (sr * 0.08)) * (2 * ((i * 82.41 / sr) % 1) - 1) + (i < 96 ? 0.1 * rnd() : 0);
+        }
+        const opts = { tempo: bpm, start: 0, bars: 2, grid: 4, place: 'metal' };
+        const kept = x.length, w = await R.readInWorker(x, sr, opts), m = R.readTake(x, sr, opts);
+        const fetched = performance.getEntriesByType('resource').some((e) => /\/read-worker\.js$/.test(e.name));
+        return { same: JSON.stringify(w) === JSON.stringify(m), notes: w.notes.length, key: w.key?.root ?? null, fetched, kept: x.length === kept };
+      });
+      T.ok(r.same && r.fetched && r.kept && r.notes === 16 && r.key === 4 && !errors.length,
+        `the read off the main thread: readInWorker in a module Worker (${r.fetched ? 'read-worker.js loaded' : 'no Worker'}) reads what readTake reads (${r.same ? 'the same' : 'different'}: ${r.notes} notes, the key's root ${r.key}), the caller's samples left whole${errors.length ? `; page errors: ${errors.join(' | ')}` : ''}`);
+    } finally { await close(); }
   }
 
   /* ---------------------------------------------------------------------------------------------- 5. the pair */

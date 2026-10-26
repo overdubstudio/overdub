@@ -1,8 +1,8 @@
 // The live room's checks: the input and the deck [stream A] (docs/research/LIVE-ROOM-MODE.md §11.5). Run by
 // tools/liveroom-test.js (ONLY=input), whose header says what a checks module exports.
 //   1. Node: the channel that moves (audioin pickChannel); the level's four verdicts on fakes peaking at −31, −11, −2
-//      and 0 dBFS; the tunings a low string can be, in the order the room asks (a stand-in fretboard with stream B's
-//      ids, so the two-way questions are checked whether or not they've landed); the lean line; the count's sticks
+//      and 0 dBFS; the tunings a low string can be, in the order the room asks (on a fretboard of the room's tuning ids,
+//      and on the fretboard's own tunings, which must ask the same); the lean line; the count's sticks
 //      (seeded, measured against the click)
 //   2. The soundcheck (muted Chromium): a stereo fake, silence on input 1 and a guitar on input 2, into the lamps:
 //      input 2 picked; Quiet, Loud and clear, Hot and That clipped as the fake gets louder; the open low strings E2, D2,
@@ -58,7 +58,7 @@ function node(T) {
   const words = LEVELS.map(([pk, k]) => LINES[`level.${k}`].text({ db: pk, input: 2 }));
   T.ok(words.every((w, i) => w.startsWith(LEVELS[i][2])) && words[0].includes('−31 dB') && !words.join(' ').includes('!'), `and say so: ${words.map((w) => `“${w}”`).join(' ')}`);
 
-  // the tunings a low string can be, with stream B's ids on a stand-in fretboard
+  // the tunings a low string can be, on a fretboard of the room's tuning ids (places.js), then on the fretboard's own
   const S = (low, iv) => { const s = [low]; for (const d of iv) s.push(s[s.length - 1] + d); return s; };
   const STD = [5, 5, 5, 4, 5], DROP = [7, 5, 5, 4, 5];
   const FB = {
@@ -70,8 +70,8 @@ function node(T) {
   T.ok(asks.join(' / ') === 'E standard / drop D | D standard / drop C | C standard / B standard | drop B', `the low string names the tuning: E2 ${asks[0]}; D2 ${asks[1]}; C2 ${asks[2]}; B1 ${asks[3]} (drop first from C up, standard first under it; DADGAD and open G aren't asked)`);
   const which = LINES['tune.which'].text({ note: 'C', a: 'drop C', b: 'C standard' }), ok = LINES['tune.ok'].text({ name: tuningName({ id: 'standard', name: 'Standard', strings: S(40, STD) }) });
   T.ok(which === 'Low string C: drop C or C standard?' && ok === 'In tune: E standard.', `the lines: “${ok}” “${which}”`);
-  const here = [40, 38, 36, 35].map((m) => tuningsFor(m).map((x) => x.id).join('|') || '-');
-  T.note(`the fretboard's own tunings here: E2 ${here[0]}, D2 ${here[1]}, C2 ${here[2]}, B1 ${here[3]}`);
+  const here = [40, 38, 36, 35].map((m) => tuningsFor(m).map((x) => x.name).join(' | ') || '-');
+  T.ok(JSON.stringify(here) === JSON.stringify(asks.join(' / ').split(' / ')), `the fretboard's own tunings ask the same: E2 ${here[0]}; D2 ${here[1]}; C2 ${here[2]}; B1 ${here[3]}`);
   const off = LINES['tune.off'].text({ cents: 20, flat: true });
   T.ok(/about 20 cents flat/.test(off), `a guitar off the band's tuning: “${off}”`);
 

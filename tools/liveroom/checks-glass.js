@@ -92,7 +92,7 @@ export async function run(T, ctx) {
     await settle(400);
     const still = await E(() => window.__lrDraws);
     T.ok(!out.open && out.covered === null && still === out.draws && out.previews === 0 && json(await history(page)) === json(h0),
-      `G goes through the glass: the room's frame stops (${out.draws} → ${still} frames), its previews released (${out.previews} open), the studio paints again, History as it was`); // needs B for a preview to release (guideOps)
+      `G goes through the glass: the room's frame stops (${out.draws} → ${still} frames), its previews released (${out.previews} open), the studio paints again, History as it was`);
     T.ok(out.key === 40, `the studio's Live room key is 40 px (${out.key})`);
     // G in the studio: back
     await press(page, 'KeyG');

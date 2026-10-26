@@ -122,39 +122,96 @@ export function planPlace(p, { place = null, tuning = null, finish = null, mic =
 }
 
 /* ------------------------------------------------------------------------------------------------ seams */
-// The spans the take tracks hold: a take folder (clips sharing a take id) is one span.
-function spans(t) {
-  const by = new Map();
-  for (const c of t.clips) {
-    if (c.kind !== 'audio') continue;
-    const k = c.take || c.id;
-    if (!by.has(k)) by.set(k, { start: c.start, end: c.start + c.length, clips: [] });
-    const s = by.get(k);
-    s.start = Math.min(s.start, c.start); s.end = Math.max(s.end, c.start + c.length); s.clips.push(c);
-  }
-  return [...by.values()].sort((a, b) => a.start - b.start);
-}
-// Butt splices on the room's take tracks: a span that runs past the start of the next one ends where it starts (the
-// engine's own edge fades do the rest), so no two takes ever play over each other. touched: clip ids the step already
-// sets (left as it set them).
-function seamOps(p, touched = new Set()) {
+// The seams on the room's take tracks after a step that moved bars (§7.2), worked out on copies of the clips and
+// written as one clip.set (or clip.remove) per clip:
+//   1. butt splices: a span that runs past the start of the next one ends where it starts (the engine's own edge
+//      fades do the rest), so no two takes ever play over each other;
+//   2. the End rings with the last part's own take: a clip lying in the End that doesn't carry on the audio of a
+//      take ending at its line (the ring of a part that was moved, cut or removed) goes, and the take that ends there
+//      runs a bar on into it, as far as its recording reaches;
+//   3. no gap at a seam: where a copy, a move or a cut left a take starting up to 30 ms after the one before ends (the
+//      lead cut off at a section line), it starts where that one ends, reaching back into its own recording, or else
+//      the one before runs on to it.
+function seamOps(p) {
   const v = readRoom(p);
+  const bpb = beatsPerBar(p.meter || [4, 4]);
+  const assets = isObj(p.assets) ? p.assets : {};
+  const all = sorted(p), end = endOf(all);
   /** @type {any[]} */
   const ops = [];
+  const seen = new Set();
   for (const role of TAKE_ROLES) {
     const t = (p.tracks || []).find((x) => x.id === v.roles[role]);
-    if (!t) continue;
-    const ss = spans(t);
+    if (!t || seen.has(t.id)) continue;
+    seen.add(t.id);
+    const work = t.clips.filter((c) => c.kind === 'audio').map((c) => ({ c, start: c.start, length: c.length, offset: +c.offset || 0, gone: false }));
+    const live = () => work.filter((w) => !w.gone);
+    const spansOf = () => {
+      const by = new Map();
+      for (const w of live()) {
+        const k = w.c.take || w.c.id;
+        if (!by.has(k)) by.set(k, { start: w.start, end: w.start + w.length, clips: [] });
+        const s = by.get(k);
+        s.start = Math.min(s.start, w.start); s.end = Math.max(s.end, w.start + w.length); s.clips.push(w);
+      }
+      return [...by.values()].sort((a, b) => a.start - b.start);
+    };
+    // (how far a clip's recording reaches, in beats from its start)
+    const reach = (w) => {
+      const d = assets[w.c.asset]?.duration;
+      return Number.isFinite(d) ? (d - w.offset) / beatSecs(p, 1, w.start) : w.length;
+    };
+    // 1. butt splices
+    const ss = spansOf();
     for (let i = 0; i + 1 < ss.length; i++) {
       const a = ss[i], b = ss[i + 1];
       if (!(a.end > b.start + EPS)) continue;
       // (a take inside another, a punch, is the comp's: left alone)
       if (b.start < a.start + MIN_CLIP || b.end < a.end - EPS) continue;
-      for (const c of a.clips) {
-        if (touched.has(c.id) || !(c.start + c.length > b.start + EPS)) continue;
-        const len = r4(b.start - c.start);
-        if (len >= MIN_CLIP) ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch: { length: len } });
+      for (const w of a.clips) {
+        if (!(w.start + w.length > b.start + EPS)) continue;
+        const len = r4(b.start - w.start);
+        if (len >= MIN_CLIP) w.length = len;
       }
+    }
+    // 2. the End's ring
+    if (end) {
+      const at = end.start, stop = end.start + end.length;
+      const near = lead(p, at) + 1e-3;
+      const enders = live().filter((w) => w.start < at - EPS && Math.abs(w.start + w.length - at) <= near);
+      const carries = (r) => enders.some((x) => x.c.asset === r.c.asset && Math.abs(x.offset + beatSecs(p, x.length, x.start) - (r.offset - beatSecs(p, r.start - (x.start + x.length), x.start + x.length))) < 2e-3);
+      for (const r of live()) {
+        if (r.start < at - EPS || r.start + r.length > stop + EPS) continue;
+        if (carries(r)) continue;
+        r.gone = true;
+      }
+      for (const x of enders) {
+        const cont = live().some((r) => r !== x && r.start >= at - near && r.start <= at + EPS && r.c.asset === x.c.asset);
+        if (cont) continue;
+        const want = Math.min(at + Math.min(bpb, end.length), x.start + reach(x)) - x.start;
+        if (want > x.length + EPS) x.length = r4(want);
+      }
+    }
+    // 3. no gap at a seam
+    const s3 = spansOf();
+    for (let i = 0; i + 1 < s3.length; i++) {
+      const a = s3[i], b = s3[i + 1];
+      const gap = b.start - a.end;
+      if (!(gap > EPS) || gap > lead(p, b.start) + 1e-3) continue;
+      const secs = beatSecs(p, gap, a.end);
+      if (b.clips.every((w) => w.offset >= secs - 1e-6 && Math.abs(w.start - b.start) < EPS)) {
+        for (const w of b.clips) { w.offset = r4(Math.max(0, w.offset - secs)); w.length = r4(w.length + (w.start - a.end)); w.start = r4(a.end); }
+      } else {
+        for (const w of a.clips) if (Math.abs(w.start + w.length - a.end) < EPS && reach(w) >= w.length + gap - 1e-3) w.length = r4(b.start - w.start);
+      }
+    }
+    for (const w of work) {
+      if (w.gone) { ops.push({ type: 'clip.remove', track: t.id, clip: w.c.id }); continue; }
+      const patch = {};
+      if (Math.abs(w.start - w.c.start) > EPS) patch.start = w.start;
+      if (Math.abs(w.offset - (+w.c.offset || 0)) > 1e-6) patch.offset = w.offset;
+      if (Math.abs(w.length - w.c.length) > EPS) patch.length = w.length;
+      if (Object.keys(patch).length) ops.push({ type: 'clip.set', track: t.id, clip: w.c.id, patch });
     }
   }
   return ops;

@@ -415,6 +415,58 @@ describe('the session: plans, each one step that undoes exactly', () => {
     s.undo();
     assert.deepEqual(song(s), was);
   });
+
+  test("the seams after ×2, a move, a remove and Lay it out: no gap, no overlap, and the End rings with the last part's own take", () => {
+    // (on each take track, the clips that play, end to end: a gap or an overlap between two is a seam the plan broke)
+    const seams = (p) => {
+      const v = readRoom(p),
+        out = [];
+      const t = p.tracks.find((x) => x.id === v.roles.guitarL);
+      const live = t.clips.filter((c) => !c.mute).sort((x, y) => x.start - y.start);
+      for (let i = 0; i + 1 < live.length; i++) {
+        const d = live[i + 1].start - (live[i].start + live[i].length);
+        // (an empty part's bars are no seam)
+        if (
+          Math.abs(d) > 1e-3 &&
+          !v.parts.some((c) => c.empty && Math.abs(c.start - (live[i].start + live[i].length)) < 1e-3)
+        )
+          out.push(`${d > 0 ? 'gap' : 'overlap'} at ${live[i + 1].start}`);
+      }
+      return out;
+    };
+    // (what plays in the End on Guitar L: the asset of the clip there, which must be the last part's take's)
+    const ring = (p) => {
+      const v = readRoom(p),
+        end = p.sections.find((x) => x.id === v.end);
+      const t = p.tracks.find((x) => x.id === v.roles.guitarL);
+      const last = v.parts.at(-1);
+      const there = t.clips.filter(
+        (c) => !c.mute && c.start < end.start + end.length - 1e-6 && c.start + c.length > end.start + 1e-6,
+      );
+      const own = t.clips.find((c) => c.id === last.playing.L);
+      return {
+        assets: [...new Set(there.map((c) => c.asset))],
+        own: own?.asset,
+        reaches: Math.max(...there.map((c) => c.start + c.length)) - end.start,
+      };
+    };
+    for (const [what, plan] of [
+      ['×2', (s, a) => planTwice(s.get(), { section: a.section })],
+      ['a move', (s, a, b) => planMove(s.get(), { section: b.section, before: a.section })],
+      ['a remove', (s, a, b) => planRemove(s.get(), { section: b.section })],
+      ['Lay it out', (s) => planLayout(s.get())],
+    ]) {
+      const { s, a, b } = two();
+      const was = song(s);
+      run(s, plan(s, a, b), what === 'Lay it out' ? 'overdub' : 'you');
+      assert.deepEqual(seams(s.get()), [], `${what}: the seams`);
+      const r = ring(s.get());
+      assert.deepEqual(r.assets, [r.own], `${what}: the End rings with the last part's own take`);
+      assert.ok(Math.abs(r.reaches - 4) < 1e-3, `${what}: a bar of ring (${r.reaches} beats)`);
+      s.undo();
+      assert.deepEqual(song(s), was, `${what}: ⌘Z back`);
+    }
+  });
 });
 
 describe('the session: the offered move and the press counts (§7.4, §11.4)', () => {

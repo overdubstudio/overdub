@@ -39,7 +39,7 @@ const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length;
 let current = null;
 // what the lamps last said, for the page's life: mounted again on the same input (back from the shelf, the send screen
 // or the control room) they light at once and don't say it all again
-const SAID = { device: null, plug: null, level: null };
+const SAID = { device: null, plug: null, level: null, lamp: null };
 const DARK = () => ({ plug: null, level: null, tune: null, lineup: null });
 
 export function lampsState() {
@@ -195,7 +195,11 @@ export function mountLamps(el, ctx) {
     // (a mic at an electric place stays said: it plays, but it's no interface)
     if (!(L.plug?.line === 'plug.mic')) set('plug', 'ok', 'plug.ok', vars, { device: st.label, input: picked || +st.channel || 1, channels: st.channels });
     // (and said once: not after the mic's line, which it would contradict)
-    if (!okSaid && SAID.device === (st.deviceId || st.label) && SAID.plug) okSaid = true;
+    if (!okSaid && SAID.device === (st.deviceId || st.label) && SAID.plug) {
+      okSaid = true;
+      // (the level as it was last heard on this input, lit until it's heard again)
+      if (SAID.lamp && !L.level) { set('level', SAID.lamp.state, SAID.lamp.id, SAID.lamp.vars, { db: SAID.lamp.db }); if (SAID.lamp.state === 'ok') wasOk = true; }
+    }
     if (!okSaid) { okSaid = true; SAID.device = st.deviceId || st.label; SAID.plug = 'plug.ok'; if (L.plug?.line !== 'plug.mic') say('plug.ok', vars); if (st.inputKind === 'interface' && st.monitoring) say('plug.direct'); }
     if (!L.tune) { set('tune', 'ask', 'tune.ask'); }
   }
@@ -241,6 +245,7 @@ export function mountLamps(el, ctx) {
     if (wasOk && v === 'quiet') return;
     const id = `level.${v}`, vars = { db: Math.round(db), input: picked };
     set('level', v === 'ok' ? 'ok' : 'warn', id, vars, { db: Math.round(db * 10) / 10 });
+    SAID.lamp = { state: v === 'ok' ? 'ok' : 'warn', id, vars, db: Math.round(db * 10) / 10 };
     if (saidLevel !== id) { saidLevel = id; if (SAID.level !== id) say(id, vars); SAID.level = id; }
     if (v === 'ok') wasOk = true;
   }

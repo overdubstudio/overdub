@@ -409,10 +409,11 @@ try {
   }
 
   /* ================================================================ one studio: a first visit is the full studio
-     A person's first visit (navigator.webdriver hidden, so the coach's own first-visit rule runs) opens the full studio,
-     the simple view's hide-by-default gone: the welcome is up and the tour waits for it. ?view=simple (a URL only, for
-     one release) still opens the simple view on the blank sheet, where ?coach starts the tour and Tap a beat opens Start a
-     song's stage. */
+     A person's first visit (navigator.webdriver hidden, so the coach's own first-visit rule runs) to bare /app/ opens the
+     live room's door (tools/liveroom/checks-door.js has the rest). Their first time in the control room, on the house's
+     demo (?demo), opens the full studio, the simple view's hide-by-default gone: the welcome is up (the room's visit
+     didn't use it up) and the tour waits for it. ?view=simple (a URL only, for one release) still opens the simple view
+     on the blank sheet, where ?coach starts the tour and Tap a beat opens Start a song's stage. */
   {
     const hide = () => { Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false, configurable: true }); };
     const ctx = await s.browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['microphone'] });
@@ -420,8 +421,11 @@ try {
     const pg = await ctx.newPage();
     const boot = async (url) => { await pg.goto(s.base + url, { waitUntil: 'load' }); await pg.waitForSelector('html[data-ready="1"]', { timeout: 45000 }); await sleep(900); };
     await boot('/app/');
+    const room = await pg.evaluate(() => { const o = window.overdub; return { open: !!o.liveRoom?.isOpen?.(), screen: o.ui.state.liveRoom?.screen || null, coach: !!o.onboard?.active, card: !!document.querySelector('.ob:not(.out)') }; });
+    T.ok(room.open && room.screen === 'door' && !room.coach && !room.card, `a person's first visit to /app/ opens the live room's door, no tour over it (${JSON.stringify(room)})`);
+    await boot('/app/?demo');
     const first = await pg.evaluate(() => { const o = window.overdub, w = document.querySelector('.ar-welcome'); return { wd: navigator.webdriver, view: o.ui.workspace?.view?.() || null, coach: !!o.onboard?.active, card: !!document.querySelector('.ob:not(.out)'), welcome: !!w && w.getClientRects().length > 0, blank: !!document.querySelector('.ar-empty-title')?.getClientRects().length }; });
-    T.ok(first.wd === false && first.view === 'full' && !first.blank, `a person's first visit opens the full studio, nothing put away (${JSON.stringify(first)})`);
+    T.ok(first.wd === false && first.view === 'full' && !first.blank, `their first time in the control room, on the house's demo (?demo), opens the full studio, nothing put away (${JSON.stringify(first)})`);
     T.ok(!first.coach && !first.card && first.welcome, `... with the welcome up, and the coach waiting for it (coach ${first.coach}, welcome ${first.welcome})`);
     await boot('/app/?view=simple&coach');
     const forced = await pg.evaluate(() => ({ coach: !!window.overdub.onboard?.active, step: window.overdub.onboard?.step, view: window.overdub.ui.workspace?.view?.() || null }));

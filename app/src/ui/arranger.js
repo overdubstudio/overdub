@@ -222,6 +222,9 @@ function mountArranger(el, app) {
     const KEY = 'overdub:welcomed';
     // (never in the simple view: its first screen is the blank sheet, and Night Shift is one link on it. Marked as
     // seen all the same: a song switched to the full studio later isn't introduced as if it were the demo)
+    // (nor under the live room, whose first run is its own: a first visit to the room isn't the control room's, and the
+    // welcome waits, unmarked, for the first time the control room opens on a song by itself)
+    if (app.ui.covered === 'liveroom' || document.documentElement.dataset.room != null) return;
     try { if (localStorage.getItem(KEY) === '1') return; localStorage.setItem(KEY, '1'); } catch { return; }
     if (app.ui.workspace?.view?.() === 'simple') return;
     const pr = app.store.get();

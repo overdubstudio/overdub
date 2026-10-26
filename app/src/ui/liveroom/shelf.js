@@ -30,6 +30,8 @@ import { songAssets } from '../export.js';
 const line = (id, vars) => LINES[id].text(vars || {});
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 const roomy = (p) => isObj(p?.room);
+// the screen a room song plays on: the kitchen table's own, else the stage
+const stageOf = (p) => (p?.room?.place === 'kitchen' ? 'kitchen' : 'stage');
 const MB = (b) => Math.round(b / 1e6);
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const dayOf = (at) => { const d = new Date(at); return `${DAYS[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -189,13 +191,13 @@ screens.add({
     const { app, ui, store } = ctx;
     css('liveroom-shelf', CSS);
     let gone = false, records = [], plain = [], space = '', asking = null;
-    const back = () => app.liveRoom.open({ screen: roomy(store.get()) ? 'stage' : 'door' });
+    const back = () => app.liveRoom.open({ screen: roomy(store.get()) ? stageOf(store.get()) : 'door' });
     const said = h('div.lrsh-said-box');
     const corner = h('button.btn.btn-txt.lrsh-corner', { type: 'button', hidden: true, style: { display: 'none' }, onclick: () => backup() }, 'Back it up');
     const showCorner = (yes) => { corner.hidden = !yes; corner.style.display = yes ? '' : 'none'; };
     const boxes = h('div.lrsh-boxes', { role: 'list', 'aria-label': 'Songs on the shelf' });
     el.append(h('div.lrsh',
-      h('div.lrsh-top', h('h1.lr-h.disp', 'The shelf'), corner, h('button.btn.btn-txt.lrsh-back', { type: 'button', onclick: back }, roomy(store.get()) ? 'Back to the stage' : 'Back to the door')),
+      h('div.lrsh-top', h('h1.lr-h.disp', 'The shelf'), corner, h('button.btn.btn-txt.lrsh-back', { type: 'button', onclick: back }, !roomy(store.get()) ? 'Back to the door' : stageOf(store.get()) === 'kitchen' ? 'Back to the table' : 'Back to the stage')),
       said, boxes));
 
     async function backup() {
@@ -216,16 +218,16 @@ screens.add({
 
     async function open(rec) {
       const cur = store.get();
-      if (rec.id === cur.id) { app.liveRoom.open({ screen: 'stage' }); return true; }
+      if (rec.id === cur.id) { app.liveRoom.open({ screen: stageOf(cur) }); return true; }
       const ok = await app.exporter.openSong(rec.song, { from: 'shelf', name: rec.title, said: `Back to “${rec.title}”.` });
       if (!ok) return false;
       // (openSong opens the room on a song with one, and installShelf's listener says where you left it)
-      if (roomy(store.get())) app.liveRoom.open({ screen: 'stage' });
+      if (roomy(store.get())) app.liveRoom.open({ screen: stageOf(store.get()) });
       return true;
     }
     function openPlain(i) {
       if (!app.exporter?.openRecent?.(i)) return false;
-      if (roomy(store.get())) app.liveRoom.open({ screen: 'stage' });
+      if (roomy(store.get())) app.liveRoom.open({ screen: stageOf(store.get()) });
       else app.liveRoom.close();
       return true;
     }

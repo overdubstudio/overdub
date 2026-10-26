@@ -542,7 +542,8 @@ export default function (app) {
     const lr = app.liveRoom;
     if (!lr) return;
     const p = store.get(), roomy = !!(p.room && typeof p.room === 'object');
-    if (roomy && (lr.isOpen() || !navigator.webdriver)) lr.open({ screen: 'stage' });
+    // (the kitchen table has its own screen; the electric places share the stage)
+    if (roomy && (lr.isOpen() || !navigator.webdriver)) lr.open({ screen: p.room.place === 'kitchen' ? 'kitchen' : 'stage' });
     else if (!roomy && lr.isOpen()) lr.close();
   }
   // ⌘O and Song ▸ Open: a project file, or a Send the song zip (its recordings come back into this browser first)

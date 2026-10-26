@@ -1090,6 +1090,8 @@ export function createRecorder(app, input, opts = {}) {
   }
   async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null, punch = null, lead = 0, quiet = false } = {}) {
     if (R) return R;
+    // (a new take: the pass Esc kept out is no longer the one ⇧R puts in, "right after")
+    thrown = null;
     const pf = punch && fin(+punch.from) ? Math.max(0, +punch.from) : null, pt = punch && fin(+punch.to) && pf != null && +punch.to > pf + EPS ? +punch.to : null;
     const au = audio ? store.track(audio) : targetFor('audio');
     // A sound on trial on a track this take records onto is kept first, said before it happens (the instrument change

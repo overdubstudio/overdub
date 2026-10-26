@@ -317,7 +317,8 @@ export default function installLiveRoom(app) {
   /* ------------------------------------------------------------------------------------------- the held keys */
   // Declared while the room is open, and only then: ahead of every key the studio has (its modes too), and the
   // screen's own come in ahead of them as it mounts (first: true, in the group 'Live room'). A global key is held as
-  // one, so it's held in a field too. (A dialog over the room, the keys sheet, keeps its keys: Esc closes it.)
+  // one, so it's held in a field too, unless only a mode makes it global. (A dialog over the room, the keys sheet,
+  // keeps its keys: Esc closes it.)
   const isOpen = () => L.open;
   const holding = () => L.open && !document.querySelector('body > [aria-modal=true]:not(.ew-region)');
   const held = new Map();
@@ -326,14 +327,18 @@ export default function installLiveRoom(app) {
     for (const k of ui.keys.list()) {
       const s = sig(k);
       if (k.group === 'Live room' || KEEP.has(s) || held.has(s)) continue;
-      want.set(s, { key: k.key, mod: k.mod || null, global: !!k.global || !!want.get(s)?.global, job: want.get(s)?.job || jobOf(k.label) });
+      // (held in a field too only for a key that's global everywhere: a mode's global key, the sounds panel's Space,
+      // held as global would take Space and Enter from the kitchen's paper)
+      want.set(s, { key: k.key, mod: k.mod || null, global: (!!k.global && !k.when) || !!want.get(s)?.global, job: want.get(s)?.job || jobOf(k) });
     }
     for (const [s, { job, ...k }] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: holding, run: () => { if (job) sayJob(job); }, label: 'Held while the live room is open', group: 'Live room' }));
   }
   // a studio key that does what the room leaves to the control room: the room points through the glass, once per job
   // and song, never mid-take (§3.15)
-  function jobOf(label) {
-    const t = String(label || '');
+  function jobOf(k) {
+    // (a key that moves, closes or plays isn't a job: only a letter, a digit or a chord with ⌘ is)
+    if (/^(Escape|Enter|NumpadEnter|Space|Tab|Arrow|Page|Home|End)/.test(k.key)) return null;
+    const t = String(k.label || '');
     if (/\bsplit|\btrim|\bcomp\b|\bcomping/i.test(t)) return /comp/i.test(t) ? 'comp' : 'edit';
     if (/\b(mute|solo|fader|pan)\b/i.test(t)) return 'mixer';
     if (/\bnotes?\b/i.test(t)) return 'notes';

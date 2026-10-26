@@ -28,7 +28,7 @@ const JOBS = {
   edit: 'editing inside a take',
   comp: 'comping takes',
   mixer: 'the mixer',
-  knobs: 'a device’s knobs',
+  knobs: 'turning a device’s knobs',
   notes: 'writing notes',
   instrument: 'an instrument this room doesn’t have',
 };

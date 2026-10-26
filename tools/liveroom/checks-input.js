@@ -18,7 +18,7 @@
 // The keys are the stage's (stream C): these drive the deck as the keys do, a key event's time being the beat (stop's
 // rule reads it from the event, as Space will).
 import { pickChannel } from '../../app/src/input/audioin.js';
-import { levelVerdict, tuningsFor, tuningName, leanLine } from '../../app/src/ui/liveroom/soundcheck.js';
+import { levelVerdict, tuningsFor, tuningName, leanLine } from '../../app/src/ui/liveroom/lamps.js';
 import { LINES } from '../../app/src/core/liveroom/lines/soundcheck.js';
 import { sticksSamples, clickSamples, STICKS, CLICK } from '../../app/src/engine/click.js';
 import { SR, riffDI, mix, session } from './fake.js';

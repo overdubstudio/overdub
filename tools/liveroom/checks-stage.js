@@ -32,8 +32,11 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|the 
 const BPM = 132;
 const VERSE = { bpm: BPM, beats: 4, chord: true, notes: [[0, 36, 0], [0.5, 36, 0], [1, 36, 0], [1.5, 39, 0.5], [2, 36, 0], [2.5, 36, 0], [3, 41, 0.75]] };
 const CHORUS = { bpm: BPM, beats: 4, chord: true, notes: [[0, 36, 1], [1, 43, 1], [2, 41, 1], [3, 39, 0.75]] };
-// [what, the riff, the file's bar it starts on, seed]
-const PASSES = [['verse L', VERSE, 1, 11], ['verse R', VERSE, 19, 12], ['chorus', CHORUS, 37, 13], ['chorus again', CHORUS, 53, 14], ['chorus kept', CHORUS, 67, 15], ['chorus R', CHORUS, 77, 16]];
+// [what, the riff, the file's bar it starts on, seed]. (A pass's count is asked for before its bar comes round in the
+// file, or the take lands off the part by however late it was. The chorus's right side follows Esc, ⇧R and the
+// band's learning, so it sits 18 bars after the kept pass: at 10, its count came after its bar on a slow run, and the
+// pair was measured on that offset, a wander or a bar to play again, which Space then offered ahead of Lay it out.)
+const PASSES = [['verse L', VERSE, 1, 11], ['verse R', VERSE, 19, 12], ['chorus', CHORUS, 37, 13], ['chorus again', CHORUS, 53, 14], ['chorus kept', CHORUS, 67, 15], ['chorus R', CHORUS, 85, 16]];
 function stageFake() {
   return session({ bpm: BPM, lead: 14, tail: 4, parts: PASSES.map(([, riff, bar, seed]) => ({ kind: 'riff', riff, bar, passes: 8, seed, jitter: 0.003, peak: -12 })) });
 }
@@ -315,6 +318,7 @@ export async function run(T, ctx) {
 
     // the other side on the chorus; its wide playback moved on; then Lay it out, offered once, by the house, ⌘Z back
     await queue(5);
+    r0 = await E(READ);
     await press(page, 'Space');
     await labelled('Chorus, the other side');
     await waitFor(() => window.__lr.stageState()?.wide, null, 30000);
@@ -323,6 +327,9 @@ export async function run(T, ctx) {
     await waitFor(() => !window.__lr.stageState()?.wide && window.overdub.ui.state.liveRoom.run === 'idle', null, 30000);
     await settle(150);
     r = await E(READ);
+    // (the pass lined up with its part of the file, so the pair is measured on what was played: tight, no bar to redo)
+    const cR = r.counts.at(-1), sideR = any(saidSince(r0, r), /^Right side is in on the chorus: the guitars are wide now\. Within/);
+    T.ok(cR?.part === 5 && cR?.from === 32 && lined(cR) && sideR && !r.state.drift, `the chorus's other side is counted in lined up with its part (its first beat ${cR ? (cR.at - cR.now).toFixed(2) : '-'} s ahead) and measured against the left: "${sideR}"`);
     const offerLine = any(r.said, /lay them out as a song\?/);
     T.ok(wide.to === 64 && r.primary === 'Lay it out' && /Intro, verse, chorus, verse, chorus, breakdown, chorus ×2, end: 61 bars, 1:51/.test(offerLine || ''), `the chorus's other side plays back wide to beat ${wide.to}, then Lay it out is offered: "${offerLine}"`);
     const pre = await E(() => JSON.stringify(window.overdub.store.get().sections));

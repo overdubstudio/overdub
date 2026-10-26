@@ -177,6 +177,24 @@ describe('the band', () => {
       b.map((n) => n.p).join(' '),
     );
   });
+  test('the bass folds a high riff by octaves into B0-B2, never onto another note', () => {
+    for (const low of [40, 52, 64]) {
+      const notes = [0, 1, 2, 3].map((t, i) => ({ t, p: low + [0, 3, 5, 10][i], d: 0.9, ms: 0, v: 0.8, db: -12 }));
+      const riff = { notes, chugs: notes, roots: notes.map((n) => n.p % 12), low, thin: false };
+      const b = bandNotes(song({ sections: [{ id: 's_a', name: 'Verse', start: 0, length: 4 }] }), 's_a', {
+        feel: 'chugs',
+        riff,
+        seed: 'x',
+      }).bass;
+      assert.equal(b.length, 4);
+      assert.deepEqual(
+        b.map((n) => n.p % 12),
+        riff.roots,
+        `low ${low}: ${b.map((n) => n.p).join(' ')}`,
+      );
+      for (const n of b) assert.ok(n.p >= HOUSE_RULES.bassLo && n.p <= HOUSE_RULES.bassHi);
+    }
+  });
   test("a thin read keeps the groove's own kick and the bass waits", () => {
     const thin = { notes: [], chugs: [], roots: [], low: null, thin: true };
     const b = bandNotes(song(), 's_a', { feel: 'chugs', riff: thin, seed: 'x' });
@@ -292,6 +310,39 @@ describe('the plans', () => {
     assert.equal(st.dispatch(pans.ops, { by: 'overdub' }).ok, true);
     assert.equal(st.get().tracks.find((t) => t.id === 't_guitarL').pan, -1);
     assert.deepEqual(panLaneOps(st.get()), []);
+  });
+  test("the pan lane stays the house's when it rides in a step by you, so it follows the next part", () => {
+    const st = build();
+    const r = st.dispatch(
+      [
+        { type: 'section.add', section: { id: 's_c', name: 'Chorus', start: 8, length: 8 } },
+        {
+          type: 'clip.add',
+          track: 't_guitarL',
+          clip: { id: 'c_l2', kind: 'audio', asset: 'a_l', start: 8, length: 8, offset: 0, by: 'you' },
+        },
+      ],
+      { by: 'you' },
+    );
+    assert.equal(r.ok, true, r.error);
+    assert.equal(st.dispatch(planDouble(st.get(), { section: 's_v' }).ops, { by: 'overdub' }).ok, true);
+    const R = st.get().tracks.find((t) => t.name === 'Guitar R').id;
+    const right = (start) => ({
+      type: 'clip.add',
+      track: R,
+      clip: { kind: 'audio', asset: 'a_l', start, length: 8, offset: 0, by: 'you' },
+    });
+    // the verse's right side, its pans in the same step by you
+    st.dispatch([right(0)], { by: 'you' });
+    assert.equal(st.dispatch(planPans(st.get()).ops, { by: 'you' }).ok, true);
+    const lane = st.get().tracks.find((t) => t.id === 't_guitarL').auto.pan;
+    assert.equal(lane.by, 'overdub');
+    // the chorus's: both parts wide, so the lane goes and L sits hard left
+    st.dispatch([right(8)], { by: 'you' });
+    assert.equal(st.dispatch(planPans(st.get()).ops, { by: 'you' }).ok, true);
+    const L = st.get().tracks.find((t) => t.id === 't_guitarL');
+    assert.equal(L.auto?.pan, undefined);
+    assert.equal(L.pan, -1);
   });
 });
 

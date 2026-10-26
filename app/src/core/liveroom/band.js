@@ -10,8 +10,9 @@
 //                                                  store.preview, never kept): the house's clips there muted
 //   planLearn(p, { section, read })                the house's step, reason room:learn:<section>: the read's notes on
 //                                                  Riff (as heard), the drums and the bass from the read (only the
-//                                                  house's untouched clips replaced), Guitar L's pan lane, the song's
-//                                                  key when it has none, room.part.set { feel, learned }
+//                                                  house's untouched clips replaced), Guitar L's pan lane,
+//                                                  room.part.set { feel, learned } (the song's key is the take's step:
+//                                                  plans.js takeOps sets it from read.key)
 //                                                  -> also { thin, kicks, bass, feel }
 //   planFeel(p, { section, feel, busy, loud, force })   room.part.set and the part's drums (and the bass, which sits on
 //                                                  the kick), signed by the house inside a step by you; from the part's
@@ -127,7 +128,14 @@ function heardRiff(p, s, heard, span, thin = null) {
 
 /* ------------------------------------------------------------------------------------------------ the band's notes */
 const RANK = { intro: 0, half: 1, bridge: 1, verse: 2, prechorus: 2, outro: 2, chorus: 3 };
-const pitchIn = (pc, lo) => clamp(lo + ((((pc - lo) % 12) + 12) % 12), HOUSE_RULES.bassLo, HOUSE_RULES.bassHi);
+// a pitch class at or over `lo`, folded by octaves into the bass's range (B0-B2): an octave down when it lands over the
+// top, never another note
+const pitchIn = (pc, lo) => {
+  let x = lo + ((((pc - lo) % 12) + 12) % 12);
+  while (x > HOUSE_RULES.bassHi) x -= 12;
+  while (x < HOUSE_RULES.bassLo) x += 12;
+  return x;
+};
 function keyRoot(p) {
   const k = p?.key;
   const pc = k && typeof k === 'object' ? parsePc(k.root) : typeof k === 'string' ? parsePc(k.split(/\s/)[0]) : NaN;
@@ -174,8 +182,9 @@ export function bandNotes(p, section, { feel = null, busy = 0, loud = 0, riff = 
   const silentFrom = drop ? len - 1 : len;
   if (drop) fillAt(F.drop, silentFrom);
   else if (busy >= 0 && next) {
-    const up = (RANK[partKey(next.name)] ?? 2) - (RANK[part] ?? 2);
-    fillAt(P.id === 'bluesbar' ? F.bar : up > 0 ? (len >= 4 * bpb ? F.bar : F.two) : up < 0 ? F.two : F.one, len);
+    const into = partKey(next.name), up = (RANK[into] ?? 2) - (RANK[part] ?? 2);
+    // (into a breakdown, round the kit into the drop, its drop on or off)
+    fillAt(P.id === 'bluesbar' ? F.bar : into === 'half' ? F.drop : up > 0 ? (len >= 4 * bpb ? F.bar : F.two) : up < 0 ? F.two : F.one, len);
   }
   if (busy >= 0) {
     const phrase = (P.id === 'bluesbar' ? 12 : busy > 0 ? 4 : 8) * bpb;

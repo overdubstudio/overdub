@@ -96,7 +96,8 @@ export function panLaneOps(p, { both = [] } = {}) {
   const have = lane ? lane.points.map((x) => ({ t: x.t, v: x.v })) : [];
   if (lane && same(have, points)) return [];
   const to = Math.max(points[points.length - 1].t, ...(lane ? lane.points.map((x) => x.t) : [0]));
-  ops.push({ type: 'auto.write', track: L.id, param: 'pan', points: points.map((x) => ({ t: x.t, v: x.v })), from: 0, to });
+  // (signed by the house whoever's step it rides in, a right side's take by you among them: _by, ops.js writeRange)
+  ops.push({ type: 'auto.write', track: L.id, param: 'pan', points: points.map((x) => ({ t: x.t, v: x.v })), from: 0, to, _by: HOUSE });
   if (Math.abs(L.pan || 0) > EPS) ops.push({ type: 'track.set', track: L.id, patch: { pan: 0 } });
   return ops;
 }

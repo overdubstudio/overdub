@@ -5,8 +5,8 @@
 //
 // Frozen (§14.2):
 //   planPlace(p, { place, tuning })      the tempo and meter, the role tracks with their chains and faders (from
-//                                        core/liveroom/places.js setupOf; the kitchen's from kitchen.js kitchenSetup),
-//                                        the master finish, room.set
+//                                        core/liveroom/places.js setupOf; the kitchen's is kitchen-plans.js
+//                                        kitchenOps), the master finish, room.set
 //   takeOps(take, { part })              the ops joined to a take's step: a new part's section.add and room.part.set,
 //                                        the seams' re-trims, the End moved
 //   planLayout(p)                        the place's form: copies, empty sections, their parts and their band, the End
@@ -18,7 +18,7 @@
 //
 // What each takes and returns, beside the frozen shape:
 //   planPlace(p, { place, tuning, finish, mic, setup })   setup: what the place sets up (setupOf's shape; the default
-//       is places.js setupOf, or kitchen.js kitchenSetup at the kitchen). Its tracks are [{ role, name, kind, ... }]:
+//       is places.js setupOf; at the kitchen, with no setup given, kitchenOps). Its tracks are [{ role, name, kind, ... }]:
 //       track.add's track with the role it plays (or { role, track: {...} }); a band role (drums, bass, the riff as
 //       heard, the kitchen's players and chords) is signed by the house inside the step unless the spec signs it.
 //       Roles the song already has are kept; a song's own master chain is kept (the finish is then null: "Yours").
@@ -43,7 +43,7 @@
 
 import { roomOf, partOf, NAMES, FINISHES } from './model.js';
 import { setupOf, placeOf } from './places.js';
-import { kitchenSetup } from './kitchen.js';
+import { kitchenOps } from './kitchen-plans.js';
 import { planFeel } from './band.js';
 import { readRoom } from './session.js';
 import { beatsPerBar, beatsBefore, beatSecs } from '../music.js';
@@ -82,7 +82,13 @@ const lead = (p, at) => r4(beatsBefore(p, at, LEAD));
 /* ------------------------------------------------------------------------------------------------ the place */
 export function planPlace(p, { place = null, tuning = null, finish = null, mic = 'one', setup = null } = {}) {
   if (!place || !NAMES.place[place]) return none();
-  const S = setup || (place === 'kitchen' ? kitchenSetup({ mic }) : setupOf(place, { tuning, finish }));
+  // the kitchen table's setup is its own (core/liveroom/kitchen-plans.js kitchenOps: the take track or Voice and
+  // Guitar, the Bare finish, room.set), picked by you
+  if (place === 'kitchen' && !setup) {
+    const k = kitchenOps(p, { mic: mic === 'two' ? 'two' : 'one' });
+    return { ops: k.ops, label: `Into ${NAMES.place[place]}`, reason: 'room:place' };
+  }
+  const S = setup || setupOf(place, { tuning, finish });
   const room = roomOf(p) || {};
   const have = readRoom(p).roles;
   /** @type {any[]} */
@@ -97,7 +103,9 @@ export function planPlace(p, { place = null, tuning = null, finish = null, mic =
     if (!isObj(spec) || typeof spec.role !== 'string') continue;
     const role = spec.role;
     if (tracks[role]) continue;
-    const { role: _r, track: inner, ...rest } = spec;
+    // (later: a role setupOf marks as made when it's first played, Guitar R and the Lead; §3.2 makes every role track
+    // when the place is picked, Guitar R unarmed under the dust cover, so it's made now and the mark isn't the track's)
+    const { role: _r, track: inner, later: _l, ...rest } = spec;
     const track = clone(isObj(inner) ? inner : rest);
     if (!track.by && BAND.has(role)) track.by = HOUSE;
     ops.push({ type: 'track.add', track, ref: role });
@@ -113,7 +121,9 @@ export function planPlace(p, { place = null, tuning = null, finish = null, mic =
   if (!own) for (const ins of Array.isArray(S.master) ? S.master : []) if (isObj(ins) && ins.device) ops.push({ type: 'insert.add', track: 'master', insert: clone(ins) });
   const rp = { place };
   if (place !== 'kitchen') { const rig = S.rig || placeOf(place).rigs?.[0]; if (rig) rp.rig = rig; }
-  if (tuning) rp.tuning = tuning;
+  // (the tuning the guitars' chains were made for: the one asked for, else the place's own, drop C at the metal club;
+  // the soundcheck's Tune lamp sets another, with the chains' low cut, ui/liveroom/soundcheck.js)
+  if (tuning || (place !== 'kitchen' && S.tuning)) rp.tuning = tuning || S.tuning;
   if (!own && fin) rp.finish = fin;
   if (place === 'kitchen') rp.mic = mic === 'two' ? 'two' : 'one';
   if (Object.keys(tracks).length) rp.tracks = tracks;

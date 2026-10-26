@@ -187,7 +187,9 @@ function segsOver(p, start, length) {
 }
 
 // The free spans of the master's time (song beats), where the players rest. free: the master take's free time, seconds
-// into its recording as the analyser read it (its read's result.free). The song doesn't keep a read (room.takes is
+// into its recording as the analyser read it (its read's result.free). A read is of what the clip plays: its
+// recording from the clip's offset (the work tape's leading silence trimmed off, §6.3), so its times run from the
+// clip's start. The song doesn't keep a read (room.takes is
 // { capo, bpm, onMaster }), so whoever holds the read passes it: the kitchen screen, and planRead from its take.
 // A counted take has none: it's on the grid by construction.
 function freeBeats(p, f) {
@@ -195,7 +197,7 @@ function freeBeats(p, f) {
   const m = p.tempoMap;
   if (!Array.isArray(f) || !f.length || !R.master || !m || !Array.isArray(m.anchors) || m.anchors.length < 2) return [];
   const c = clipOf(p, R.master);
-  const s0 = c ? mapSec(m.anchors, c.clip.start) - (+c.clip.offset || 0) : 0;
+  const s0 = c ? mapSec(m.anchors, c.clip.start) : 0;
   return f.map(([t0, t1]) => [mapBeat(m.anchors, s0 + t0), mapBeat(m.anchors, s0 + t1)]);
 }
 
@@ -296,7 +298,7 @@ function gridOps(p, R, take) {
   const dur = Number(take.read?.result?.duration);
   if (c) {
     const s0 = mapSec(R.anchors, R.start);
-    const len = Number.isFinite(dur) && dur > 0 ? r4(mapBeat(R.anchors, s0 + dur - (+c.clip.offset || 0)) - R.start) : null;
+    const len = Number.isFinite(dur) && dur > 0 ? r4(mapBeat(R.anchors, s0 + dur) - R.start) : null;
     ops.push({ type: 'clip.set', track: c.track.id, clip: c.clip.id, patch: { start: R.start, ...(len && len > 0 ? { length: len } : {}) } });
   }
   return ops;
@@ -317,7 +319,7 @@ function takeBeats(p, take) {
   if (!c) return null;
   const spb = 60 / (+p.tempo || 120);
   const A = m && Array.isArray(m.anchors) && m.anchors.length >= 2 ? m.anchors : [{ beat: 0, sec: 0 }, { beat: 1, sec: spb }];
-  const s0 = mapSec(A, c.clip.start) - (+c.clip.offset || 0);
+  const s0 = mapSec(A, c.clip.start);
   const dur = Number(take.read?.result?.duration) || 0;
   const b0 = Math.ceil(c.clip.start - EPS), b1 = Math.floor(mapBeat(A, s0 + dur) + EPS);
   const beats = [], secs = [];

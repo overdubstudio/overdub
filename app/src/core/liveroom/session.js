@@ -23,10 +23,12 @@
 //       byline: the first clip in its bars that is neither yours nor the house's)
 //   offered(view, run) -> { id, label, key, card? } | null   the offered move (§7.4); the kitchen's is kitchen.js
 //       offeredKitchen. run: ui.state.liveRoom.run ('idle' | 'count' | 'take' | 'learn' | 'play'), or the session's
-//       state { run, last (the part just played), drift ({ card, bar }: a drift line just named a bar), said (the
-//       once-only marks said for this song: prefs said), heard (the shape when it was last heard top to bottom) }.
-//       ids: take (That's a take), stop, punch (Bar 5 again), other (The other side), layout, hear, play (an empty
-//       part, by name: R on it), count (Count me in), next (Next part). null: nothing to offer (the door)
+//       state { run, last (the part just played), drift ({ card, bar }: a drift line just named a bar), use2 ({ card,
+//       take }: two left takes of a part sit within the pair rule, §3.7), said (the once-only marks said for this
+//       song: prefs said), heard (the shape when it was last heard top to bottom) }.
+//       ids: take (That's a take), stop, punch (Bar 5 again), use2 (Use take 2 as the right side), other (The other
+//       side), layout, hear, play (an empty part, by name: R on it), count (Count me in), next (Next part). null:
+//       nothing to offer (the door)
 //   stopBeat(view, beat, { from }?) -> the beat a stop pressed at `beat` ends on (§3.5): pressed in the first beat of a
 //       bar, the line just gone (a late press costs no bar); later in the bar, the next. At the blues bar a part is
 //       whole twelve-bar choruses from `from` (the part's 1): in a chorus's first two bars, that chorus's start; later,
@@ -163,7 +165,11 @@ const low = (s) => String(s || '').toLowerCase();
 export function offered(view, run) {
   if (!view || !view.place) return null;
   const r = runOf(run);
-  if (view.place === 'kitchen') return offeredKitchen(view, r);
+  // (the kitchen's own: its screen passes its run; from a bare run, the takes and the tape read from the view)
+  if (view.place === 'kitchen') {
+    const takes = (view.cards || []).reduce((n, c) => n + (c.takes?.L?.length || 0), 0);
+    return offeredKitchen(view, { takes, rolling: r.run === 'take' || r.run === 'count', playing: r.run === 'play', ...r });
+  }
   const parts = view.parts || (view.cards || []).filter((c) => !c.end);
   const said = saidOf(r);
   const state = r.run || 'idle';
@@ -173,6 +179,9 @@ export function offered(view, run) {
   // 2. a drift line just named a bar
   const drift = isObj(r.drift) ? r.drift : null;
   if (drift && parts.some((c) => c.id === drift.card) && Number.isFinite(drift.bar)) return { id: 'punch', label: `Bar ${drift.bar} again`, key: 'Space', card: drift.card };
+  // 2b. two left takes of a part sit within the pair rule: one of them as the right side (§3.7)
+  const use2 = isObj(r.use2) ? r.use2 : null;
+  if (use2 && Number.isFinite(use2.take) && parts.some((c) => c.id === use2.card && !c.takes?.R?.length)) return { id: 'use2', label: `Use take ${use2.take} as the right side`, key: 'Space', card: use2.card };
   const taken = parts.filter((c) => !c.empty);
   const last = parts.find((c) => c.id === r.last) || null;
   // 3. the other side: at the metal club, the part just played has a left take and no right one; at the basement,

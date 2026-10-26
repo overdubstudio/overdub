@@ -26,7 +26,7 @@ import { h, css } from '../dom.js';
 import { pickChannel, inputKind } from '../../input/audioin.js';
 import { levelVerdict, tuningsFor, NOTE } from './lamps.js';
 import { roomOf } from '../../core/liveroom/model.js';
-import { rigLabel } from '../../core/liveroom/places.js';
+import { rigLabel, lowCut } from '../../core/liveroom/places.js';
 import { LINES } from '../../core/liveroom/lines/soundcheck.js';
 import { createDeck } from './deck.js';
 
@@ -64,6 +64,19 @@ const CSS = `
 .lr-lamp-rig { font: 13px/1.3 var(--font-mono, monospace); color: var(--text-2); }
 @media (hover: none) { .lr-lamp, .lr-lamp-ask .btn { min-height: 44px; } }
 `;
+
+// The guitars' Slide Rule low cut for a tuning (§4.1: 100 Hz for E standard and drop D, 90 for D and C, 80 for B), on
+// each guitar role's track, in the tuning's step: the chains places.js setupOf made were for the place's own tuning
+const GUITARS = ['guitarL', 'guitarR', 'guitar', 'lead'];
+function lowCutOps(p, tuning) {
+  const room = roomOf(p), hz = lowCut(tuning), ops = [];
+  for (const role of GUITARS) {
+    const t = (p.tracks || []).find((x) => x.id === room?.tracks?.[role]);
+    const eq = t?.inserts?.find((fx) => fx.device === 'core.eq8' && fx.params?.b1_on);
+    if (eq && eq.params.b1_freq !== hz) ops.push({ type: 'insert.set', track: t.id, insert: eq.id, patch: { params: { b1_freq: hz } } });
+  }
+  return ops;
+}
 
 export function mountLamps(el, ctx) {
   css('lr-lamps', CSS);
@@ -267,7 +280,7 @@ export function mountLamps(el, ctx) {
     // the answer is the song's tuning (the bass's range, the guitar's low cut and the key's root follow it): a step by you
     const p = store.get(), room = roomOf(p);
     if (room && room.tuning !== t.id) {
-      try { store.dispatch({ type: 'room.set', patch: { tuning: t.id } }, { by: 'you', label: `Tuned to ${t.name}`, reason: 'room:tuning' }); } catch (e) { console.error('lamps: the tuning', e); }
+      try { store.dispatch([{ type: 'room.set', patch: { tuning: t.id } }, ...lowCutOps(p, t.id)], { by: 'you', label: `Tuned to ${t.name}`, reason: 'room:tuning' }); } catch (e) { console.error('lamps: the tuning', e); }
     }
     return said;
   }

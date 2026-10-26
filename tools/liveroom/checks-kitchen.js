@@ -246,6 +246,60 @@ export async function run(T, ctx) {
     T.ok(by.some((x) => /^On the beat.*:you$/.test(x)) && by.some((x) => /^The band read take 1:overdub$/.test(x)), `signing: the time a step by you, the read the house's (${by.slice(-2).join(' · ')})`);
   }
 
+  {
+    // Count me in (§6.3): a take counted in at 84 is on the song's grid by construction. The band reads its chords on
+    // that grid, and nothing reads its time (no tempo map; the take is the master at 84)
+    const bars = [...V, ...C, ...V, ...C];
+    const tk = takeOf(bars, { bpm: 84, seed: 41, lead: 0 });
+    const read = readTape(tk.buf, SR);
+    const { st, track, clip } = songWith(tk.buf);
+    const take = { track, clip, read, counted: true };
+    const r = planRead(st.get(), { take });
+    ok(st.dispatch(r.ops, { by: 'overdub', label: r.label }));
+    const p = st.get();
+    const tl = chordsTimeline(p);
+    let hit = 0, total = 0;
+    tk.played.forEach((x, i) => {
+      if (i && x.chord === tk.played[i - 1].chord) return;
+      total++;
+      const beat = (x.at * 84) / 60;
+      if (tl.some((s) => s.chord.name === x.chord && Math.abs(s.a - beat) <= 1.01)) hit++;   // (the names as the capo spells them: Bb)
+    });
+    const noTime = !r.ops.some((o) => o.type === 'tempo.map') && !p.tempoMap && p.tempo === 84;
+    T.ok(noTime && p.room.master === clip && p.sections[0]?.start === 0 && hit / total >= 0.9, `Count me in: a counted take keeps the song's time (no tempo map: ${noTime}; at 84) and the band reads its chords on that grid (${hit} of ${total} changes within a beat; ${p.sections.map((s) => s.name).join(', ')})`);
+    // a fresh song at the kitchen starts at the kitchen's 84, the tempo Count me in offers
+    const fresh = createStore(createProject({ tempo: 120 }), { getDevice });
+    ok(fresh.dispatch(kitchenOps(fresh.get(), { mic: 'one' }).ops, { by: 'overdub' }));
+    T.ok(fresh.get().tempo === 84, `Count me in: a fresh song at the kitchen table starts at ${fresh.get().tempo} BPM`);
+  }
+  {
+    // a paper in Nashville numbers: the Chords track plays them in the key of the shapes (G), not in C
+    const st = createStore(createProject({ tempo: 84 }), { getDevice });
+    ok(st.dispatch(pasteOps(st.get(), parseSheet('{key: G}\n[Verse]\n| 1 | 4 | 6- | 5 |\n')).ops, { by: 'you' }));
+    ok(st.dispatch([{ type: 'track.add', ref: 'c', track: { name: 'Chords', kind: 'instrument', instrument: { device: 'core.keys' }, mute: true } }, ...['1', '4', '6-', '5'].map((n, i) => ({ type: 'clip.add', track: '$c', clip: { kind: 'notes', start: i * 4, length: 4, name: n, notes: [] } }))], { by: 'overdub' }));
+    const names = chordsTimeline(st.get()).map((x) => x.chord.name).join(' ');
+    T.ok(names === 'G C Em D', `the chords: Nashville numbers on the Chords track play in the paper's key (1 4 6- 5 in G: ${names})`);
+  }
+  {
+    // where the time moves, the players rest: a take with a third of it in free time, the shaker kept over all of it
+    const tk = takeOf([...V, ...V, ...C, ...C], { bpm: 84, seed: 9, free: [3, 9] });
+    const read = readTape(tk.buf, SR);
+    const { st, track, clip } = songWith(tk.buf);
+    const take = { track, clip, read };
+    ok(st.dispatch(planTime(st.get(), { take, reading: 'found' }).ops, { by: 'you' }));
+    ok(st.dispatch(planRead(st.get(), { take }).ops, { by: 'overdub' }));
+    const p = st.get();
+    const pp = planPlayer(p, { player: 'shaker', section: p.sections.map((s) => s.id), free: read.result.free });
+    ok(st.dispatch(pp.ops, { by: 'you' }));
+    const q = st.get(), A = q.tempoMap.anchors, c = q.tracks.find((t) => t.id === track).clips[0];
+    const s0 = mapSec(A, c.start) - (c.offset || 0);
+    const spans = read.result.free.map(([a, b]) => [mapBeat(A, s0 + a), mapBeat(A, s0 + b)]);
+    const sh = q.tracks.find((t) => t.id === q.room.tracks.shaker);
+    const at = sh.clips.flatMap((cl) => cl.notes.map((n) => cl.start + n.t));
+    const inFree = at.filter((t) => spans.some(([a, b]) => t >= a && t < b)).length;
+    T.ok(spans.length > 0 && at.length > 0 && inFree === 0, `the time: the players rest where the time moves (${at.length} shaker notes, ${inFree} in ${spans.length} free span${spans.length === 1 ? '' : 's'})`);
+  }
+
   // 4. the levels
   if (ctx.levels !== false) {
     const tk = takeOf([...V, ...V, ...C, ...C, ...B, ...C, ...C], { bpm: 84, seed: 21, drift: 0.02 });

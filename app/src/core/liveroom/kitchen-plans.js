@@ -10,7 +10,8 @@
 //       input: { device, channel } }] (the take track, or Voice and Guitar with mic 'two'; the players' tracks are
 //       made by planPlayer, once, when a player is kept); master: the Bare finish's inserts; count: no count at all
 //       (voice 'none': the work tape); names: each role's track name
-//   planRead(p, { take, sheet })          the house's read of a work tape: the song's sections from the paper as the
+//   planRead(p, { take, sheet })          (take.counted: a take counted in, on the song's grid already: no time read)
+//       the house's read of a work tape: the song's sections from the paper as the
 //       take played it, room.parts[s].sheet, a muted Chords track with one clip per chord, the take's trim, the sounding
 //       key, room.takes. take: { track, clip, read } (read: tape.js readTape's { result, chroma, level }); sheet: the
 //       paper (the song's when left out). With no tempo map from this take yet, the found reading's grid comes first.
@@ -20,9 +21,10 @@
 //       toOps.js's form: anchors, the clip, clipStart), the take placed on it, and the band re-timed (the read, the
 //       players' clips) on the new grid. reading: a reading id ('found', 'double', 'half', 'downbeat') or one of
 //       take.read.result.readings
-//   planPlayer(p, { player, section })    a player's track (once, at its level) and its clip in each section given
-//       (a section id, a list, or left out: where the player is offered, offerSections). The step is yours, its clip
-//       the house's
+//   planPlayer(p, { player, section, free? })    a player's track (once, at its level) and its clip in each section
+//       given (a section id, a list, or left out: where the player is offered, offerSections). The step is yours, its
+//       clip the house's. free: the master take's free time (its read's result.free, seconds), where the player rests
+//       (the song keeps no read, so whoever holds it passes it)
 //   planMaster(p, { clip, read })         room.set master; with that take's read, the time and the band from it
 //   planKitchenFinish(p, { finish })      the master's chain for a finish (bare, warm, close) and room.set finish
 //   offeredKitchen(view, run) -> { id, label, key } | null   the kitchen's offered move (§7.4: Start the tape -> the
@@ -30,18 +32,18 @@
 // And:
 //   PLAYERS, PLAYER_ORDER, FEEL_GROOVES, TAKE_LEVEL      the band and where the take sits
 //   kitchenOps(p, { mic }) -> { ops, label, reason }     the setup as ops (planPlace may use it whole): the tracks,
-//       room.set { place, mic, finish, tracks }, the master's chain
+//       room.set { place, mic, finish, tracks }, the master's chain, and the kitchen's tempo on a song with nothing in it
 //   offerSections(p, player) -> [section ids]            where a player is offered: the shaker the choruses, the cajón
 //       the verses, the bass from the first chorus on, the strings the bridge (none without one)
 //   chordsTimeline(p) -> [{ a, b, chord, name }]         the Chords track as sounding chords, in song beats
-//   playerNotes(p, player, section) -> notes             what a player plays over a section (beats from its start)
+//   playerNotes(p, player, section, { free }) -> notes   what a player plays over a section (beats from its start)
 //   finishChain(finish) -> [{ device, params, on }]
 //   takeName(p, n, { capo, bpm }) -> 'Paper Moon · take 1 · capo 2'
 //   after(p, ops) -> p'                                    a copy of the song with ops applied (nothing dispatched)
 //   fromTakeOps(p, { take, capo }) -> { ops, label, reason, line }   a blank paper written from the take's own chords
 //       (chords-only lines under section headings, the house's), in the shapes the capo gives
 
-import { readChord, sheetChords, transposeChord, soundingKey, keyName, keyOfChords } from './sheet-text.js';
+import { readChord, sheetChords, transposeChord, soundingKey, shapesKey, keyName, keyOfChords } from './sheet-text.js';
 import { alignChords, formOf, timeWords } from './tape.js';
 import { roomOf, sheetOf, NAMES } from './model.js';
 import { beatsPerBar, mapSec, mapBeat, parsePc } from '../music.js';
@@ -119,6 +121,9 @@ export function kitchenOps(p, { mic = 'one' } = {}) {
   const ops = [], roles = {};
   const R = roomOf(p) || {};
   const have = isObj(R.tracks) ? R.tracks : {};
+  // (a song with nothing in it yet starts at the kitchen's tempo, the one Count me in offers)
+  const fresh = !p.tempoMap && !(p.tracks || []).some((t) => (t.clips || []).length);
+  if (fresh && p.tempo !== S.tempo) ops.push({ type: 'project.set', patch: { tempo: S.tempo } });
   for (const t of S.tracks) {
     if (have[t.role] && (p.tracks || []).some((x) => x.id === have[t.role])) { roles[t.role] = have[t.role]; continue; }
     const { role, ...track } = t;
@@ -144,12 +149,17 @@ export function chordsTimeline(p) {
   const t = roleTrack(p, 'chords');
   if (!t) return [];
   const capo = takeCapo(p);
+  // (a Nashville number is read in the key of the shapes, then moved by the capo like a letter)
+  const shapes = shapesKey(sheetOf(p), p);
   const out = [];
   for (const c of (t.clips || []).slice().sort((a, b) => a.start - b.start)) {
     if (c.kind !== 'notes' || c.mute) continue;
     const sym = String(c.name || '').trim();
-    const heard = readChord(transposeChord(sym, capo)) || readChord(sym);
-    if (!heard) continue;
+    const shape = readChord(sym, shapes);
+    if (!shape) continue;
+    const as = transposeChord(/^[A-G]/.test(sym) ? sym : shape.name, capo), sounds = readChord(as);
+    // (the sounding chord keeps the capo's spelling: Bb, not A#)
+    const heard = sounds ? { ...sounds, name: as } : shape;
     out.push({ a: c.start, b: c.start + c.length, chord: heard, name: sym });
   }
   return out;
@@ -176,12 +186,14 @@ function segsOver(p, start, length) {
   return segs;
 }
 
-// the free spans of the master's time (song beats), where the players rest
-function freeBeats(p) {
+// The free spans of the master's time (song beats), where the players rest. free: the master take's free time, seconds
+// into its recording as the analyser read it (its read's result.free). The song doesn't keep a read (room.takes is
+// { capo, bpm, onMaster }), so whoever holds the read passes it: the kitchen screen, and planRead from its take.
+// A counted take has none: it's on the grid by construction.
+function freeBeats(p, f) {
   const R = roomOf(p) || {};
   const m = p.tempoMap;
-  const f = R.master && isObj(R.takes) && Array.isArray(R.takes[R.master]?.free) ? R.takes[R.master].free : null;
-  if (!f || !m || !Array.isArray(m.anchors) || m.anchors.length < 2) return [];
+  if (!Array.isArray(f) || !f.length || !R.master || !m || !Array.isArray(m.anchors) || m.anchors.length < 2) return [];
   const c = clipOf(p, R.master);
   const s0 = c ? mapSec(m.anchors, c.clip.start) - (+c.clip.offset || 0) : 0;
   return f.map(([t0, t1]) => [mapBeat(m.anchors, s0 + t0), mapBeat(m.anchors, s0 + t1)]);
@@ -204,7 +216,7 @@ function rowsNotes(rows, pitchOf, bars, bpb, S16, R) {
   return out;
 }
 
-export function playerNotes(p, player, section) {
+export function playerNotes(p, player, section, { free = null } = {}) {
   const P = PLAYERS[player];
   const sec = typeof section === 'string' ? (p.sections || []).find((s) => s.id === section) : section;
   if (!P || !sec) return [];
@@ -240,9 +252,9 @@ export function playerNotes(p, player, section) {
     }
   }
   // nothing where the time moves (the free spans), nothing past the section
-  const free = freeBeats(p).map(([a, b]) => [a - sec.start, b - sec.start]);
+  const rests = freeBeats(p, free).map(([a, b]) => [a - sec.start, b - sec.start]);
   return notes
-    .filter((n) => n.t > -EPS && n.t < length - EPS && !free.some(([a, b]) => n.t >= a - EPS && n.t < b - EPS))
+    .filter((n) => n.t > -EPS && n.t < length - EPS && !rests.some(([a, b]) => n.t >= a - EPS && n.t < b - EPS))
     .map((n) => ({ p: n.p, t: r4(Math.max(0, n.t)), d: r4(Math.max(1 / 32, Math.min(n.d, length - n.t))), v: r4(clamp(n.v, 0.05, 1)), by: HOUSE }))
     .sort((a, b) => a.t - b.t || a.p - b.p);
 }
@@ -299,10 +311,13 @@ export function after(p, ops) {
 }
 
 // the beats of the song's grid over a take: song beats (integers) and where each falls in the recording (seconds)
+// (a counted take is on the song's grid by construction: with no tempo map, the song's tempo from beat 0)
 function takeBeats(p, take) {
   const m = p.tempoMap, c = clipOf(p, take.clip);
-  if (!m || !c) return null;
-  const A = m.anchors, s0 = mapSec(A, c.clip.start) - (+c.clip.offset || 0);
+  if (!c) return null;
+  const spb = 60 / (+p.tempo || 120);
+  const A = m && Array.isArray(m.anchors) && m.anchors.length >= 2 ? m.anchors : [{ beat: 0, sec: 0 }, { beat: 1, sec: spb }];
+  const s0 = mapSec(A, c.clip.start) - (+c.clip.offset || 0);
   const dur = Number(take.read?.result?.duration) || 0;
   const b0 = Math.ceil(c.clip.start - EPS), b1 = Math.floor(mapBeat(A, s0 + dur) + EPS);
   const beats = [], secs = [];
@@ -411,14 +426,16 @@ function summarize(p, sheet, changes, passes) {
   return { chords: [...bySec.values()], form, skipped, unknown };
 }
 
-function playersOps(q, kept, made) {
+// the take's free time, when it's the master the players follow (a counted take has none)
+const takeFree = (q, take) => (!take.counted && roomOf(q)?.master === take.clip && Array.isArray(take.read?.result?.free) ? take.read.result.free : null);
+function playersOps(q, kept, made, free = null) {
   const ops = [];
   for (const [id, k] of Object.entries(kept)) {
     for (const m of made) {
       if (!k.where.has(m.sheet)) continue;
       const sec = (q.sections || []).find((s) => Math.abs(s.start - m.a) < EPS && Math.abs(s.start + s.length - m.b) < EPS);
       if (!sec) continue;
-      const notes = playerNotes(q, id, sec);
+      const notes = playerNotes(q, id, sec, { free });
       if (notes.length) ops.push({ type: 'clip.add', track: k.track, clip: { kind: 'notes', start: sec.start, length: sec.length, name: `${PLAYERS[id].name} · ${sec.name}`, by: HOUSE, notes } });
     }
   }
@@ -432,14 +449,15 @@ export function planRead(p, { take = null, sheet = null } = {}) {
   const c = clipOf(p, take.clip);
   if (!c) return none();
   const R = readingOf(take.read.result, take.reading || null);
-  const pre = p.tempoMap && p.tempoMap.clip === take.clip ? [] : R ? gridOps(p, R, take) : [];
+  // (a counted take keeps the song's grid: nothing about its time is read)
+  const pre = take.counted || (p.tempoMap && p.tempoMap.clip === take.clip) ? [] : R ? gridOps(p, R, take) : [];
   const p1 = after(p, pre);
   const r = readOps(p1, take, paper);
   if (!r) return none();
   const p2 = after(p1, r.ops);
-  const ops = [...pre, ...r.ops, ...playersOps(p2, r.kept, r.made)];
+  const ops = [...pre, ...r.ops, ...playersOps(p2, r.kept, r.made, takeFree(p2, take))];
   const sum = summarize(p, paper, r.changes, r.passes);
-  const tw = timeWords(take.read.result, R);
+  const tw = take.counted ? null : timeWords(take.read.result, R);
   const n = takeNumber(p, take.clip);
   return { ops, label: `The band read take ${n}`, reason: 'sections and chords from the paper, lined up with the take', ...sum, moves: !!tw && tw.free > 0.2, time: tw };
 }
@@ -455,7 +473,7 @@ export function planTime(p, { take = null, reading = null } = {}) {
   const paper = sheetOf(p);
   if (hasRead && paper) {
     const r = readOps(p1, take, paper);
-    if (r) { const p2 = after(p1, r.ops); ops.push(...r.ops, ...playersOps(p2, r.kept, r.made)); }
+    if (r) { const p2 = after(p1, r.ops); ops.push(...r.ops, ...playersOps(p2, r.kept, r.made, takeFree(p2, take))); }
   } else {
     const Rm = roomOf(p) || {};
     const takes = { ...(isObj(Rm.takes) ? Rm.takes : {}) };
@@ -467,7 +485,7 @@ export function planTime(p, { take = null, reading = null } = {}) {
   return { ops, label: `${words}: around ${Math.round(R.tempo)}`, reason: `the time from take ${takeNumber(p, take.clip)}`, moves: !!tw && tw.free > 0.2, time: tw };
 }
 
-export function planPlayer(p, { player = null, section = null } = {}) {
+export function planPlayer(p, { player = null, section = null, free = null } = {}) {
   const P = PLAYERS[player];
   if (!P) return none();
   const ids = section == null ? offerSections(p, player) : Array.isArray(section) ? section : [section];
@@ -484,7 +502,7 @@ export function planPlayer(p, { player = null, section = null } = {}) {
   for (const s of secs) {
     // (a player already in that section is played again, not doubled)
     if (t) for (const c of t.clips || []) if (c.start < s.start + s.length - EPS && c.start + c.length > s.start + EPS) ops.push({ type: 'clip.remove', track: t.id, clip: c.id });
-    const notes = playerNotes(p, player, s);
+    const notes = playerNotes(p, player, s, { free });
     if (notes.length) ops.push({ type: 'clip.add', track: ref, clip: { kind: 'notes', start: s.start, length: s.length, name: `${P.name} · ${s.name}`, by: HOUSE, notes } });
   }
   const where = whereWords(p, player, secs.map((s) => s.id));

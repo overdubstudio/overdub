@@ -224,6 +224,16 @@ describe('chords and keys', () => {
     assert.equal(transposeChord('Cadd9', 2), 'Dadd9');
     assert.equal(transposeChord('Hm7', 2), 'Hm7');
     assert.equal(transposeChord('4', 2), '4');
+    // a minor chord on its own spells as guitarists do: Bbm and Ebm, but C#m, F#m and G#m
+    assert.deepEqual(
+      ['Gm', 'Cm', 'Am', 'Dm', 'Em'].map((c) => transposeChord(c, 3)),
+      ['Bbm', 'Ebm', 'Cm', 'Fm', 'Gm'],
+    );
+    assert.deepEqual(
+      ['Am', 'Em', 'Bm'].map((c) => transposeChord(c, 4)),
+      ['C#m', 'G#m', 'Ebm'],
+    );
+    assert.equal(transposeChord('F#m', 0), 'F#m');
   });
   test('Nashville numbers read in the key', () => {
     const k = { root: 'G', scale: 'major' };

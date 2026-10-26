@@ -53,8 +53,9 @@ const pcOf = (n) => ((Math.round(n) % 12) + 12) % 12;
 const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 const PLAIN_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
-// a major chord's own key, as guitarists name it (F#, not Gb; Db, not C#)
+// a chord's own key, as guitarists name it: major F#, not Gb, and Db, not C#; minor Bbm and Ebm, but C#m, F#m, G#m
 const OWN_MAJOR = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const OWN_MINOR = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
 // keys by their signature: major roots that take flats, minor roots that take flats
 const FLAT_MAJOR = new Set([5, 10, 3, 8, 1]);   // F Bb Eb Ab Db (F# rather than Gb)
 const FLAT_MINOR = new Set([2, 7, 0, 5, 10, 3]);   // D G C F Bb Eb
@@ -116,7 +117,7 @@ export function transposeChord(sym, semis, key = null) {
   const root = parsePc(m[1].toUpperCase() + acc(m[2]));
   // (with no key given, the chord's own: E/G#, Bb/D)
   const own = key || { root: '', scale: isMinorQ(parseChord(s.trim())?.quality) ? 'minor' : 'major' };
-  if (!key) own.root = (/minor/.test(own.scale) ? SHARP_NAMES : OWN_MAJOR)[pcOf(root + n)];
+  if (!key) own.root = (/minor/.test(own.scale) ? OWN_MINOR : OWN_MAJOR)[pcOf(root + n)];
   key = own;
   const out = nameIn(root + n, key) + m[3] + (m[4] ? '/' + nameIn(parsePc(m[4][0].toUpperCase() + acc(m[4].slice(1))) + n, key) : '');
   return out;

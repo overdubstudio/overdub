@@ -33,6 +33,7 @@ import { offered, stopBeat } from '../../core/liveroom/session.js';
 import { takeOps, planLayout, planTwice, planMove, planShorter, planRemove } from '../../core/liveroom/plans.js';
 import { guideOps, planLearn, planFeel, planBassYours } from '../../core/liveroom/band.js';
 import { planDouble } from '../../core/liveroom/double.js';
+import { measurePair } from '../../core/liveroom/tight.js';
 import { readInWorker } from '../../core/liveroom/read.js';
 import { setupOf, feelsOf, placeOf, rigLabel } from '../../core/liveroom/places.js';
 import { LINES as DOUBLE } from '../../core/liveroom/lines/double.js';
@@ -128,35 +129,40 @@ screens.add({
     const err = (e) => ({ ok: false, error: String(e?.message || e || 'That didn’t work.') });
 
     // a pass: the count (or the pre-roll) and the take, from the deck, the band's guide heard over it as a preview
-    function pass(kind, cardId = null) {
+    function pass(kind, cardId = null, { bar = null } = {}) {
       if (L.run !== 'idle') return { ok: false, error: 'Something’s already running.' };
       const v = view();
       const c = cardId ? v.cards.find((x) => x.id === cardId) : null;
       if (kind !== 'new' && !c) return { ok: false, error: 'Pick a part first.' };
       if (c?.end) { ctx.say('end.follows'); return { ok: true }; }
-      const role = roleFor(v, c, kind);
+      // (Bar 5 again: that bar of the right side, with the bar before it as the pre-roll)
+      const role = kind === 'punch' ? 'guitarR' : roleFor(v, c, kind);
       const track = v.roles[role];
       if (!track) return { ok: false, error: role === 'guitarR' ? 'There’s no right side in this room.' : 'There’s no guitar track in this room.' };
       const bpb = v.bpb || 4;
       const lastPart = v.parts.at(-1) || null;
-      const from = c ? c.start : lastPart ? lastPart.start + lastPart.length : 0;
-      const punch = c ? [c.start, c.start + c.length] : null;
+      const punch = c ? (kind === 'punch' && bar >= 1 ? [c.start + (bar - 1) * bpb, c.start + bar * bpb] : [c.start, c.start + c.length]) : null;
+      const from = punch ? punch[0] : lastPart ? lastPart.start + lastPart.length : 0;
       const first = !v.taken;
       const S0 = v.place ? setupOf(v.place) : null;
-      const countBeats = first ? (S0?.count?.beats || ((v.tempo || 120) >= 160 ? 8 : 4)) : 0;
       const pre = first ? 0 : kind === 'new' ? 2 : 1;
+      // (the count: the first take's, or a pass at the top of the song, where there's no song before it to pre-roll)
+      const counted = first || from - pre * bpb < -EPS;
+      const countBeats = counted ? S0?.count?.beats || ((v.tempo || 120) >= 160 ? 8 : 4) : 0;
       const p = song();
-      S.pass = { kind, from, punch, track, role, section: c?.id || null, name: c ? c.name : v.next, landed: false, bpb };
+      S.pass = { kind, from, punch, track, role, section: c?.id || null, name: c ? c.name : v.next, landed: false, bpb, bar };
       L.run = 'count';
       L.card = c?.id || L.card;
       tbHold(true);
       // the band's guide under the pass (B's guideOps), heard and never stored
       try {
-        const g = guideOps(p, { section: c?.id || null, from, bars: c ? c.bars : 8, feel: c?.part?.feel || null });
+        const g = guideOps(p, { section: c?.id || null, from, bars: punch ? (punch[1] - punch[0]) / bpb : 8, feel: c?.part?.feel || null });
         if (g?.ops?.length) S.preview = store.preview(g.ops, { by: 'overdub' });
       } catch (e) { console.error('liveroom: the guide', e); }
-      const count = deck.countIn({ from: from - pre * bpb, bars: first ? countBeats / bpb : pre, voice: first ? S0?.count?.voice || 'sticks' : 'band', hits: countBeats || undefined });
-      const take = deck.take({ track, from, punch, tail: bpb });
+      // (from: the downbeat the count or the pre-roll leads into; voice 'none' is the song's own bars before it, §9.4)
+      const hits = counted && Array.isArray(S0?.count?.hits) ? S0.count.hits : undefined;
+      const count = deck.countIn({ from, bars: counted ? countBeats / bpb : pre, voice: counted ? S0?.count?.voice || 'sticks' : 'none', hits });
+      const take = deck.take({ track, from, punch: punch ? { from: punch[0], to: punch[1] } : null, tail: bpb });
       Promise.resolve(count).then((r) => {
         if (S.pass?.from !== from) return;
         if (r && r.ok === false) return failed(r);
@@ -164,7 +170,7 @@ screens.add({
       }, failed);
       Promise.resolve(take).then((r) => {
         if (r && r.ok === false) return failed(r);
-        if (r && (r.commit || r.txn)) landed(r);
+        if (commitOf(r)) landed(r);
       }, failed);
       return { ok: true };
     }
@@ -186,22 +192,48 @@ screens.add({
       let r;
       try { r = await deck.stop({ at: 'bar', to, keep: 'song' }); } catch (e) { failed(e); return err(e); }
       if (r && r.ok === false) { failed(r); return r; }
-      if (r && (r.commit || r.txn)) landed(r);
-      else if (S.pass === P) { S.pass = null; releasePreview(); L.run = 'idle'; tbHold(false); ctx.say('take.none'); }
+      if (commitOf(r)) landed(r);
+      else if (S.pass === P) nothingKept(r);
       return { ok: true };
     }
+    // a pass that left nothing in the song: stopped in the count (said nothing), or under a bar (the deck's line)
+    function nothingKept(r) {
+      S.pass = null; releasePreview(); L.run = 'idle'; tbHold(false);
+      if (r?.cancelled) return;
+      if (!(typeof r?.line === 'string' && ctx.say(r.line))) ctx.say('take.none');
+    }
+    // What the deck hands back for a landed take, as the stage reads it: a commit ({ txn, track, clip | clips, from,
+    // to, samples?, sr? }), or the deck's take ({ ok, txn, take: { track, clip, asset }, takes, from, to, quietLead }).
+    // null: nothing landed (a take that has only started, a count stopped, a pass under a bar)
+    function commitOf(r) {
+      if (!isObj(r) || r.ok === false) return null;
+      if (isObj(r.commit)) return r.commit;
+      if (!r.txn) return null;
+      const t = isObj(r.take) ? r.take : null;
+      const clips = Array.isArray(r.takes) ? r.takes.map((x) => x?.clip).filter(Boolean) : null;
+      return { ...r, track: r.track || t?.track || null, clip: r.clip || t?.clip || null, clips: r.clips || clips };
+    }
+    // (a punch ends itself: its take lands through the deck's 'take' and 'empty' events, as well as take()'s promise)
+    offs.push(deck.on?.('take', (r) => { if (S.pass && !S.pass.landed && S.pass.punch && commitOf(r)) landed(r); }) || (() => {}));
+    offs.push(deck.on?.('empty', (r) => { if (S.pass && !S.pass.landed && S.pass.punch) nothingKept(r); }) || (() => {}));
+    // the stop rule is the session's (the blues bar's chorus rule): the deck asks it, on the beat the key went down
+    const stopWas = deck.stopBeat;
+    try { deck.stopBeat = (beat, o = {}) => stopBeat(view(), beat, { from: o.from ?? S.pass?.from ?? null }); } catch { /* a frozen deck: it keeps its own */ }
+    offs.push(() => { try { deck.stopBeat = stopWas ?? null; } catch { /* fine */ } });
     // the deck committed a take: its part, its seams and the End joined to the step, then the band learns it
     function landed(r) {
       const P = S.pass;
       if (!P || P.landed) return;
       P.landed = true;
       releasePreview();
-      const c = isObj(r.commit) ? r.commit : r;
+      const c = commitOf(r) || r;
       const txn = typeof c.txn === 'string' ? c.txn : c.txn?.id || null;
       const to = Number.isFinite(c.to) ? c.to : P.to ?? (P.punch ? P.punch[1] : P.from + 8 * P.bpb);
       const from = Number.isFinite(c.from) ? c.from : P.from;
       const v0 = view();
-      const plan = takeOps({ song: song(), track: c.track || P.track, clip: c.clip || null, clips: c.clips || null, from, to, section: P.section, name: P.name }, {});
+      // (the song's first part: the whole bars at its head you didn't play in go, §3.6; the deck counts them)
+      const drop = P.kind === 'new' && !v0.taken && Number(c.quietLead) > 0 ? Number(c.quietLead) * P.bpb : 0;
+      const plan = takeOps({ song: song(), track: c.track || P.track, clip: c.clip || null, clips: c.clips || null, from, to, section: P.section, name: P.name, drop }, {});
       if (plan.ops.length) {
         const j = dispatch(plan.ops, { by: 'you', join: txn || undefined, label: plan.label, reason: plan.reason });
         if (!j.ok) { console.error('liveroom: the take\'s part', j.error); }
@@ -217,18 +249,66 @@ screens.add({
       L.side = 'L';
       const v = view(), cd = v.cards.find((x) => x.id === section);
       const n = cd ? (P.role === 'guitarR' ? cd.takes.R.length : cd.takes.L.length || cd.takes.lead.length) : 1;
+      // (the part as it landed: a new one's bars, the dropped ones out)
+      const pFrom = P.kind === 'new' && cd ? cd.start : from, pTo = P.kind === 'new' && cd ? cd.start + cd.length : to;
       tbHold(false);
-      if (P.kind === 'new' && !v0.taken) say('part.in', { part: cd?.name || P.name, bars: Math.round((to - from) / P.bpb), bpm: Math.round(v.tempo), tuning: tuningWords(v.tuning) });
-      else if (P.kind === 'new') say('next.in', { part: cd?.name || P.name, bars: Math.round((to - from) / P.bpb) });
+      if (P.kind === 'new' && !v0.taken) say('part.in', { part: cd?.name || P.name, bars: Math.round((pTo - pFrom) / P.bpb), bpm: Math.round(v.tempo), tuning: tuningWords(v.tuning) });
+      else if (P.kind === 'new') say('next.in', { part: cd?.name || P.name, bars: Math.round((pTo - pFrom) / P.bpb) });
       else if (P.kind === 'again' && n > 1) say('again.in', { part: cd?.name || P.name, take: n, was: n - 1 });
       S.pass = null;
-      learn(section, c, { from, to, name: cd?.name || P.name });
+      // (the right side: the drums follow the left take, so the band doesn't learn from it; the pair is measured)
+      if (P.role === 'guitarR') { pair(section, c, { from, to, bar: P.kind === 'punch' ? P.bar : null }); return; }
+      learn(section, c, { from: pFrom, to: pTo, name: cd?.name || P.name });
+    }
+    // a clip's recording from the part's 1, as a DI (the commit's samples, else the asset the engine holds)
+    function diOf(clipId, { from, samples = null, sr = null } = {}) {
+      const found = clipId ? store.findClip?.(clipId) : null;
+      const clip = found?.clip || null;
+      let data = samples, rate = sr || 48000;
+      if (!data && clip?.asset) {
+        const buf = eng()?.assets?.peek?.(clip.asset);
+        if (buf) { data = buf.getChannelData(0); rate = buf.sampleRate; }
+      }
+      if (!data || !clip) return null;
+      const spb = 60 / (song().tempo || 120);
+      const at = Math.max(0, Math.round(((+clip.offset || 0) + (from - clip.start) * spb) * rate));
+      return { di: data.subarray(at), sr: rate };
+    }
+    // the other side is in: how tightly it sits on the left, bar by bar (B's measurePair, §4.7), in one line; a drift
+    // of one or two bars offers that bar again (Space). Then the part plays back once, wide.
+    function pair(section, c, { from, to, bar = null }) {
+      L.run = 'idle';
+      const v = view(), cd = v.cards.find((x) => x.id === section);
+      if (!cd) return;
+      const bpb = v.bpb || 4, bars = Math.round((to - from) / bpb);
+      let m = null;
+      try {
+        const left = diOf(cd.playing.L, { from });
+        const right = diOf(c.clip || c.clips?.[0] || cd.playing.R, { from, samples: c.samples || null, sr: c.sr || null });
+        if (left && right && left.sr === right.sr) m = measurePair(left.di, right.di, { sr: left.sr, tempo: song().tempo, start: 0, bars, grid: placeOf(v.place).grid || 4 });
+      } catch (e) { console.error('liveroom: measuring the pair', e); }
+      // needs B: measurePair's verdict and the side.* lines (lines/double.js)
+      const per = Array.isArray(m?.perBar) ? m.perBar.filter((b) => Number.isFinite(b?.ms)) : [];
+      const worst = per.reduce((a, b) => (!a || Math.abs(b.ms) > Math.abs(a.ms) ? b : a), null);
+      const r5 = (x) => Math.round(Math.abs(x) / 5) * 5;
+      const vars = { part: cd.name, ms: worst ? Math.round(Math.abs(worst.ms)) : null };
+      // (a punch: that bar alone, measured again)
+      if (bar != null) { if (worst) say('side.punched', { ...vars, bar }); return; }
+      if (m?.verdict === 'bar' && worst) {
+        S.drift = { card: section, bar: worst.bar };
+        say('side.drift', { ...vars, bar: worst.bar, ms: r5(worst.ms), dir: worst.ms > 0 ? 'late' : 'early' });
+      } else if (m?.verdict === 'loose') {
+        const lim = Math.min(20, (60000 / (song().tempo || 120)) / 16);
+        const first = per.find((b) => Math.abs(b.ms) > lim || b.matched === false) || per[0] || null;
+        say('side.wander', { ...vars, bar: first?.bar ?? 1 });
+      } else if (m?.verdict === 'tight') say(worst && Math.abs(worst.ms) <= 10 ? 'side.tight' : 'side.fine', vars);
     }
     async function learn(section, c, { from, to }) {
       L.run = 'learn';
       try {
         const p = song();
-        const found = c.clip ? store.findClip?.(c.clip) : null;
+        const cid = c.clip || c.clips?.[0] || null;
+        const found = cid ? store.findClip?.(cid) : null;
         const clip = found?.clip || null;
         let samples = c.samples || null, sr = c.sr || 48000;
         if (!samples && clip?.asset) {
@@ -282,6 +362,7 @@ screens.add({
       S.top = !c || from === 0;
       S.from = from;
       S.ended = false;
+      S.seen = null;
       L.run = 'play';
       try { e.play(from); } catch (x) { L.run = 'idle'; return err(x); }
       return { ok: true };
@@ -478,7 +559,7 @@ screens.add({
           return pass('again', c.id);
         }
         case 'play': { const c = v.parts.find((x) => x.empty); return c ? pass('again', c.id) : { ok: false }; }
-        case 'punch': { const d = S.drift; S.drift = null; return d ? pass('again', d.card) : { ok: false }; }
+        case 'punch': { const d = S.drift; if (!d) return { ok: false }; S.drift = null; L.side = 'R'; return pass('punch', d.card, { bar: d.bar }); }
         case 'other': {
           if (v.place === 'bluesbar' || v.place === 'kitchen') return { ok: false, error: 'This room has no other side.' };
           const c = (typeof anchor === 'string' ? v.cards.find((x) => x.id === anchor) : null) || card() || v.parts.find((x) => x.id === S.last);
@@ -667,7 +748,9 @@ screens.add({
       if (L.run === 'play') {
         const e = eng();
         const end = e?.songEnd?.() ?? Infinity;
-        if (!e?.playing && !e?.starting) stopPlay(true);
+        if (e?.playing && Number.isFinite(e.beat)) S.seen = e.beat;
+        // (stopped from somewhere else, ⇧Esc or the agent: heard to the end only if it got to the last bar)
+        if (!e?.playing && !e?.starting) stopPlay(Number.isFinite(S.seen) && S.seen >= end - (lv.bpb || 4) - EPS);
         else if (e?.beat >= end - EPS) stopPlay(true);
       }
       stage.dataset.run = L.run === 'count' || L.run === 'take' ? 'take' : L.run;

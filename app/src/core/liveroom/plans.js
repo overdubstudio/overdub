@@ -26,7 +26,8 @@
 //   takeOps(take, { part })   take: { song (the song as the take left it, the take in), track, clip (the take's clip;
 //       or clips: every clip the take put in), from (the part's 1, beats), to (the stop's bar line), section (an
 //       existing part's id: Again, the other side, a punch; none for a new part), name (a new part's name), id (a new
-//       part's section id; one is made) }; part: room.part.set's patch for a new part (its feel). -> { ops, label,
+//       part's section id; one is made), drop (the song's first part: the beats of whole bars at its head you didn't
+//       play in, the deck's quietLead, dropped: the take moves left by them) }; part: room.part.set's patch for a new part (its feel). -> { ops, label,
 //       reason, section } by you, reason room:take:<section>, label "Verse take 1". The take's clips start 30 ms before
 //       the part's 1 (the first part's at beat 0) when the recording reaches back that far, end on the next part's
 //       seam (a butt splice) or, the last part, ring a bar into the End; the take before it on the track ends where it
@@ -249,11 +250,17 @@ export function takeOps(take, { part = null } = {}) {
   const p = take?.song;
   if (!isObj(p) || !Array.isArray(p.sections)) return none();
   const bpb = beatsPerBar(p.meter || [4, 4]);
-  const from = r4(Number(take.from) || 0), to = r4(Number(take.to) || from + bpb);
+  const from = r4(Number(take.from) || 0);
+  let to = r4(Number(take.to) || from + bpb);
   if (!(to > from + EPS)) return none();
   /** @type {any[]} */
   const ops = [];
   const existing = take.section ? sectionOf(p, take.section) : null;
+  // (the song's first part drops the whole bars at its head you didn't play in, §3.6: the take moves left by them, so
+  // your 1 is the song's; at least a bar stays)
+  const firstPart = !existing && from <= EPS && !sorted(p).some((s, i, a) => !isEndSec(s, i, a));
+  const drop = firstPart && Number(take.drop) > 0 ? Math.max(0, Math.min(Math.floor(Number(take.drop) / bpb) * bpb, Math.floor((to - from) / bpb - 1) * bpb)) : 0;
+  to = r4(to - drop);
   const id = existing ? existing.id : take.id || minter(p)('s');
   const name = existing ? existing.name : String(take.name || 'Verse');
   if (!existing) {
@@ -276,10 +283,13 @@ export function takeOps(take, { part = null } = {}) {
   for (const c of mine) {
     if (c.kind !== 'audio') continue;
     const patch = {};
-    let start = c.start, off = +c.offset || 0;
+    let start = c.start - drop, off = +c.offset || 0;
+    if (start < -EPS) { off = r4(off + beatSecs(p, -start, 0)); start = 0; }
     // (a recording that reaches back past the seam is cut there; one that starts later keeps its own start)
-    if (start < head - EPS) { off = r4(off + beatSecs(p, head - start, start)); start = head; patch.start = start; patch.offset = off; }
-    const end = Math.min(c.start + c.length, tail);
+    if (start < head - EPS) { off = r4(off + beatSecs(p, head - start, start)); start = head; }
+    if (Math.abs(start - c.start) > EPS) patch.start = r4(start);
+    if (Math.abs(off - (+c.offset || 0)) > 1e-6) patch.offset = off;
+    const end = Math.min(c.start + c.length - drop, tail);
     if (Math.abs(end - start - c.length) > EPS && end - start >= MIN_CLIP) patch.length = r4(end - start);
     if (Object.keys(patch).length) { ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch }); touched.add(c.id); }
     starts.push(start);

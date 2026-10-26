@@ -228,6 +228,37 @@ describe("the session: the room's view", () => {
     assert.equal(offered(v, { run: 'idle', last: v.parts[1].id }).id, 'other', 'so the other side is offered for it');
   });
 
+  test("the first part drops the whole bars at its head you didn't play in: your 1 is the song's", () => {
+    const s = metalSong();
+    const c = commit(s, { from: 0, to: 40 });
+    const t = takeOps({ song: s.get(), track: c.track, clip: c.clip, from: 0, to: 40, name: 'Verse', drop: 8 }, {});
+    assert.ok(s.dispatch(t.ops, { by: 'you', join: c.txn, label: t.label, reason: t.reason }).ok);
+    const p = s.get(),
+      v = readRoom(p);
+    assert.deepEqual(
+      v.cards.map((x) => [x.name, x.start, x.bars]),
+      [
+        ['Verse', 0, 8],
+        ['End', 32, 1],
+      ],
+    );
+    const clip = p.tracks.find((x) => x.id === c.track).clips[0];
+    assert.equal(clip.start, 0);
+    assert.ok(
+      Math.abs(clip.offset - (8 * 60) / 132) < 1e-3,
+      `the take reads from your first bar (${clip.offset} s in)`,
+    );
+    assert.equal(clip.length, 36, 'the part and a bar of ring');
+    assert.equal(s.history.length, 2, 'still one step for the take');
+    // (a later part never drops: its bars are the song's)
+    const c2 = commit(s, { from: 32, to: 64 });
+    const t2 = takeOps(
+      { song: s.get(), track: c2.track, clip: c2.clip, from: 32, to: 64, name: 'Chorus', drop: 8 },
+      {},
+    );
+    assert.equal(t2.ops.find((o) => o.type === 'section.add').section.start, 32);
+  });
+
   test("the End: one bar after the last part (two at the blues bar), and planEnd when it's already there is nothing", () => {
     const s = metalSong();
     takeIn(s, { name: 'Verse', from: 0, to: 32 });

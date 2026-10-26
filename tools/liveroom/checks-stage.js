@@ -40,7 +40,8 @@ const INSTALL = async (setup) => {
   const { screens } = await import('/app/src/ui/liveroom/screens.js');
   const { planPlace } = await import('/app/src/core/liveroom/plans.js');
   const F = (window.__lrFake = { calls: [], n: 0, cur: null, resolve: null, kept: null, beat: 0, playing: false, plays: [] });
-  function commit({ track, from, to }) {
+  // (a commit as the stage's seam has it, or, as: 'deck', the deck's own take: { ok, txn, take, takes, from, to, quietLead })
+  function commit({ track, from, to }, as = 'commit') {
     const p = o.store.get();
     const t = p.tracks.find((x) => x.id === track);
     const n = ++F.n, id = `a_fake${n}`, cid = `c_fake${n}`;
@@ -50,7 +51,9 @@ const INSTALL = async (setup) => {
     for (const c of t.clips) if (!c.mute && Math.min(c.start + c.length, to) - Math.max(c.start, from) > c.length / 2) ops.push({ type: 'clip.set', track, clip: c.id, patch: { mute: true } });
     ops.push({ type: 'clip.add', track, clip: { id: cid, kind: 'audio', asset: id, start, length: len, offset: 0, take: `tk_fake${n}`, name: `Take ${n}` } });
     const r = o.store.dispatch(ops, { by: 'you', label: `Take ${n}` });
-    return r.ok ? { ok: true, commit: { txn: r.txn.id, track, clip: cid, from, to } } : { ok: false, error: r.error };
+    if (!r.ok) return { ok: false, error: r.error };
+    const tk = { track, clip: cid, asset: id, start, length: len };
+    return as === 'deck' ? { ok: true, txn: r.txn.id, take: tk, takes: [tk], from, to, quietLead: 0 } : { ok: true, commit: { txn: r.txn.id, track, clip: cid, from, to } };
   }
   const fake = {
     state: { run: 'idle' },
@@ -63,13 +66,13 @@ const INSTALL = async (setup) => {
       F.cur = null; F.resolve = null;
       if (a.keep === 'capture') { F.kept = cur; res?.({ ok: false, cancelled: true }); return Promise.resolve({ ok: true }); }
       res?.({ ok: true });
-      return Promise.resolve(cur ? commit({ track: cur.track, from: cur.from, to: a.to }) : { ok: false, error: 'no take' });
+      return Promise.resolve(cur ? commit({ track: cur.track, from: cur.from, to: a.to }, 'deck') : { ok: false, error: 'no take' });
     },
-    keepAfterAll() { F.calls.push(['keepAfterAll']); const k = F.kept; F.kept = null; return Promise.resolve(k ? commit({ track: k.track, from: k.from, to: k.punch ? k.punch[1] : k.from + 32 }) : { ok: false }); },
+    keepAfterAll() { F.calls.push(['keepAfterAll']); const k = F.kept; F.kept = null; return Promise.resolve(k ? commit({ track: k.track, from: k.from, to: k.punch ? k.punch.to : k.from + 32 }) : { ok: false }); },
     level: () => null, tuner: () => null,
   };
   // a punch ends itself at its part's end: the check says when
-  F.finish = () => { const cur = F.cur, res = F.resolve; F.cur = null; F.resolve = null; fake.state.run = 'idle'; res?.(commit({ track: cur.track, from: cur.punch[0], to: cur.punch[1] })); };
+  F.finish = () => { const cur = F.cur, res = F.resolve; F.cur = null; F.resolve = null; fake.state.run = 'idle'; res?.(commit({ track: cur.track, from: cur.punch.from, to: cur.punch.to })); };
   const def = screens.get('stage'), mount = def.mount;
   def.mount = (el, ctx) => { window.__lrCtx = ctx; Object.assign(ctx.deck, fake); return mount(el, ctx); };
   // the transport, held still
@@ -200,7 +203,7 @@ export async function run(T, ctx) {
     await settle();
     r = await E(READ);
     const tkR = r.calls.filter((c) => c[0] === 'take').at(-1)?.[1];
-    T.ok(tkR?.track === gR && json(tkR?.punch) === json([0, 32]), `PageDown is the offered move: the other side, on Guitar R over bars 1-8 (${json(tkR?.punch)})`); // needs B (planDouble)
+    T.ok(tkR?.track === gR && json(tkR?.punch) === json({ from: 0, to: 32 }), `PageDown is the offered move: the other side, on Guitar R over bars 1-8 (${json(tkR?.punch)})`); // needs B (planDouble)
     await E(() => window.__lrFake.finish());
     await settle();
     h = await history(page);
@@ -212,7 +215,7 @@ export async function run(T, ctx) {
     await settle();
     r = await E(READ);
     const ciN = r.calls.filter((c) => c[0] === 'countIn').at(-1)?.[1], tkN = r.calls.filter((c) => c[0] === 'take').at(-1)?.[1];
-    T.ok(ciN?.from === 24 && tkN?.from === 32 && tkN?.track === gL && r.run === 'take', `a sustain-pedal press is Space: the next part from beat 32, two bars of the verse before it (countIn from ${ciN?.from})`);
+    T.ok(ciN?.from === 32 && ciN?.bars === 2 && ciN?.voice === 'none' && tkN?.from === 32 && tkN?.track === gL && r.run === 'take', `a sustain-pedal press is Space: the next part from beat 32, two bars of the verse before it as its pre-roll (countIn into ${ciN?.from}, ${ciN?.bars} bars of ${ciN?.voice})`); // needs A (countIn's from is the downbeat)
     await E(() => { window.__lrFake.beat = 64.4; window.overdub.input.emit('expr', { src: 'midi', sustain: true }); window.overdub.input.emit('expr', { src: 'midi', sustain: false }); });
     await settle();
     r = await E(READ);
@@ -223,6 +226,10 @@ export async function run(T, ctx) {
     // Again on the chorus, an agent's edit, then the learning: ⌘Z undoes the learning alone
     await press(page, 'KeyR');
     await settle();
+    r = await E(READ);
+    const ciA = r.calls.filter((c) => c[0] === 'countIn').at(-1)?.[1], tkA = r.calls.filter((c) => c[0] === 'take').at(-1)?.[1];
+    T.ok(ciA?.from === 32 && ciA?.bars === 1 && ciA?.voice === 'none' && json(tkA?.punch) === json({ from: 32, to: 64 }) && tkA?.track === gL,
+      `R is Again on the chorus: a bar of the verse as its pre-roll into beat ${ciA?.from}, the take ending itself at the chorus's end (${json(tkA?.punch)})`); // needs A
     await E(() => window.__lrFake.finish());
     await settle();
     await E(() => { const o = window.overdub, d = o.store.get().tracks.find((t) => t.name === 'Bass'); o.store.dispatch({ type: 'track.set', track: d.id, patch: { gain: -9 } }, { by: 'mcp:test', label: 'bass down' }); });

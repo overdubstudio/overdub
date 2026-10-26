@@ -15,7 +15,8 @@
 //      channels, the one that moves on the first strum picked (at least 12 dB over the others: audioin pickChannel);
 //      nothing in 5 s, a refusal, or a mic at an electric place, each says so. Monitoring is the input layer's (on
 //      through the amp for an interface). Device and channel selects, 16 px.
-//   2. Level: the hardest strums' peak over the last 3 s, said when it has held a second.
+//   2. Level: the hardest strums' peak over the last 3 s, said when it has held a second; the lamp shows the number
+//      it was said with until the verdict changes (or the lamp is pressed and listens again).
 //   3. Tune: the open low string (the tuner down to 38 Hz) names the tuning, or asks which of two; the answer is a
 //      step by you (room.set { tuning }) when the song has a room. Six sustained notes more than 15 cents off say so.
 //   4. Line it up: eight strums to the clicks (input/latency.js, how: 'tap'), kept per device; long round trips and
@@ -56,9 +57,9 @@ const CSS = `
 .lr-stage .lr-lamp-rig { display: none; }
 .lr-lamp { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line-2); background: var(--bg-2, transparent);
   color: var(--text); font: 600 13px/1.2 var(--font-ui); text-align: left; cursor: pointer; max-width: 100%; }
-.lr-lamp:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lr-lamp:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .lr-lamp-dot { flex: none; width: 10px; height: 10px; background: var(--line-2); }
-.lr-lamp[data-state="ok"] .lr-lamp-dot { background: var(--accent); }
+.lr-lamp[data-state="ok"] .lr-lamp-dot { background: var(--lr-lamp, #ffc85a); }
 .lr-lamp[data-state="ask"] .lr-lamp-dot, .lr-lamp[data-state="busy"] .lr-lamp-dot { background: var(--text-3); }
 .lr-lamp[data-state="warn"] .lr-lamp-dot { background: var(--text); }
 .lr-lamp-name { white-space: nowrap; }
@@ -244,9 +245,17 @@ export function mountLamps(el, ctx) {
     if (now - since < SETTLE_MS) return;
     if (wasOk && v === 'quiet') return;
     const id = `level.${v}`, vars = { db: Math.round(db), input: picked };
-    set('level', v === 'ok' ? 'ok' : 'warn', id, vars, { db: Math.round(db * 10) / 10 });
-    SAID.lamp = { state: v === 'ok' ? 'ok' : 'warn', id, vars, db: Math.round(db * 10) / 10 };
-    if (saidLevel !== id) { saidLevel = id; if (SAID.level !== id) say(id, vars); SAID.level = id; }
+    // (the lamp holds the peak its line was said from, until the verdict changes or the lamp is pressed: a number moving
+    // under a line that doesn't would be two answers. Mounted again on the same input, the verdict it said stands)
+    if (saidLevel === id) return;
+    saidLevel = id;
+    if (SAID.level === id && SAID.lamp?.id === id) set('level', SAID.lamp.state, id, SAID.lamp.vars, { db: SAID.lamp.db });
+    else {
+      set('level', v === 'ok' ? 'ok' : 'warn', id, vars, { db: Math.round(db * 10) / 10 });
+      SAID.lamp = { state: v === 'ok' ? 'ok' : 'warn', id, vars, db: Math.round(db * 10) / 10 };
+      SAID.level = id;
+      say(id, vars);
+    }
     if (v === 'ok') wasOk = true;
   }
 
@@ -332,7 +341,7 @@ export function mountLamps(el, ctx) {
 
   function redo(k) {
     if (k === 'plug') openInput({ device: null });
-    else if (k === 'level') { peaks = []; verdict = null; saidLevel = null; wasOk = false; }
+    else if (k === 'level') { peaks = []; verdict = null; saidLevel = null; wasOk = false; SAID.level = null; }
     else if (k === 'tune') { lowSeen = null; notes = []; offSaid = false; set('tune', 'ask', 'tune.ask'); paintAsk(); say('tune.ask'); }
     else if (k === 'lineup') lineUp();
   }

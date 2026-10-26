@@ -8,7 +8,7 @@
 //      input 2 picked; Quiet, Loud and clear, Hot and That clipped as the fake gets louder; the open low strings E2, D2,
 //      C2, B1 named or asked about (as the fretboard's tunings have them, the Tune lamp pressed before C2 and B1); the
 //      D2 after E2 has been named, with no press, names nothing; six notes of a C2 20 cents flat say so, and
-//      not before the sixth
+//      not before the sixth; Line it up pressed lights amber, kept for the device, and lit again when mounted again
 //   3. The count (muted Chromium, the speakers' feed captured): four sticks at 132, eight at 160, the basement's two
 //      bars with its hits, each on its beat within a render quantum (128 samples), the silent ones silent, `at` kept
 //   4. The takes (muted Chromium, a stereo fake: a voice on input 1, a guitar on input 2, the deck's latency 0): the
@@ -134,7 +134,33 @@ async function soundcheck(T, ctx) {
     await page.waitForFunction((t) => (window.__sc.fileT() ?? 0) > t, flatEnd + 1, { timeout: 30000 });
     const r = await E(() => ({ said: window.__sc.said, lamps: window.__sc.lampsState(), st: { channel: window.overdub.input.audio.state.channel, channels: window.overdub.input.audio.state.channels, label: window.overdub.input.audio.state.label } }));
     await room.shot('liveroom-input-lamps');
-    await E(() => window.__sc.stop());
+    // Line it up: the lamp pressed (the eight strums' measurement stood in for: its clicks would sound) lights amber with
+    // the round trip, kept for the device (overdub:latency); the lamps mounted again (back through the glass, from the
+    // shelf) come up lit with it at once
+    const lu = await E(async () => {
+      const app = window.overdub, lat = app.input.audio.latency, measure = lat.measure;
+      lat.measure = async () => ({ ok: true, how: 'tap', ms: 12.4, spread: 6 });
+      try {
+        document.querySelector('.lr-lamp[data-lamp="lineup"]').click();
+        await new Promise((r) => setTimeout(r, 150));
+      } finally { lat.measure = measure; }
+      const first = window.__sc.lampsState().lineup;
+      const dot = getComputedStyle(document.querySelector('.lr-lamp[data-lamp="lineup"] .lr-lamp-dot')).backgroundColor;
+      const kept = JSON.parse(localStorage.getItem('overdub:latency') || '{}')[String(app.input.audio.state.deviceId || 'default')] || null;
+      const said = window.__sc.said.filter((x) => x.id === 'line.ok').map((x) => x.vars.ms);
+      window.__sc.stop();
+      const { mountLamps, lampsState } = await import('/app/src/ui/liveroom/soundcheck.js');
+      const el = document.createElement('div');
+      document.body.append(el);
+      const again = mountLamps(el, { app, ui: app.ui, store: app.store, deck: window.__sc.deck, view: () => ({ place: null }), say: () => {}, prefs: null, scene: null });
+      await new Promise((r) => setTimeout(r, 50));
+      const back = lampsState().lineup;
+      again.unmount();
+      el.remove();
+      return { first, dot, kept, said, back };
+    });
+    T.ok(lu.first?.lit && lu.first.state === 'ok' && lu.first.text === 'Lined up: 12 ms there and back.' && lu.dot === 'rgb(255, 200, 90)' && lu.said.length === 1 && lu.kept?.ms === 12.4 && lu.kept.how === 'tap' && lu.back?.lit && lu.back.text === lu.first.text,
+      `Line it up: lit amber (${lu.dot}) with “${lu.first?.text}”, kept for the device (${lu.kept?.ms} ms, ${lu.kept?.how}); mounted again it's lit at once (“${lu.back?.text}”)`);
     const said = r.said, line = (id) => said.find((x) => x.id === id);
     T.note(`the lamps said: ${said.map((x) => `${x.id}@${fmt(x.t)}`).join(' ')}`);
 

@@ -8,7 +8,9 @@
 
 export const CSS = `
 .lr { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column; background: var(--bg); color: var(--text); overflow-x: hidden; overflow-y: auto; outline: none;
-  padding: 0 clamp(16px, 2.4vw, 32px) 12px; }
+  padding: 0 clamp(16px, 2.4vw, 32px) 12px;
+  /* (a lit lamp is amber, as the scenes' are, docs/BRAND.md: the soundcheck's, the talkback's, a card's L R) */
+  --lr-lamp: #ffc85a; --lr-lamp-ink: #16130f; }
 .lr[hidden] { display: none; }
 /* (a hidden element in the room stays hidden: .btn and the room's flex rows would otherwise show it) */
 .lr [hidden] { display: none !important; }
@@ -24,7 +26,7 @@ export const CSS = `
 .lr-scene { width: min(100%, 1024px); height: auto; aspect-ratio: 16 / 9; image-rendering: pixelated; display: block; }
 .lr-talkback { display: flex; align-items: baseline; gap: 10px; width: min(100%, 1180px); margin: 8px auto 0; min-height: 1.5em; }
 .lr-tb-lamp { flex: none; width: 8px; height: 8px; background: var(--line-2); align-self: center; }
-.lr-tb-lamp.lr-on { background: var(--accent-2); }
+.lr-tb-lamp.lr-on { background: var(--lr-lamp); }
 /* (no line yet: no lamp, so an empty strip isn't a stray square) */
 .lr-talkback:not(.lr-said) .lr-tb-lamp { visibility: hidden; }
 .lr-tb-text { margin: 0; font: 400 18px/1.4 var(--font-ui); max-width: 70ch; }
@@ -89,7 +91,7 @@ export const CSS = `
 .lr-card-feel { font: 400 13px/1.3 var(--font-ui); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lr-sides { position: absolute; right: 8px; bottom: 26px; pointer-events: none; display: flex; gap: 4px; }
 .lr-sidelamp { font: 700 12px/1 var(--font-mono); font-style: normal; width: 16px; height: 16px; display: grid; place-items: center; border: 1px solid var(--line-2); color: var(--text-3); }
-.lr-sidelamp.lr-on { color: var(--bg); background: var(--text-2); border-color: var(--text-2); }
+.lr-sidelamp.lr-on { color: var(--lr-lamp-ink); background: var(--lr-lamp); border-color: var(--lr-lamp); }
 .lr-env { position: absolute; left: 10px; bottom: 6px; width: 148px; height: 16px; color: var(--text-3); image-rendering: pixelated; }
 .lr-card-more { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; padding: 0; background: none; border: 0; color: var(--text-2); font-size: 16px; cursor: pointer; border-radius: var(--r-press); }
 .lr-card-more:hover, .lr-card-more:focus-visible { background: var(--bg-3); color: var(--text); }

@@ -536,7 +536,7 @@ It keeps a baseline per scope: measure BEFORE a change and again AFTER, and you 
 bypass: [insert ids] and mute: [tracks] apply to this render only (a scratch copy: no History entries), e.g. your effect on vs bypassed in two calls.
 per_track: true measures balance in one call (is the hook buried?): each track on its own and the rest of the mix without it, with its level against the mix and the rest, and its main band against the rest of the mix in that band. The summed mix's loudness and tone can stay put while one track moves 2 LU, so use this for balance.
 series: "bars" adds per-bar numbers over the range (lufsShortMax, rms, centroid for each bar), so a fade or a sweep can be checked as numbers ("bars 1–4: −41, −29, −22, −17 LUFS short-term, rising").
-targets: "bass-music", "metal" or "acoustic" checks the render against the genre's measured targets (bass music: window "drop": short-term loudness, crest, the low end's mono-ness, the bands; "song": integrated loudness, true peak; metal: window "song", every number on the whole master; acoustic: the whole song), the misses first.`,
+targets: "bass-music", "metal" or "acoustic" checks the render against the genre's measured targets, the misses first (bass music, window "drop": short-term loudness, crest, a mono low end, the bands; "song": loudness, true peak; the others: the whole song).`,
     input_schema: { type: 'object', properties: { ...RANGE_PROPS, series: { type: 'string', enum: ['bars'], description: 'bars: per-bar loudness and brightness over the range (to check a fade or a sweep)' }, tracks: { type: 'array', items: { type: 'string' }, description: 'track ids or names (default: the mix)' }, spectrogram: { type: 'boolean' }, compare_to: { type: 'string', description: '"previous" (default) | "none" | a save_as name' }, save_as: { type: 'string' }, bypass: { type: 'array', items: { type: 'string' }, description: 'insert ids to bypass in this render only' }, mute: { type: 'array', items: { type: 'string' }, description: 'tracks to mute in this render only' }, per_track: { type: 'boolean', description: 'balance: every audible track (or the tracks given) against the rest of the mix' }, targets: { type: 'string', enum: ['bass-music', 'metal', 'acoustic'], description: 'a genre: check against its targets' }, window: { type: 'string', enum: ['drop', 'song'], description: 'with targets: a drop\'s numbers (default) or the whole song\'s' } }, additionalProperties: false },
     run(input, { app, signal }) { return renderAndMeasure(app, input, signal); },
   },
@@ -661,7 +661,7 @@ measure: true renders each take before showing it (a scratch copy over the targe
   {
     name: 'say',
     annotations: { title: 'Post a message in the studio', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    description: 'Post a short message to the human: in the Agent panel, or the live room\'s talkback while it\'s open (outside agents use this to talk to the person at the studio; 1–3 sentences, two in the room).',
+    description: 'Post a short message to the human (outside agents: how you talk to them): the Agent panel, or the live room\'s talkback while it\'s open. 1–3 sentences.',
     input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
     run(input, { app, by }) {
       if (!input.text) return err('text is empty');

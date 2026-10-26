@@ -407,6 +407,8 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
         { type: 'sheet.section.add', ref: 'ss', section: { name: 'Verse 1', lines: [{ text: 'Somewhere a [G]paper [Em]moon', by: 'you' }] } },
         { type: 'sheet.line.add', ref: 'l2', section: '$ss', line: { text: 'over the [C]roofs' } },
         { type: 'sheet.line.set', section: '$ss', line: '$l2', patch: { text: 'over the [C]roofs of the [D]town' } },
+        { type: 'sheet.line.add', ref: 'l3', section: '$ss', line: { text: 'a line to cross out' } },
+        { type: 'sheet.line.remove', section: '$ss', line: '$l3' },
         { type: 'sheet.section.add', ref: 'br', section: { name: 'Bridge' } },
         { type: 'sheet.section.set', section: '$br', patch: { name: 'Middle' } },
         { type: 'sheet.section.remove', section: '$br' },
@@ -418,7 +420,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       const kinds = new Set(ten.map((o) => o.type));
       t.ok(all.ok && kinds.size === 10 && last.by === 'mcp:probe' && q.room?.place === 'metal' && q.room?.parts?.[secs.v]?.feel === 'gallop' && q.sheet?.capo === 3 && lines.length === 2 && lines.every((l) => l.by === 'mcp:probe')
         && q.sections.find((s) => s.id === secs.c).start === 0 && /room|sheet|moved Chorus/.test(all.summary || '') && (all.diff || []).some((l) => /^(room|sheet): /.test(l)),
-        `node: apply_ops takes the room's ten ops in one step, signed by the agent (a line given by: 'you' is the agent's): "${all.summary || all.error}"; diff ${JSON.stringify((all.diff || []).filter((l) => /^(room|sheet)/.test(l)).slice(0, 3))}`);
+        `node: apply_ops takes the room's ten ops in one step (${kinds.size} kinds), signed by the agent (a line given by: 'you' is the agent's): "${all.summary || all.error}"; diff ${JSON.stringify((all.diff || []).filter((l) => /^(room|sheet)/.test(l)).slice(0, 3))}`);
       const bad = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'sheet.lines.add', section: 'Verse 1' }] }, { by: 'mcp:probe' });
       t.ok(bad.error && /sheet\.line\.add/.test(bad.hint || '') && /section\.move/.test(bad.hint || '') && /room\.part\.set/.test(bad.hint || ''), `node: an unknown op's hint names the room's and the sheet's ops (${String(bad.hint).slice(0, 80)}…)`);
       const ex = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'sheet.line.set', section: 'Verse 1', line: 'sl_nope', patch: { text: 'x' } }] }, { by: 'mcp:probe' });

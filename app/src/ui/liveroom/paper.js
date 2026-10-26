@@ -126,7 +126,10 @@ export function createPaper({ app, store, say = () => {} }) {
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); } e.stopPropagation(); });
     title.addEventListener('blur', () => { const t = title.textContent.trim().slice(0, 200); if (t && t !== p.title) dispatch([{ type: 'project.set', patch: { title: t } }], 'The title'); });
     const capo = sh?.capo || 0;
-    const sk = sh ? soundingKey(sh, p) : null;
+    // (the key it sounds in, once there's something to read it from: a chord on the paper, or a take; a blank song's
+    // own key is nobody's yet)
+    const heard = (p.tracks || []).some((t) => (t.clips || []).some((c) => c.kind === 'audio' || c.asset));
+    const sk = sh && (heard || (sh.sections || []).some((x) => (x.lines || []).some((l) => chordsOf(l.text).length)) || sh.key) ? soundingKey(sh, p) : null;
     const room = roomOf(p);
     const slate = h('div.pp-slate',
       h('button', { 'aria-label': 'Capo down', onclick: () => setCapo(capo - 1), disabled: capo <= 0 }, '−'),

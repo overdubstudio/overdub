@@ -41,6 +41,7 @@ const CSS = `
 @media (hover: none) { .kt-go kbd { display: none; } }
 .kt-break { flex-basis: 100%; height: 0; }
 .kt-go:disabled { opacity: 0.5; cursor: default; }
+.kt-go:disabled kbd, .kt-go[hidden] { display: none; }
 .kt-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .kt-row > span { color: var(--text-3); font-size: 13px; }
 .kt-chip { min-height: 36px; padding: 0 12px; font: 400 14px/1 var(--font-ui); background: none; color: var(--text); border: 1px solid var(--line-2); cursor: pointer; }
@@ -636,8 +637,11 @@ screens.add({
       root.dataset.step = run.step;
       root.classList.toggle('kt-dim', run.rolling);
       const o = offered();
-      go.querySelector('.kt-go-label').textContent = o ? o.label : run.reading ? 'The band’s reading it' : '';
+      // (nothing to press: what the room's doing instead, or no button at all; never a blank green bar)
+      const busy = run.reading ? 'The band’s reading it' : run.step === 'balance' ? 'Listening' : '';
+      go.querySelector('.kt-go-label').textContent = o ? o.label : busy;
       go.disabled = !o;
+      go.hidden = !o && !busy;
       go.dataset.act = o ? o.id : '';
       choices.replaceChildren();
       q.textContent = '';

@@ -173,7 +173,7 @@ the device's presets.
 
 | tool | what it does |
 |---|---|
-| `get_project` | the song: title, tempo, key, meter, sections, tracks with instrument, inserts (with params) and clips, the selection and the last few history entries. `detail: "full"` (optionally with `track`) includes every note. A device with over 40 params is shown as its preset and what differs from it (`preset "Bokeh" + {"flt_cutoff":900}`), or what differs from its defaults. Automation lanes are listed under their track (`auto: Keyhole cutoff (fx_k) 31:600 32:4500 48:600, by claude`, held ones marked). `held` lists the song's devices kept off on this computer (see below); `from_link`, first, says the song came from someone's link and isn't the person's yet; `key_note` says when the key is a new song's default nobody chose (C minor, as Sketch treats it). |
+| `get_project` | the song: title, tempo, key, meter, sections, tracks with instrument, inserts (with params) and clips, the selection and the last few history entries. `detail: "full"` (optionally with `track`) includes every note. A device with over 40 params is shown as its preset and what differs from it (`preset "Bokeh" + {"flt_cutoff":900}`), or what differs from its defaults. Automation lanes are listed under their track (`auto: Keyhole cutoff (fx_k) 31:600 32:4500 48:600, by claude`, held ones marked). `held` lists the song's devices kept off on this computer (see below); `from_link`, first, says the song came from someone's link and isn't the person's yet; `key_note` says when the key is a new song's default nobody chose (C minor, as Sketch treats it). A song made in the [live room](#the-live-room-and-the-sheet) has a `room:` line (the place, rig, tuning and finish, each part with its feel and sides, the tracks by role, the takes) and, at the kitchen table, a `sheet:` line (the capo, each section of the paper and its chords; `detail: "full"` adds every line with its id and author). |
 | `get_guide` | the studio's guides: `etiquette`, `devices` (kernel writing), `ops`, `lexicon`, `transforms` (every transform's params and defaults), `genres` (with `section`: `bass-music`, `metal`), `workflows` (with `section`: `flip`). Outside agents: read first. `lexicon` also returns `personal`: what this human means by warm, fat and tight, learned from their A/B picks. Follow it. |
 | `get_selection` | what the human is looking at: track, clip (with notes, and a grid for drums), selected notes, range (beats and bars), insert (with params), playhead, and the key (marked when nobody chose it yet); `from_link` as `get_project` has it; `trying`: `{ track, device }` while the person is hearing a sound on a track before keeping it (the song still has the old one, and `track.instrument` says that one; your next call that reads or changes the song puts it back first), else `null`; `start`: `{ step, kind, tempo, sure, rounds, landed: { track, clip } | null }` while the person is starting a song on Start a song's stage, else `null` ([below](#start-a-song)). |
 | `get_history` | recent changes, newest first: who, label, reason, summary. Check it before redoing something. |
@@ -181,7 +181,7 @@ the device's presets.
 | `list_devices` | instruments and effects (`kind`, `cat`, `query`): built-ins, the Guitar Studio's pedals and amps, and devices written in this song. Each device's params (range, unit, curve, role and meaning) while the list stays under about 8,000 characters, and always for a single device; past that, names, param keys and presets, and `get_device` for the one wanted (`detail` `"params"` or `"brief"` chooses). A `cat` nothing is filed under ("guitar") lists the devices that mention the word, and the categories. |
 | `get_device` | one device; the kernel source for project devices (`source: true` for built-in kernels to learn from). A device with over 40 params (Light Table, Studio A, Slide Rule, Scribble Strip) tells the params that repeat by number once (`m1_src … [also m{2-8}_src, the same]`) and names its presets with their blurbs; `detail: "full"` gives every param on its own line and what each preset changes; `preset: "<name>"` returns one preset's whole params. A drum kit comes with its note map (`notes`: what each MIDI note plays on it). Light Table has a library, its AKWF single cycles: `library: ""` lists the families and their waves, `library: "voice"` each matching wave with the params that play it (`{ "a_table": "AKWF VOICE", "a_pos": 0.25 }`). Echo Chamber's library is its six measured rooms: `library: ""` gives each one whole, with `params: { "room": "LECTURE" }`. A held device comes back with `held: true`, its params and its source as the song's text. |
 | `define_device` | write or rewrite a kernel device; it is compiled and run through the device check (level, true peak, NaN, tail, CPU, determinism; an instrument that makes no sound fails) first, and refused with the reason if it fails. `use_on: { track }` puts it on a track in the same step and measures it there, on vs bypassed (`on_target`). A device someone else wrote is refused with whose it is and the tracks that use it; `replace: true` rewrites it, only after the human said yes. Ids the studio ships (built-ins, the house shelf) are never rewritten. A held device's code is refused under any id, as it is or with its names, comments or spacing changed, before anything runs it; and on a song that has held devices, any device an agent defines goes to the person as a card to Keep first (see [Held devices](#held-devices)). A preset value outside its param's range is refused. What an agent defines here is trusted in this browser from then on. |
-| `render_and_measure` | render a range of some tracks offline (the exact graph the human hears) and measure: LUFS, true peak, crest, band energy (`bands`, each band's share of the total, and `bandsAbs`, its own energy), brightness, width, onsets, key, plus glosses. Keeps a baseline per scope and reports deltas ("previous" moves on with every measurement: `save_as: "before"` first for a change in several steps); `spectrogram: true` adds an image. `bypass: [insert ids]` and `mute: [tracks]` apply to that render only (no History). `per_track: true` measures balance in one call: each track against the mix and the rest of it, and its main band against the rest there. An unknown section is an error, here and in `play`, `adjust` and `highlight`. `series: "bars"` adds per-bar numbers (short-term LUFS, RMS, brightness) over the range, so a fade or a sweep can be checked bar by bar. A range that starts past the song's end is an error saying where it ends. |
+| `render_and_measure` | render a range of some tracks offline (the exact graph the human hears) and measure: LUFS, true peak, crest, band energy (`bands`, each band's share of the total, and `bandsAbs`, its own energy), brightness, width, onsets, key, plus glosses. Keeps a baseline per scope and reports deltas ("previous" moves on with every measurement: `save_as: "before"` first for a change in several steps); `spectrogram: true` adds an image. `bypass: [insert ids]` and `mute: [tracks]` apply to that render only (no History). `per_track: true` measures balance in one call: each track against the mix and the rest of it, and its main band against the rest there. An unknown section is an error, here and in `play`, `adjust` and `highlight`. `series: "bars"` adds per-bar numbers (short-term LUFS, RMS, brightness) over the range, so a fade or a sweep can be checked bar by bar. A range that starts past the song's end is an error saying where it ends. `targets: "bass-music"`, `"metal"` or `"acoustic"` checks the render against that genre's measured targets, the misses first (acoustic, like metal, on the whole song). |
 | `adjust` | a perceptual move: `axis` (a word like warm, dark, punchy, lush, lazy, or an axis), `direction`, `amount` (`a_touch`, `a_bit`, `a_lot`), `target`. Resolves through the lexicon to params on the devices present (or adds an EQ, comp or reverb), applies, measures before/after, corrects once, and returns exactly what moved. Time-feel words move notes. Words people disagree on (warm/cold, fat, tight): the first time, two audible readings as A/B cards ("Darker top" vs "Fuller low-mid"); the pick is applied and kept as the human's meaning (`learned`), and later calls use it without asking (`personal: 'using your "warm": darker top'`). `reading` names one for a single call. `over` (bars, beats or a section) writes the move as automation over that range only, in a `shape` (`hold` by default, `ramp`, `ramp_up`, `ramp_down`, `swell`, `dip`, `fade_in`, `fade_out`), measures the first and last bars and the bars either side before and after, corrects once and reports per-bar numbers. On a param whose lane plays, a plain `adjust` shifts the whole lane (its shape kept) and says so. |
 | `play` | play a range for the human (bars, beats or a section; default the selection or the loop). Refused while they record. |
 | `stop` | stop playback. |
@@ -192,7 +192,7 @@ the device's presets.
 | `get_capture` | the human's latest (or recent) hummed, tapped or played phrase, as notes text, with its kind, tempo, key and confidence. |
 | `get_recording` | whether the human is recording (`idle`, `count` for the count-in, `rec`): the tracks the take goes onto, each with its mode (`fold`, picked per track: the passes folded at the stop, what was played in most of them kept and the rest left out; `layer`, a drum track's default: every loop pass adds into one clip; `take`: every pass a new take, the earlier ones muted), where it started, the loop and pass, and the notes in so far; `wait_seconds` waits for the take to end. While one records, edits to its tracks or to the timeline (tempo, meter, loop, sections, bars) come back `{ error: "recording" }`; other tracks are fine. |
 | `ask_human` | one short question, 2-4 options, shown at a natural pause (never while they record); returns the answer (or pending). |
-| `say` | post a message to the human in the Agent panel (outside agents: this is how you talk to them). |
+| `say` | post a message to the human in the Agent panel (outside agents: this is how you talk to them). While the live room is open it goes to the room's talkback instead, signed with your name, and the result says `where: "the live room's talkback"`; keep it to two sentences there. |
 | `undo` | take back your latest change (never the human's). |
 | `revert_my_changes` | revert everything you did (or since a history id), keeping the human's edits in between; says what it skipped. |
 | `transform` | a named, deterministic note transform or infill on a clip or some notes (`app/src/core/transforms.js`): humanize, quantize, strum, arpeggiate, legato, staccato, transpose (in key), invert, retrograde, double, thin, ornament, chords_from_melody, melody_from_chords, continue, fill_the_gap. One undo step; over the human's own notes it returns ready-made `variations` for `propose_variations` instead (or `mode: "apply"`). `into_track` puts added notes on another track. The human has the same set in the piano roll's Transform menu. |
@@ -341,6 +341,7 @@ Tracks may be named by id or exact name; `'master'` takes inserts. All times are
 { type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo? } }   // mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; clip.remove / clip.move { toTrack?, start? }
 { type: 'notes.add' | 'notes.replace', track, clip, notes: "text" }     // notes.remove { ids } / notes.set { notes: [{ id, p?, t?, d?, v?, s?, f? }] }
 { type: 'section.add', section: { name, start, length, key? } }          // section.set / section.remove; key: its own key ("F# minor")
+{ type: 'section.move', section, before }   // the section and everything in it to before another (id or name; null: the end), the bars between closing up
 { type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat, sec }, …], clip? } | null }   // the grid follows a recording (Flip a song, below); null: one tempo again
 // a name is plain text up to 100 characters (the .set ops refuse a longer one); a colour is var(--c-1)..var(--c-8) or hex
 { type: 'section.duplicate', section, to?, push? }   { type: 'time.insert' | 'time.remove', at, length }   // beats; across the whole song
@@ -386,6 +387,38 @@ pump on the bass is one call:
 presets (Pump (quarter notes), Gate (sixteenths), Auto-pan, Filter wobble (eighths) …) are in `get_device`, whole, for
 `insert.set` as they are. While its window is open (`show_device`), a shape you change flashes there in your colour
 and the window says what you drew.
+
+## The live room and the sheet
+
+The live room ([GUIDE.md](GUIDE.md#the-live-room)) is the same song, so everything above works on it: its parts are
+the song's sections, its takes are clips on its tracks, and the band's parts are clips by the house. Two fields are
+the room's own, and `get_project` shows them as one line each:
+
+- **`room`**: the place (`metal`, `basement`, `bluesbar`, `kitchen`), the amp's rig, the tuning, the finish, the
+  kitchen's mic, the tracks by role (`guitarL`, `drums`, `bass`, …), each part's feel, busy and loud (−1, 0 or 1),
+  repeats and sides, the take the band follows, and the levels the house set. What the band learned from a take is
+  written into its clips when the take lands; the room's fields are its memory of how.
+- **`sheet`**: the kitchen table's paper: a capo, a time signature, and sections of lines, each line plain text with
+  its chords as `[bracketed]` tokens on their syllables (`"Somewhere a [G]paper [Em]moon"`), signed by whoever wrote
+  it. `sheet.set`'s capo is the paper's: it doesn't change the song's key.
+
+```js
+{ type: 'section.move', section, before }                         // also the arranger's; before: id or name, null the end
+{ type: 'sheet.set', patch: { capo? (0-11), time? ([n, d]), notes? } }   // null deletes a key; { clear: true } the sheet
+{ type: 'sheet.section.add', section: { name, lines?: [{ text }] }, index?, ref? }   // sheet.section.set { section, patch: { name } } / .remove { section }
+{ type: 'sheet.line.add', section, line: { text }, index?, ref? }   // sheet.line.set { section, line, patch: { text } } / .remove { section, line }
+{ type: 'room.set', patch: { place?, rig?, tuning?, finish?, master?, mic?, tracks?, takes?, managed? } }   // whole values; null deletes
+{ type: 'room.part.set', section, patch: { feel?, busy?, loud?, reps?, oneSide?, drop?, sheet?, learned? } }   // merged; { section, remove: true }
+```
+
+A sheet section is found by id or name and a line by id (`get_project` with `detail: "full"` lists them); a line is
+200 characters at most. `room.set` and `room.part.set` change the room's memory, not the sound: the band's clips
+don't follow them, so to change what the band plays, change its clips, as anywhere else. Each op is one undo step
+with its exact inverse, signed by you.
+
+While the person is playing in the room (a count, a take, or the band learning it), every tool that could change the
+song waits: it returns `{ error: "recording" }` with a hint, and `get_project`, `say` and the other reads still work.
+Try again once the take is in. `say` reaches them through the talkback while the room is open.
 
 ## Notes and grids
 
@@ -465,7 +498,7 @@ verse   Straight eighths  1 bar
 
 **A note's place.** A note may carry where it's played on a guitar: `s`, the string (0 the lowest), and `f`, the fret
 counted from the nut, as whole numbers, set together (`notes.set` with `s: null` takes the place off). A notes clip may
-carry the `tuning` it's written in (`standard`, `drop-d`, `half-down`, `dadgad`, `open-g`) and a `capo` (1-12).
+carry the `tuning` it's written in (`standard`, `drop-d`, `half-down`, `dadgad`, `open-g`, `d-standard`, `drop-c`, `c-standard`, `b-standard`, `drop-b`) and a `capo` (1-12).
 Every op, undo, save and share link keeps them. The pitch is the truth: a place that no longer plays the note's pitch
 (the note was moved, the tuning changed) is fingered again wherever tab is drawn, and a note with no place is fingered
 when it's read (`fingering` in `app/src/core/fretboard.js`: as few hand positions as the part allows, within a hand's

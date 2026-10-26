@@ -15,6 +15,8 @@
 import { noteName, beatsPerBar } from '../core/music.js';
 import { ARRANGEMENT_OPS, spanLabel, whereLabel } from '../core/arrangement.js';
 import { lanesOf, parsePoints } from '../core/automation.js';
+import { NAMES } from '../core/liveroom/model.js';
+import { TUNINGS } from '../core/fretboard.js';
 
 const r = (x) => (typeof x === 'number' ? Math.round(x * 1000) / 1000 : x);
 const fmt = (v) => (typeof v === 'number' ? String(r(v)) : JSON.stringify(v));
@@ -156,6 +158,7 @@ export function diffProjects(A, B, { getDevice = () => null, max = 24, ids = tru
     else if (o.version !== d.version) out.push(words ? `${d.name || id}: version ${d.version}` : `device ${id} → v${d.version}`);
   }
   for (const id of Object.keys(A.devices || {})) if (!B.devices?.[id]) out.push(words ? `removed device "${A.devices[id]?.name || id}"` : `removed device ${id}`);
+  out.push(...roomDiff(A, B));
   if (out.length > max) return [...out.slice(0, max), `… and ${out.length - max} more changes`];
   return out;
 }
@@ -250,6 +253,17 @@ export function opsSummary(ops = [], project = null, { getDevice = null } = {}) 
       case 'time.insert': add(`inserted ${spanLabel(project || {}, +o.length || 0)} at ${whereLabel(project || {}, +o.at || 0)}`); break;
       case 'time.remove': add(`deleted ${spanLabel(project || {}, +o.length || 0)} from ${whereLabel(project || {}, +o.at || 0)}`); break;
       case 'section.duplicate': add(`copied ${sectionName(project, o.section)}`); break;
+      case 'section.move': add(`moved ${sectionName(project, o.section)} ${o.before == null ? 'to the end' : `before ${sectionName(project, o.before)}`}`); break;
+      // the live room's memory and the kitchen table's paper (core/liveroom/room-ops.js, sheet-ops.js)
+      case 'room.set': for (const w of roomSetWords(o)) add(w); break;
+      case 'room.part.set': for (const w of partSetWords(o, project)) add(w); break;
+      case 'sheet.set': for (const w of sheetSetWords(o)) add(w); break;
+      case 'sheet.section.add': add(o.section?.name ? `${o.section.name} on the sheet` : 'a new section on the sheet'); break;
+      case 'sheet.section.set': add(o.patch && 'name' in o.patch ? `renamed ${sheetSection(project, o.section)} on the sheet to ${o.patch.name}` : `changed ${sheetSection(project, o.section)} on the sheet`); break;
+      case 'sheet.section.remove': add(`removed ${sheetSection(project, o.section)} from the sheet`); break;
+      case 'sheet.line.add': add('+line', 1); break;
+      case 'sheet.line.set': add('edited line', 1); break;
+      case 'sheet.line.remove': add('−line', 1); break;
       case 'clip.repeat': {
         // a clip made in this call, repeated: its copies are new clips with its notes, counted with it
         const times = Number(o.times ?? 2) || 2, ref = typeof o.clip === 'string' && o.clip.startsWith('$') ? o.clip.slice(1) : null;
@@ -263,7 +277,9 @@ export function opsSummary(ops = [], project = null, { getDevice = null } = {}) 
     }
   }
   const notes = (n) => `${n} note${n === 1 ? '' : 's'}`;
-  const bits = [...parts].map(([k, n]) => (k === '+notes' ? `+${notes(n)}` : k === '−notes' ? `−${notes(n)}` : k === 'edited notes' ? `${notes(n)} edited` : k === 'rewrote notes' ? `rewrote ${notes(n)}` : k === 'new clip' && n > 1 ? `${n} new clips` : n > 1 ? `${k} ×${n}` : k));
+  const lines = (n) => `${n} line${n === 1 ? '' : 's'}`;
+  const bits = [...parts].map(([k, n]) => (k === '+notes' ? `+${notes(n)}` : k === '−notes' ? `−${notes(n)}` : k === 'edited notes' ? `${notes(n)} edited` : k === 'rewrote notes' ? `rewrote ${notes(n)}` : k === 'new clip' && n > 1 ? `${n} new clips`
+    : k === '+line' ? `+${lines(n)} on the sheet` : k === '−line' ? `−${lines(n)} on the sheet` : k === 'edited line' ? `${lines(n)} edited on the sheet` : n > 1 ? `${k} ×${n}` : k));
   const where = [...tracks].filter(Boolean).slice(0, 3).join(', ');
   return bits.slice(0, 3).join(', ') + (where ? ` · ${where}` : '');
 }
@@ -322,6 +338,91 @@ const sectionName = (p, ref) => {
   const s = p?.sections?.find((x) => x.id === id) || p?.sections?.find((x) => x.name.toLowerCase() === String(id).toLowerCase());
   return s ? s.name : 'a section';
 };
+// the live room's ops in words: "the room: the metal club, Drop C", "Verse: Gallop, busier", "capo 3, 3/4 on the sheet"
+const ROOM_WORDS = { tracks: "the room's tracks", master: 'the master take', mic: 'the mic', takes: 'the takes', managed: 'what the house set' };
+function roomSetWords(o) {
+  if (o.clear) return ['cleared the room'];
+  const w = [];
+  for (const [k, v] of Object.entries(o.patch || {})) {
+    if (v === null) w.push(`no ${k}`);
+    else if (k === 'place') w.push(`the room: ${NAMES.place[v] || v}`);
+    else if (k === 'finish') w.push(`finish ${NAMES.finish[v] || v}`);
+    else if (k === 'rig') w.push(`amp ${NAMES.rig[v] || v}`);
+    else if (k === 'tuning') w.push(TUNINGS[v]?.name || `tuning ${v}`);
+    else w.push(ROOM_WORDS[k] || k);
+  }
+  return w.length ? w : ['the room'];
+}
+const PART_WORDS = { busy: ['simpler', 'as written', 'busier'], loud: ['softer', 'as written', 'louder'] };
+function partSetWords(o, project) {
+  const s = sectionName(project, o.section);
+  if (o.remove) return [`${s}: the room's part cleared`];
+  const w = [];
+  for (const [k, v] of Object.entries(o.patch || {})) {
+    if (k === 'feel') w.push(v == null ? 'no feel' : NAMES.feel[v] || v);
+    else if (k in PART_WORDS) w.push(v == null ? `${k} as written` : PART_WORDS[k][Math.max(0, Math.min(2, Math.round(+v) + 1))]);
+    else if (k === 'reps') w.push(`×${v ?? 1}`);
+    else if (k === 'oneSide') w.push(v ? 'one side' : 'both sides');
+    else if (k === 'drop') w.push(v ? 'the drop into it' : 'no drop');
+    else if (k === 'sheet') w.push('plays its section of the sheet');
+    else if (k === 'learned') w.push('what the band learned');
+    else w.push(k);
+  }
+  return [`${s}: ${w.join(', ') || 'the part'}`];
+}
+function sheetSetWords(o) {
+  if (o.clear) return ['cleared the sheet'];
+  const w = [];
+  for (const [k, v] of Object.entries(o.patch || {})) {
+    if (k === 'capo') w.push(v ? `capo ${v}` : 'no capo');
+    else if (k === 'time') w.push(Array.isArray(v) ? `${v[0]}/${v[1]} on the sheet` : 'no time on the sheet');
+    else if (k === 'notes') w.push('the sheet’s notes');
+    else w.push(k);
+  }
+  return w.length ? w : ['the sheet'];
+}
+// what the room's memory and the sheet say now, where they changed: "room: finish Tight → Loud", "Verse: Gallop",
+// "sheet: Chorus +2 lines"
+function roomDiff(A, B) {
+  const out = [], ra = A.room || null, rb = B.room || null, J = JSON.stringify;
+  if (J(ra) !== J(rb)) {
+    if (!rb) out.push('room: cleared');
+    else {
+      const was = (k, v) => (k === 'place' ? NAMES.place[v] : k === 'finish' ? NAMES.finish[v] : k === 'rig' ? NAMES.rig[v] : k === 'tuning' ? TUNINGS[v]?.name : null) || v;
+      for (const k of ['place', 'rig', 'tuning', 'finish']) if (rb[k] !== ra?.[k]) out.push(`room: ${k} ${ra?.[k] ? `${was(k, ra[k])} → ` : ''}${rb[k] ? was(k, rb[k]) : 'none'}`);
+      for (const k of ['master', 'mic', 'tracks', 'takes', 'managed']) if (J(rb[k]) !== J(ra?.[k])) out.push(`room: ${ROOM_WORDS[k]}`);
+      const pa = ra?.parts || {}, pb = rb.parts || {};
+      for (const id of new Set([...Object.keys(pa), ...Object.keys(pb)])) {
+        if (J(pa[id]) === J(pb[id])) continue;
+        const ch = Object.fromEntries(Object.keys({ ...pa[id], ...pb[id] }).filter((k) => J(pa[id]?.[k]) !== J(pb[id]?.[k])).map((k) => [k, pb[id]?.[k] ?? null]));
+        out.push(...partSetWords(pb[id] ? { section: id, patch: ch } : { section: id, remove: true }, B));
+      }
+    }
+  }
+  const sa = A.sheet || null, sb = B.sheet || null;
+  if (J(sa) !== J(sb)) {
+    if (!sb) out.push('sheet: cleared');
+    else {
+      const top = sheetSetWords({ patch: Object.fromEntries(['capo', 'time', 'notes'].filter((k) => J(sa?.[k]) !== J(sb[k])).map((k) => [k, sb[k]])) });
+      if (top[0] !== 'the sheet') out.push(`sheet: ${top.join(', ').replace(/ on the sheet/g, '')}`);
+      const secs = new Map((sa?.sections || []).map((s) => [s.id, s]));
+      for (const s of sb.sections || []) {
+        const o = secs.get(s.id);
+        if (!o) { out.push(`sheet: + ${s.name}, ${s.lines.length} line${s.lines.length === 1 ? '' : 's'}`); continue; }
+        if (J(o) === J(s)) continue;
+        const ol = new Map(o.lines.map((l) => [l.id, l])), bl = new Set(s.lines.map((l) => l.id));
+        const added = s.lines.filter((l) => !ol.has(l.id)).length, gone = o.lines.filter((l) => !bl.has(l.id)).length;
+        const edited = s.lines.filter((l) => ol.has(l.id) && ol.get(l.id).text !== l.text).length;
+        const bits = [o.name !== s.name ? `renamed from ${o.name}` : '', added ? `+${added} line${added === 1 ? '' : 's'}` : '', gone ? `−${gone} line${gone === 1 ? '' : 's'}` : '', edited ? `${edited} line${edited === 1 ? '' : 's'} edited` : ''].filter(Boolean);
+        out.push(`sheet: ${s.name}${bits.length ? ` ${bits.join(', ')}` : ', reordered'}`);
+      }
+      const kept = new Set((sb.sections || []).map((s) => s.id));
+      for (const s of sa?.sections || []) if (!kept.has(s.id)) out.push(`sheet: removed ${s.name}`);
+    }
+  }
+  return out;
+}
+const sheetSection = (p, id) => p?.sheet?.sections?.find((x) => x.id === id)?.name || 'a section';
 const clipName = (p, id) => {
   for (const t of p?.tracks || []) { const c = t.clips.find((x) => x.id === id); if (c) return c.name || 'a clip'; }
   return 'a clip';

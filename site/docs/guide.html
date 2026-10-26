@@ -45,6 +45,7 @@
       <summary>On this page</summary>
       <nav aria-label="On this page"><ol>
 <li><a href="#your-first-overdub-in-five-minutes">Your first overdub in five minutes</a></li>
+<li><a href="#the-live-room">The live room</a><ol><li><a href="#on-the-stage">On the stage</a></li><li><a href="#the-talkback">The talkback</a></li><li><a href="#the-kitchen-table">The kitchen table</a></li><li><a href="#the-shelf-and-sending">The shelf and sending</a></li></ol></li>
 <li><a href="#start-a-song">Start a song</a></li>
 <li><a href="#flip-a-song">Flip a song</a></li>
 <li><a href="#find-anything">Find anything</a></li>
@@ -69,7 +70,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">The guide</a></h1>
-    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 61 min to read</p>
+    <p class="doc-meta">From <code>docs/GUIDE.md</code> (<a href="/docs/GUIDE.md">the Markdown</a>), about 66 min to read</p>
     <article class="prose">
 <p>Overdub is a studio for you and your agents. You lay down a take, your agent plays over it, you play over that, and
 every take is signed: warm for you, cool for it. This page gets you from the door to a kept take in five minutes,
@@ -77,9 +78,13 @@ then shows where everything else lives. In the studio, <code>?</code> shows ever
 <h2 id="your-first-overdub-in-five-minutes"><a class="h-link" href="#your-first-overdub-in-five-minutes">Your first overdub in five minutes</a></h2>
 <ol>
 <li><strong>Open the studio.</strong> <a href="/app/">overdubstudio.com/app/</a> in Chrome, Safari or Firefox, on a computer or a phone.
-Nothing to install, no account. The first time, it opens on <strong>Night Shift</strong>, a finished song, with a card on who
-played what; the Song menu's <strong>Demos</strong> has more, in other genres. Nothing plays until you press something. <strong>Make
-your own</strong> on that card starts a blank song and <strong>Take one</strong>, a small card that walks you through the steps below.
+Nothing to install, no account. The first time, it opens on the <a href="#the-live-room"><strong>live room</strong></a>'s door, <em>Where are
+we playing?</em>, for a guitar and a band; its <strong>Control room →</strong> link, or <strong>No guitar? Hum, tap or play keys in the
+control room.</strong>, brings you here. <a href="/app/?studio">/app/?studio</a> opens a new song in the control room straight away,
+<a href="/app/?demo">/app/?demo</a> opens on <strong>Night Shift</strong>, a finished song, with a card on who played what, and
+<a href="/app/?room">/app/?room</a> opens the live room. The Song menu's <strong>Demos</strong> has more songs, in other genres. Nothing
+plays until you press something. <strong>Make your own</strong> on the Night Shift card starts a blank song and <strong>Take one</strong>, a
+small card that walks you through the steps below.
 It waits for each one to really happen, and you can close it. It stays out of songs someone sends you, and closing
 it puts back the loop it set, unless you've changed that loop since. If you've used Overdub in this browser before,
 it opens where you left off. Everything is on screen, and <a href="#find-anything"><strong>Find anything</strong></a> (<code>⌘K</code>) gets you to
@@ -120,6 +125,71 @@ you like.</li>
 agent gave. <code>⌘Z</code> undoes the latest edit.
 <strong>Revert all Claude's changes (keep mine)</strong> takes back everything the agent did and leaves your edits alone, and
 <code>⇧⌘Z</code> puts it back, as it does after <strong>Undo</strong> on one of the agent's lines there.</p>
+<h2 id="the-live-room"><a class="h-link" href="#the-live-room">The live room</a></h2>
+<p>The live room is the other side of the glass: you bring a guitar (or an acoustic and your voice), pick a place, count
+in and play, and a band learns your part from the take. Everything in it is the same song, signed the same way:
+<strong>Control room →</strong> at the top right (or <code>G</code>) goes through the glass to the arranger with the song as it is, and <code>G</code>
+in the control room comes back. Your takes stay in this browser.</p>
+<p><strong>Where are we playing?</strong> The door has four places, each with its own band, tempo and amp, drawn in pixels with the
+kick drum's name on it. <code>1</code> to <code>4</code> picks one.</p>
+<ul>
+<li><strong>The metal club</strong> (VOID): an electric at 132 BPM, two stacks and a big kit; the kick locks to your chugs.</li>
+<li><strong>The basement</strong> (SUMP PUMP): an electric at 172 BPM, one amp, fast and loud, with a two-bar count.</li>
+<li><strong>The blues bar</strong> (LAST CALL): an electric at 96 BPM, a small amp and a shuffle, twelve bars at a time.</li>
+<li><strong>The kitchen table</strong> (COOLER): an acoustic and your voice, on the laptop's mic, at your tempo.</li>
+</ul>
+<h3 id="on-the-stage"><a class="h-link" href="#on-the-stage">On the stage</a></h3>
+<ol>
+<li><strong>Soundcheck.</strong> The column beside the stage says what it heard: <strong>Plug in</strong> (an electric wants an interface; the
+laptop's mic is fine at the kitchen table), <strong>Level</strong>, <strong>Tune</strong> (<code>U</code>) and <strong>Line it up</strong> (strum on each of eight
+clicks, so your takes land on the drums). <code>[</code> and <code>]</code> step through the amp's settings. Before the first take,
+<code>←</code> <code>→</code> move the drummer's tempo (<code>⇧</code> for ten), and <code>T</code> four times taps it.</li>
+<li><strong>Count me in.</strong> <code>Space</code> counts you in and the tape rolls. Play the part as many times round as you like; <code>Space</code>
+again is <em>That's a take</em>. It lands as a part (a verse, say), and the talkback says what went in (&quot;Verse is in: 8
+bars at 132. The band's learning it.&quot;): the drums and bass learn its rhythm and its notes, and play it back with
+you. <code>⌘Z</code> takes the take and the band's learning out together; <code>⇧⌘Z</code> puts both back.</li>
+<li><strong>The other side.</strong> A heavy part is played twice, once per speaker. At the metal club, after each part's first
+take, <code>Space</code> offers <em>The other side</em>; at the basement it's offered once, after the second part. <code>D</code> plays the
+other side of the selected part at either, and you play it again.</li>
+<li><strong>Next part.</strong> <code>N</code>, or <strong>+ Next part</strong> under the cards, counts you into the next one (a chorus, then a bridge).
+Once a part is in, <code>Space</code> offers <em>Next part</em> too.</li>
+<li><strong>Lay it out.</strong> Once two parts are in, <code>Space</code> offers <em>Lay it out</em>: the parts as a song, with how many bars and
+how long. <strong>Hear it all</strong> (<code>Home</code> then <code>Enter</code>) plays it top to bottom; <code>Enter</code> alone plays from the selected card.</li>
+</ol>
+<p>Each part is a card. <code>←</code> <code>→</code> select one (after the first take), <code>↑</code> <code>↓</code> pick which of its takes plays, and its menu
+has, one step each: <strong>Again</strong> (<code>R</code>), <strong>The other side</strong> (<code>D</code>, not at the blues bar), <strong>Another feel</strong> (<code>F</code>),
+<strong>Simpler</strong> · <strong>Busier</strong>, <strong>Softer</strong> · <strong>Louder</strong>, <strong>×2</strong> (<code>X</code>), <strong>Round and round</strong> (<code>L</code>, the part on a loop:
+<code>Space</code> hears it, <code>R</code> records it), <strong>Earlier</strong> · <strong>Later</strong> (<code>⌥←</code> · <code>⌥→</code>) and <strong>Remove</strong> (<code>⌫</code>; <code>⌘Z</code> brings it back).
+<code>Esc</code> in a take is <em>Not that one</em>: nothing goes in the song, and it's in Capture; <code>⇧R</code> puts it in after all.</p>
+<p>A page-turner pedal works the stage: <code>PageDown</code> is the offered move (the same as <code>Space</code>) and <code>PageUp</code> is <strong>Again</strong>.
+So does a sustain pedal on a MIDI keyboard (CC 64), as <code>Space</code>, while no instrument track is armed.</p>
+<h3 id="the-talkback"><a class="h-link" href="#the-talkback">The talkback</a></h3>
+<p>The line under the stage is the house talking, unsigned. <code>/</code> talks to Claude: what you type goes to the agent, and
+what it says back comes through the talkback, signed <strong>Claude</strong>, in cool. While you're playing a take, Claude's tools
+wait until you stop.</p>
+<h3 id="the-kitchen-table"><a class="h-link" href="#the-kitchen-table">The kitchen table</a></h3>
+<p>The kitchen table records an acoustic and your voice on one mic (the laptop's, a mic on the interface, or a mic and a
+pickup). It asks whether you're on headphones (<code>Y</code> · <code>N</code>): on speakers the band never plays during a take.</p>
+<ul>
+<li><strong>The paper.</strong> A sheet of words and chords, typed or pasted (ChordPro, or chords over the words), one line at a
+time; the pencil tick follows the playhead. Each line is signed by whoever wrote it; yours and the house's carry no
+name.</li>
+<li><strong>The work tape.</strong> <strong>Start the tape</strong> (<code>Space</code>) and play the song as you would at the table, at your own time. The
+band reads it: the tempo (<strong>On the beat</strong> keeps it), the parts and the chords. On headphones, <strong>Count me in</strong> gives
+one bar of sticks and a shaker on the song's time instead.</li>
+<li><strong>The players.</strong> Then the band is offered one player at a time, where each would play: <strong>A shaker in the chorus</strong>,
+<strong>The cajón under the verses</strong>, <strong>The bass from the first chorus</strong>, <strong>Strings in the bridge</strong>. <strong>Keep it</strong> or
+<strong>No thanks</strong>. <code>↑</code> <code>↓</code> hear the takes, and <strong>Use this one</strong> picks the master.</li>
+</ul>
+<h3 id="the-shelf-and-sending"><a class="h-link" href="#the-shelf-and-sending">The shelf and sending</a></h3>
+<p><strong>Shelf</strong> at the top right shows the room's songs as tape boxes, newest first, each with its label, its parts, its
+day and its engineer's note. The die on an untitled box offers three titles. A box opens its song on the stage, and
+<strong>Take it off the shelf</strong> asks first.</p>
+<p><strong>Send</strong> (on a box, or <strong>Send a mix</strong> at the kitchen table) has two choices. <strong>Send a mix</strong> is the song as a WAV,
+through your device's share sheet where it has one, else a download. <strong>Send the song</strong> is one <code>.overdub.zip</code>: the
+song and its recordings. <code>⌘O</code> opens it again, here or in another browser, and puts the recordings back; it's also
+the shelf's backup. There's no share link from the room: a link carries the notes and the devices and leaves your
+recordings behind.</p>
 <h2 id="start-a-song"><a class="h-link" href="#start-a-song">Start a song</a></h2>
 <p>Every blank song (<strong>New song</strong>, <strong>Make your own</strong>) opens on its door: <strong>Tap a beat</strong>, <strong>Hum a tune</strong>, <strong>Play the
 keys</strong> or <strong>Flip a song</strong>, and, with no playing in time, <strong>Draw a beat</strong>, <strong>Pick a groove</strong> or <strong>Ask</strong> your agent.
@@ -576,7 +646,7 @@ the bar sit beside them. A long name (&quot;Dbmaj7/Ab&quot;) gets smaller rather
 song's notes, so take them as a good reading, not gospel; a song made only of audio clips has none.</li>
 <li><strong>The neck.</strong> The pentatonic box, the key's scale, the chord's tones (by interval, or by name with <strong>Note names</strong>)
 and the next chord, fading in as the change comes; each one toggles. Pick a tuning (standard, drop D, half-step
-down, DADGAD, open G), or <strong>Left-handed</strong>. What you play lights up wherever it falls: filled when it fits, a ring
+down, DADGAD, open G, D standard, drop C, C standard, B standard, drop B), or <strong>Left-handed</strong>. What you play lights up wherever it falls: filled when it fits, a ring
 when it's outside, and the line under the neck says what it is (&quot;G: the blue third over E7; bend it a little toward
 G#&quot;).</li>
 <li><strong>Your guitar.</strong> With an interface, choose it and its input under <strong>Your guitar</strong> and open it. An interface or a

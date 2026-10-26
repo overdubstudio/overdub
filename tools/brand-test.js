@@ -179,7 +179,7 @@ if (T.ok(fs.existsSync(og), 'og.png exists')) {
   T.ok(b.readUInt32BE(16) === 1200 && b.readUInt32BE(20) === 630, `og.png is 1200x630 (${b.readUInt32BE(16)}x${b.readUInt32BE(20)}), ${(b.length / 1024).toFixed(0)} KB`);
 }
 
-for (const f of ['studio.webp', 'studio-960.webp', 'rack.webp', 'sketch.webp', 'history.webp']) {
+for (const f of ['liveroom.webp', 'liveroom-960.webp', 'studio.webp', 'studio-960.webp', 'rack.webp', 'sketch.webp', 'history.webp']) {
   const fp = path.join(ROOT, 'site/assets', f);
   T.ok(fs.existsSync(fp) && fs.statSync(fp).size <= 400 * 1024, `${f}: a real studio screenshot (node tools/shots.js), under 400 KB${fs.existsSync(fp) ? ' (' + (fs.statSync(fp).size / 1024).toFixed(0) + ' KB)' : ''}`);
 }
@@ -211,13 +211,13 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   const ctas = await page.$$eval('a[href="/app/"]', (as) => as.map((x) => x.textContent.trim()));
   T.ok(ctas.filter((t) => t === 'Open the studio').length >= 4, `"Open the studio" links to /app/ (${ctas.length})`);
   const lazy = await page.$$eval('.studio img', (im) => im.map((x) => x.loading));
-  T.ok(lazy.length === 4 && lazy.every((l) => l === 'lazy'), `studio: four real screenshots, lazy-loaded (${lazy.join(' ')})`);
+  T.ok(lazy.length === 5 && lazy.every((l) => l === 'lazy'), `studio: five real screenshots (the live room's door first), lazy-loaded (${lazy.join(' ')})`);
   await page.locator('.studio-cta').scrollIntoViewIfNeeded();
   // (the main shot is the reduced-motion fallback for the film: hidden, so never loaded, unless motion is reduced)
   const shown = '.studio img:not(.demo-still img)';
   await page.waitForFunction((sel) => [...document.querySelectorAll(sel)].every((x) => x.complete && x.naturalWidth > 0), shown, { timeout: 8000 }).catch(() => {});
   const loaded = await page.$$eval(shown, (im) => im.filter((x) => x.complete && x.naturalWidth > 0).length);
-  T.ok(loaded === 3, `studio: the screenshots load when scrolled to (${loaded}/3)`);
+  T.ok(loaded === 4, `studio: the screenshots load when scrolled to (${loaded}/4)`);
   await page.locator('.demo-film').scrollIntoViewIfNeeded().catch(() => {});
   await page.waitForFunction(() => { const v = document.querySelector('.demo-film'); return v && v.readyState >= 2 && !v.paused; }, null, { timeout: 8000 }).catch(() => {});
   const film = await page.evaluate(() => { const v = document.querySelector('.demo-film'); return v ? { muted: v.muted, playing: !v.paused, ready: v.readyState } : null; });

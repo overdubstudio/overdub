@@ -4,6 +4,8 @@
 
 Agents drive the studio through a small set of task-shaped tools (read the song and the selection, apply ops, render and measure, perceptual adjustments, A/B variations, questions, writing DSP devices as kernels, share links), the same set over MCP and for the in-app agent.
 
+The studio opens in the live room: the musician picks a place (the metal club, the basement, the blues bar or the kitchen table), counts in and plays a guitar part, and a band learns it from the take. It is the same song as the control room, with two fields of its own (`room`, `sheet`) and their ops (`room.set`, `room.part.set`, `sheet.*`); `say` reaches the musician through the room's talkback, and song-changing tools wait while a take is being played.
+
 ## Docs
 
 - [Overdub for agents](/docs/AGENTS.md): connecting (Claude Code over MCP: `claude mcp add overdub -- node <repo>/server/mcp.js`; it starts the server and opens the studio tab if needed), the rules of the room, every tool, the ops, the notes and drum-grid formats

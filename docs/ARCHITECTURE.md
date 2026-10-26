@@ -57,6 +57,14 @@ overdub/
                          fingering in one hand position, tab text in and out), riff.js (the house riff writer),
                          playalong.js (judging what you play against a part)                           [jam]
                          sounds.js (newPartFor: the track a new idea makes; the rest is ux-instruments')   [core]
+  app/src/core/liveroom/ the live room's song side, pure: model.js (its ids, caps and names), room-ops.js + sheet-ops.js
+                         (the ten ops' room.* and sheet.*), places.js (each place's band, tempo, rigs, feels),
+                         plans.js + session.js (the stage's plans, the room's view of the song, the offered move),
+                         band.js (the drummer and bass learning a part), read.js + read-worker.js (reading a take),
+                         double.js + tight.js (the other side, and how tight it is), kitchen.js + kitchen-plans.js,
+                         tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
+                         sheet-text.js (the paper's words and chords), label.js (the tape box), lines/ (everything
+                         the house says in the talkback, by id)                                       [room]
   app/src/engine/        engine.js (context, transport, scheduler, tracks, mixer), strip.js (channel strips),
                          schedule.js (what plays when), click.js (the click's sound), render.js (offline, in the browser), node/render.js (the
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
@@ -107,6 +115,12 @@ overdub/
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
+  app/src/ui/liveroom/   the live room in front of the glass: index.js (app.liveRoom, the overlay, the screens'
+                         registry from screens.js, the held keys), door-decide.js (which side a load opens on),
+                         door.js, stage.js + menu.js + setlist.js + soundcheck.js + lamps.js, kitchen.js + paper.js,
+                         shelf.js + shelf-db.js (overdub-shelf), send.js, talkback.js, deck.js (count-in, takes,
+                         the tuner on the audio clock), view.js, prefs.js (overdub:room), style.js, pixels/ (the
+                         scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -156,6 +170,8 @@ Project = {
   assets: { [id]: { kind: 'audio', name, sr, channels, duration } },   // the samples live in IndexedDB (engine/assets.js)
   master: { gain: 0, inserts: [Insert], auto?: { gain?: Lane } },   // gain in dB
   reference?: { asset, name, sr, channels, duration, profile, by },   // the reference track: beside the song, never in it
+  room?: Room,                                           // the live room's memory of the song (below); absent: a control-room song
+  sheet?: Sheet,                                         // the kitchen table's paper (below)
   meta: { created, modified, authors: { [authorId]: { kind: 'human' | 'agent' | 'house', name } },
           forkedFrom?: { title, authors, at, id, from } },             // set by "Make it yours" (core/share.js)
 }
@@ -181,7 +197,17 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   // a place on the neck: both or neither
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
+Room   = { v: 1, place?: 'metal' | 'basement' | 'bluesbar' | 'kitchen', rig?, tuning? /* a TUNINGS id */, finish?,
+           mic?: 'one' | 'two', master? /* the clip the band follows */, tracks?: { [role]: trackId },
+           parts?: { [sectionId]: { feel?, busy?: -1..1, loud?: -1..1, reps?: 1..4, oneSide?, drop?, sheet?, learned? } },
+           takes?: { [clipId]: { capo?, bpm?, onMaster? } }, managed?: { [trackId | 'master']: { gain, pan, chain } } }
+Sheet  = { v: 1, capo?: 1..11, time?: [n, d], notes?, sections: [{ id: 'ss_x', name, lines: [{ id: 'sl_x', text, by }] }] }
+         // a line is plain text, its chords [bracketed] on their syllables; capo is the paper's, not the song's key
 ```
+
+`room` and `sheet` (`core/liveroom/model.js`: the ids, the caps, the canonical key order) are written only by their
+ops, below. What the band plays is clips like any other; the room's fields remember how it was made, so a part's
+feel or a take's capo survive a reload. A reader that doesn't know them skips them.
 
 ### The tempo map
 
@@ -364,6 +390,12 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `section.add` | `section: { name, start, length, color?, key? }`, `ref?` (`key`: the section's own key's name, `"F# minor"`) |
 | `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color?, key? }` |
 | `section.duplicate` | `section`, `to?` (beats; default right after it), `push?` (make room there first), `ref?` |
+| `section.move` | `section`, `before` (a section id or name; `null`: the end): the section and everything in it moves, the bars between close up (an arrangement op, planned like `section.duplicate`) |
+| `room.set` | `patch: { place?, rig?, tuning?, finish?, master?, mic?, tracks?, takes?, managed? }` (whole values; `null` deletes a key; makes the room when there's none), or `clear: true` (`core/liveroom/room-ops.js`) |
+| `room.part.set` | `section`, `patch: { feel?, busy?, loud?, reps?, oneSide?, drop?, sheet?, learned? }` (merged; `null` deletes a key), or `remove: true` |
+| `sheet.set` | `patch: { capo?, time?, notes? }` (`null` deletes a key; makes the sheet), or `clear: true` (`core/liveroom/sheet-ops.js`) |
+| `sheet.section.add` / `.set` / `.remove` | `section: { name, lines? }`, `index?`, `ref?` / `section`, `patch: { name }` / `section` (by id, `$ref` or name) |
+| `sheet.line.add` / `.set` / `.remove` | `section`, `line: { text }`, `index?`, `ref?` / `section`, `line`, `patch: { text }` / `section`, `line` (each line signed by the op's author) |
 | `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop, the tempo map) |
 | `tempo.map` | `map: { anchors: [{ beat, sec }], clip? } \| null`, `tempo?` (sets or clears the tempo map; set, `tempo` becomes its nominal; cleared, the grid plays at `tempo` if given, else the nominal it had. The inverse restores both exactly) |
 | `clip.repeat` | `track`, `clip`, `times` (2..64, in all), `mode?: 'copies' \| 'loop'`, `ref?` |
@@ -1985,12 +2017,29 @@ of this version trusts the kept songs' devices, once), decodes a share link if t
 (the link's song, `?new`, `?demo`, the saved song, or the demo), the engine (a silent stand-in if it fails), the
 shell, then starts each module in `MODULES` (each `export default function (app)`) in order; one failing never stops
 the rest. Audio starts on the first gesture. URL switches: `?new`, `?demo=<id>`, `?device=<id>`, `?agent=mock`,
-`?coach`, `?autostart`, `?view=simple|full`, `#s=…`. Straight after the shell,
+`?coach`, `?autostart`, `?view=simple|full`, `?room`, `?studio`, `#s=…`.
+
+**The door.** Before the shell is built, `main.js` asks `decideDoor` (`ui/liveroom/door-decide.js`, pure) which side of
+the glass the load opens on and with which song, and keeps the answer as `app.door` (`{ side, song }`). A share link
+opens in the control room; `?room` opens the live room on a new song; `?demo`, `?studio` and the control room's own
+switches open the control room; a saved song with a room opens in the room (unless it was last on the control room's
+side); a first visit opens the room's door. Under `navigator.webdriver` everything but `?room` opens the control
+room, as before the room, so the suites see what they always saw. On the room's side `main.js` sets `data-room` on
+`<html>`, and `app.css` keeps the studio out of sight until the room has mounted over it.
+
+**The live room** (`ui/liveroom/index.js`) is a screen over an inert studio, one at a time from its registry
+(`door`, `stage`, `kitchen`, `shelf`, `send`), drawn from the shell's loop. `app.liveRoom` is `{ isOpen(), busy(),
+open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }`: `busy()` is true through a
+count, a take and the band's read, and the agent's song-changing tools refuse while it is (`agent/tools.js`,
+`recordingBlock`); `say` puts a line in the talkback, the house's unsigned and an agent's signed. Its state is
+`ui.state.liveRoom`; its memory in this browser is `localStorage overdub:room` (`ui/liveroom/prefs.js`: the side
+last used, the place, headphones or speakers per output, the once-only lines said per song); the room's songs are
+kept in IndexedDB `overdub-shelf` (`ui/liveroom/shelf-db.js`), beside `overdub:project`. Both names are forever. Straight after the shell,
 `installWorkspace(ui, app)` gives it `ui.workspace`, before any module mounts a panel.
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,
-analytics, plugin, jam, songs, site, siteConfig }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
+analytics, plugin, jam, songs, site, siteConfig, door, liveRoom }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
 `browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.siteConfig` is
 `loadSiteConfig`'s answer as boot read it (main.js waits for it, at most 4 s, `CONFIG_WAIT_MS`, before the first
 module starts), or null when this load couldn't see it.

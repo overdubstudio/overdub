@@ -139,6 +139,11 @@ export async function run(T, ctx) {
     const done = await s.E(() => document.querySelector('.lr-tb-line')?.textContent || '');
     T.ok(left.a_shared && left.a_onlyA && !left.a_onlyB && !left.a_onlyB2, `…and deletes only the recordings no other song here uses (${Object.entries(left).map(([k, v]) => `${k} ${v ? 'kept' : 'gone'}`).join(', ')})`);
     T.ok(/is off the shelf\. 1 recording stays: another song here uses it\.$/.test(done), `…and says so: “${done}”`);
+    // (B was in Recent songs too, put there when A replaced it: off the shelf, it doesn't come back as a plain box)
+    await until(s, () => !document.querySelector('.lrsh-ask'));
+    const after = (await boxes(s)).map((b) => b.id || `recent:${b.title}`);
+    const inRecent = await s.E((t) => window.overdub.exporter.recent().some((e) => e.id === 'p_b' || e.title === t), named);
+    T.ok(!after.includes('p_b') && !after.some((x) => x === `recent:${named}`) && !inRecent, `…and it’s gone from the shelf and from Recent songs (${after.join(', ')})`);
 
     // a room song whose recordings aren't in this browser
     const away = roomSong({ id: 'p_away', title: 'Night Haul', takes: ['a_away1', 'a_away2', 'a_away3'] });

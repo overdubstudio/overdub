@@ -27,6 +27,7 @@
 //                  loadZip(bytes, name) -> Promise<boolean> (a Send the song zip: its recordings back, then the song),
 //                  newSong({ door }) (door: the Song menu's New song, which opens the live room's door on it),
 //                  recent() -> [{ id, title, at, tracks }], openRecent(i), putAside(song, msg) (a song main.js replaced on the way in),
+//                  forgetRecent(id) -> n (every copy of that song off Recent songs: the live room's Take it off the shelf),
 //                  openMenu(anchor?) (the menu, under anchor: More's Song row on a phone),
 //                  startSong({ anchor }) (Song ▸ Start a song: the stage on a blank song, else New song's question first) }
 // The simple view (ui/workspace.js) puts the file rows away (data-feature="files": open a file, the imports, stems, MIDI,
@@ -406,6 +407,14 @@ export default function (app) {
     if (keep.length !== list.length) writeRecent(keep);
   }
   const recent = () => { const cur = stamp(store.get()); return readRecent().filter((e) => stamp(e.song) !== cur); };
+  // every copy of a song (by id) off the list: a song taken off the live room's shelf goes from here too
+  // (ui/liveroom/shelf.js), or it would come back as a plain box with its recordings gone. -> how many went
+  function forgetRecent(id) {
+    if (typeof id !== 'string' || !id) return 0;
+    const list = readRecent(), keep = list.filter((e) => e.id !== id && e.song?.id !== id);
+    if (keep.length !== list.length) writeRecent(keep);
+    return list.length - keep.length;
+  }
   function openRecent(i) {
     const e = recent()[i];
     if (!e) return false;
@@ -719,7 +728,7 @@ export default function (app) {
   const openReport = () => openProvenanceReport(app);
 
   app.exporter = { encodeWav, decodeWav, encodeMidi, zipStore, unzip, crc32, provenance: () => provenance(app), newSong, startSong, openDemo, putAside, openFile, loadText, loadZip, openSong, saveProject, exportMix, exportRelease, releaseRender, songZip, lastRelease: () => lastRelease, exportStems, exportMidi, exportLog, exportDawproject, openReport, get busy() { return busy; },
-    recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, openMenu: (anchor) => openMenu(anchor) };
+    recent: () => recent().map(({ id, title, at, tracks }) => ({ id, title, at, tracks })), openRecent, forgetRecent, openMenu: (anchor) => openMenu(anchor) };
 
   /* ---------------------------------------------------- the menu */
   // the width under which app.css hides the transport's loop and metronome group

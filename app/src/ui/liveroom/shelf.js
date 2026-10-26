@@ -245,6 +245,8 @@ screens.add({
         try { await app.engine?.assets?.remove?.(id); } catch { /* gone already */ }
       }
       await db.remove(rec.id);
+      // (and from Recent songs, where a song the studio replaced is kept: off the shelf is off the shelf)
+      try { app.exporter?.forgetRecent?.(rec.id); } catch { /* storage */ }
       app.liveRoom.say(line('shelf.done', { title: rec.title, kept }));
       asking = null;
       await load();

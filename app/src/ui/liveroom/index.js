@@ -6,7 +6,9 @@
 //
 // Frozen (§14.2):
 //   default (app)      installs it, and opens it over the studio at load when main.js's door says so (app.door.side
-//                      'room': ui/liveroom/door-decide.js)
+//                      'room': ui/liveroom/door-decide.js). Opened while the studio is still loading, the room covers it
+//                      at once and mounts its screen when the studio is up (main.js's 'ready', after every module):
+//                      a screen's mount always has the whole app, and every key the studio declares is held
 //   app.liveRoom = {
 //     isOpen()             the room is over the studio
 //     busy()               a count, a take or a read is running (song-changing agent tools wait, §3.16)
@@ -16,7 +18,8 @@
 //     selection()          { screen, card, side, menu }: what the room has selected (an agent acts on it)
 //     press(id)            one of the room's actions by id, as its key or button presses it: the mounted screen's
 //                          press(id) first, then the room's own ('glass'); -> { ok, error? }
-//     on(evt, fn) -> off   'open', 'close', 'screen' ({ screen }), 'say' ({ text, by }), 'press' ({ id, ok })
+//     on(evt, fn) -> off   'open' ({ screen }: the screen is up), 'close', 'screen' ({ screen }), 'say' ({ text, by }),
+//                          'press' ({ id, ok })
 //   }
 //   screens            ./screens.js's registry, re-exported
 //   a screen's ctx = { app, ui, store, deck, view(), say(lineId, vars), prefs, scene }
@@ -162,10 +165,13 @@ export default function installLiveRoom(app) {
     }
     emit('screen', { screen: L.screen });
   }
+  // Opening is two steps: covering the studio (at once) and entering, the screen mounted over it with the studio's
+  // keys held. Before the studio is up the second waits for it, so the screen mounts once, with the song in and every
+  // module installed. (asked: the screen open() was asked for; entered: this opening's screen is up)
+  let up = document.documentElement.dataset.ready === '1', asked = null, entered = false;
   function open({ screen = null } = {}) {
     build();
-    const first = !L.open;
-    if (first) {
+    if (!L.open) {
       // Start a song's stage gives way (a take played there stays in Takes)
       if (app.start?.step) { try { app.start.close({ quiet: true }); } catch (e) { console.error('liveroom: closing Start a song', e); } }
       opener = document.activeElement;
@@ -173,27 +179,41 @@ export default function installLiveRoom(app) {
       focusWas = ui.state.focus;
       ui.state.focus = 'liveroom';
       ui.covered = 'liveroom';
-      hold(true);
       L.open = true;
+      entered = false;
       openedOnce = true;
       el.hidden = false;
+      // (while the studio loads, the keys declared so far: entering holds them all)
+      if (!up) hold();
       showKey();
-    }
-    const want = screen || (L.screen && !first ? L.screen : roomOf(store.get()) ? 'stage' : 'door');
-    if (first || want !== L.screen || !current) go(want);
-    delete document.documentElement.dataset.room;
-    try { prefs.set({ side: 'room' }); } catch { /* storage: fine */ }
-    if (first) {
       setTimeout(() => { if (L.open && el && !el.contains(document.activeElement)) el.focus({ preventScroll: true }); }, 0);
-      emit('open', { screen: L.screen });
     }
+    if (screen) asked = screen;
+    if (up) enter();
     return true;
   }
+  function enter() {
+    if (!L.open) return;
+    const fresh = !entered;
+    // (the holds again, over every key declared by now: the screen's own, added as it mounts, go before them)
+    if (fresh) { unhold(); hold(); }
+    const want = asked || (!fresh && current && L.screen) || (roomOf(store.get()) ? 'stage' : 'door');
+    asked = null;
+    if (fresh || want !== L.screen || !current) go(want);
+    entered = true;
+    delete document.documentElement.dataset.room;
+    try { prefs.set({ side: 'room' }); } catch { /* storage: fine */ }
+    if (fresh) emit('open', { screen: L.screen });
+  }
+  // (after every 'ready' listener has run: the keys they declare are held too)
+  ui.on?.('ready', () => queueMicrotask(() => { up = true; enter(); }));
   function close() {
     if (!L.open) return false;
     unmountScreen();
     L.open = false;
     L.menu = null;
+    entered = false;
+    asked = null;
     el.hidden = true;
     unhold();
     releaseUnder();
@@ -250,24 +270,22 @@ export default function installLiveRoom(app) {
   }
 
   /* ------------------------------------------------------------------------------------------- the held keys */
-  // Declared while the room is open, and only then: on opening, ahead of every key the studio has (its modes too), and
-  // the screen's own come in ahead of them as it mounts (first: true, in the group 'Live room'); a room open while the
-  // studio is still loading holds the later modules' keys at 'ready', behind every mode. A global key is held as one,
-  // so it's held in a field too. (A dialog over the room, the keys sheet, keeps its keys: Esc closes it.)
+  // Declared while the room is open, and only then: ahead of every key the studio has (its modes too), and the
+  // screen's own come in ahead of them as it mounts (first: true, in the group 'Live room'). A global key is held as
+  // one, so it's held in a field too. (A dialog over the room, the keys sheet, keeps its keys: Esc closes it.)
   const isOpen = () => L.open;
   const holding = () => L.open && !document.querySelector('body > [aria-modal=true]:not(.ew-region)');
   const held = new Map();
-  function hold(first) {
+  function hold() {
     const want = new Map();
     for (const k of ui.keys.list()) {
       const s = sig(k);
       if (k.group === 'Live room' || KEEP.has(s) || held.has(s)) continue;
       want.set(s, { key: k.key, mod: k.mod || null, global: !!k.global || !!want.get(s)?.global });
     }
-    for (const [s, k] of want) held.set(s, ui.keys.add({ ...k, first, hidden: true, when: holding, run: () => {}, label: 'Held while the live room is open', group: 'Live room' }));
+    for (const [s, k] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: holding, run: () => {}, label: 'Held while the live room is open', group: 'Live room' }));
   }
   function unhold() { for (const off of held.values()) off(); held.clear(); }
-  ui.on?.('ready', () => { if (L.open) hold(false); });
 
   app.liveRoom = {
     isOpen,

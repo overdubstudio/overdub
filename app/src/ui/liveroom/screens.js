@@ -8,7 +8,8 @@
 //       el: the screen's element (empty, in the overlay); ctx: ui/liveroom/index.js's { app, ui, store, deck, view(),
 //       say(lineId, vars), prefs, scene }. A screen declares its keys in mount with ctx.ui.keys.add({ ..., first: true,
 //       when, group: 'Live room' }) and removes them in unmount, so they're tried before the room's held keys and never
-//       held themselves. press(id), if it has one, is what app.liveRoom.press(id) asks first: { ok, error? }, or
+//       held themselves (the when() too: the shell tries the keys that have one before those that don't, and the
+//       holds have one). A room opened at load mounts its screen once the studio is up, so mount has the whole app. press(id), if it has one, is what app.liveRoom.press(id) asks first: { ok, error? }, or
 //       false for an id it doesn't know.
 //   screens.get(id), screens.has(id), screens.list() -> [ids]
 // The ids are the room's: 'door', 'stage', 'shelf', 'send', 'kitchen' (ui.state.liveRoom.screen).

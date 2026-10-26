@@ -236,10 +236,36 @@ export async function run(T, ctx) {
   /* ---------------------------------------------------------------------------------------------- 5. the page */
   if (!ctx.pages) return;
   const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|the server responded with a status of 404/.test(e);
-  // whether <html> ever had data-room, from before the page's own scripts
+  // What each key the studio declares reaches with the room open, in the shell's own order (ui/shell.js: the keys with
+  // a when() first, then the rest; the first that's live takes it): the sigs that reach the studio, which should be
+  // the kept ones and no more, and the holds declared for a key nobody declares
+  const HOLD = 'Held while the live room is open';
+  const KEPT = ['mod+KeyO', 'mod+KeyS', 'mod+KeyY', 'mod+KeyZ', 'mod+shift+KeyZ', 'shift+Escape', 'shift+Slash'];
+  const reach = (HOLD) => {
+    const list = window.overdub.ui.keys.list(), sig = (k) => `${k.mod ? k.mod + '+' : ''}${k.key}`;
+    const order = [...list.filter((k) => k.when), ...list.filter((k) => !k.when)];
+    const live = (k) => { try { return !k.when || !!k.when(); } catch { return false; } };
+    const through = [];
+    for (const sg of new Set(list.map(sig))) {
+      const k = order.find((x) => sig(x) === sg && live(x));
+      if (k && k.label !== HOLD && k.group !== 'Live room') through.push(sg);
+    }
+    const holds = new Set(list.filter((k) => k.label === HOLD).map(sig)), studio = new Set(list.filter((k) => k.group !== 'Live room').map(sig));
+    return { through: through.sort(), extra: [...holds].filter((x) => !studio.has(x)), n: holds.size };
+  };
+  const reachOk = (r) => json(r.through) === json(KEPT) && !r.extra.length;
+  const reachSaid = (r) => `${r.n} keys held; ${r.through.length} reach the studio${json(r.through) === json(KEPT) ? '' : ': ' + r.through.join(' ')}${r.extra.length ? '; held for nothing: ' + r.extra.join(' ') : ''}`;
+  // whether <html> ever had data-room, from before the page's own scripts; and each screen the room mounted, with
+  // whether the studio was up by then (data-ready, and Start a song, a module after the room's, installed)
   const watch = () => {
     window.__lrRoomAttr = [];
-    new MutationObserver((ms) => { for (const m of ms) if (m.attributeName === 'data-room') window.__lrRoomAttr.push(m.target.hasAttribute('data-room')); }).observe(document, { attributes: true, subtree: true, attributeFilter: ['data-room'] });
+    window.__lrMounts = [];
+    new MutationObserver((ms) => {
+      for (const m of ms) {
+        if (m.type === 'attributes' && m.attributeName === 'data-room') window.__lrRoomAttr.push(m.target.hasAttribute('data-room'));
+        for (const n of m.addedNodes || []) if (n.nodeType === 1 && n.classList.contains('lr-screen')) window.__lrMounts.push({ screen: n.dataset.screen, ready: document.documentElement.dataset.ready === '1', start: !!window.overdub?.start });
+      }
+    }).observe(document, { attributes: true, childList: true, subtree: true, attributeFilter: ['data-room'] });
   };
   {
     const s = await openRoom('/app/?room', { init: watch });
@@ -259,6 +285,8 @@ export async function run(T, ctx) {
       T.ok(up.open && up.state.open && up.state.screen === 'door' && up.shown && up.inert && up.covered === 'liveroom' && up.focus === 'liveroom' && up.inRoom && up.screen === 'door',
         `?room opens the room over the studio on the door: the studio under it inert, ui.covered '${up.covered}', focus in the room (ui.state.liveRoom ${json(up.state)})${up.inert && up.inRoom ? '' : `; inert ${up.inert}, focus in it ${up.inRoom}`}`);
       T.ok(!up.attr && json(up.seen) === json([true, false]), `the anti-flash attribute: set on <html> before the studio was built, cleared once the room was up (${json(up.seen)})`);
+      const mounts = await E(() => window.__lrMounts.slice());
+      T.ok(mounts.length === 1 && mounts[0].screen === 'door' && mounts[0].ready && mounts[0].start, `opened at load, the room covers the studio at once and mounts its screen once, when the studio is up (${json(mounts)})`);
       T.ok(up.key && up.history === 0 && up.side === 'room', `the studio's Live room key is in the top bar, nothing is in History, and overdub:room says the room (${up.side})`);
       await s.shot('liveroom/model-room');
       // the room holds the studio's keys: B (the browser pane) and Space (play) do nothing under it
@@ -268,14 +296,8 @@ export async function run(T, ctx) {
       await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
       const held = await E(() => ({ left: window.overdub.ui.isOpen('left'), playing: !!window.overdub.engine.playing }));
       T.ok(held.left === left0 && !held.playing, `under the room the studio's single keys are held: B left the browser pane ${left0 ? 'open' : 'shut'}, Space didn't play`);
-      const keys = await E(() => {
-        const list = window.overdub.ui.keys.list(), sig = (k) => `${k.mod ? k.mod + '+' : ''}${k.key}`;
-        const holds = new Set(list.filter((k) => k.label === 'Held while the live room is open').map(sig));
-        const studio = [...new Set(list.filter((k) => k.group !== 'Live room').map(sig))];
-        const keep = ['mod+KeyZ', 'mod+shift+KeyZ', 'mod+KeyY', 'mod+KeyS', 'mod+KeyO', 'shift+Slash', 'shift+Escape'];
-        return { unheld: studio.filter((x) => !holds.has(x) && !keep.includes(x)), kept: keep.filter((x) => holds.has(x)), extra: [...holds].filter((x) => !studio.includes(x)), n: holds.size };
-      });
-      T.ok(!keys.unheld.length && !keys.kept.length && !keys.extra.length, `the room holds every key the studio declares (${keys.n} of them) but ⌘Z ⇧⌘Z ⌘Y ⌘S ⌘O ? ⇧Esc, and declares none the studio doesn't${keys.unheld.length ? '; not held: ' + keys.unheld.join(' ') : ''}${keys.kept.length ? '; held but kept: ' + keys.kept.join(' ') : ''}${keys.extra.length ? '; declared for nothing: ' + keys.extra.join(' ') : ''}`);
+      const r1 = await E(reach, HOLD);
+      T.ok(reachOk(r1), `opened at load, every key the studio declares reaches the room's holds but ⌘Z ⇧⌘Z ⌘Y ⌘S ⌘O ? ⇧Esc, in the shell's own order, its modes and every module's keys among them (${reachSaid(r1)})`);
       // the talkback: the house unsigned, an agent signed in its ink
       const tb = await E(() => {
         const o = window.overdub, read = () => ({ text: document.querySelector('.lr-tb-line')?.textContent, by: document.querySelector('.lr-tb-by .by')?.textContent || null, ink: document.querySelector('.lr-tb-by .by')?.className || '' });
@@ -315,6 +337,8 @@ export async function run(T, ctx) {
       await page.click('[data-panel="liveroom"] .lr-key');
       await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
       const again = await E(() => ({ open: window.overdub.liveRoom.isOpen(), screen: window.overdub.ui.state.liveRoom.screen, covered: window.overdub.ui.covered }));
+      const r2 = await E(reach, HOLD);
+      T.ok(reachOk(r2), `opened again from the studio, the same: only the kept keys reach the studio (${reachSaid(r2)})`);
       const pressed = await E(() => window.overdub.liveRoom.press('glass'));
       const closed = await E(() => !window.overdub.liveRoom.isOpen());
       T.ok(again.open && again.screen === 'door' && again.covered === 'liveroom' && pressed?.ok && closed, `the Live room key brings the room back on the door, and press('glass') goes through again`);

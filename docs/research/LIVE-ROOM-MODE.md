@@ -1670,7 +1670,7 @@ It lands the parts every stream shares, and nothing else:
 | `ui/liveroom/deck.js` (A) | `createDeck(app)` → `{ state, on(evt, fn), countIn({ from, bars, voice, hits, at }), take({ track, from, punch, tail }), stop({ at: 'bar' \| 'now', keep: 'song' \| 'capture' }), keepAfterAll(), level(), tuner(), latency }` |
 | `ui/liveroom/soundcheck.js` (A) | `mountLamps(el, ctx)` → `{ frame(now), unmount() }`, `lampsState()` |
 | `ui/liveroom/pixels/index.js` (E) | `W` 256, `H` 144, `LEDGE` 14, `sceneOf(place)` → `{ draw(ctx, view, now) }`, `drawCrop(ctx, place, size)`, `drawCover(ctx, cover, size)`, `windowFor(view)`; drawn with `fillStyle`, `fillRect` and `globalAlpha` only, as the prototype's are, so a Node check draws them into a buffer |
-| `ui/liveroom/door-decide.js` (F) | `decideDoor({ search, hash, saved, room, webdriver })` → `{ side, song }` |
+| `ui/liveroom/door-decide.js` (F) | `decideDoor({ search, hash, saved, room, webdriver })` → `{ side, song }` (`saved`: `false`, `true`, or `{ room, blank }` as `main.js` read the saved song: whether it has a room field, whether it's blank) |
 | `ui/liveroom/shelf-db.js` (F) | `put(record)`, `list()`, `get(id)`, `remove(id)` over IndexedDB `overdub-shelf` |
 | `ui/liveroom/send.js` (F) | `sendMix(app)`, `sendSong(app)`; the screen `send` |
 

@@ -523,7 +523,16 @@ async function flow(T, ctx) {
         T.ok(ink.house === true, 'signing: the house\'s chord lines are unsigned');
         await S.shot?.('kitchen-paper');
       }
-      // a finish (Bare is on) and press 8: Send a mix, the send screen
+      // a finish (Bare is on): Warm pressed is answered at once, and its number, measured, follows
+      if (await page.$('[data-act="finish.warm"]')) {
+        await page.click('[data-act="finish.warm"]');
+        await page.waitForTimeout(300);
+        const now = await E(() => document.querySelector('.lr-tb-line')?.textContent || '');
+        const num = await page.waitForFunction(() => window.__k.lines.find((x) => /^Warm is on: the peaks rounded off, (about \d+ dB (louder|quieter) than Bare|as loud as Bare)\.$/.test(x)), null, { timeout: 15000 }).then((h) => h.jsonValue(), () => null);
+        T.ok(/^Warm is on: the peaks rounded off/.test(now) && !!num, `a finish: Warm answered at once (“${now}”), its number after (“${num}”)`);
+        await page.click('[data-act="finish.bare"]');
+      }
+      // press 8: Send a mix, the send screen
       presses++;
       await page.click('[data-act="send"]');
       const sent = await page.waitForFunction(() => window.overdub.ui.state.liveRoom.screen === 'send', null, { timeout: 10000 }).then(() => true, () => false);

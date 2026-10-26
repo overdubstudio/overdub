@@ -663,6 +663,7 @@ screens.add({
         return out;
       })() };
       levels = mine;
+      mine.p.then((o) => { mine.done = o; }, () => {});
       return mine.p;
     }
     function finish(f) {
@@ -671,11 +672,18 @@ screens.add({
       const r = planKitchenFinish(store.get(), { finish: f });
       if (!r.ops.length) return { ok: false };
       // (measured on the song as it was played, before the step: the finish is the only change between the two)
+      const known = levels?.key === levelsKey(store.get()) ? levels.done || null : null;
       const measured = finishLevels();
       const d = store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
       if (d.ok) {
-        const words = (m) => { if (!live || roomNow().finish !== f) return; const db = m && Number.isFinite(m[f]) && Number.isFinite(m[than]) ? Math.round((m[f] - m[than]) * 10) / 10 : null; say('k.finish', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db }); };
-        Promise.race([Promise.resolve(measured), new Promise((res) => setTimeout(() => res(null), 8000))]).then(words, () => words(null));
+        // the press answered at once: with its number when the levels are in, else what's on and the number after
+        const dbOf = (m) => (m && Number.isFinite(m[f]) && Number.isFinite(m[than]) ? Math.round((m[f] - m[than]) * 10) / 10 : null);
+        const words = (db) => say('k.finish', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db });
+        words(dbOf(known));
+        if (!known) {
+          const later = (m) => { if (live && roomNow().finish === f && dbOf(m) != null) words(dbOf(m)); };
+          Promise.race([Promise.resolve(measured), new Promise((res) => setTimeout(() => res(null), 8000))]).then(later, () => {});
+        }
       }
       return d;
     }

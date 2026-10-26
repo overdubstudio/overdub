@@ -338,6 +338,8 @@ export async function run(T, ctx) {
     const seq = [offeredKitchen(v, {}), offeredKitchen(v, { rolling: true }), offeredKitchen(v, { takes: 1, ask: 'time' }), offeredKitchen(v, { takes: 1 }), offeredKitchen(v, { takes: 1, offer: 'shaker' }), offeredKitchen(v, { takes: 1, done: PLAYER_ORDER }), offeredKitchen(v, { takes: 1, done: PLAYER_ORDER, again: true })].map((o) => o?.id);
     T.ok(seq.join(' ') === 'tape stop time offer.shaker keep again hear', `the offered move: ${seq.join(' → ')}`);
     T.ok(offeredKitchen({ cards: [{ name: 'Verse' }] }, { takes: 1, done: ['shaker', 'cajon', 'bass'] })?.id === 'again', 'the offered move: strings only with a bridge');
+    const form = offeredKitchen(v, { takes: 1, ask: 'form', offer: null })?.id, bare = offeredKitchen({ cards: [] }, { takes: 1 })?.id, noChorus = offeredKitchen({ cards: [{ name: 'Verse 1' }] }, { takes: 1 })?.id;
+    T.ok(form === 'form' && bare === 'again' && noChorus === 'offer.cajon', `the offered move: the form asked before the players (${form}); no parts, no players (${bare}); no chorus, no shaker (${noChorus})`);
   }
 
   if (!ctx.pages) { T.note('the flow: skipped (PAGES=0)'); return; }
@@ -508,5 +510,69 @@ async function flow(T, ctx) {
     } finally {
       await S.close();
     }
+  }
+  await countedFlow(T);
+}
+
+// Count me in (§6.3), the other way in on headphones: the tempo set first with → and ⇧→, one bar of sticks, the
+// shaker under the take (a preview), and on the stop no question about the time: the band reads the chords on the
+// song's grid at once. The deck is the stand-in (// needs A); the take is played at that tempo from beat 0.
+async function countedFlow(T) {
+  const bars = [...V, ...C, ...V, ...C];
+  const tk = takeOf(bars, { bpm: 96, seed: 33, lead: 0 });
+  const sr = 22050, n = Math.floor((tk.buf.length * sr) / SR), pcm = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, tk.buf[Math.floor((i * SR) / sr)])) * 32767), i * 2);
+  const b64 = pcm.toString('base64');
+  let S;
+  try { S = await openRoom('/app/?room', { name: 'kitchen-counted', init: STANDIN }); } catch (e) { T.ok(false, `Count me in: the room opened (${e.message})`); return; }
+  const { page, E } = S;
+  try {
+    await E(async ({ b64, sr }) => {
+      const m = await import('/app/src/ui/liveroom/kitchen.js');
+      const app = window.overdub || window.app;
+      const d = window.__kitchenDeck({ pcm: b64, sr, output: 'Built-in Output', track: () => app.store.get().room?.tracks?.take });
+      window.__deck = d;
+      window.__kstate = m.kitchenState;
+      window.__asked = [];
+      m.setKitchenDeck(d);
+    }, { b64, sr });
+    await E(() => (window.overdub || window.app).liveRoom.open({ screen: 'kitchen' }));
+    await page.waitForSelector('.kt', { timeout: 10000 });
+    await page.keyboard.press('Space');   // Headphones on? Yes
+    await page.waitForFunction(() => window.__kstate()?.step === 'paper', null, { timeout: 15000 });
+    await E(async (text) => {
+      const app = window.overdub || window.app;
+      const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
+      app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
+    }, `Paper Moon\nCapo 3\n\n[Verse]\nG       Em\nSomewhere a paper moon\nC          D\nover the roofs of town\n\n[Chorus]\nC       G\nHold on hold on\nD            G\nuntil the morning\n`);
+    const chip0 = await E(() => document.querySelector('[data-act="count"]')?.textContent || '');
+    // 84 to 96: ⇧→ is ten, → is one
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(150);
+    const chip1 = await E(() => document.querySelector('[data-act="count"]')?.textContent || '');
+    const offered = await E(() => window.__kstate()?.offered?.id);
+    T.ok(chip0 === 'Count me in at 84' && chip1 === 'Count me in at 96' && offered === 'tape', `Count me in: beside the bare tape on headphones (${chip0} → ${chip1}; Space is still ${offered})`);
+    await page.click('[data-act="count"]');
+    await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 10000 });
+    const during = await E(() => { const app = window.overdub || window.app; const p = app.store.get(); const sh = p.tracks.find((t) => t.id === p.room?.tracks?.shaker); return { hold: window.__kstate().hold, shaker: sh ? sh.clips.reduce((a, c) => a + c.notes.length, 0) : 0, tempo: p.tempo, log: window.__deck.log.map((x) => `${x.kind}${x.voice ? ':' + x.voice : ''}${x.bars != null ? ':' + x.bars : ''}`).join(' ') }; });
+    T.ok(during.hold && during.shaker > 100 && during.tempo === 96 && /^countIn:sticks:1 take/.test(during.log), `Count me in: one bar of sticks, the shaker on 96 under the take (${during.log}; ${during.shaker} shaker notes, a preview) // needs A`);
+    await page.keyboard.press('Space');   // That's a take
+    await page.waitForFunction(() => window.__kstate()?.offer === 'shaker', null, { timeout: 60000 });
+    const after = await E(() => {
+      const app = window.overdub || window.app, p = app.store.get();
+      const take = p.tracks.find((t) => t.id === p.room.tracks.take).clips.find((c) => c.kind === 'audio');
+      return { map: !!p.tempoMap, tempo: p.tempo, master: p.room.master === take?.id, name: take?.name, sections: p.sections.map((s) => s.name), steps: app.store.history.map((x) => `${x.label}:${x.by}`), shakerLeft: !(p.room.tracks?.shaker) || window.__kstate().preview };
+    });
+    const asked = after.steps.some((x) => /^On the beat/.test(x));
+    T.ok(!after.map && after.tempo === 96 && after.master && !asked && after.sections.length >= 2 && after.steps.some((x) => /^96 BPM:you$/.test(x)) && after.steps.some((x) => /^The band read take 1:overdub$/.test(x)), `Count me in: no question about the time, the band read the chords on 96 (${after.sections.join(', ')}; ${after.steps.slice(-3).join(' · ')})`);
+    T.ok(/· take 1 · capo 3 · 96$/.test(after.name || ''), `Count me in: the take named with its tempo (${after.name})`);
+  } catch (e) {
+    let why = '';
+    try { const k = await E(() => { const s = window.__kstate(); return s && { step: s.step, ask: s.ask, offer: s.offer, rolling: s.rolling, reading: s.reading, offered: s.offered?.id, tb: document.querySelector('.lr-tb-text')?.textContent }; }); why = ` ${JSON.stringify(k)}`; } catch { /* the page is gone */ }
+    T.ok(false, `Count me in: ${e.message.split('\n')[0]}${why}`);
+  } finally {
+    await S.close();
   }
 }

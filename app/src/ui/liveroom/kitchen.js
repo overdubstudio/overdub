@@ -1,7 +1,10 @@
 // The kitchen table [ui] (docs/research/LIVE-ROOM-MODE.md §2.5, §3.18, §6): how it's miked, the headphones question,
 // the balance, the paper, the work tape, the band's read of it, the players offered one at a time, the takes. It adds
 // the 'kitchen' screen to the registry (ui/liveroom/screens.js) when it's imported, and records through the deck
-// (ui/liveroom/deck.js: countIn({ voice: 'none' }) for the work tape, take, stop).
+// (ui/liveroom/deck.js: countIn({ voice: 'none' }) for the work tape, take, stop). On headphones there's the other way
+// in beside the bare tape (§6.3): Count me in, one bar of sticks (countIn({ bars: 1, voice: 'sticks' })) with the
+// shaker on the song's time under the take; ← → and T set the tempo first. A counted take is on the grid by
+// construction, so nothing about its time is read: the band reads its chords straight away.
 //
 // What the musician hears before they choose is a preview (store.preview: nothing in the song, nothing in History);
 // what they keep is one step: the time (tempo.map) by you, the read (sections, the Chords track) by the house, a
@@ -22,6 +25,7 @@ import {
   takeNumber, chordsWords, PLAYERS, PLAYER_ORDER, fromTakeOps, after,
 } from '../../core/liveroom/kitchen-plans.js';
 import { capoChoices } from '../../core/liveroom/sheet-text.js';
+import { beatsPerBar } from '../../core/music.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
@@ -48,6 +52,8 @@ let current = null;
 export function setKitchenDeck(d) { override = d || null; }
 export function kitchenState() { return current ? current.state() : null; }
 
+// how long the shaker under a counted take runs (it stops with the tape): 128 bars, about six minutes at 84
+const COUNT_BARS = 128;
 const MICS = [
   { id: 'laptop', mic: 'one', label: 'The laptop’s mic' },
   { id: 'interface', mic: 'one', label: 'A mic on the interface' },
@@ -71,9 +77,12 @@ screens.add({
     const run = {
       step: 'how', mic: null, micGuess: 'laptop', phones: null, balance: null, rolling: false, playing: false, reading: false,
       takes: 0, ask: null, offer: null, done: [], again: false, heard: false, sent: false, readings: null, chosen: 'found', form: null,
+      counted: false, countTempo: null, moves: false,
     };
     const reads = new Map();   // clip id -> the tape's read
-    let preview = null, takeHold = null, rollStart = 0, lastCanvas = 0;
+    let preview = null, takeHold = null, rollStart = 0, lastCanvas = 0, live = true, taps = [], hearGen = 0;
+    // a line said a moment later (the chords line read first), never after the screen has gone
+    const later = (fn, ms) => setTimeout(() => { if (live) fn(); }, ms);
 
     // the room in the song: the kitchen's tracks when the song has none yet (the house's), else what it has
     const roomNow = () => roomOf(store.get()) || {};
@@ -160,6 +169,8 @@ screens.add({
       if (!B || run.step !== 'balance') return;
       const db = dbOf(deck()?.level?.());
       if (db == null || db < -50) { if (!B.heard.length) B.since = now; return; }
+      // (the three seconds run from the first sound heard)
+      if (!B.heard.length) B.since = now;
       B.heard.push(db);
       if (now - B.since < 3000) return;
       const mean = 10 * Math.log10(B.heard.reduce((a, x) => a + 10 ** (x / 10), 0) / B.heard.length);
@@ -186,6 +197,8 @@ screens.add({
       if (id === 'phones.yes') { answerPhones(true); return { ok: true }; }
       if (id === 'phones.no') { answerPhones(false); return { ok: true }; }
       if (id === 'tape' || id === 'again') return startTape(id === 'again');
+      if (id === 'count') return startTape(run.takes > 0, { counted: true });
+      if (id === 'tempo.down' || id === 'tempo.up') { nudgeTempo(id === 'tempo.up' ? 1 : -1); return { ok: true }; }
       if (id === 'stop') return stop();
       if (id === 'time') { try { return keepTime(run.chosen); } catch (e) { console.warn('overdub kitchen time:', e?.message || e); return { ok: false }; } }
       if (id.startsWith('time.')) return hearReading(id.slice(5));
@@ -198,6 +211,7 @@ screens.add({
       if (id.startsWith('mic.')) { pickMic(id.slice(4)); return { ok: true }; }
       if (id === 'balance.skip') { skipBalance(); return { ok: true }; }
       if (id === 'form') return writeForm();
+      if (id === 'form.no') return leaveForm();
       if (id.startsWith('use.')) return useTake(id.slice(4));
       return false;
     }
@@ -219,23 +233,80 @@ screens.add({
     }
 
     /* ------------------------------------------------------------------------------------------- the tape */
-    async function startTape(again) {
+    // Count me in (headphones, before any time is kept): the tempo the count will be at, set first by ← → and T
+    const canCount = () => !!run.phones && !roomNow().master && !run.rolling && !run.reading && run.step === 'paper' && !run.offer;
+    const countTempo = () => Math.round(run.countTempo ?? store.get().tempo ?? 84);
+    function nudgeTempo(by) { if (canCount()) setCountTempo(countTempo() + by); }
+    function setCountTempo(t) {
+      run.countTempo = Math.max(40, Math.min(240, Math.round(t)));
+      hearTempo();
+      draw();
+    }
+    // T: four taps whose intervals agree within 8%
+    function tap(now) {
+      if (!canCount()) return;
+      if (taps.length && now - taps[taps.length - 1] > 2000) taps = [];
+      taps.push(now);
+      if (taps.length > 4) taps.shift();
+      if (taps.length < 4) return;
+      const gaps = taps.slice(1).map((x, i) => x - taps[i]), mean = gaps.reduce((a, x) => a + x, 0) / gaps.length;
+      if (gaps.every((x) => Math.abs(x - mean) <= 0.08 * mean)) setCountTempo(60000 / mean);
+    }
+    // the shaker on the song's time over `bars` bars from `from` (the ops, for a preview)
+    function shakerOver(p, from, bars) {
+      try {
+        const bpb = beatsPerBar(p.meter || [4, 4]);
+        const q = after(p, [{ type: 'section.add', section: { id: 'kt_count', name: 'Chorus', start: from, length: Math.round(bars * bpb) } }]);
+        return planPlayer(q, { player: 'shaker', section: 'kt_count' }).ops;
+      } catch (e) { console.warn('overdub kitchen shaker:', e?.message || e); return []; }
+    }
+    // after a tempo change, a bar of the shaker at it, the takes quiet: you hear the number rather than read it
+    function hearTempo() {
+      const p = store.get(), tempo = countTempo(), gen = ++hearGen;
+      const set = [{ type: 'project.set', patch: { tempo } }];
+      const takeId = takeTrack();
+      const ops = [...set, ...(takeId ? [{ type: 'track.set', track: takeId, patch: { mute: true } }] : []), ...shakerOver(after(p, set), 0, 1)];
+      if (!hearOps(ops, 0)) return;
+      // (a bar to hear the number by isn't something to stop: Space still starts the tape)
+      run.playing = false;
+      const bpb = beatsPerBar(p.meter || [4, 4]);
+      later(() => { if (gen === hearGen && preview) { stopPreview(); draw(); } }, ((bpb * 60) / tempo) * 1000 + 250);
+    }
+    async function startTape(again, { counted = false } = {}) {
       const d = deck(), track = takeTrack();
       if (!d || !track) return { ok: false, error: 'no deck' };
+      if (counted && !run.phones) return { ok: false, error: 'a count needs headphones: on speakers the band waits' };
       stopPreview();
       paper.markTake();
       // on speakers the band sits out: every band track held muted while the tape rolls (a preview, never the song)
       const band = PLAYER_ORDER.map((id) => roomNow().tracks?.[PLAYERS[id].role]).filter(Boolean);
       if (!run.phones && band.length) { const r = store.preview(band.map((t) => ({ type: 'track.set', track: t, patch: { mute: true } })), { by: 'overdub' }); takeHold = r.ok ? r : null; }
-      const counted = await d.countIn({ from: 0, bars: 0, voice: 'none' });
-      if (counted && counted.ok === false) { releaseHold(); say('k.tape.start'); return counted; }
+      if (counted) {
+        // the tempo you set is the song's (a step by you), and the shaker plays it under the take (a preview, released
+        // when the tape stops)
+        const tempo = countTempo();
+        if (tempo !== Math.round(store.get().tempo)) store.dispatch([{ type: 'project.set', patch: { tempo } }], { by: 'you', label: `${tempo} BPM` });
+        const sh = shakerOver(store.get(), 0, COUNT_BARS);
+        if (sh.length) { const r = store.preview(sh, { by: 'overdub' }); takeHold = r.ok ? r : null; }
+      }
+      const c = await d.countIn(counted ? { from: 0, bars: 1, voice: 'sticks' } : { from: 0, bars: 0, voice: 'none' });
+      if (c && c.ok === false) { releaseHold(); say('k.tape.start'); return c; }
       const t = await d.take({ track, from: 0 });
       if (t && t.ok === false) { releaseHold(); return t; }
       run.rolling = true;
+      run.counted = counted;
       run.again = run.again || again;
       rollStart = performance.now();
       draw();
       return { ok: true };
+    }
+    // Esc while the tape rolls: it stops at once and nothing goes into the song (the deck keeps the pass in Capture)
+    async function notThatOne() {
+      const d = deck();
+      run.rolling = false;
+      releaseHold();
+      try { await d?.stop?.({ at: 'now', keep: 'capture' }); } catch (e) { console.warn('overdub kitchen stop:', e?.message || e); }
+      draw();
     }
     function releaseHold() { if (takeHold) { try { takeHold.release(); } catch { /* gone */ } takeHold = null; } }
     async function stop() {
@@ -250,12 +321,13 @@ screens.add({
       if (!clip) { draw(); return res || { ok: false }; }
       run.takes = clipsOn(track).filter((c) => c.kind === 'audio').length;
       const n = run.takes, sh = sheetOf(store.get());
-      const name = takeName(store.get(), n, { capo: sh?.capo || 0 });
+      const timed = run.counted || !!roomNow().master;
+      const name = takeName(store.get(), n, { capo: sh?.capo || 0, bpm: timed ? store.get().tempo : null });
       store.dispatch([{ type: 'clip.set', track, clip: clip.id, patch: { name } }], { by: 'you', label: `Take ${n}`, ...(res?.txn ? { join: res.txn } : {}) });
       const secs = await durationOf(clip);
       say('k.take.in', { n, time: mmss(secs) });
       draw();
-      readTake(clip, { first: !roomNow().master });
+      readTake(clip, { first: !roomNow().master, counted: run.counted });
       return { ok: true, clip: clip.id };
     }
     const clipsOn = (track) => (store.get().tracks.find((t) => t.id === track)?.clips || []);
@@ -265,14 +337,15 @@ screens.add({
       return { x: buf.getChannelData(0), sr: buf.sampleRate };
     }
     async function durationOf(clip) { const a = store.get().assets?.[clip.asset]; if (a && Number.isFinite(a.duration)) return a.duration; const s = await samplesOf(clip); return s ? s.x.length / s.sr : 0; }
-    async function readTake(clip, { first }) {
+    async function readTake(clip, { first, counted = false }) {
       const s = await samplesOf(clip);
       if (!s) return;
       run.reading = true;
       draw();
       let read;
       try { read = await readTapeInWorker(s.x, s.sr); } catch (e) { run.reading = false; console.warn('overdub kitchen read:', e); draw(); return; }
-      reads.set(clip.id, read);
+      // (a counted take's read is marked: its time is the count's, never the analyser's)
+      reads.set(clip.id, counted ? { ...read, counted: true } : read);
       run.reading = false;
       if (!first) { draw(); return; }
       run.readClip = clip.id;
@@ -283,12 +356,15 @@ screens.add({
         const f = fromTakeOps(store.get(), { take: { clip: clip.id, read }, capo: 0 });
         if (f.line) { run.fromTake = { clip: clip.id }; say('k.paper.fromtake', { chords: f.line.split(' in the ')[0], section: f.line.split(' in the ')[1] }); }
       }
+      // a counted take: on the song's grid already, so the band reads its chords and nothing about its time
+      if (counted) { landRead({ track: takeTrack(), clip: clip.id, read, counted: true }); return; }
       // the time, confirmed by ear: the found reading with a shaker on it, at once
       const tw = planTime(store.get(), { take: { track: takeTrack(), clip: clip.id, read }, reading: 'found' });
       run.ask = 'time';
       run.chosen = 'found';
       const t = tw.time || { tempo: Math.round(read.result.tempo) };
-      if (tw.moves) say(run.phones ? 'k.time.moves' : 'k.time.speakers', { tempo: t.tempo });
+      run.moves = !!tw.moves;
+      if (tw.moves) say(run.phones ? 'k.time.moves' : 'k.time.speakers', { tempo: countTempo() });
       else say('k.time.read', { tempo: t.tempo, lo: t.lo, hi: t.hi, player: 'the shaker' });
       hearReading('found');
       draw();
@@ -326,7 +402,13 @@ screens.add({
       const t = planTime(store.get(), { take, reading: id });
       const r1 = store.dispatch(t.ops, { by: 'you', label: t.label, reason: t.reason });
       if (!r1.ok) { console.warn('overdub kitchen time:', r1.error); return r1; }
+      return landRead(take);
+    }
+    // the house's read of a take whose time is the song's (kept by ear, or counted in), then the first player's offer
+    function landRead(take) {
+      stopPreview();
       run.ask = null;
+      run.moves = false;
       const rd = planRead(store.get(), { take });
       if (rd.ops.length) {
         const r2 = store.dispatch(rd.ops, { by: 'overdub', label: rd.label, reason: rd.reason });
@@ -334,16 +416,25 @@ screens.add({
         if (r2.ok) {
           const w = chordsWords(rd);
           if (w) say('k.chords', w);
-          if (rd.unknown?.length) setTimeout(() => say('k.unknown'), 0);
+          if (rd.unknown?.length) later(() => say('k.unknown'), 0);
           run.form = rd.form?.length ? rd.form[rd.form.length - 1] : null;
         }
       }
-      // the first player's offer, played in at once; its line once the chords line has been read
-      const next = nextPlayer();
-      if (next) offerPlayer(next, { lineAfter: 2500 });
+      // where the take and the paper differ in form, that's asked first (once the chords line has been read); then the
+      // first player's offer, played in at once
+      if (run.form) {
+        const f = run.form, section = String(f.name || 'chorus').replace(/\s+\d+$/, '').toLowerCase();
+        const where = f.end ? 'at the end' : f.after ? `after the ${String(f.after).replace(/\s+\d+$/, '').toLowerCase()}` : 'at the top';
+        run.ask = 'form';
+        later(() => { if (run.ask === 'form') say('k.form', { section, times: f.times, where }); }, 2500);
+      } else offerNext(2500);
       draw();
       return { ok: true };
     }
+    function offerNext(lineAfter = 0) { const next = nextPlayer(); if (next) offerPlayer(next, { lineAfter }); }
+    // the master take's free time, from its read (the song keeps no read): where the players rest. A counted master
+    // has none
+    const masterFree = () => { const m = roomNow().master; const rd = m ? reads.get(m) : null; return rd && !rd.counted ? rd.result.free : null; };
     function nextPlayer() {
       const o = offeredKitchen(view(), { ...run, offer: null, ask: null });
       return o && o.id.startsWith('offer.') ? o.id.slice(6) : null;
@@ -352,9 +443,9 @@ screens.add({
       stopPreview();
       const where = offerSections(store.get(), id);
       if (!where.length) { run.done.push(id); draw(); return { ok: false }; }
-      const r = planPlayer(store.get(), { player: id, section: where });
+      const r = planPlayer(store.get(), { player: id, section: where, free: masterFree() });
       run.offer = id;
-      if (lineAfter) setTimeout(() => { if (run.offer === id) say(`k.offer.${id}`); }, lineAfter);
+      if (lineAfter) later(() => { if (run.offer === id) say(`k.offer.${id}`); }, lineAfter);
       else say(`k.offer.${id}`);
       const from = store.get().sections.find((s) => s.id === where[0])?.start ?? 0;
       hearOps(r.ops, from);
@@ -365,7 +456,7 @@ screens.add({
       const id = run.offer;
       if (!id) return { ok: false };
       stopPreview();
-      const r = planPlayer(store.get(), { player: id, section: offerSections(store.get(), id) });
+      const r = planPlayer(store.get(), { player: id, section: offerSections(store.get(), id), free: masterFree() });
       const d = store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
       run.done.push(id);
       run.offer = null;
@@ -383,9 +474,11 @@ screens.add({
       return { ok: true };
     }
     // "You played the chorus twice at the end. Write it as Chorus ×2?": the two passes one section of the song
+    function leaveForm() { run.form = null; run.ask = null; offerNext(); draw(); return { ok: true }; }
     function writeForm() {
       const f = run.form;
       if (!f) return { ok: false };
+      run.ask = null;
       const p = store.get(), secs = p.sections.slice().sort((a, b) => a.start - b.start);
       const runOf = secs.filter((s) => roomOf(p)?.parts?.[s.id]?.sheet === f.section);
       const group = [];
@@ -395,13 +488,15 @@ screens.add({
       for (const s of group.slice(1)) ops.push({ type: 'room.part.set', section: s.id, remove: true }, { type: 'section.remove', section: s.id });
       run.form = null;
       const r = store.dispatch(ops, { by: 'you', label: `${f.name} ×${group.length}` });
+      offerNext();
       draw();
       return r;
     }
     async function useTake(clipId) {
       let read = reads.get(clipId);
       if (!read) { const c = clipsOn(takeTrack()).find((x) => x.id === clipId); const s = c && (await samplesOf(c)); if (s) { read = await readTapeInWorker(s.x, s.sr); reads.set(clipId, read); } }
-      const r = planMaster(store.get(), { clip: clipId, read });
+      // (a counted take is on the song's grid already: it becomes the master with nothing re-timed)
+      const r = planMaster(store.get(), { clip: clipId, read: read && !read.counted ? read : null });
       if (!r.ops.length) return { ok: false };
       const d = store.dispatch(r.ops, { by: 'overdub', label: r.label, reason: r.reason });
       if (d.ok) say('k.master', { n: takeNumber(store.get(), clipId), tempo: r.tempo });
@@ -432,7 +527,7 @@ screens.add({
         for (const sid of secs) { const s = p.sections.find((x) => x.id === sid); if (s) for (const c of t.clips) if (c.start < s.start + s.length && c.start + c.length > s.start) ops.push({ type: 'clip.remove', track: t.id, clip: c.id }); }
         store.dispatch(ops, { by: 'you', label: `${P.name} out` });
       } else {
-        const r = planPlayer(p, { player: id, section: secs });
+        const r = planPlayer(p, { player: id, section: secs, free: masterFree() });
         if (r.ops.length) store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
         if (!run.done.includes(id)) run.done.push(id);
       }
@@ -440,8 +535,8 @@ screens.add({
     }
 
     /* ------------------------------------------------------------------------------------------- drawing */
-    function chip(label, onclick, { pressed = null, disabled = false, id = null } = {}) {
-      return h('button.kt-chip', { type: 'button', onclick, disabled, 'aria-pressed': pressed == null ? null : String(pressed), dataset: id ? { act: id } : {} }, label);
+    function chip(label, onclick, { pressed = null, disabled = false, id = null, aria = null } = {}) {
+      return h('button.kt-chip', { type: 'button', onclick, disabled, 'aria-pressed': pressed == null ? null : String(pressed), 'aria-label': aria, dataset: id ? { act: id } : {} }, label);
     }
     function draw() {
       root.dataset.step = run.step;
@@ -469,11 +564,19 @@ screens.add({
       } else if (run.offer) {
         choices.append(chip('No thanks', noThanks, { id: 'nothanks' }));
       }
+      // on headphones, beside the bare tape: Count me in, at a tempo set first (− +, ← →, T)
+      if (canCount()) {
+        choices.append(
+          chip('−', () => nudgeTempo(-1), { id: 'tempo.down', aria: 'Slower' }),
+          chip(`Count me in at ${countTempo()}`, () => press('count'), { id: 'count' }),
+          chip('+', () => nudgeTempo(1), { id: 'tempo.up', aria: 'Faster' }));
+      }
       if (run.fromTake && run.ask !== 'time') {
-        const k = store.get().key;
+        // (the key the take sounds in, as read: the song has none of its own yet)
+        const k = reads.get(run.fromTake.clip)?.result?.key || store.get().key;
         for (const c of capoChoices(k)) choices.append(chip(c.capo ? `${c.shapes} shapes, capo ${c.capo}` : 'No capo', () => writeFromTake(c.capo), { id: `fromtake.${c.capo}` }));
       }
-      if (run.form && !run.offer && run.ask == null) choices.append(chip(`Write it as ${run.form.name} ×${run.form.times}`, writeForm, { id: 'form' }));
+      if (run.ask === 'form' && run.form) choices.append(chip(`Write it as ${String(run.form.name).replace(/\s+\d+$/, '')} ×${run.form.times}`, writeForm, { id: 'form' }), chip('Leave it as played', leaveForm, { id: 'form.no' }));
       // the takes: whole passes, the master marked
       takesRow.replaceChildren();
       const cl = takeTrack() ? clipsOn(takeTrack()).filter((c) => c.kind === 'audio') : [];
@@ -505,8 +608,11 @@ screens.add({
       const clip = run.fromTake?.clip, read = reads.get(clip);
       if (!read) return;
       const f = fromTakeOps(store.get(), { take: { clip, read }, capo });
-      if (f.ops.length) store.dispatch(f.ops, { by: 'overdub', label: f.label, reason: f.reason });
+      const r = f.ops.length ? store.dispatch(f.ops, { by: 'overdub', label: f.label, reason: f.reason }) : null;
       run.fromTake = null;
+      // with the time kept, the band reads the master again with the chords now on the paper
+      const m = roomNow().master, mr = m ? reads.get(m) : null;
+      if (r?.ok && mr && !run.rolling) { landRead({ track: takeTrack(), clip: m, read: mr, ...(mr.counted ? { counted: true } : {}) }); return; }
       draw();
     }
     draw();
@@ -517,7 +623,12 @@ screens.add({
     const keys = [
       { key: 'Space', label: 'The offered move', run: () => { press(offered()?.id); } },
       { key: 'PageDown', label: 'The offered move', run: () => { press(offered()?.id); } },
-      { key: 'Escape', label: 'Not that one', run: () => { if (run.offer) noThanks(); else if (run.playing) { stopPreview(); draw(); } } },
+      { key: 'Escape', label: 'Not that one', run: () => { if (run.rolling) notThatOne(); else if (run.offer) noThanks(); else if (run.playing) { stopPreview(); draw(); } } },
+      { key: 'ArrowLeft', label: 'Slower, for the count', run: () => nudgeTempo(-1) },
+      { key: 'ArrowRight', label: 'Faster, for the count', run: () => nudgeTempo(1) },
+      { key: 'ArrowLeft', mod: 'shift', label: 'Ten slower, for the count', run: () => nudgeTempo(-10) },
+      { key: 'ArrowRight', mod: 'shift', label: 'Ten faster, for the count', run: () => nudgeTempo(10) },
+      { key: 'KeyT', label: 'Tap the tempo for the count', run: () => tap(performance.now()) },
       { key: 'ArrowUp', label: 'The take before', run: () => hearTake(-1) },
       { key: 'ArrowDown', label: 'The next take', run: () => hearTake(1) },
       { key: 'KeyY', label: 'Headphones on', run: () => { if (run.step === 'phones') answerPhones(true); } },
@@ -543,6 +654,7 @@ screens.add({
       },
       press,
       unmount() {
+        live = false;
         stopPreview();
         releaseHold();
         for (const off of offs) { try { off?.(); } catch { /* gone */ } }

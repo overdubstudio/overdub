@@ -28,7 +28,7 @@
 //   planMaster(p, { clip, read })         room.set master; with that take's read, the time and the band from it
 //   planKitchenFinish(p, { finish })      the master's chain for a finish (bare, warm, close) and room.set finish
 //   offeredKitchen(view, run) -> { id, label, key } | null   the kitchen's offered move (§7.4: Start the tape -> the
-//       read's question -> the next player's offer -> Again -> Hear it all)
+//       read's question -> the next player's offer, where the song has a part for it (view.cards) -> Again -> Hear it all)
 // And:
 //   PLAYERS, PLAYER_ORDER, FEEL_GROOVES, TAKE_LEVEL      the band and where the take sits
 //   kitchenOps(p, { mic }) -> { ops, label, reason }     the setup as ops (planPlace may use it whole): the tracks,
@@ -416,7 +416,7 @@ function summarize(p, sheet, changes, passes) {
   for (let i = 0; i < passes.length; i++) {
     let n = 1;
     while (i + n < passes.length && passes[i + n].section === passes[i].section) n++;
-    if (n > 1) form.push({ section: passes[i].section, name: passes[i].name, times: n, at: i });
+    if (n > 1) form.push({ section: passes[i].section, name: passes[i].name, times: n, at: i, end: i + n === passes.length, after: i > 0 ? passes[i - 1].name : null });
     i += n - 1;
   }
   const playedIds = new Set(passes.map((x) => x.section));
@@ -600,9 +600,12 @@ export function offeredKitchen(view, run) {
   if (!r.takes) return { id: 'tape', label: 'Start the tape', key: 'Space' };
   const cards = Array.isArray(view?.cards) ? view.cards : [];
   const done = new Set(Array.isArray(r.done) ? r.done : []);
-  const hasBridge = cards.some((c) => /^bridge/i.test(String(c.name || '')));
+  // (each player is offered where it would play: the shaker a chorus, the cajón a verse, the strings a bridge, the
+  // bass any part; a song with no parts yet has nothing to offer)
+  const has = (re) => cards.some((c) => re.test(String(c.name || '')));
+  const where = { shaker: has(/^chorus/i), cajon: has(/^verse/i), bass: cards.length > 0, strings: has(/^bridge/i) };
   for (const id of PLAYER_ORDER) {
-    if (done.has(id) || (id === 'strings' && !hasBridge)) continue;
+    if (done.has(id) || !where[id]) continue;
     const label = { shaker: 'A shaker in the chorus', cajon: 'The cajón under the verses', bass: 'The bass from the first chorus', strings: 'Strings in the bridge' }[id];
     return { id: `offer.${id}`, label, key: 'Space' };
   }

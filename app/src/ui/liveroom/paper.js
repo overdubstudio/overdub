@@ -8,13 +8,13 @@
 //     aside); markTake(): the words as a take used them, for the crossings-out until the next take; paste(text): a
 //     ChordPro or chords-over-words text read onto the paper (one step by you); say(lineId, vars): the talkback
 //
-// Every edit is one store.dispatch by 'you': sheet.line.set (the words with each chord kept on its syllable),
+// Every edit is one store.dispatch by 'you': sheet.line.set (the line in its inline form, each chord on its syllable),
 // sheet.line.add, sheet.line.remove, sheet.section.add, sheet.set { capo }. The house's lines (by 'overdub') carry no
 // byline; you carry none on your own paper either; anyone else's line ends with theirs, in the paper's inks.
 
 import { h, css, byline } from '../dom.js';
 import {
-  parseSheet, pasteOps, lineParts, lineWords, chordsOf, setWords, isBars, readChord, chordRow, shapesKey, soundingKey,
+  parseSheet, pasteOps, lineParts, lineWords, chordsOf, isBars, readChord, chordRow, shapesKey, soundingKey,
   keyName, newVerse, describeSheet, transposeChord,
 } from '../../core/liveroom/sheet-text.js';
 import { roomOf, sheetOf } from '../../core/liveroom/model.js';
@@ -187,15 +187,12 @@ export function createPaper({ app, store, say = () => {} }) {
 
   function edit(section, line, at = null) { editing = { section, line, at }; draw(); }
   function find(section, line) { const sh = sheet(); const s = sh?.sections.find((x) => x.id === section); return { sh, s, l: s?.lines.find((x) => x.id === line) }; }
-  // the line's new text: when only its words changed, its chords stay on their syllables (setWords)
-  function textFor(old, typed) {
-    if (typed.includes('[') || isBars(typed) || isBars(old)) return typed;
-    return chordsOf(old).length ? setWords(old, typed) : typed;
-  }
   function commit(section, line, typed, { next = false, at = null }) {
     const { s, l } = find(section, line);
     if (!s || !l) { editing = null; draw(); return; }
-    const text = textFor(l.text, String(typed).slice(0, 200));
+    // (the line as typed: the editor holds it in its inline form, "Somewhere a [G]paper [Em]moon", so a chord stays on
+    // its syllable as the words round it change, and a chord taken out stays out)
+    const text = String(typed).slice(0, 200);
     const ops = [];
     if (text !== l.text) ops.push({ type: 'sheet.line.set', section, line, patch: { text } });
     let nextId = null;
@@ -226,7 +223,7 @@ export function createPaper({ app, store, say = () => {} }) {
     const i = all.findIndex((x) => x.l === line);
     const to = all[i + dir];
     const { l } = find(section, line);
-    const text = l ? textFor(l.text, typed) : typed;
+    const text = String(typed).slice(0, 200);
     if (l && text !== l.text) dispatch([{ type: 'sheet.line.set', section, line, patch: { text } }], 'A line');
     if (to) edit(to.s, to.l); else { editing = null; draw(); }
   }

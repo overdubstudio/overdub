@@ -5,7 +5,8 @@
 // words with its author.
 // Muted Chromium: G both ways, the console ledge, Control room → and the studio's 40 px Live room key; going through
 // leaves History as it was, the studio doesn't paint under the room (ui.covered) and the room's frame doesn't run
-// behind the glass; an edit made in the control room is said on the way back, signed when an agent made it. The song is
+// behind the glass; a finish previewed as G goes down is released and the part it started stops; an edit made in the
+// control room is said on the way back, signed when an agent made it. The song is
 // the metal club's as the door makes it (core/liveroom/plans.js planPlace, places.js setupOf).
 
 import { createStore } from '../../app/src/core/store.js';
@@ -151,6 +152,26 @@ export async function run(T, ctx) {
     const p1 = await E(() => window.overdub.liveRoom.press('glass'));
     const c2 = await E(() => window.overdub.liveRoom.isOpen() && window.overdub.ui.state.liveRoom.screen === 'stage');
     T.ok(c1 && p1?.ok && c2, 'Control room → goes through, and press(\'glass\') comes back to the stage');
+
+    // G with a preview open: a finish chip focused at the moment G goes down (once the song's been heard top to
+    // bottom, so the chips are up), its finish previewed over the part the focus started; through the glass the
+    // preview is released, the song's master as it was, and the part it started has stopped
+    await E(() => window.overdub.liveRoom.press('home'));
+    await settle(100);
+    await E(() => window.overdub.engine.seek(window.overdub.engine.songEnd() - 1));
+    await page.waitForFunction(() => window.overdub.ui.state.liveRoom.run === 'idle' && !window.overdub.engine.playing, null, { timeout: 30000 });
+    await page.waitForSelector('.lr-finishes:not([hidden]) .lr-chip[data-finish="loud"]', { timeout: 10000 });
+    const master0 = await E(() => JSON.stringify(window.overdub.store.get().master));
+    await page.hover('.lr-chip[data-finish="loud"]');
+    await settle(150);
+    const held = await E(() => ({ previews: window.__lrPreviews.open, playing: window.overdub.engine.playing || !!window.overdub.engine.starting, run: window.overdub.ui.state.liveRoom.run, master: JSON.stringify(window.overdub.store.get().master) }));
+    await press(page, 'KeyG');
+    await settle(200);
+    const gone = await E(() => ({ open: window.overdub.liveRoom.isOpen(), previews: window.__lrPreviews.open, playing: window.overdub.engine.playing || !!window.overdub.engine.starting, master: JSON.stringify(window.overdub.store.get().master) }));
+    T.ok(held.previews === 1 && held.playing && held.run === 'play' && held.master !== master0 && !gone.open && gone.previews === 0 && !gone.playing && gone.master === master0,
+      `G with a finish previewed (${held.previews} open, the part playing ${held.playing}): through the glass it's released (${gone.previews} open), the master the song's own (${gone.master === master0}), and silent (playing ${gone.playing})`);
+    await press(page, 'KeyG');
+    await settle();
 
     const errs = s.errors.filter((e) => !ignorable(e));
     T.ok(!errs.length, `no page errors through the glass${errs.length ? ': ' + errs.slice(0, 3).join(' | ').slice(0, 400) : ''}`);

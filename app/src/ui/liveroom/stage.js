@@ -1046,6 +1046,8 @@ screens.add({
       unmount() {
         // through the glass mid-pass: Not that one (the pass is in Capture); a playback plays on, as the transport was
         if (L.run === 'count' || L.run === 'take') notThatOne();
+        // (a finish's preview goes with the part it started: that playback was the preview's, not the transport's)
+        finishBlur({ quiet: true });
         if (L.run === 'play') L.run = 'idle';
         current = null;
         for (const k of K) k();
@@ -1054,7 +1056,6 @@ screens.add({
         try { lock?.release?.(); } catch { /* fine */ }
         lock = null;
         releasePreview();
-        finishBlur({ quiet: true });
         S.widePending = null;
         const sendBtn = room?.querySelector('.lr-send');
         if (sendBtn) sendBtn.hidden = true;

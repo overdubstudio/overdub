@@ -29,7 +29,7 @@ function clean(x) {
   if (isObj(x.outputs)) for (const [k, v] of Object.entries(x.outputs)) if (k.length <= 200 && (v === 'headphones' || v === 'speakers')) out.outputs[k] = v;
   if (isObj(x.said)) {
     for (const [song, ids] of Object.entries(x.said).slice(-SONGS)) {
-      if (!song || song.length > 64 || !Array.isArray(ids)) continue;
+      if (!song || song.length > 64 || song === '__proto__' || !Array.isArray(ids)) continue;
       out.said[song] = [...new Set(ids.filter((id) => typeof id === 'string' && id.length <= 64))].slice(-200);
     }
   }
@@ -59,6 +59,8 @@ function write(next) {
     if (st) { st.setItem(KEY, JSON.stringify(next)); memOnly = false; }
   } catch { memOnly = true; /* blocked or full: this page load remembers it */ }
 }
+// (a song's id is whatever its file says: 'constructor' is a song like any other, never Object's; '__proto__', which
+// setting a key can't make, is never remembered)
 const songKey = (song) => String((isObj(song) ? song.id : song) || '');
 const copy = (x) => JSON.parse(JSON.stringify(x));
 
@@ -79,13 +81,13 @@ export const prefs = {
     return prefs.get();
   },
   said(song, id) {
-    const list = read().said[songKey(song)];
-    return !!list && list.includes(id);
+    const said = read().said, key = songKey(song);
+    return Object.hasOwn(said, key) && said[key].includes(id);
   },
   mark(song, id) {
     const key = songKey(song);
-    if (!key || key.length > 64 || typeof id !== 'string' || !id) return;
-    const cur = read(), said = { ...cur.said }, list = said[key] || [];
+    if (!key || key.length > 64 || key === '__proto__' || typeof id !== 'string' || !id) return;
+    const cur = read(), said = { ...cur.said }, list = Object.hasOwn(said, key) ? said[key] : [];
     delete said[key];
     said[key] = list.includes(id) ? list : [...list, id];
     const keys = Object.keys(said);

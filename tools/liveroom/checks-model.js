@@ -210,6 +210,15 @@ export async function run(T, ctx) {
       for (let i = 0; i < 50; i++) prefs.mark(`p_more${i}`, 'finish');
       T.ok(!prefs.said('p_song1', 'layout') && prefs.said('p_more49', 'finish') && !prefs.said('p_more49', 'layout') && Object.keys(prefs.get().said).length === 50,
         'prefs: a once-only line said for a song is remembered for the last 50 songs');
+      let odd;
+      try {
+        prefs.mark('constructor', 'layout');
+        prefs.mark('__proto__', 'layout');
+        const a = [prefs.said('constructor', 'layout'), prefs.said('valueOf', 'layout'), prefs.said('__proto__', 'layout')];
+        store.set('overdub:room', '{"v":1,"said":{"__proto__":["layout"],"toString":["layout"]}}');
+        odd = [...a, prefs.said('toString', 'layout'), prefs.said('__proto__', 'layout'), prefs.said('length', 'layout')].join(' ');
+      } catch (e) { odd = msg(e); }
+      T.ok(odd === 'true false false true false false', `prefs: a song whose id is one of Object's words (constructor, toString, __proto__) is a song like any other (${odd})`);
       store.set('overdub:room', '{not json');
       T.ok(prefs.get().side === null && (prefs.set({ side: 'control' }), JSON.parse(store.get('overdub:room')).side === 'control'), 'prefs: an unreadable overdub:room reads as empty, and the next set writes a good one');
       Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('blocked'); } });

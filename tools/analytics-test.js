@@ -281,7 +281,8 @@ try {
     // checks the shelf's part)
     for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF',
       'LIVE_DISTRIBUTION', 'LOCAL_LIVE_DEPLOY', 'GITHUB_ACTIONS']) delete env[k];
-    const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; const r = spawnSync('bash', [path.join(ROOT, script), ...args], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 120000 }); return { status: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
+    // 600 s each: a dry deploy still gzips every kit (about 1 GB), which took over 120 s with the machine busy
+    const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; const r = spawnSync('bash', [path.join(ROOT, script), ...args], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 600000 }); return { status: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
     const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
 
     // Both sites' AWS is Terraform's (infra/live, infra/next): what the live site's directory promises, read from its HCL
@@ -337,7 +338,7 @@ try {
     // fetches no model or runtime it hasn't cached: deploy/stage-stems.js stages stand-ins and says so)
     const noBase = { ...env };
     delete noBase.SITE_CONFIG;
-    const committed = spawnSync('bash', [path.join(ROOT, 'deploy/deploy.sh'), '--skip-tests'], { cwd: ROOT, env: noBase, encoding: 'utf8', timeout: 300000 });
+    const committed = spawnSync('bash', [path.join(ROOT, 'deploy/deploy.sh'), '--skip-tests'], { cwd: ROOT, env: noBase, encoding: 'utf8', timeout: 600000 });
     const comOut = (committed.stdout || '') + (committed.stderr || '');
     const liveJson = JSON.parse(spawnSync('git', ['show', 'HEAD:deploy/live-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout || 'null');
     const comCfg = (() => { try { return JSON.parse((/^app\/site-config\.json: (.*)$/m.exec(comOut) || [])[1]); } catch { return null; } })();

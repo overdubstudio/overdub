@@ -36,7 +36,8 @@ try {
   const head = (name) => `.ar-head[data-track="${ids[name]}"]`;
   const armedNames = () => E(() => { const app = window.overdub; return app.arranger.armed().map((id) => app.store.track(id)?.name).sort(); });
   const lit = () => E(() => [...document.querySelectorAll('.ar-head')].filter((r) => r.querySelector('.ar-hb-arm')?.getAttribute('aria-pressed') === 'true').map((r) => r.querySelector('.ar-hname')?.textContent).sort());
-  const clickHead = async (name, mods = []) => { const b = await page.$(head(name) + ' .ar-hname').then((x) => x.boundingBox()); await page.mouse.move(b.x + 4, b.y + b.height / 2); for (const m of mods) await page.keyboard.down(m); await page.mouse.down(); await page.mouse.up(); for (const m of mods) await page.keyboard.up(m); await page.waitForTimeout(120); };
+  // (the header's box, waited for: a mode switch redraws the headers, and on a busy machine the one found first can be gone)
+  const clickHead = async (name, mods = []) => { let b = null; for (let i = 0; i < 40 && !b; i++) { b = await page.$(head(name) + ' .ar-hname').then((x) => x && x.boundingBox()); if (!b) await page.waitForTimeout(50); } await page.mouse.move(b.x + 4, b.y + b.height / 2); for (const m of mods) await page.keyboard.down(m); await page.mouse.down(); await page.mouse.up(); for (const m of mods) await page.keyboard.up(m); await page.waitForTimeout(120); };
 
   /* ---- clicking a track arms it; ⌘-click arms one more; a plain click moves it */
   const hist0 = await E(() => window.overdub.store.history.length);

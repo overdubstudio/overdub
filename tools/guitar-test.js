@@ -12,6 +12,8 @@
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
 //  2b. automation: every pedal param that changes the sound before set()'s `at` is marked auto: false (no lane).
 //  6. live: stomping a few pedals on and off while a tone plays is click-free (the 10 ms crossfades).
+//  6b. live: a pedal and an amp built on and wired in a moment later (as a strip does) play through themselves from
+//     the first note, not their dry signal.
 //  7. faces: gallery.html renders a face for every device with no page errors; knobs turn (keys, double-click reset),
 //     switches flip, footswitches stomp; screenshots at 1440 and 390 wide (tools/.out/gallery-*.png).
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
@@ -364,6 +366,38 @@ async function boot(page) {
     return res;
   });
   for (const l of live) t.ok(l.ratio < 1.6 && l.secs > 1, `live stomps on ${l.id} are click-free (second difference at the stomps ${l.ratio.toFixed(2)}× the steady sound's, ${l.secs.toFixed(1)} s captured)`);
+
+  // 6b. live: built on and wired in a moment later, as a strip wires a device in after its dip, it plays through itself
+  // from the first note. Chrome 155 drops a curve that is over before its node first renders, so the footswitch's 10 ms
+  // switch to on was lost and every pedal and amp passed its dry signal until it was stomped off and on (kit.js endAt).
+  // (Chromium 151, the one tools/pw.js finds, lands the curve: CHROMIUM=<a Chrome 155 or later> makes this one bite.)
+  const late = await page.evaluate(async () => {
+    const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+    await c.resume();
+    const REC = `class GtRec2 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
+      process(i) { const a = i[0] && i[0][0], b = i[1] && i[1][0]; if (a && b && this.on) this.port.postMessage([a.slice(0), b.slice(0)]); return this.on; } } registerProcessor('gt-rec2', GtRec2);`;
+    await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
+    const res = [];
+    for (const id of ['pedal.drive', 'amp.recto']) {
+      const inst = await R.instantiate(c, id, { uid: 'late-' + id, on: true }); await inst.ready;
+      await new Promise((r) => setTimeout(r, 80));
+      const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
+      const rec = new AudioWorkletNode(c, 'gt-rec2', { numberOfInputs: 2 }), blocks = [];
+      rec.port.onmessage = (e) => blocks.push(e.data);
+      g.connect(rec, 0, 0); g.connect(inst.input); inst.output.connect(rec, 0, 1); rec.connect(c.destination); o.start();
+      await new Promise((r) => setTimeout(r, 400));
+      rec.port.postMessage('stop'); o.stop(); await new Promise((r) => setTimeout(r, 60));
+      inst.dispose(); g.disconnect(); rec.disconnect();
+      // how far what comes out is from the dry signal, over the last 200 ms: off, it's the dry exactly (-inf)
+      const tail = blocks.slice(-Math.round((0.2 * c.sampleRate) / 128));
+      let d = 0, s = 0;
+      for (const [x, y] of tail) for (let i = 0; i < x.length; i++) { d += (y[i] - x[i]) ** 2; s += x[i] ** 2; }
+      res.push({ id, db: d > 0 && s > 0 ? 10 * Math.log10(d / s) : -Infinity, n: tail.length });
+    }
+    await c.close();
+    return res;
+  });
+  for (const l of late) t.ok(l.db > -20 && l.n > 50, `${l.id} built on and wired in 80 ms later plays through itself from the first note, not its dry signal (${Number.isFinite(l.db) ? l.db.toFixed(1) + ' dB' : '-inf'} from the dry)`);
 
   t.ok(!errors.length, `no page errors in the audio checks${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await close();

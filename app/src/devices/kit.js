@@ -86,8 +86,14 @@ export function glide(c, param, v, dur, at, from) {
   if (Math.abs(f0 - v) < 1e-9) { param.cancelScheduledValues(t); param.setValueAtTime(v, t); return; }
   for (let i = 0; i < n; i++) cv[i] = f0 + (v - f0) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (n - 1)));
   if (live) { param.cancelScheduledValues(0); param.setValueAtTime(f0, c.currentTime); } else { param.cancelScheduledValues(t); param.setValueAtTime(f0, t); }
-  try { param.setValueCurveAtTime(cv, t, dur); } catch { param.setTargetAtTime(v, t, dur / 4); }
+  try { param.setValueCurveAtTime(cv, t, dur); } catch { param.setTargetAtTime(v, t, dur / 4); return; }
+  endAt(param, v, t + dur);
 }
+// A curve's last value, set again where the curve ends. Chrome 155 drops a curve that is over before its node is first
+// rendered and leaves the param where it was: graph.js's footswitch runs when a device is built, and its strip wires
+// it in after a dip, so every pedal and amp came up passing its dry signal until it was switched off and on (Chromium
+// 151 lands the curve). A browser that counts the end as inside the curve throws, and the curve stands.
+function endAt(param, v, t) { try { param.setValueAtTime(v, t); } catch { /* the curve stands */ } }
 
 const NOISE = new WeakMap();
 // The kit for one device instance on context c. own: what it started (stopped by release()).
@@ -161,7 +167,7 @@ export function makeKit(c, { uid = 'device', seed = 1, clock = null } = {}) {
     let norm = true;
     const add = (b) => { const n = c.createConvolver(), g = G(1); n.normalize = norm; if (b) n.buffer = b; link(inp, n); n.connect(g); g.connect(out); return { n, g }; };
     let cur = add(buffer);
-    const fade = (param, from, to, t, dur) => { const k = 24, cv = new Float32Array(k); for (let i = 0; i < k; i++) cv[i] = from + (to - from) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (k - 1))); param.cancelScheduledValues(0); param.setValueAtTime(from, c.currentTime); param.setValueCurveAtTime(cv, t, dur); };
+    const fade = (param, from, to, t, dur) => { const k = 24, cv = new Float32Array(k); for (let i = 0; i < k; i++) cv[i] = from + (to - from) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (k - 1))); param.cancelScheduledValues(0); param.setValueAtTime(from, c.currentTime); param.setValueCurveAtTime(cv, t, dur); endAt(param, to, t + dur); };
     Object.defineProperty(inp, 'buffer', { configurable: true, get: () => cur.n.buffer, set(b) {
       if (!live || !cur.n.buffer) { cur.n.buffer = b; return; }
       const old = cur, t = c.currentTime + 0.003;

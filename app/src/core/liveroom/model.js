@@ -46,7 +46,7 @@ export const ROLES = Object.freeze(['guitarL', 'guitarR', 'guitar', 'lead', 'dru
 export const NAMES = deep({
   place: { metal: 'the metal club', basement: 'the basement', bluesbar: 'the blues bar', kitchen: 'the kitchen table' },
   feel: {
-    chugs: 'Your chugs', gallop: 'Gallop', threes: 'In threes', open: 'Open', china: 'China', halftime: 'Half time', stops: 'Stops', toms: 'Toms', build: 'Build',
+    chugs: 'Your chugs', gallop: 'Gallop', threes: 'In threes', open: 'Open', china: 'On the china', halftime: 'Half time', stops: 'Stops', toms: 'Toms', build: 'Build',
     blast: 'Blast', dbeat: 'D-beat', straight: 'Straight', skank: 'Skank', floortoms: 'Floor toms', shuffle: 'Shuffle', double: 'Double', ride: 'Ride', slow: 'Slow',
     eighths: 'Eighths', pushpull: 'Push and pull', boomchick: 'Boom-chick', train: 'Train beat',
   },

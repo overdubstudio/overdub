@@ -17,7 +17,7 @@ const s = (n, one, many) => (n === 1 ? one : many);
 
 export const LINES = {
   // the shelf
-  'shelf.backup': { once: true, text: () => 'Kept in this browser. Back it up? One file with your recordings.' },
+  'shelf.backup': { once: true, text: () => 'Kept in this browser. Back it up as one file, with your recordings?' },
   'shelf.safari': { text: () => 'Safari can clear a site’s storage after a week away.' },
   'shelf.space': { text: ({ minutes = 0 } = {}) => `This browser has room for about ${minutes} more ${s(minutes, 'minute', 'minutes')} of takes.` },
   'shelf.remove.ask': { text: ({ title = 'This song', mb = 0 } = {}) => (mb > 0 ? `Take ${title} off the shelf? Its ${mb} MB of takes go with it, and that can’t be undone.` : `Take ${title} off the shelf? That can’t be undone.`) },

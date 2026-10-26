@@ -352,7 +352,7 @@ export async function run(T, ctx) {
     // measured difference; Send in the header
     await waitFor(() => window.__lr.said.some((x) => /^Hear it with a finish\?/.test(x)), null, 10000).catch(() => null);
     const fin0 = await E(() => ({ chips: [...document.querySelectorAll('.lr-finishes:not([hidden]) .lr-chip')].map((b) => `${b.textContent}${b.getAttribute('aria-pressed') === 'true' ? '*' : ''}`), send: !document.querySelector('.lr-send')?.hidden, line: window.__lr.said.find((x) => /^Hear it with a finish\?/.test(x)) || null }));
-    T.ok(json(fin0.chips) === json(['Tight*', 'Loud', 'Room']) && fin0.send && fin0.line === 'Hear it with a finish? Tight is on. Loud and Room are a press away.', `after the first time through: "${fin0.line}", the chips ${fin0.chips.join(' · ')}, and Send in the header (${fin0.send})`);
+    T.ok(json(fin0.chips) === json(['Tight*', 'Loud', 'Room']) && fin0.send && fin0.line === 'Hear it with a finish? Tight is on; Loud and Room are a press away.', `after the first time through: "${fin0.line}", the chips ${fin0.chips.join(' · ')}, and Send in the header (${fin0.send})`);
     await waitFor(() => { const f = window.__lr.stageState()?.finishes?.lufs; return f && ['tight', 'loud', 'room'].every((k) => Number.isFinite(f[k])); }, null, 180000);
     const L = (await E(() => window.__lr.stageState().finishes.lufs));
     const g0 = await E(() => window.overdub.store.get().master.gain || 0);

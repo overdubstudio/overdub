@@ -103,7 +103,7 @@ export async function run(T, ctx) {
     const plainBox = bx.find((b) => b.recent != null);
     T.ok(plainBox && plainBox.parts === 'made in the control room', `a Recent song is a plain box, made in the control room (“${plainBox?.title}”)`);
     const backup1 = await s.E(() => document.querySelector('.lrsh-backup')?.textContent || '');
-    T.ok(/^Kept in this browser\. Back it up\? One file with your recordings\./.test(backup1), `the first time the shelf opens: “${backup1.slice(0, 64)}…”`);
+    T.ok(/^Kept in this browser\. Back it up as one file, with your recordings\?/.test(backup1), `the first time the shelf opens: “${backup1.slice(0, 64)}…”`);
     await s.shot('liveroom-shelf');
 
     // the dice name the song on the stage, one step by you

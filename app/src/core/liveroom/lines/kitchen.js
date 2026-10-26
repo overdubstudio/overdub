@@ -46,7 +46,7 @@ export const LINES = {
   'k.chords': { text: ({ chords = '', section = 'verse' } = {}) => `The band has your chords: ${chords} in the ${section}.` },
   'k.form': { text: ({ section = 'chorus', times = 2, where = 'at the end' } = {}) => `You played the ${section} ${times === 2 ? 'twice' : `${times} times`} ${where}. Write it as ${cap(section)} ×${times}?` },
   'k.unknown': { text: () => 'The band doesn’t know this one: they’ll rest under it.' },
-  'k.capo.after': { text: ({ takes = [1], capo = 0 } = {}) => `Take${takes.length > 1 ? 's' : ''} ${list(takes.map(String))} ${takes.length > 1 ? 'were' : 'was'} ${capo ? `capo ${capo}` : 'no capo'}, so the band won’t match ${takes.length > 1 ? 'them' : 'it'} now.` },
+  'k.capo.after': { text: ({ takes = [1], capo = 0 } = {}) => `Take${takes.length > 1 ? 's' : ''} ${list(takes.map(String))} had ${capo ? `the capo at ${capo}` : 'no capo'}, so the band won’t match ${takes.length > 1 ? 'them' : 'it'} now.` },
   'k.offer.shaker': { text: () => 'Want a shaker in the chorus?' },
   'k.offer.cajon': { text: () => 'The cajón under the verses?' },
   'k.offer.bass': { text: () => 'The bass from the first chorus?' },

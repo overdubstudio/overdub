@@ -22,6 +22,8 @@
 //   glass.nofeel       { part }                  a section made behind the glass: no feel yet
 
 const low = (s) => String(s ?? '').toLowerCase();
+// plural names take a bare apostrophe (the drums’ level); the bass keeps its ’s
+const possessive = (s) => (/[^s]s$/.test(s) ? `${s}’` : `${s}’s`);
 const JOBS = {
   edit: 'editing inside a take',
   comp: 'comping takes',
@@ -34,12 +36,12 @@ const JOBS = {
 export const LINES = {
   'glass.job': { text: ({ job }) => `${JOBS[job] ? `${JOBS[job][0].toUpperCase()}${JOBS[job].slice(1)} is` : 'That’s'} a control-room job: the takes are laid out there. Control room →` },
   'glass.back': { text: ({ changes }) => `While you were in the control room: ${changes}. The room leaves ${/\band\b|,/.test(String(changes)) ? 'them' : 'it'} as ${/\band\b|,/.test(String(changes)) ? 'they are' : 'it is'}.` },
-  'glass.levels': { text: ({ track }) => `You set the ${low(track)}’s level in the control room. The room leaves it there.` },
-  'glass.drums.edited': { text: ({ part, track = 'drums' }) => `The ${low(part)} ${low(track)} ${/s$/.test(low(track)) ? 'were' : 'was'} changed in the control room: another feel would replace ${/s$/.test(low(track)) ? 'them' : 'it'}. Go ahead?` },
+  'glass.levels': { text: ({ track }) => `You set the ${possessive(low(track))} level in the control room. The room leaves it there.` },
+  'glass.drums.edited': { text: ({ part, track = 'drums' }) => (low(track) === 'drums' ? `The ${low(part)} drums were changed in the control room: another feel would replace them. Go ahead?` : `The ${low(part)} ${low(track)} was changed in the control room; the band plays it as it is now.`) },
   'glass.amp.yours': { text: () => '‹ › replaces your amp settings. ⌘Z brings them back.' },
   'glass.master.yours': { text: () => 'The finish is yours from the control room. Another one replaces it, and ⌘Z brings yours back.' },
   'glass.tempo': { once: true, text: ({ bpm, was }) => `The tempo’s ${bpm} now: your takes were played at ${was}, so they won’t sit on the new bars.` },
   'glass.meter': { once: true, text: ({ meter }) => `The song’s in ${meter} now. The band plays in four; its parts stay as they are.` },
-  'glass.track': { text: ({ track, kind }) => `${kind === 'audio' ? `An audio track, ${track},` : `A ${low(track)}`} came in from the control room.` },
+  'glass.track': { text: ({ track, kind }) => `${kind === 'audio' ? 'An audio track' : 'A track'}, ${track}, came in from the control room.` },
   'glass.nofeel': { text: ({ part }) => `The drummer hasn’t played the ${low(part)} yet. F to give it a feel.` },
 };

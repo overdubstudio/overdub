@@ -41,7 +41,7 @@ export const LINES = {
   'side.both': { text: () => 'Both sides are in. The guitars are wide and the bass is under them.' },
   // the guide changed (§4.3)
   'guide.held': { text: ({ take, ms: m }) => `The drummer follows take ${take} now. The right side still sits within ${ms(m)} ms.` },
-  'guide.drifts': { text: ({ from, bar, take }) => `The right side was played to take ${from}: from bar ${bar} it drifts against take ${take}. The other side again? D` },
+  'guide.drifts': { text: ({ from, bar, take }) => `The right side was played to take ${from}: from bar ${bar} it drifts against take ${take}. Again on the right?` },
   // directing the drummer (§3.9, §4.4)
   'feel.named': { text: ({ feel }) => `${cap(feel)}. F for another.` },
   'busy.simpler': { text: () => 'Simpler: no fills, the kick on the accents.' },
@@ -49,7 +49,7 @@ export const LINES = {
   'loud.softer': { text: () => 'Brought down: hats instead of the crash.' },
   'loud.louder': { text: () => 'Pushed: a crash on every bar.' },
   // the finish (§3.12)
-  'finish.offer': { once: true, text: ({ finish, others = [] }) => `Hear it with a finish? ${cap(finish)} is on. ${others.map(cap).join(' and ')} are a press away.` },
+  'finish.offer': { once: true, text: ({ finish, others = [] }) => `Hear it with a finish? ${cap(finish)} is on; ${others.map(cap).join(' and ')} ${others.length === 1 ? 'is' : 'are'} a press away.` },
   'finish.chosen': { text: ({ finish, than, db }) => (Number(db) > 0.5 ? `${cap(finish)}: the same mix, pushed. About ${Math.round(Number(db))} dB louder than ${cap(than)}.` : `${cap(finish)} is on.`) },
   // your bass (§4.5)
   'bass.yours': { text: ({ part }) => `Bass is in on the ${lower(part)}: yours. The house’s is off there.` },

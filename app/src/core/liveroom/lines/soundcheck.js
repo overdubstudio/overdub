@@ -41,7 +41,7 @@ export const LINES = {
   'line.ok': { text: (v) => `Lined up: ${ms(v.ms)} there and back.` },
   'line.long': { text: (v) => `You’ll hear yourself ${ms(v.ms)} late on this setup. Wired headphones on the interface help.` },
   'line.output': { text: (v) => `These headphones add ${ms(v.ms)} on their own: wireless, most likely. Wired ones, or the interface’s output, for playing.` },
-  'line.lean': { text: (v) => `Your last two takes landed about ${ms(v.ms)} ${v.late === false ? 'ahead of' : 'behind'} the drums. Line it up? Eight strums.`, once: true },
+  'line.lean': { text: (v) => `Your last two takes landed about ${ms(v.ms)} ${v.late === false ? 'ahead of' : 'behind'} the drums. Line it up with eight strums?`, once: true },
   // coming back on the same input: the lamps are lit already
   'ready.back': { text: (v) => `${v.device || 'The input'}${v.input ? `, input ${v.input}` : ''}: ready.` },
   // the deck: the count waiting on the kit, a pass not kept

@@ -80,12 +80,13 @@ function partsOf(p) {
   const byId = (id) => tracks.find((t) => t.id === id) || null;
   const single = ['guitar', 'lead'].map((r) => byId(view.roles[r])).filter(Boolean);
   const doubles = DOUBLES.has(view.place);
-  const out = view.cards.map((c) => {
+  // (the End is the band's: never a part of yours, nor empty)
+  const out = view.cards.filter((c) => !c.end).map((c) => {
     const L = c.takes.L.length > 0, R = c.takes.R.length > 0;
     const one = single.some((t) => audioClips(t).some((x) => overlaps(x, c)));
     const oneSide = !!c.part?.oneSide;
     const any = L || R || one;
-    return { id: c.id, name: c.name, L, R, one, any, wantsR: doubles && L && !R && !oneSide, done: doubles ? (oneSide ? L || R : L && R) : any };
+    return { id: c.id, name: c.name, L, R, one, any, oneSide, wantsR: doubles && L && !R && !oneSide, done: doubles ? (oneSide ? L || R : L && R) : any };
   });
   return { view, parts: out };
 }
@@ -117,10 +118,14 @@ function noteParts(p, { cap = true } = {}) {
     const n = sh && Array.isArray(sh.sections) ? sh.sections.length : 0;
     return [n ? line('note.paper', { n }) : line('note.empty')];
   }
+  // (a part laid out twice is one part to the note: "Verse 2" and "Chorus ×2" are the verse and the chorus)
+  const stem = (n) => String(n).replace(/\s*(×\s*\d+|\d+)\s*$/u, '').trim() || String(n);
   const uniq = (xs) => { const seen = new Set(), out = []; for (const x of xs) { const k = x.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(x); } } return out; };
-  const done = uniq(parts.filter((x) => x.done).map((x) => inSentence(x.name)));
-  const left = uniq(parts.filter((x) => x.wantsR && !x.done).map((x) => inSentence(x.name)));
-  const empty = uniq(parts.filter((x) => !x.any).map((x) => inSentence(x.name)));
+  const allDone = (x) => parts.filter((y) => stem(y.name).toLowerCase() === stem(x.name).toLowerCase()).every((y) => y.done);
+  // (the intro on the left alone is in, by design: it isn't one of the doubled parts)
+  const done = uniq(parts.filter((x) => x.done && !(DOUBLES.has(view.place) && x.oneSide) && allDone(x)).map((x) => inSentence(stem(x.name))));
+  const left = uniq(parts.filter((x) => x.wantsR && !x.done).map((x) => inSentence(stem(x.name))));
+  const empty = uniq(parts.filter((x) => !x.any).map((x) => inSentence(stem(x.name))));
   if (!done.length && !left.length) return [line('note.empty')];
   const out = [];
   if (done.length) out.push(line(DOUBLES.has(view.place) ? 'note.doubled' : 'note.in', { parts: C(listWords(done)) }));
@@ -175,7 +180,12 @@ export function labelOf(p) {
   const slate = [placeShort(room.place), tune.toUpperCase(), capo, String(tempo), key.toUpperCase()].filter(Boolean).join(' · ');
   const sections = (Array.isArray(p?.sections) ? p.sections : []).slice().sort((a, b) => a.start - b.start);
   const parts = [];
-  for (const s of sections) if (s && typeof s.name === 'string' && s.name && !parts.some((x) => x.toLowerCase() === s.name.toLowerCase())) parts.push(s.name);
+  // (the parts as words: each once, "Verse 2" and "Chorus ×2" under their own names, the band's End left out)
+  for (const s of sections) {
+    if (!s || typeof s.name !== 'string' || !s.name || /^(end|ending)$/i.test(s.name.trim())) continue;
+    const n = s.name.replace(/\s*(×\s*\d+|\d+)\s*$/u, '').trim() || s.name;
+    if (!parts.some((x) => x.toLowerCase() === n.toLowerCase())) parts.push(n);
+  }
   const { parts: ps } = partsOf(p);
   const finished = ps.length > 0 && ps.every((x) => x.done);
   const notes = noteParts(p), note = notes.join(' ');

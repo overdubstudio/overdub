@@ -61,7 +61,9 @@ describe('decideDoor: every row of §2.1', () => {
       song: 'demo',
     });
     assert.deepEqual(D({ search: '?new&device=core.bass' }), { side: 'control', song: 'new' });
-    for (const k of ['jam', 'flip', 'view=simple', 'coach', 'device=core.bass']) {
+    // (a community shelf link opens like a device link; a checkout comes back to the Agent tab's Top up)
+    assert.deepEqual(D({ search: '?new&community-device=ana.fuzz' }), { side: 'control', song: 'new' });
+    for (const k of ['jam', 'flip', 'view=simple', 'coach', 'device=core.bass', 'community-device=ana.fuzz', 'plus=done&ref=abcd1234']) {
       assert.deepEqual(D({ search: '?' + k }), { side: 'control', song: 'demo' }, k);
       assert.deepEqual(
         D({ search: '?' + k, saved: { room: true }, room: room('room') }),

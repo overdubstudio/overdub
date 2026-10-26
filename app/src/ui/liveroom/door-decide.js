@@ -18,9 +18,11 @@
 //   ?room                                       the room on a new song, even under navigator.webdriver (its checks)
 //   under navigator.webdriver, anything else    the control room, as before the room: ?new and ?studio a new song,
 //                                               ?demo the demo, a saved song, else the demo
-//   ?demo, ?new&device=, ?studio, and the       the control room (?studio and ?new&device= on a new song)
-//   control room's own (?device, ?jam, ?flip,
-//   ?view, ?coach, ?community)
+//   ?demo, ?new&device=, ?studio, and the       the control room (?studio, ?new&device= and
+//   control room's own (?device, ?jam, ?flip,   ?new&community-device= on a new song)
+//   ?view, ?coach, ?community, a community
+//   shelf link's ?community-device, a checkout's
+//   ?plus)
 //   ?new                                        the room on a new song (its door)
 //   a saved song with a room, last on the       the room, on that song
 //   room's side (or never through the glass)
@@ -29,7 +31,7 @@
 //   a saved song otherwise                      the control room, on that song
 //   nothing saved (a first visit)               the room's door, on a new song
 
-const CONTROL = ['device', 'jam', 'flip', 'view', 'coach', 'community'];
+const CONTROL = ['device', 'jam', 'flip', 'view', 'coach', 'community', 'community-device', 'plus'];
 
 /**
  * @param {{ search?: string, hash?: string, saved?: boolean | { room?: boolean, blank?: boolean }, room?: any, webdriver?: boolean }} [o]
@@ -50,7 +52,7 @@ export function decideDoor({ search = '', hash = '', saved = false, room = null,
     return { side: 'control', song: fallback };
   }
   if (q.has('demo')) return { side: 'control', song: 'demo' };
-  if (q.has('studio') || (q.has('new') && q.has('device'))) return { side: 'control', song: 'new' };
+  if (q.has('studio') || (q.has('new') && (q.has('device') || q.has('community-device')))) return { side: 'control', song: 'new' };
   if (CONTROL.some((k) => q.has(k))) return { side: 'control', song: fallback };
   if (q.has('new')) return { side: 'room', song: 'new' };
   if (hasRoom) return { side: room && room.side === 'control' ? 'control' : 'room', song: 'saved' };

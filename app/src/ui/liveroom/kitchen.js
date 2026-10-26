@@ -19,7 +19,7 @@ import { h, css } from '../dom.js';
 import { screens } from './screens.js';
 import { createPaper } from './paper.js';
 import { W, H } from './pixels/index.js';
-import { roomOf, sheetOf } from '../../core/liveroom/model.js';
+import { roomOf, sheetOf, NAMES } from '../../core/liveroom/model.js';
 import { readTapeInWorker } from '../../core/liveroom/tape.js';
 import {
   kitchenOps, planTime, planRead, planPlayer, planMaster, planKitchenFinish, offeredKitchen, offerSections, takeName,
@@ -29,6 +29,9 @@ import { capoChoices } from '../../core/liveroom/sheet-text.js';
 import { beatsPerBar, beatToSec, secToBeat } from '../../core/music.js';
 import { inputKind } from '../../input/audioin.js';
 import { LINES } from '../../core/liveroom/lines/kitchen.js';
+import { createStore } from '../../core/store.js';
+import { renderProject } from '../../engine/render.js';
+import { lufs } from '../../audio/measure.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
@@ -561,7 +564,48 @@ screens.add({
       return d;
     }
     function noThanks() { if (!run.offer) return { ok: false }; stopPreview(); run.done.push(run.offer); run.offer = null; draw(); return { ok: true }; }
-    function finish(f) { const r = planKitchenFinish(store.get(), { finish: f }); if (!r.ops.length) return { ok: false }; return store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason }); }
+    // A finish chosen is a step by you, and said with its number: each finish's loudness on this song, measured as the
+    // stage does (the busiest part, the chorus else the first, eight bars of it at most, rendered offline through each
+    // finish on a copy of the song), the one chosen against the one it replaced
+    const FINISHES = ['bare', 'warm', 'close'];
+    let levels = null;
+    const levelsKey = (p) => JSON.stringify([p.tempo, p.tempoMap?.anchors?.length || 0, p.sections.map((x) => [x.start, x.length]), p.tracks.map((t) => [t.id, t.mute, t.gain, t.clips.map((c) => [c.id, c.mute, c.start, c.length])])]);
+    async function finishLevels() {
+      const p = store.get(), key = levelsKey(p), assets = app.engine?.assets;
+      if (levels?.key === key) return levels.p;
+      if (!assets) return null;
+      const bpb = beatsPerBar(p.meter || [4, 4]), secs = p.sections.slice().sort((a, b) => a.start - b.start);
+      const c = secs.find((x) => /^chorus/i.test(x.name)) || secs[0] || { start: 0, length: 8 * bpb };
+      const range = { from: c.start, to: c.start + Math.min(c.length, 8 * bpb) };
+      const mine = { key, p: (async () => {
+        const out = {};
+        for (const f of FINISHES) {
+          try {
+            const st = createStore(structuredClone(p));
+            const pl = planKitchenFinish(st.get(), { finish: f });
+            if (pl.ops.length) st.dispatch(pl.ops, { by: 'you' });
+            out[f] = Math.round(lufs(await renderProject(st.get(), { ...range, tail: 0, assets })) * 10) / 10;
+          } catch (e) { console.warn('overdub kitchen finish level:', f, e?.message || e); }
+        }
+        return out;
+      })() };
+      levels = mine;
+      return mine.p;
+    }
+    function finish(f) {
+      const than = FINISHES.includes(roomNow().finish) ? roomNow().finish : 'bare';
+      if (f === than) return { ok: true };
+      const r = planKitchenFinish(store.get(), { finish: f });
+      if (!r.ops.length) return { ok: false };
+      // (measured on the song as it was played, before the step: the finish is the only change between the two)
+      const measured = finishLevels();
+      const d = store.dispatch(r.ops, { by: 'you', label: r.label, reason: r.reason });
+      if (d.ok) {
+        const words = (m) => { if (!live || roomNow().finish !== f) return; const db = m && Number.isFinite(m[f]) && Number.isFinite(m[than]) ? Math.round((m[f] - m[than]) * 10) / 10 : null; say('k.finish', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db }); };
+        Promise.race([Promise.resolve(measured), new Promise((res) => setTimeout(() => res(null), 8000))]).then(words, () => words(null));
+      }
+      return d;
+    }
     function send() {
       stopPreview();
       run.sent = true;

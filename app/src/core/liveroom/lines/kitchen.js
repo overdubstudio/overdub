@@ -10,7 +10,7 @@
 // vars, by line: k.how { mic: "The laptop's mic" }; k.balance.ok { db }; k.paper.read { sections, lines, count, chords,
 // capo }; k.paper.fromtake { chords, section }; k.take.in { n, time }; k.time.read { tempo, lo, hi, player };
 // k.time.moves { tempo }; k.time.speakers { part }; k.chords { chords, section }; k.form { section, times, where };
-// k.capo.after { takes, capo }; k.player.in { player, where }; k.master { n, tempo }
+// k.capo.after { takes, capo }; k.player.in { player, where }; k.master { n, tempo }; k.finish { finish, than, db }
 
 const n = (x) => String(x).replace(/-/g, '−');
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
@@ -59,6 +59,15 @@ export const LINES = {
     },
   },
   'k.master': { text: ({ n: k = 1, tempo = null } = {}) => `Take ${k} is the master now: the band follows it${tempo ? `, around ${tempo}` : ''}.` },
+  // a finish chosen, with its loudness against the one it replaced, measured on this song (db: null when it couldn't be)
+  'k.finish': {
+    text: ({ finish = 'Warm', than = 'Bare', db = null } = {}) => {
+      const what = { bare: 'the mix as you played it', warm: 'the peaks rounded off', close: 'brought forward and a little brighter' }[String(finish).toLowerCase()];
+      const d = Number(db), by = Math.round(Math.abs(d));
+      const level = db == null || !Number.isFinite(d) ? '' : by < 1 ? `, as loud as ${cap(than)}` : `, about ${by} dB ${d > 0 ? 'louder' : 'quieter'} than ${cap(than)}`;
+      return `${cap(finish)} is on${what ? `: ${what}` : ''}${level}.`;
+    },
+  },
   'k.both.or.voice': { text: () => 'Both, or just the voice?' },
   'k.pickup.needed': { text: () => 'Two inputs need a guitar with a pickup.' },
 };

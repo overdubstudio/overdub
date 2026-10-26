@@ -169,6 +169,9 @@ export default function installLiveRoom(app) {
     unmountScreen();
     const send = el?.querySelector('.lr-send');
     if (send) send.hidden = true;
+    // (the Shelf key: everywhere but the shelf itself; the door hides it again until there's a song on the shelf)
+    const shelf = el?.querySelector('.lr-shelf');
+    if (shelf) shelf.hidden = (def ? def.id : id) === 'shelf';
     const box = h('div.lr-screen', { dataset: { screen: def ? def.id : id } });
     body.append(box);
     L.screen = def ? def.id : id;
@@ -243,6 +246,8 @@ export default function installLiveRoom(app) {
     return true;
   }
   function press(id) {
+    // (a press by id is a press: what the room says to it shows at once)
+    talkback.pressed();
     let r = null;
     if (L.open && current?.view?.press) {
       try { r = current.view.press(id); } catch (e) { console.error('liveroom press', id, e); r = { ok: false, error: String(e?.message || e) }; }
@@ -310,9 +315,25 @@ export default function installLiveRoom(app) {
     for (const k of ui.keys.list()) {
       const s = sig(k);
       if (k.group === 'Live room' || KEEP.has(s) || held.has(s)) continue;
-      want.set(s, { key: k.key, mod: k.mod || null, global: !!k.global || !!want.get(s)?.global });
+      want.set(s, { key: k.key, mod: k.mod || null, global: !!k.global || !!want.get(s)?.global, job: want.get(s)?.job || jobOf(k.label) });
     }
-    for (const [s, k] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: holding, run: () => {}, label: 'Held while the live room is open', group: 'Live room' }));
+    for (const [s, { job, ...k }] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: holding, run: () => { if (job) sayJob(job); }, label: 'Held while the live room is open', group: 'Live room' }));
+  }
+  // a studio key that does what the room leaves to the control room: the room points through the glass, once per job
+  // and song, never mid-take (§3.15)
+  function jobOf(label) {
+    const t = String(label || '');
+    if (/\bsplit|\btrim|\bcomp\b|\bcomping/i.test(t)) return /comp/i.test(t) ? 'comp' : 'edit';
+    if (/\b(mute|solo|fader|pan)\b/i.test(t)) return 'mixer';
+    if (/\bnotes?\b/i.test(t)) return 'notes';
+    if (/\bdevice\b|\bknob/i.test(t)) return 'knobs';
+    return null;
+  }
+  function sayJob(job) {
+    if (BUSY.has(L.run)) return;
+    const song = store.get(), id = `glass.job:${job}`;
+    try { if (prefs.said(song, id)) return; prefs.mark(song, id); } catch { /* storage: said this once on the page */ }
+    sayLine('glass.job', { job });
   }
   function unhold() { for (const off of held.values()) off(); held.clear(); }
 
@@ -362,6 +383,8 @@ export default function installLiveRoom(app) {
   // Coming back through the glass, the room reads the song and History since it was left and says what changed in
   // one line (§3.15, §7.5), signed when an agent made all of it; a once-only line is said once per song.
   let left = null;
+  // a track's name in the read-back's words: "the drums", "the bass", "the left guitar"
+  const roleOf = (c) => String(c.text || '').replace(/ came (up|down) .*$/, '').replace(/^the /, '') || c.track;
   function sayBack() {
     const was = left;
     left = null;
@@ -373,7 +396,13 @@ export default function installLiveRoom(app) {
     try { back = readBack(was.snap, store.get(), steps); } catch (e) { console.error('liveroom: the read-back', e); return; }
     const song = store.get();
     const fresh = back.changes.filter((c) => !(c.kind === 'level' || c.kind === 'track') || !prefs.said(song, c.id.slice(0, 64)));
-    if (fresh.length) {
+    // (one change of your own that the room has its own words for: those, not the list)
+    const one = fresh.length === 1 && fresh[0].by === 'you' ? fresh[0] : null;
+    const own = one && { level: ['glass.levels', { track: roleOf(one) }], track: ['glass.track', { track: one.track, kind: one.audio ? 'audio' : 'notes' }], section: ['glass.nofeel', { part: one.part }], amp: ['glass.amp.yours', {}], master: ['glass.master.yours', {}] }[one.kind];
+    if (own) {
+      sayLine(own[0], own[1]);
+      if (one.kind === 'level' || one.kind === 'track') { try { prefs.mark(song, one.id.slice(0, 64)); } catch { /* fine */ } }
+    } else if (fresh.length) {
       const bys = [...new Set(fresh.map((c) => c.by))];
       const by = bys.length === 1 && bys[0] !== 'you' && bys[0] !== 'overdub' ? bys[0] : 'overdub';
       const words = listWords(fresh.slice(0, 3).map((c) => c.text)) + (fresh.length > 3 ? `, and ${fresh.length - 3} more` : '');

@@ -40,6 +40,7 @@ const reducedMotion = () => { try { return !!globalThis.matchMedia?.('(prefers-r
 
 // a meter's dBFS as the scene takes it (0..1: -48 dB is 0, -6 dB is 1, the prototype's mapping)
 const unit = (db) => (Number.isFinite(db) ? Math.max(0, Math.min(1, (db + 48) / 42)) : 0);
+const vu = (db) => (Number.isFinite(db) ? Math.max(0, Math.min(1, (db + 36) / 36)) : 0);
 // The drummer's hits at a beat, as the scene's envelopes (1 on the note, falling over about 120 ms): the notes of the
 // clips playing on a track there (the song as it sounds, a preview's band among them), by the kit's pieces
 const PIECE = { 35: 'kick', 36: 'kick', 37: 'snare', 38: 'snare', 39: 'snare', 40: 'snare', 42: 'hat', 44: 'hat', 46: 'hat', 49: 'crash', 52: 'crash', 55: 'crash', 57: 'crash', 51: 'crash', 59: 'crash', 41: 'tom', 43: 'tom', 45: 'tom', 47: 'tom', 48: 'tom', 50: 'tom' };
@@ -77,7 +78,9 @@ export function liveView(ctx, extra = {}) {
   // bass, the master's needles, the drummer's hits on the beat heard
   const live = {
     input: unit(levels.input), L: unit(levels.guitarL ?? levels.guitar), R: unit(levels.guitarR ?? levels.lead), bass: unit(levels.bass),
-    master: [unit(levels.master), unit(levels.master)],
+    // (the needles are VUs: the master's average level, 0 at −36 dBFS and full at 0, so a loud master swings near the
+    // top instead of resting pinned on its peaks)
+    master: [vu(meters?.master?.rms), vu(meters?.master?.rms)],
   };
   const p = ctx.store?.get?.() || null;
   if (p && beat != null) {

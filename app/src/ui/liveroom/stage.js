@@ -414,7 +414,11 @@ screens.add({
           if (first && key && (q.key?.root !== key.root || q.key?.scale !== key.scale)) ops.push({ type: 'project.set', patch: { key } });
           const r = dispatch(ops, { by: 'overdub', label: plan.label, reason: plan.reason || `room:learn:${section}` });
           if (!r.ok) console.error('liveroom: the band\'s learning', r.error);
-          else say(plan.thin ? 'learn.thin' : 'learn.got');
+          else {
+            say(plan.thin ? 'learn.thin' : 'learn.got');
+            // (the basement's other side is offered once, after its second part, as a question)
+            if (view().place === 'basement' && offered(view(), { ...runState(), run: 'idle' })?.id === 'other') say('side.now', { place: 'basement' });
+          }
         }
         // (two takes in a row leaning the same way, the latency a guess: Line it up? once)
         if (read && Number.isFinite(read.lean)) {
@@ -502,6 +506,8 @@ screens.add({
       const range = { from: c.start, to: Math.min(c.start + c.length, c.start + 8 * (v.bpb || 4)) };
       const out = { key, lufs: {} };
       S.finishes = out;
+      let done = () => {};
+      S.measuring = new Promise((res) => { done = res; });
       for (const f of fins) {
         try {
           const st = createStore(structuredClone(p));
@@ -510,8 +516,9 @@ screens.add({
           const buf = await renderProject(st.get(), { from: range.from, to: range.to, tail: 0, assets: e.assets });
           out.lufs[f] = Math.round(lufs(buf) * 10) / 10;
         } catch (x) { console.error('liveroom: measuring a finish', f, x); }
-        if (S.finishes !== out) return null;
+        if (S.finishes !== out) { done(); return null; }
       }
+      done();
       return out;
     }
     const finishDb = (f, than) => { const m = S.finishes?.lufs; return m && Number.isFinite(m[f]) && Number.isFinite(m[than]) ? m[f] - m[than] : null; };
@@ -546,8 +553,10 @@ screens.add({
       if (!pl.ops.length) return { ok: false, error: 'Nothing to change there.' };
       const r = runPlan(store, pl, { by: 'you' });
       if (!r.ok) return r;
-      const db = finishDb(f, than);
-      say('finish.chosen', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db: Number.isFinite(db) ? db : 0 });
+      // (the number is the measurement's, made when the song was first heard top to bottom: said when it's in)
+      const words = () => { const db = finishDb(f, than); say('finish.chosen', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db: Number.isFinite(db) ? db : 0 }); };
+      if (Number.isFinite(finishDb(f, than)) || !S.measuring) words();
+      else Promise.race([S.measuring, new Promise((res) => setTimeout(res, 8000))]).then(words, words);
       return { ok: true };
     }
 
@@ -620,6 +629,8 @@ screens.add({
       if (kind === 'feel') say('feel.named', { feel: fname });
       else if (kind === 'simpler' || kind === 'busier') { if (patch.busy) say(patch.busy < 0 ? 'busy.simpler' : 'busy.busier'); }
       else if (patch.loud) say(patch.loud < 0 ? 'loud.softer' : 'loud.louder');
+      // (heard at once: the part plays through once with the drummer's new feel, any press stopping it, §3.9)
+      if (L.run === 'idle' && !S.pass) playWide(c.id);
       return { ok: true };
     }
     function pickTake(dir) {
@@ -641,6 +652,14 @@ screens.add({
       const r = dispatch(ops, { by: 'you', label: `${c.name}: take ${j + 1}`, reason: `room:takepick:${c.id}` });
       if (!r.ok) return r;
       say('take.pick', { part: c.name, take: j + 1 });
+      // (the left take is the guide: a right side played to the old one is measured against the new, §4.3)
+      if (L.side !== 'R' && c.takes.R.length && (v.place === 'metal' || v.place === 'basement')) {
+        const now = view().cards.find((x) => x.id === c.id);
+        let m = null;
+        try { m = now ? measured(now.playing.L, now.playing.R, { from: now.start, bars: Math.round(now.length / (v.bpb || 4)), place: v.place }) : null; } catch { m = null; }
+        if (m?.verdict === 'tight' || m?.verdict === 'fine') say('guide.held', { take: j + 1, ms: m.line?.vars?.ms ?? Math.round(Math.abs(m.median ?? 0)) });
+        else if (m?.worst) { const bar = m.from ?? m.worst.bar; S.drift = { card: c.id, bar }; say('guide.drifts', { from: cur + 1, bar, take: j + 1 }); }
+      }
       return { ok: true };
     }
     function tempo(d) {
@@ -735,7 +754,7 @@ screens.add({
           if (v.place === 'basement') mark('basement.other');
           const d = planDouble(song(), { section: c.id });
           if (d?.ops?.length) { const r = runPlan(store, d, { by: 'overdub' }); if (!r.ok) return r; }
-          say('side.now', { place: v.place });
+          say('other.now');
           L.side = 'R';
           return pass('other', c.id);
         }
@@ -746,6 +765,8 @@ screens.add({
           const r = runPlan(store, pl, { by: 'overdub' });
           if (!r.ok) return r;
           say('layout.in', { bars: pl.bars, time: pl.time || clock(pl.secs), empty: pl.empty || null });
+          // (the laid-out intro is on the left alone, by design: said once, after the layout's line)
+          if (view().cards.some((c) => c.part?.oneSide && !c.empty)) say('side.intro');
           L.card = view().parts[0]?.id || null;
           return { ok: true };
         }
@@ -951,9 +972,11 @@ screens.add({
       rigRow.hidden = !lv.place || lv.place === 'kitchen';
       rigName.textContent = lv.rig ? rigLabel(lv.rig) : '';
       tVal.textContent = String(Math.round(lv.tempo || 0));
-      steppers.hidden = !!lv.taken;
+      steppers.hidden = !!lv.taken || L.run !== 'idle';
       // the offered move, and what's beside it
-      const o = offered(lv, runState());
+      // (the wide playback after the other side, or a feel heard: any press stops it and does what it does, so the
+      // button says that, not Stop)
+      const o = offered(lv, S.wide && L.run === 'play' ? { ...runState(), run: 'idle' } : runState());
       primary.hidden = !o;
       if (o) {
         primary.querySelector('.lr-pl').textContent = o.label;
@@ -989,7 +1012,8 @@ screens.add({
       const beat = e?.playing ? e.beat : null;
       const playing = beat == null ? null : lv.cards.find((c) => beat >= c.start - EPS && beat < c.start + c.length)?.id || null;
       if (L.card && !lv.cards.some((c) => c.id === L.card)) L.card = null;
-      setlist.update(lv, { card: L.card, playing });
+      const rec = S.pass && S.pass.kind === 'new' && (L.run === 'count' || L.run === 'take') ? { name: S.pass.name, bars: L.run === 'take' && lv.bar ? Math.max(0, lv.bar - 1 - Math.floor((S.pass.from || 0) / (lv.bpb || 4))) : 0 } : null;
+      setlist.update(lv, { card: L.card, playing, rec, next: !!lv.taken && !lv.laidOut });
       if (playing) { const c = lv.cards.find((x) => x.id === playing); setlist.head(playing, (beat - c.start) / c.length); } else setlist.head(null, 0);
       try { lamps.frame(now); } catch (e2) { console.error('liveroom: the lamps', e2); }
     }

@@ -28,6 +28,7 @@ import {
 import { capoChoices } from '../../core/liveroom/sheet-text.js';
 import { beatsPerBar, beatToSec, secToBeat } from '../../core/music.js';
 import { inputKind } from '../../input/audioin.js';
+import { LINES } from '../../core/liveroom/lines/kitchen.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }
@@ -59,6 +60,8 @@ const MICS = [
   { id: 'interface', mic: 'one', label: 'A mic on the interface' },
   { id: 'two', mic: 'two', label: 'A mic and a pickup' },
 ];
+// a line's words, on the screen rather than in the talkback (a question, a chip)
+const words = (id, vars) => { try { return LINES[id] ? String(LINES[id].text(vars || {})) : ''; } catch { return ''; } };
 const SAYS_OUTPUT = (label) => (/headphone|airpods|earbud|buds|headset/i.test(label) ? 'headphones' : /speaker/i.test(label) ? 'speakers' : null);
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const dbOf = (lv) => {
@@ -630,14 +633,14 @@ screens.add({
       choices.replaceChildren();
       q.textContent = '';
       if (run.step === 'phones' || run.step === 'balance' || run.step === 'how') {
-        for (const m of MICS) choices.append(chip(m.id === 'two' && !twoMoving() ? `${m.label} · needs a guitar with a pickup` : m.label, () => pickMic(m.id), { pressed: run.mic === m.id, disabled: m.id === 'two' && !twoMoving(), id: `mic.${m.id}` }));
+        for (const m of MICS) choices.append(chip(m.id === 'two' && !twoMoving() ? `${m.label} · needs a guitar with a pickup` : m.label, () => pickMic(m.id), { pressed: run.mic === m.id, disabled: m.id === 'two' && !twoMoving(), id: `mic.${m.id}`, aria: m.id === 'two' && !twoMoving() ? words('k.pickup.needed') : null }));
       }
       if (run.step === 'phones') {
-        q.textContent = 'Headphones on?';
+        q.textContent = words('k.phones');
         choices.append(h('br'), chip('Yes', () => answerPhones(true), { id: 'phones.yes' }), chip('No, speakers', () => answerPhones(false), { id: 'phones.no' }));
       } else if (run.step === 'balance') {
         q.textContent = run.balance?.phase === 'sing' ? 'Sing a line, or speak one.' : 'Strum the way you’ll play.';
-        choices.append(chip('No singing? Skip.', skipBalance, { id: 'balance.skip' }));
+        choices.append(chip(words('k.balance.skip'), skipBalance, { id: 'balance.skip' }));
       } else if (run.ask === 'time') {
         for (const [id, label] of [['found', 'On the beat'], ['double', 'Twice as fast'], ['half', 'Half as fast'], ['downbeat', 'The 1’s a beat later']]) {
           if (!reads.get(run.readClip)?.result.readings.some((r) => r.id === id)) continue;

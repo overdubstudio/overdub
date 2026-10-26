@@ -93,10 +93,15 @@ const safari = () => typeof navigator !== 'undefined' && /^((?!chrome|chromium|c
 /* ------------------------------------------------------------------------------------------------ coming back */
 // The room on a song you come back to (§2.6): one line written from the song, and when its recordings aren't in this
 // browser (a song from the cloud, or another computer), the line that says so. -> the lines said
-export async function comeBack(app) {
+export async function comeBack(app, { from = null } = {}) {
   const p = app.store.get();
   if (!roomy(p)) return [];
   const L = labelOf(p), said = [];
+  // (a Send the song zip: its recordings came with it, said first)
+  if (from === 'zip') {
+    const n = songAssets(p).length;
+    if (n) { const t = line('send.opened', { title: L.title, n }); app.liveRoom?.say?.(t); said.push(t); }
+  }
   const text = line('back.where', { title: L.title, note: L.where });
   app.liveRoom?.say?.(text);
   said.push(text);
@@ -156,7 +161,7 @@ export function installShelf(app) {
   }
   // a room song opened from outside (a file, a Send the song zip, the account, the shelf): the same, once the room is
   // over it (ui/export.js opens the room just after it says the song is open)
-  app.ui?.on?.('song:opened', () => setTimeout(() => { if (app.liveRoom?.isOpen?.() && roomy(app.store.get())) comeBack(app); }, 0));
+  app.ui?.on?.('song:opened', (d) => setTimeout(() => { if (app.liveRoom?.isOpen?.() && roomy(app.store.get())) comeBack(app, { from: d?.from || null }); }, 0));
   return { keep };
 }
 
@@ -173,7 +178,7 @@ const CSS = `
 .lrsh-open { display: flex; flex-direction: column; gap: 6px; padding: 0; text-align: left; background: none; border: 0; color: var(--text); font: inherit; cursor: pointer; min-width: 0; }
 .lrsh-open:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 4px; }
 .lrsh-cover { width: 256px; max-width: 100%; height: auto; aspect-ratio: 128 / 80; image-rendering: pixelated; display: block; }
-.lrsh-title { font-size: 20px; line-height: 1.15; overflow-wrap: anywhere; }
+.lrsh-title { font-size: 20px; line-height: 1.15; overflow-wrap: anywhere; text-wrap: balance; }
 .lrsh-slate { font: 12px/1.35 var(--font-mono); letter-spacing: .04em; color: var(--text-2); }
 .lrsh-meta { font: 12px/1.35 var(--font-mono); color: var(--text-3); }
 .lrsh-parts { font-size: 14px; color: var(--text-2); }

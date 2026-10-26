@@ -152,12 +152,13 @@ const CSS = `
 @media (max-width: 640px) { .lrd-cards { grid-template-columns: 1fr; } .lrd-num { display: none; } .lrd-card { padding: 12px; } }
 `;
 
-// an audio input that isn't the phone's own: a USB interface, or a second input
+// an audio input that isn't the phone's own: a USB interface
 async function hasInterface() {
   try {
     const ds = (await navigator.mediaDevices?.enumerateDevices?.()) || [];
     const ins = ds.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
-    return ins.some((d) => /usb|interface|scarlett|focusrite|irig|audient|motu|presonus|steinberg|behringer|line 6|zoom|apogee|universal audio/i.test(d.label || '')) || new Set(ins.map((d) => d.groupId)).size > 1;
+    // (by its name: a phone's own mics and a headset's don't count, and without a name nothing is promised)
+    return ins.some((d) => /usb|interface|scarlett|focusrite|irig|audient|motu|presonus|steinberg|behringer|line 6|zoom|apogee|universal audio/i.test(d.label || ''));
   } catch { return false; }
 }
 

@@ -8,7 +8,8 @@
 //       take it asks the browser to keep this site's storage (navigator.storage.persist(), silently, once per browser).
 //       A load that came back to the room (app.door: side 'room', song 'saved') says where you left it, and when the
 //       song's recordings aren't in this browser, says so (§2.6)
-//   comeBack(app) -> Promise of the lines said      the same, for a song opened from the shelf
+//   comeBack(app) -> Promise of the lines said      the same, for a room song opened from the shelf, a file, a zip or
+//                                                   the account (ui event 'song:opened', with the room over it)
 //   inUse(app, { except }) -> Promise of Set        every recording another song in this browser names
 //   spaceLine() -> Promise of the space line or ''  the line at 80% of navigator.storage.estimate()
 //
@@ -120,25 +121,36 @@ export function installShelf(app) {
       await navigator.storage.persist();
     } catch { /* the browser decides */ }
   }
-  let last = '';
+  const last = new Map();
   function keep(song) {
     if (!roomy(song) || typeof song.id !== 'string') return;
     const L = labelOf(song);
     const rec = { id: song.id, song, at: Date.now(), title: L.title, place: song.room.place || null, finished: !!L.finished, bytes: bytesOf(app, song) };
     // (the same song with nothing changed but the time isn't written again)
-    const sig = JSON.stringify([song.meta?.modified, song.tracks.length, rec.bytes, rec.title, JSON.stringify(song).length]);
-    if (sig === last) return;
-    last = sig;
+    const sig = JSON.stringify(song);
+    if (last.get(song.id) === sig) return;
+    last.set(song.id, sig);
     db.put(rec).then(() => app.ui?.emit?.('liveroom:shelf', { id: rec.id }));
     if (hasTake(song)) {
       askPersist();
       if (!spaceSaid) spaceLine().then((t) => { if (t && !spaceSaid && app.liveRoom?.isOpen?.()) { spaceSaid = true; app.liveRoom.say(t); } });
     }
   }
+  // A song replaced before its autosave ran (a box opened right after an edit, a file, New song): kept as it was, so the
+  // shelf has its last change. (The store loads a new song object; the old one stays as it was.)
+  let was = app.store.get();
+  app.store.on('change', (e) => {
+    const now = app.store.get();
+    if (e?.kind === 'load' && was && was !== now && was.id !== now.id && roomy(was)) { try { keep(was); } catch (err) { console.error('overdub: the shelf', err); } }
+    was = now;
+  });
   // a load that came back to the room: where you left it, once the room is up
   if (app.door?.side === 'room' && app.door?.song === 'saved' && app.liveRoom?.on) {
     const off = app.liveRoom.on('open', () => { off(); comeBack(app); });
   }
+  // a room song opened from outside (a file, a Send the song zip, the account, the shelf): the same, once the room is
+  // over it (ui/export.js opens the room just after it says the song is open)
+  app.ui?.on?.('song:opened', () => setTimeout(() => { if (app.liveRoom?.isOpen?.() && roomy(app.store.get())) comeBack(app); }, 0));
   return { keep };
 }
 
@@ -207,7 +219,8 @@ screens.add({
       if (rec.id === cur.id) { app.liveRoom.open({ screen: 'stage' }); return true; }
       const ok = await app.exporter.openSong(rec.song, { from: 'shelf', name: rec.title, said: `Back to “${rec.title}”.` });
       if (!ok) return false;
-      if (roomy(store.get())) { app.liveRoom.open({ screen: 'stage' }); comeBack(app); }
+      // (openSong opens the room on a song with one, and installShelf's listener says where you left it)
+      if (roomy(store.get())) app.liveRoom.open({ screen: 'stage' });
       return true;
     }
     function openPlain(i) {
@@ -238,6 +251,20 @@ screens.add({
       return { ok: true, kept, removed: mine.length - kept };
     }
 
+    // the question names what goes: the megabytes of takes no other song here uses
+    async function ask(rec) {
+      const used = await inUse(app, { except: rec.id });
+      let bytes = 0;
+      for (const id of songAssets(rec.song)) {
+        if (used.has(id)) continue;
+        let b = app.engine?.assets?.peek?.(id) || null;
+        if (!b) { try { b = await app.engine?.assets?.get?.(id); } catch { b = null; } }
+        if (b) bytes += b.length * b.numberOfChannels * 4;
+      }
+      asking = { id: rec.id, mb: MB(bytes) };
+      draw();
+      boxes.querySelector('.lrsh-off-yes')?.focus();
+    }
     function box(rec) {
       const L = labelOf(rec.song);
       const cover = h('canvas.lrsh-cover', { width: COVER.w, height: COVER.h, 'aria-hidden': 'true' });
@@ -246,8 +273,8 @@ screens.add({
       const mb = MB(rec.bytes || bytesOf(app, rec.song));
       const meta = [dayOf(rec.at), mb ? `${mb} MB of takes` : 'no takes yet'].join(' · ');
       const dice = !L.named ? h('div.lrsh-dice', { hidden: true }, titleDice(rec.song).map((t) => h('button.btn.btn-small.lrsh-name', { type: 'button', onclick: () => name(rec, t) }, t))) : null;
-      const ask = asking === rec.id ? h('div.lrsh-ask', { role: 'group', 'aria-label': 'Take it off the shelf?' },
-        h('span', line('shelf.remove.ask', { title: L.title, mb })),
+      const asked = asking?.id === rec.id ? h('div.lrsh-ask', { role: 'group', 'aria-label': 'Take it off the shelf?' },
+        h('span', line('shelf.remove.ask', { title: L.title, mb: asking.mb })),
         h('div', h('button.btn.btn-small.lrsh-off-yes', { type: 'button', onclick: () => takeOff(rec) }, 'Take it off'), h('button.btn.btn-small.lrsh-off-no', { type: 'button', onclick: () => { asking = null; draw(); } }, 'Keep it'))) : null;
       return h('article.lrsh-box', { role: 'listitem', dataset: { id: rec.id } },
         h('button.lrsh-open', { type: 'button', onclick: () => open(rec), 'aria-label': `${L.title}. ${L.slate}. ${L.note}` },
@@ -259,8 +286,8 @@ screens.add({
           h('span.lrsh-note', L.note)),
         h('div.lrsh-acts',
           dice ? h('button.lrsh-act.lrsh-die', { type: 'button', 'aria-expanded': 'false', onclick: (e) => { dice.hidden = !dice.hidden; e.currentTarget.setAttribute('aria-expanded', String(!dice.hidden)); } }, 'Name it') : null,
-          here ? h('span.lrsh-here', line('shelf.here')) : h('button.lrsh-act.lrsh-off', { type: 'button', onclick: () => { asking = rec.id; draw(); } }, 'Take it off the shelf')),
-        dice, ask);
+          here ? h('span.lrsh-here', line('shelf.here')) : h('button.lrsh-act.lrsh-off', { type: 'button', onclick: () => ask(rec) }, 'Take it off the shelf')),
+        dice, asked);
     }
     function plainBox(e, i) {
       return h('article.lrsh-box.lrsh-plain', { role: 'listitem', dataset: { recent: String(i) } },

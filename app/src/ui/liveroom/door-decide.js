@@ -31,13 +31,18 @@
 
 const CONTROL = ['device', 'jam', 'flip', 'view', 'coach', 'community'];
 
+/**
+ * @param {{ search?: string, hash?: string, saved?: boolean | { room?: boolean, blank?: boolean }, room?: any, webdriver?: boolean }} [o]
+ * @returns {{ side: 'room' | 'control', song: 'new' | 'saved' | 'demo' | 'shared' }}
+ */
 export function decideDoor({ search = '', hash = '', saved = false, room = null, webdriver = false } = {}) {
   let q;
   try { q = new URLSearchParams(search || ''); } catch { q = new URLSearchParams(); }
   if (/[#&]s=/.test(hash || '')) return { side: 'control', song: 'shared' };
   if (q.has('room')) return { side: 'room', song: 'new' };
   const has = !!saved;
-  const hasRoom = !!saved && typeof saved === 'object' && !!saved.room;
+  const so = typeof saved === 'object' && saved ? saved : null;
+  const hasRoom = !!so && !!so.room;
   const fallback = has ? 'saved' : 'demo';
   if (webdriver) {
     if (q.has('new') || q.has('studio')) return { side: 'control', song: 'new' };
@@ -49,7 +54,7 @@ export function decideDoor({ search = '', hash = '', saved = false, room = null,
   if (CONTROL.some((k) => q.has(k))) return { side: 'control', song: fallback };
   if (q.has('new')) return { side: 'room', song: 'new' };
   if (hasRoom) return { side: room && room.side === 'control' ? 'control' : 'room', song: 'saved' };
-  if (has && typeof saved === 'object' && saved.blank && room && room.side === 'room') return { side: 'room', song: 'saved' };
+  if (so && so.blank && room && room.side === 'room') return { side: 'room', song: 'saved' };
   if (has) return { side: 'control', song: 'saved' };
   return { side: 'room', song: 'new' };
 }

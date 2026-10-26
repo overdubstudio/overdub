@@ -45,6 +45,6 @@ export const LINES = {
   'note.take': { text: ({ time = '0:00' } = {}) => `Take 1 is in: ${time}.` },
   'note.takes': { text: ({ n = 2, master = 0 } = {}) => `${n} takes in${master ? `; the band follows take ${master}` : ''}.` },
   // coming back (§2.6)
-  'note.back': { text: ({ title = 'The song', note = '' } = {}) => `${title}, where you left it${note ? `: ${note}` : '.'}` },
+  'note.back': { text: ({ title = 'The song', note = '' } = {}) => `${title}, where you left it${note ? `: ${note}.` : '.'}` },
   'note.assets': { text: () => 'This song’s recordings are in another browser. The band’s here; your guitar isn’t.' },
 };

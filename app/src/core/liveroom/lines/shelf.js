@@ -34,7 +34,7 @@ export const LINES = {
   'send.nothing': { text: () => 'Nothing to send yet: no part has a take.' },
   'send.silent': { text: () => 'The mix would be silent: every track is muted, or nothing plays.' },
   'send.didnt': { text: ({ why = '' } = {}) => `The mix didn’t render${why ? `: ${why}` : ''}.` },
-  'send.song.didnt': { text: ({ why = '' } = {}) => `The song didn’t pack${why ? `: ${why}` : ''}.` },
+  'send.song.didnt': { text: ({ why = '' } = {}) => `The song’s file wasn’t made${why ? `: ${why}` : ''}.` },
   'send.opened': { text: ({ title = 'The song', n = 0 } = {}) => `${title} is in, with ${n} ${s(n, 'recording', 'recordings')} back in this browser.` },
   // the tape box's note (labelOf), at most three sentences
   'note.empty': { text: () => 'Nothing on tape yet.' },

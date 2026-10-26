@@ -227,6 +227,12 @@ async function frontDoor(T, ctx) {
     T.ok(heard && Number.isFinite(prev.lufs) && Math.abs(prev.lufs + 20 * Math.log10(prev.gain) - (-18)) < 0.05, `after a gesture, hovering the basement plays a bar of its band, measured at ${prev ? prev.lufs.toFixed(1) : '?'} LUFS and played at about −18`);
     await s.page.mouse.move(700, 880);
     T.ok((await history(s.page)).length === 0, 'the door’s previews leave nothing in History');
+    // the door opening again with the audio running: focus on its first card, and nothing played for it
+    await s.E(() => { window.__lrPrev = []; const lr = window.overdub.liveRoom; lr.open({ screen: 'shelf' }); lr.open({ screen: 'door' }); });
+    await until(s, () => document.activeElement?.classList.contains('lrd-card'), null, 5000);
+    await new Promise((r) => setTimeout(r, 1500));
+    const reopened = await s.E(() => ({ focused: document.activeElement?.dataset?.place || null, played: window.__lrPrev.length }));
+    T.ok(reopened.focused === 'metal' && reopened.played === 0, `the door opening again puts focus on the first card and plays nothing for it (focus ${reopened.focused}, ${reopened.played} played)`);
 
     // 1-4 picks (planPlace stood in: needs C)
     await standIn(s.context);

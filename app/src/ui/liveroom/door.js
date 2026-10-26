@@ -169,7 +169,9 @@ screens.add({
     css('liveroom-door', CSS);
     const previews = createPreviews(app);
     const order = phone() ? ['kitchen', 'metal', 'basement', 'bluesbar'] : ORDER;
-    let picking = false, gone = false;
+    // (auto: the door putting focus on its first card as it opens, which plays nothing: a preview is for a card you
+    // move to)
+    let picking = false, gone = false, auto = false;
 
     function pick(place) {
       if (picking || gone) return false;
@@ -218,7 +220,7 @@ screens.add({
         'aria-label': `${title(place)}. ${slate}. ${say(`door.card.${place}`)}`,
         onclick: () => pick(place),
         onpointerenter: () => previews.play(place), onpointerleave: () => previews.stop(),
-        onfocus: () => previews.play(place), onblur: () => previews.stop(),
+        onfocus: () => { if (!auto) previews.play(place); }, onblur: () => previews.stop(),
       },
       crop,
       h('span.lrd-kick', { 'aria-hidden': 'true' }, KICK[place]),
@@ -265,7 +267,11 @@ screens.add({
       }
     }
     // (focus on the first card, so Enter picks it and arrows move along)
-    setTimeout(() => { if (!gone && open() && !el.contains(document.activeElement)) cards[0].focus({ preventScroll: true }); }, 0);
+    setTimeout(() => {
+      if (gone || !open() || el.contains(document.activeElement)) return;
+      auto = true;
+      try { cards[0].focus({ preventScroll: true }); } finally { auto = false; }
+    }, 0);
     root.addEventListener('keydown', (e) => {
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
       const i = cards.indexOf(/** @type {any} */ (document.activeElement));

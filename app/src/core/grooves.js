@@ -6,7 +6,8 @@
 //   parseGrooves(text, { file })               -> { styles, grooves, errors }   (the format, below)
 //   getStyle(idOrWord) / getGroove(idOrWord, { style })                          (or null)
 //   findGrooves({ style, part, feel, tempo, query, limit })                      -> [groove]
-//   realize(groove, { tempo, seed, human, length, offset })                     -> notes [{ p, t, d, v }] (beats)
+//   realize(groove, { tempo, seed, human, length, offset, rules })              -> notes [{ p, t, d, v }] (beats)
+//                                              (rules: 'band', the live room's velocity house rules: bandRules)
 //   gridText(groove) / describe(groove) / lengthLabel(groove)                    the written rows; a one-line summary
 //   tempoFromTaps(seconds[]) -> { bpm, beats, phase }                            the tempo a tapped rhythm was played at
 //   matchTaps(taps, { limit, parts, styles })  -> { bpm, taps, results: [{ groove, score, matched, of, shift, bpm }] }
@@ -407,9 +408,11 @@ const PHI = 0.86, INNOV = Math.sqrt(1 - PHI * PHI), PHI_V = 0.96, INNOV_V = Math
 // accents and lay; 1 the style's humanising; 2 twice that. seed: the same seed gives the same notes.
 // articulations: true on a kit that has them (Studio A): rows the groove's `art` lines name play those articulations,
 // and a snare flam is the kit's own flam note. Off (the default), every note is General MIDI, for any kit.
-export function realize(groove, { tempo = 120, seed = 1, human = 1, length = null, offset = 0, swing = true, articulations = false } = {}) {
+/** @param {any} groove @param {{ tempo?: number, seed?: number | string, human?: number, length?: number | null, offset?: number, swing?: boolean, articulations?: boolean, rules?: string | null }} [opts] */
+export function realize(groove, { tempo = 120, seed = 1, human = 1, length = null, offset = 0, swing = true, articulations = false, rules = null } = {}) {
   const g = getGroove(groove);
   if (!g) throw new Error(`no groove "${groove}"`);
+  if (rules === 'band') return bandRules(g, realize(g.id, { tempo, seed, human: g.part === 'fill' ? human * 1.5 : human, length, offset, swing, articulations }), { seed, tempo });
   const L = g.length, total = length == null ? L : Math.max(0, Number(length));
   const R = rng(`${g.id}:${seed}`);
   const sw = swing ? swingAt(g, tempo) : null;
@@ -446,6 +449,32 @@ export function realize(groove, { tempo = 120, seed = 1, human = 1, length = nul
   return out.map((n) => { const t = r4(clamp(n.t, 0, end)); return { p: n.p, t, d: down(Math.max(1 / 64, Math.min(n.d, total - t))), v: r4(clamp(n.v, 0.05, 1)) }; })
     .filter((n) => n.t < total - EPS)
     .sort((a, b) => a.t - b.t || a.p - b.p);
+}
+
+// The live room's house rules (rules: 'band', docs/research/LIVE-ROOM-MODE.md §4.1), over the notes a groove realized:
+// the way session drummers' velocities sit, from the products and producers. No run of hits at full (everything held
+// to 0.95; a blast's snare 0.85-0.9), ghost notes (written o or g) between 0.15 and 0.4, the hats varied 5 to 8% either
+// way, and a fill's first hit full with the rest a touch softer (realize plays a fill half as loose again in time).
+// Seeded on its own stream (`<groove>:<seed>:band`), so a realize without it is the same as it always was.
+const FULL = 0.95, GHOST = [0.15, 0.4];
+function bandRules(g, notes, { seed }) {
+  const R = rng(`${g.id}:${seed}:band`);
+  const blast = /blast/.test(g.id), fill = g.part === 'fill';
+  // which notes were written as ghosts: the grid's own soft marks, matched by piece and by time within a 48th of a
+  // beat or so (the humanising moves a note a few ms)
+  const ghosts = g.hits.filter((h) => h.v <= MARKS.o + EPS), L = g.length;
+  const isGhost = (n) => ghosts.some((h) => { if (h.p !== n.p) return false; const d = Math.abs((((n.t - h.t) % L) + L) % L); return Math.min(d, L - d) < 0.06; });
+  const first = notes.length ? notes[0].t : 0;
+  return notes.map((n) => {
+    let v = n.v;
+    const fam = familyOf(n.p);
+    if (fam === 'hat') { const mag = 0.05 + 0.03 * R(), sign = R() < 0.5 ? -1 : 1; v *= 1 + sign * mag; }
+    if (isGhost(n)) v = clamp(v, GHOST[0], GHOST[1]);
+    else if (blast && fam === 'snare') v = 0.85 + 0.05 * R();
+    else if (fill) v = Math.abs(n.t - first) < EPS ? 1 : Math.min(FULL, v * 0.94);
+    else v = Math.min(FULL, v);
+    return { ...n, v: r4(clamp(v, 0.05, 1)) };
+  });
 }
 
 // How many bars a groove fills when it's put in the song and nobody said: a main groove four (or its own length when

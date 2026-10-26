@@ -119,6 +119,9 @@ export const CSS = `
 .lr-stage.lr-phone .lr-tbslot .lr-talkback { padding: 6px 0; border: 0; }
 .lr-stage.lr-phone .lr-primary { min-height: 56px; justify-content: center; }
 .lr-stage.lr-phone[data-run="take"] .lr-primary { min-height: 40vh; }
+/* (on a phone, the take is the scene, the counter and that button: the lamps and the rest go, so it's in reach) */
+.lr-stage.lr-phone[data-run="take"] .lr-lamps, .lr-stage.lr-phone[data-run="take"] .lr-rig,
+.lr-stage.lr-phone[data-run="take"] .lr-secs, .lr-stage.lr-phone[data-run="take"] .lr-steppers { display: none; }
 .lr-stage.lr-phone .lr-secs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lr-stage.lr-phone .lr-sec { min-height: 44px; justify-content: center; padding: 0 6px; }
 .lr-stage.lr-phone .lr-sec .lr-kbd { display: none; }

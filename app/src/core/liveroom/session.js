@@ -182,7 +182,8 @@ export function offered(view, run) {
   if (drift && parts.some((c) => c.id === drift.card) && Number.isFinite(drift.bar)) return { id: 'punch', label: `Bar ${drift.bar} again`, key: 'Space', card: drift.card };
   // 2b. two left takes of a part sit within the pair rule: one of them as the right side (§3.7)
   const use2 = isObj(r.use2) ? r.use2 : null;
-  if (use2 && Number.isFinite(use2.take) && parts.some((c) => c.id === use2.card && !c.takes?.R?.length)) return { id: 'use2', label: `Use take ${use2.take} as the right side`, key: 'Space', card: use2.card };
+  // (while that take is still one of two or more on the left: ⌘Z on the take after it takes the offer back too)
+  if (use2 && Number.isFinite(use2.take) && parts.some((c) => c.id === use2.card && !c.takes?.R?.length && (!use2.clip || ((c.takes?.L || []).includes(use2.clip) && c.takes.L.length >= 2)))) return { id: 'use2', label: `Use take ${use2.take} as the right side`, key: 'Space', card: use2.card };
   const taken = parts.filter((c) => !c.empty);
   const last = parts.find((c) => c.id === r.last) || null;
   // 3. the other side: at the metal club, the part just played has a left take and no right one; at the basement,

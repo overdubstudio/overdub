@@ -19,7 +19,8 @@
 //   7. two inputs (muted Chromium, a stereo fake: a voice on 1, a guitar on 2): the option says it needs a pickup until
 //      both channels move, one mic is the default; picked, a take is two takes lined up on Voice and Guitar in one step
 //      by you; Again asks Both, or just the voice?, and just the voice is a pass on Voice alone over the guitar from the
-//      take before. If Chromium's fake capture gives one channel, the page part is skipped and said (the plans in Node)
+//      take before. If Chromium's fake capture gives one channel, the page part is skipped and said (the plans in Node).
+//      One source on both channels (the same strums on 1 and 2) moves both and the option still needs a pickup
 import { parseSheet, formatSheet, soundingKey, sheetChords, setWords, pasteOps } from '../../app/src/core/liveroom/sheet-text.js';
 import { readTape, alignChords, timeWords } from '../../app/src/core/liveroom/tape.js';
 import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, offeredKitchen, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen-plans.js';
@@ -558,6 +559,47 @@ async function flow(T, ctx) {
   }
   await countedFlow(T);
   await twoFlow(T);
+  await sameFlow(T);
+}
+
+// One source on both channels of a stereo input (a mic on it, or Chromium's own fake): both channels move, always at
+// the same level, and the two-input option still says it needs a pickup
+async function sameFlow(T) {
+  const bpm = 96, bars = [...V, ...C, ...V];
+  const g = strum(bars.map((c, i) => ({ beat: i * 4, notes: VOICINGS[c], beats: 4 })), { bpm, seed: 61, peak: -14, tail: 1 });
+  const len = g.buf.length + SR;
+  const one = mix([{ buf: g.buf, at: 0.5 }], { length: len });
+  let S;
+  try { S = await openRoom('/app/?room', { name: 'kitchen-same', fake: { wav: { sr: SR, channels: [one, one.slice()] } } }); } catch (e) { T.ok(false, `one source on both channels: the room opened (${e.message})`); return; }
+  const { page, E } = S;
+  try {
+    await E(INSTALL);
+    await page.waitForSelector('.lrd-card', { timeout: 15000 });
+    await page.keyboard.press('Digit4');
+    await page.waitForSelector('.kt', { timeout: 10000 });
+    await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
+    const chs = await E(() => window.overdub.input.audio.state.channels);
+    if (chs < 2) { T.note(`one source on both channels: Chromium's fake capture gave ${chs} channel, so it's skipped`); return; }
+    // (3 s of the strums on both channels, sampled as the room's frame reads them)
+    const seen = await E(() => new Promise((res) => {
+      let both = 0, apart = 0;
+      const t0 = performance.now();
+      const tick = () => {
+        const dbs = (window.__k.deck.level?.()?.channels || []).map((c) => (Number.isFinite(c.db) ? c.db : -120));
+        if (dbs.length >= 2 && dbs.every((d) => d > -50)) both++;
+        if (dbs.length >= 2 && Math.max(...dbs) > -50 && Math.max(...dbs) - Math.min(...dbs) >= 6) apart++;
+        if (performance.now() - t0 > 3000) res({ both, apart }); else requestAnimationFrame(tick);
+      };
+      tick();
+    }));
+    const c = await E(() => { const b = document.querySelector('[data-act="mic.two"]'); return b ? { text: b.textContent, disabled: b.disabled } : null; });
+    T.ok(seen.both > 10 && seen.apart === 0 && c?.disabled && /needs a guitar with a pickup/.test(c.text),
+      `one source on both channels: both moved (${seen.both} frames, never 6 dB apart) and the option still says “${c?.text}”`);
+  } catch (e) {
+    T.ok(false, `one source on both channels: ${e.message.split('\n')[0]}`);
+  } finally {
+    await S.close();
+  }
 }
 
 // Two inputs (§6.2 c, §13): a stereo fake, a voice on channel 1 from the start and a guitar on channel 2 from 4 s, both

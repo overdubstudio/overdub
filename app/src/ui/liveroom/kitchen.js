@@ -86,12 +86,17 @@ screens.add({
     const { app, ui, store, say } = ctx;
     const deck = () => ctx.deck;
     // what the kitchen reads of the input, from the deck's state (ui/liveroom/deck.js: input { label, channels }) and the
-    // input layer's (the browser's settings for the track); both moving: two channels over -50 dBFS now
+    // input layer's (the browser's settings for the track); both moving: two channels over -50 dBFS now; apart: one of
+    // them moving and the two 6 dB or more apart now (one mic on a stereo input has the same level on both, always)
     const inputNow = () => {
       const i = deck()?.state?.input || {}, a = app.input?.audio?.state || {};
-      let both = false;
-      try { const chs = deck()?.level?.()?.channels || []; both = chs.filter((c) => Number.isFinite(c.db) && c.db > -50).length >= 2; } catch { both = false; }
-      return { device: String(i.label || a.label || ''), channels: i.channels || a.channels || 0, settings: a.settings || null, bothMoving: both };
+      let both = false, apart = false;
+      try {
+        const dbs = (deck()?.level?.()?.channels || []).map((c) => (Number.isFinite(c.db) ? c.db : -120));
+        both = dbs.filter((db) => db > -50).length >= 2;
+        apart = dbs.length >= 2 && Math.max(...dbs) > -50 && Math.max(...dbs) - Math.min(...dbs) >= 6;
+      } catch { both = false; }
+      return { device: String(i.label || a.label || ''), channels: i.channels || a.channels || 0, settings: a.settings || null, bothMoving: both, apart };
     };
     const run = {
       step: 'how', mic: null, micGuess: 'laptop', phones: null, balance: null, rolling: false, playing: false, reading: false,
@@ -219,8 +224,16 @@ screens.add({
       if ((roomNow().mic || 'one') !== m.mic) { setup(m.mic); reopen(); }
       draw();
     }
-    // the option says it needs a pickup until a device shows both channels moving, once (§6.2 c)
-    const twoMoving = () => { if (!run.bothSeen) { const i = inputNow(); if (i.channels >= 2 && i.bothMoving) run.bothSeen = true; } return !!run.bothSeen; };
+    // the option says it needs a pickup until a device shows both channels moving, once (§6.2 c), and the two have been
+    // apart at least once: the same signal on both is one source on a stereo input (a mic, or Chromium's fake)
+    const twoMoving = () => {
+      if (!run.bothSeen) {
+        const i = inputNow();
+        if (i.channels >= 2 && i.apart) run.apartSeen = true;
+        if (i.channels >= 2 && i.bothMoving && run.apartSeen) run.bothSeen = true;
+      }
+      return !!run.bothSeen;
+    };
     // Two inputs: one stream, the mic's channel to Voice and the pickup's to Guitar, recorded together (audio/audioin.js
     // split). Nothing is monitored through the room (as with one mic: you hear yourself in the air, or by the
     // interface's direct monitor). voiceOnly: input 1 alone, for a pass on Voice over the master's guitar

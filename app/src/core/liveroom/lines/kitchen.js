@@ -10,7 +10,8 @@
 // vars, by line: k.how { mic: "The laptop's mic" }; k.balance.ok { db }; k.paper.read { sections, lines, count, chords,
 // capo }; k.paper.fromtake { chords, section }; k.take.in { n, time }; k.time.read { tempo, lo, hi, player };
 // k.time.moves { tempo }; k.time.speakers { part }; k.chords { chords, section }; k.form { section, times, where };
-// k.capo.after { takes, capo }; k.player.in { player, where }; k.master { n, tempo }; k.finish { finish, than, db }
+// k.capo.after { takes, capo }; k.player.in { player, where }; k.master { n, tempo }; k.finish { finish, than, db };
+// k.take.voice { n, time, take }
 
 const n = (x) => String(x).replace(/-/g, '−');
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
@@ -69,5 +70,6 @@ export const LINES = {
     },
   },
   'k.both.or.voice': { text: () => 'Both, or just the voice?' },
+  'k.take.voice': { text: ({ n: k = 2, time = '0:00', take = 1 } = {}) => `Voice take ${k} is in: ${time}, over the guitar from take ${take}.` },
   'k.pickup.needed': { text: () => 'Two inputs need a guitar with a pickup.' },
 };

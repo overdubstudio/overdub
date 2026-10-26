@@ -588,7 +588,7 @@ export function fromTakeOps(p, { take = null, capo = 0 } = {}) {
 
 /* ------------------------------------------------------------------------------------------------ the offered move */
 // run: the kitchen screen's state the song doesn't hold: { rolling, playing, reading, takes (how many), ask: 'time'
-// | 'chords' | 'form' | null, offer: a player being offered | null, done: [players offered or kept], again (Again was
+// | 'chords' | 'form' | 'both' (two inputs: Again's question) | null, offer: a player being offered | null, done: [players offered or kept], again (Again was
 // offered), heard (heard top to bottom since the last change) }
 export function offeredKitchen(view, run) {
   const r = isObj(run) ? run : {};
@@ -597,6 +597,8 @@ export function offeredKitchen(view, run) {
   // (the read's question and a player's offer are heard as they're asked: keeping it is the move, not stopping it)
   if (r.takes && r.ask === 'time') return { id: 'time', label: 'On the beat', key: 'Space' };
   if (r.takes && r.ask === 'form') return { id: 'form', label: 'Write it that way', key: 'Space' };
+  // (two inputs, Again: both again, or just the voice over the master's guitar)
+  if (r.takes && r.ask === 'both') return { id: 'again.both', label: 'Both again', key: 'Space' };
   if (r.takes && r.offer) return { id: 'keep', label: 'Keep it', key: 'Space' };
   if (r.playing) return { id: 'stop', label: 'Stop', key: 'Space' };
   if (!r.takes) return { id: 'tape', label: 'Start the tape', key: 'Space' };

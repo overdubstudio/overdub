@@ -352,7 +352,8 @@ export function guideOps(p, { section = null, from = 0, bars = 0, feel = null } 
   drums = drums.filter((x) => !(x.t < 0.06 && (familyOf(x.p) === 'hat' || familyOf(x.p) === 'ride')));
   for (let b = 0; b < len - EPS; b += bpb) drums.push({ p: 36, t: b, d: 0.25, v: b === 0 ? 0.95 : 0.9 });
   drums.push({ p: CRASH, t: 0, d: 1, v: 0.92 });
-  drums.sort((a, b) => a.t - b.t || a.p - b.p);
+  // (at the house's touch, as the learned band plays: the faders were measured there)
+  drums = touch(drums.sort((a, b) => a.t - b.t || a.p - b.p), 0, 0);
   const R = roles(p), ops = [];
   const drumsId = R.get('drums');
   const span = { start, length: len };

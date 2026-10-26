@@ -317,6 +317,43 @@ agent's mark is a short straight cool stroke, the Weave's exact strand; a person
   taste ("Take 2 is in: Claude doubled your keys an octave up. Keep it?").
 - Empty states invite an action ("Hum something. Nothing is recorded until you press the button.") and never sell.
 
+## The live room
+
+**The live room may; the control room may not.** The live room (`app/src/ui/liveroom/`) is a place you walk into
+with a guitar, so it's allowed what the rest of the studio isn't: a picture of the room, things on the walls, and gear
+that moves with the sound. The control room keeps every rule above.
+
+What the room may do:
+
+- **Scenes in pixels.** Each place is a 256 x 144 room, scaled up a whole number of pixels at a time
+  (`image-rendering: pixelated`), drawn with `fillRect` in `#rrggbb` colours and nothing else (`pixels/paint.js`), so
+  the same view always gives the same pixels and a Node check can draw them (`tools/liveroom/checks-pixels.js`).
+  Lamps are amber (`#ffc85a`); the tape counter on the console ledge is leader green, because a counter is a playhead;
+  the blues bar's neon is violet.
+- **Whimsy on the walls.** Device names have it in the control room; here the room has it: the kick heads (VOID,
+  SUMP PUMP, LAST CALL, and the kitchen's cooler that is the cajón, COOLER), the BLUES neon, the basement's flyers (the
+  one by the door takes the song's title), a coffee ring on the kitchen's paper, and on the shelf, the tape box: three
+  titles from the die for an untitled song, and a cover drawn from the song (one spike per bar, its colours seeded by
+  the title, the key and the tempo).
+- **Gear moves with the signal.** Your amp follows your input, the kit follows the drummer's hits, the reels turn
+  while the tape rolls, the needles read the master. Nothing in a scene moves on its own: a quiet view holds still.
+- **The kitchen's paper.** The words and chords sit on `--paper` in `--ink`, as real, selectable text, with a pencil
+  tick on the line under the playhead. Bylines on it use the paper's inks (`--ink-human`, `--ink-agent`).
+- **The talkback.** One line under the stage, two sentences at most, with a small square lamp that lights when the
+  line is new. The house speaks unsigned; an agent's line carries its byline.
+
+Where it stops:
+
+- No people in a scene: no characters, no crowd, no face on the band. No score, no stars, no applause.
+- **No red pixel**, in any scene, crop or cover: red is the record light. The checks hold it.
+- No motion that a signal doesn't drive, and under `prefers-reduced-motion` hits and the beat move nothing; levels
+  light only the lamps, the meters and the counter.
+- The scenes are `aria-hidden`: everything they show is also said in text (the slate, the talkback, the buttons).
+- Buttons stay plain: **Count me in**, **Again**, **The other side**, **Send a mix**. The whimsy is on the walls, never
+  on a button. Leader green in the room's own interface is still only its one primary action.
+- Copy is the engineer behind the glass, as everywhere: what went in, then what changed, then the number ("Verse is
+  in: 8 bars at 132. The band's learning it.").
+
 ## On the web
 
 `site/index.html` (served at `/`):

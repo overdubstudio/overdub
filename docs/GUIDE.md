@@ -7,9 +7,13 @@ then shows where everything else lives. In the studio, `?` shows every key.
 ## Your first overdub in five minutes
 
 1. **Open the studio.** [overdubstudio.com/app/](/app/) in Chrome, Safari or Firefox, on a computer or a phone.
-   Nothing to install, no account. The first time, it opens on **Night Shift**, a finished song, with a card on who
-   played what; the Song menu's **Demos** has more, in other genres. Nothing plays until you press something. **Make
-   your own** on that card starts a blank song and **Take one**, a small card that walks you through the steps below.
+   Nothing to install, no account. The first time, it opens on the [**live room**](#the-live-room)'s door, *Where are
+   we playing?*, for a guitar and a band; its **Control room →** link, or **No guitar? Hum, tap or play keys in the
+   control room.**, brings you here. [/app/?studio](/app/?studio) opens a new song in the control room straight away,
+   [/app/?demo](/app/?demo) opens on **Night Shift**, a finished song, with a card on who played what, and
+   [/app/?room](/app/?room) opens the live room. The Song menu's **Demos** has more songs, in other genres. Nothing
+   plays until you press something. **Make your own** on the Night Shift card starts a blank song and **Take one**, a
+   small card that walks you through the steps below.
    It waits for each one to really happen, and you can close it. It stays out of songs someone sends you, and closing
    it puts back the loop it set, unless you've changed that loop since. If you've used Overdub in this browser before,
    it opens where you left off. Everything is on screen, and [**Find anything**](#find-anything) (`⌘K`) gets you to
@@ -49,6 +53,81 @@ That's an overdub. Take one is yours, take two is the agent's, and the **History
 agent gave. `⌘Z` undoes the latest edit.
 **Revert all Claude's changes (keep mine)** takes back everything the agent did and leaves your edits alone, and
 `⇧⌘Z` puts it back, as it does after **Undo** on one of the agent's lines there.
+
+## The live room
+
+The live room is the other side of the glass: you bring a guitar (or an acoustic and your voice), pick a place, count
+in and play, and a band learns your part from the take. Everything in it is the same song, signed the same way:
+**Control room →** at the top right (or `G`) goes through the glass to the arranger with the song as it is, and `G`
+in the control room comes back. Your takes stay in this browser.
+
+**Where are we playing?** The door has four places, each with its own band, tempo and amp, drawn in pixels with the
+kick drum's name on it. `1` to `4` picks one.
+
+- **The metal club** (VOID): an electric at 132 BPM, two stacks and a big kit; the kick locks to your chugs.
+- **The basement** (SUMP PUMP): an electric at 172 BPM, one amp, fast and loud, with a two-bar count.
+- **The blues bar** (LAST CALL): an electric at 96 BPM, a small amp and a shuffle, twelve bars at a time.
+- **The kitchen table** (COOLER): an acoustic and your voice, on the laptop's mic, at your tempo.
+
+### On the stage
+
+1. **Soundcheck.** The column beside the stage says what it heard: **Plug in** (an electric wants an interface; the
+   laptop's mic is fine at the kitchen table), **Level**, **Tune** (`U`) and **Line it up** (strum on each of eight
+   clicks, so your takes land on the drums). `[` and `]` step through the amp's settings. Before the first take,
+   `←` `→` move the drummer's tempo (`⇧` for ten), and `T` four times taps it.
+2. **Count me in.** `Space` counts you in and the tape rolls. Play the part as many times round as you like; `Space`
+   again is *That's a take*. It lands as a part (a verse, say), and the talkback says what went in ("Verse is in: 8
+   bars at 132. The band's learning it."): the drums and bass learn its rhythm and its notes, and play it back with
+   you. `⌘Z` takes the take and the band's learning out together; `⇧⌘Z` puts both back.
+3. **The other side.** A heavy part is played twice, once per speaker. At the metal club, after each part's first
+   take, `Space` offers *The other side*; at the basement it's offered once, after the second part. `D` plays the
+   other side of the selected part at either, and you play it again.
+4. **Next part.** `N`, or **+ Next part** under the cards, counts you into the next one (a chorus, then a bridge).
+   Once a part is in, `Space` offers *Next part* too.
+5. **Lay it out.** Once two parts are in, `Space` offers *Lay it out*: the parts as a song, with how many bars and
+   how long. **Hear it all** (`Home` then `Enter`) plays it top to bottom; `Enter` alone plays from the selected card.
+
+Each part is a card. `←` `→` select one (after the first take), `↑` `↓` pick which of its takes plays, and its menu
+has, one step each: **Again** (`R`), **The other side** (`D`, not at the blues bar), **Another feel** (`F`),
+**Simpler** · **Busier**, **Softer** · **Louder**, **×2** (`X`), **Round and round** (`L`, the part on a loop:
+`Space` hears it, `R` records it), **Earlier** · **Later** (`⌥←` · `⌥→`) and **Remove** (`⌫`; `⌘Z` brings it back).
+`Esc` in a take is *Not that one*: nothing goes in the song, and it's in Capture; `⇧R` puts it in after all.
+
+A page-turner pedal works the stage: `PageDown` is the offered move (the same as `Space`) and `PageUp` is **Again**.
+So does a sustain pedal on a MIDI keyboard (CC 64), as `Space`, while no instrument track is armed.
+
+### The talkback
+
+The line under the stage is the house talking, unsigned. `/` talks to Claude: what you type goes to the agent, and
+what it says back comes through the talkback, signed **Claude**, in cool. While you're playing a take, Claude's tools
+wait until you stop.
+
+### The kitchen table
+
+The kitchen table records an acoustic and your voice on one mic (the laptop's, a mic on the interface, or a mic and a
+pickup). It asks whether you're on headphones (`Y` · `N`): on speakers the band never plays during a take.
+
+- **The paper.** A sheet of words and chords, typed or pasted (ChordPro, or chords over the words), one line at a
+  time; the pencil tick follows the playhead. Each line is signed by whoever wrote it; yours and the house's carry no
+  name.
+- **The work tape.** **Start the tape** (`Space`) and play the song as you would at the table, at your own time. The
+  band reads it: the tempo (**On the beat** keeps it), the parts and the chords. On headphones, **Count me in** gives
+  one bar of sticks and a shaker on the song's time instead.
+- **The players.** Then the band is offered one player at a time, where each would play: **A shaker in the chorus**,
+  **The cajón under the verses**, **The bass from the first chorus**, **Strings in the bridge**. **Keep it** or
+  **No thanks**. `↑` `↓` hear the takes, and **Use this one** picks the master.
+
+### The shelf and sending
+
+**Shelf** at the top right shows the room's songs as tape boxes, newest first, each with its label, its parts, its
+day and its engineer's note. The die on an untitled box offers three titles. A box opens its song on the stage, and
+**Take it off the shelf** asks first.
+
+**Send** (on a box, or **Send a mix** at the kitchen table) has two choices. **Send a mix** is the song as a WAV,
+through your device's share sheet where it has one, else a download. **Send the song** is one `.overdub.zip`: the
+song and its recordings. `⌘O` opens it again, here or in another browser, and puts the recordings back; it's also
+the shelf's backup. There's no share link from the room: a link carries the notes and the devices and leaves your
+recordings behind.
 
 ## Start a song
 
@@ -525,7 +604,7 @@ and pedalboard), then your guitar and practice, then ideas. The song plays on wh
   song's notes, so take them as a good reading, not gospel; a song made only of audio clips has none.
 - **The neck.** The pentatonic box, the key's scale, the chord's tones (by interval, or by name with **Note names**)
   and the next chord, fading in as the change comes; each one toggles. Pick a tuning (standard, drop D, half-step
-  down, DADGAD, open G), or **Left-handed**. What you play lights up wherever it falls: filled when it fits, a ring
+  down, DADGAD, open G, D standard, drop C, C standard, B standard, drop B), or **Left-handed**. What you play lights up wherever it falls: filled when it fits, a ring
   when it's outside, and the line under the neck says what it is ("G: the blue third over E7; bend it a little toward
   G#").
 - **Your guitar.** With an interface, choose it and its input under **Your guitar** and open it. An interface or a

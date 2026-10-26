@@ -20,6 +20,11 @@ work too (`tools/compat-test.js` and `tools/phone-test.js` check them).
 
 ## What's in the studio
 
+- **The live room.** The studio opens on a door: *Where are we playing?* Pick the metal club, the basement or the
+  blues bar for an electric guitar, or the kitchen table for an acoustic and your voice. Count in, play a part round
+  as long as you like, and the drummer and the bass learn it from the take; the parts lay out as a song. It's the same
+  song as the control room behind the glass (`G`), signed the same way, and **Send the song** puts it and its
+  recordings in one `.overdub.zip` that opens again anywhere. `?studio` goes straight to the control room.
 - **A real DAW.** Tracks, clips, an arranger with sections and loops, a piano roll, a step grid for drums, a mixer and
   device racks. Everything is synthesized in the page. Sections duplicate with their clips, bars go in and out across
   the whole song, and clips repeat and split. Fifteen demo songs come with it: Night Shift (lo-fi), Dust Jacket

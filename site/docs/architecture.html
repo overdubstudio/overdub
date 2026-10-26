@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 134 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 138 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -118,6 +118,14 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          fingering in one hand position, tab text in and out), riff.js (the house riff writer),
                          playalong.js (judging what you play against a part)                           [jam]
                          sounds.js (newPartFor: the track a new idea makes; the rest is ux-instruments')   [core]
+  app/src/core/liveroom/ the live room's song side, pure: model.js (its ids, caps and names), room-ops.js + sheet-ops.js
+                         (the ten ops' room.* and sheet.*), places.js (each place's band, tempo, rigs, feels),
+                         plans.js + session.js (the stage's plans, the room's view of the song, the offered move),
+                         band.js (the drummer and bass learning a part), read.js + read-worker.js (reading a take),
+                         double.js + tight.js (the other side, and how tight it is), kitchen.js + kitchen-plans.js,
+                         tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
+                         sheet-text.js (the paper's words and chords), label.js (the tape box), lines/ (everything
+                         the house says in the talkback, by id)                                       [room]
   app/src/engine/        engine.js (context, transport, scheduler, tracks, mixer), strip.js (channel strips),
                          schedule.js (what plays when), click.js (the click's sound), render.js (offline, in the browser), node/render.js (the
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
@@ -168,6 +176,12 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
+  app/src/ui/liveroom/   the live room in front of the glass: index.js (app.liveRoom, the overlay, the screens'
+                         registry from screens.js, the held keys), door-decide.js (which side a load opens on),
+                         door.js, stage.js + menu.js + setlist.js + soundcheck.js + lamps.js, kitchen.js + paper.js,
+                         shelf.js + shelf-db.js (overdub-shelf), send.js, talkback.js, deck.js (count-in, takes,
+                         the tuner on the audio clock), view.js, prefs.js (overdub:room), style.js, pixels/ (the
+                         scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -210,6 +224,8 @@ module via <code>css(id, text)</code> from <code>ui/dom.js</code>, using the tok
   assets: { [id]: { kind: 'audio', name, sr, channels, duration } },   <span class="c">// the samples live in IndexedDB (engine/assets.js)</span>
   master: { gain: 0, inserts: [Insert], auto?: { gain?: Lane } },   <span class="c">// gain in dB</span>
   reference?: { asset, name, sr, channels, duration, profile, by },   <span class="c">// the reference track: beside the song, never in it</span>
+  room?: Room,                                           <span class="c">// the live room's memory of the song (below); absent: a control-room song</span>
+  sheet?: Sheet,                                         <span class="c">// the kitchen table's paper (below)</span>
   meta: { created, modified, authors: { [authorId]: { kind: 'human' | 'agent' | 'house', name } },
           forkedFrom?: { title, authors, at, id, from } },             <span class="c">// set by &quot;Make it yours&quot; (core/share.js)</span>
 }
@@ -234,7 +250,16 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
          <span class="c">// take?: 'tk_x' the take group a recording stacked (clips on one track sharing it; the unmuted one plays)</span>
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   <span class="c">// a place on the neck: both or neither</span>
-DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }</code></pre></div>
+DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
+Room   = { v: 1, place?: 'metal' | 'basement' | 'bluesbar' | 'kitchen', rig?, tuning? /* a TUNINGS id */, finish?,
+           mic?: 'one' | 'two', master? /* the clip the band follows */, tracks?: { [role]: trackId },
+           parts?: { [sectionId]: { feel?, busy?: -1..1, loud?: -1..1, reps?: 1..4, oneSide?, drop?, sheet?, learned? } },
+           takes?: { [clipId]: { capo?, bpm?, onMaster? } }, managed?: { [trackId | 'master']: { gain, pan, chain } } }
+Sheet  = { v: 1, capo?: 1..11, time?: [n, d], notes?, sections: [{ id: 'ss_x', name, lines: [{ id: 'sl_x', text, by }] }] }
+         <span class="c">// a line is plain text, its chords [bracketed] on their syllables; capo is the paper's, not the song's key</span></code></pre></div>
+<p><code>room</code> and <code>sheet</code> (<code>core/liveroom/model.js</code>: the ids, the caps, the canonical key order) are written only by their
+ops, below. What the band plays is clips like any other; the room's fields remember how it was made, so a part's
+feel or a take's capo survive a reload. A reader that doesn't know them skips them.</p>
 <h3 id="the-tempo-map"><a class="h-link" href="#the-tempo-map">The tempo map</a></h3>
 <p>A song may carry <code>tempoMap: { anchors: [{ beat, sec }, …], clip?, clipStart? }</code> (optional, top level, forever): the grid follows a
 recording instead of the recording following the grid. The grid is piecewise linear between anchors and runs on past
@@ -394,6 +419,12 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>section.add</code></td><td><code>section: { name, start, length, color?, key? }</code>, <code>ref?</code> (<code>key</code>: the section's own key's name, <code>&quot;F# minor&quot;</code>)</td></tr>
 <tr><td><code>section.set</code> / <code>section.remove</code></td><td><code>section</code> (object, id or name), <code>patch: { name?, start?, length?, color?, key? }</code></td></tr>
 <tr><td><code>section.duplicate</code></td><td><code>section</code>, <code>to?</code> (beats; default right after it), <code>push?</code> (make room there first), <code>ref?</code></td></tr>
+<tr><td><code>section.move</code></td><td><code>section</code>, <code>before</code> (a section id or name; <code>null</code>: the end): the section and everything in it moves, the bars between close up (an arrangement op, planned like <code>section.duplicate</code>)</td></tr>
+<tr><td><code>room.set</code></td><td><code>patch: { place?, rig?, tuning?, finish?, master?, mic?, tracks?, takes?, managed? }</code> (whole values; <code>null</code> deletes a key; makes the room when there's none), or <code>clear: true</code> (<code>core/liveroom/room-ops.js</code>)</td></tr>
+<tr><td><code>room.part.set</code></td><td><code>section</code>, <code>patch: { feel?, busy?, loud?, reps?, oneSide?, drop?, sheet?, learned? }</code> (merged; <code>null</code> deletes a key), or <code>remove: true</code></td></tr>
+<tr><td><code>sheet.set</code></td><td><code>patch: { capo?, time?, notes? }</code> (<code>null</code> deletes a key; makes the sheet), or <code>clear: true</code> (<code>core/liveroom/sheet-ops.js</code>)</td></tr>
+<tr><td><code>sheet.section.add</code> / <code>.set</code> / <code>.remove</code></td><td><code>section: { name, lines? }</code>, <code>index?</code>, <code>ref?</code> / <code>section</code>, <code>patch: { name }</code> / <code>section</code> (by id, <code>$ref</code> or name)</td></tr>
+<tr><td><code>sheet.line.add</code> / <code>.set</code> / <code>.remove</code></td><td><code>section</code>, <code>line: { text }</code>, <code>index?</code>, <code>ref?</code> / <code>section</code>, <code>line</code>, <code>patch: { text }</code> / <code>section</code>, <code>line</code> (each line signed by the op's author)</td></tr>
 <tr><td><code>time.insert</code> / <code>time.remove</code></td><td><code>at</code>, <code>length</code> (beats, across the whole song: clips, sections, the loop, the tempo map)</td></tr>
 <tr><td><code>tempo.map</code></td><td><code>map: { anchors: [{ beat, sec }], clip? } | null</code>, <code>tempo?</code> (sets or clears the tempo map; set, <code>tempo</code> becomes its nominal; cleared, the grid plays at <code>tempo</code> if given, else the nominal it had. The inverse restores both exactly)</td></tr>
 <tr><td><code>clip.repeat</code></td><td><code>track</code>, <code>clip</code>, <code>times</code> (2..64, in all), <code>mode?: 'copies' | 'loop'</code>, <code>ref?</code></td></tr>
@@ -1854,9 +1885,23 @@ of this version trusts the kept songs' devices, once), decodes a share link if t
 (the link's song, <code>?new</code>, <code>?demo</code>, the saved song, or the demo), the engine (a silent stand-in if it fails), the
 shell, then starts each module in <code>MODULES</code> (each <code>export default function (app)</code>) in order; one failing never stops
 the rest. Audio starts on the first gesture. URL switches: <code>?new</code>, <code>?demo=&lt;id&gt;</code>, <code>?device=&lt;id&gt;</code>, <code>?agent=mock</code>,
-<code>?coach</code>, <code>?autostart</code>, <code>?view=simple|full</code>, <code>#s=…</code>. Straight after the shell,
+<code>?coach</code>, <code>?autostart</code>, <code>?view=simple|full</code>, <code>?room</code>, <code>?studio</code>, <code>#s=…</code>.</p>
+<p><strong>The door.</strong> Before the shell is built, <code>main.js</code> asks <code>decideDoor</code> (<code>ui/liveroom/door-decide.js</code>, pure) which side of
+the glass the load opens on and with which song, and keeps the answer as <code>app.door</code> (<code>{ side, song }</code>). A share link
+opens in the control room; <code>?room</code> opens the live room on a new song; <code>?demo</code>, <code>?studio</code> and the control room's own
+switches open the control room; a saved song with a room opens in the room (unless it was last on the control room's
+side); a first visit opens the room's door. Under <code>navigator.webdriver</code> everything but <code>?room</code> opens the control
+room, as before the room, so the suites see what they always saw. On the room's side <code>main.js</code> sets <code>data-room</code> on
+<code>&lt;html&gt;</code>, and <code>app.css</code> keeps the studio out of sight until the room has mounted over it.</p>
+<p><strong>The live room</strong> (<code>ui/liveroom/index.js</code>) is a screen over an inert studio, one at a time from its registry
+(<code>door</code>, <code>stage</code>, <code>kitchen</code>, <code>shelf</code>, <code>send</code>), drawn from the shell's loop. <code>app.liveRoom</code> is <code>{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }</code>: <code>busy()</code> is true through a
+count, a take and the band's read, and the agent's song-changing tools refuse while it is (<code>agent/tools.js</code>,
+<code>recordingBlock</code>); <code>say</code> puts a line in the talkback, the house's unsigned and an agent's signed. Its state is
+<code>ui.state.liveRoom</code>; its memory in this browser is <code>localStorage overdub:room</code> (<code>ui/liveroom/prefs.js</code>: the side
+last used, the place, headphones or speakers per output, the once-only lines said per song); the room's songs are
+kept in IndexedDB <code>overdub-shelf</code> (<code>ui/liveroom/shelf-db.js</code>), beside <code>overdub:project</code>. Both names are forever. Straight after the shell,
 <code>installWorkspace(ui, app)</code> gives it <code>ui.workspace</code>, before any module mounts a panel.</p>
-<p>The app object (<code>window.overdub</code>): <code>{ store, engine, ui, devices, music, summarize, version, opened, trust, agent, tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter, analytics, plugin, jam, songs, site, siteConfig }</code> plus the panels that publish an API (<code>arranger</code>, <code>pianoroll</code>, <code>drumgrid</code>, <code>rack</code>, <code>mixer</code>,
+<p>The app object (<code>window.overdub</code>): <code>{ store, engine, ui, devices, music, summarize, version, opened, trust, agent, tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter, analytics, plugin, jam, songs, site, siteConfig, door, liveRoom }</code> plus the panels that publish an API (<code>arranger</code>, <code>pianoroll</code>, <code>drumgrid</code>, <code>rack</code>, <code>mixer</code>,
 <code>browser</code>, <code>transport</code>). <code>app.site</code> is which site this is (<code>ui/preview.js</code> reads <code>app/site-config.json</code>; deploy/README.md). <code>app.siteConfig</code> is
 <code>loadSiteConfig</code>'s answer as boot read it (main.js waits for it, at most 4 s, <code>CONFIG_WAIT_MS</code>, before the first
 module starts), or null when this load couldn't see it.</p>

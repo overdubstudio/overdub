@@ -3,6 +3,7 @@
 //   rack.webp     the rack close up, ending on Claude's Tidal Cathedral (an agent-built device face)
 //   sketch.webp   the Sketch panel after a (fake-mic) hum of A3 C4 E4: the spiral and the notes it wrote
 //   history.webp  the History panel after a few edits by you and by Claude: warm is you, cool is the agent
+//   liveroom.webp the live room's door, Where are we playing?, the first screen a first visit sees (?room)
 // Each is written at 1440 and 960 wide (name.webp, name-960.webp) into site/assets/, and kept under ~400 KB.
 // Needs ffmpeg or cwebp on PATH. Raw PNGs land in tools/.out/shots/.
 import fs from 'node:fs';
@@ -146,6 +147,16 @@ const errs = [];
   // silence): later, the next pass's A3 starts a fourth note the caption doesn't mention
   await page.waitForTimeout(Math.ceil((secs - 0.75) * 1000));
   encode('sketch', await shot(page, 'sketch', await page.evaluate(() => { const r = document.querySelector('.ew-region-bottom').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })));
+  errs.push(...errors);
+  await close();
+}
+// ---- (e) the live room's door (?room opens it on a new song, under webdriver too)
+{
+  const { page, errors, close } = await open('/app/', { width: 1440, height: 900, query: 'room' });
+  await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+  await page.waitForFunction(() => window.overdub?.liveRoom?.isOpen?.() && document.querySelector('.lrd-crop'), null, { timeout: 20000 });
+  await page.waitForTimeout(1200);
+  encode('liveroom', await shot(page, 'liveroom'));
   errs.push(...errors);
   await close();
 }

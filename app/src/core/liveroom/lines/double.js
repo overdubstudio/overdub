@@ -13,8 +13,11 @@
 //   side.punched { bar, ms }           side.wander { part, bar }                side.use2 { part, count, take }
 //   side.intro {}                      side.both {}                             guide.held { take, ms }
 //   guide.drifts { from, bar, take }   feel.named { feel }                      busy.simpler {} · busy.busier {}
-//   loud.softer {} · loud.louder {}    finish.offer { finish, others: [two] }   finish.chosen { finish, than, db }
-//   bass.yours { part }
+//   loud.softer {} · loud.louder {}    finish.offer { finish, others: [two] }   finish.chosen { finish, than, db, pushed? }
+//   finish.hearing { finish, than, matched }    finish.on { finish }            bass.yours { part }
+// (finish.chosen: db is the chosen one's measured loudness against the one it replaced, rounded to the dB here; pushed:
+// it's the same mix pushed, the Loud finish. finish.hearing: a chip focused, its finish previewed, matched to the level
+// of the one on when its loudness has been measured. finish.on: what's on, said when a focus goes or before the number)
 // ms figures arrive as measured; a drift's is rounded here to 5 ms (§4.7), the others to the ms.
 
 const lower = (s) => String(s ?? '').toLowerCase();
@@ -50,7 +53,16 @@ export const LINES = {
   'loud.louder': { text: () => 'Pushed: a crash on every bar.' },
   // the finish (§3.12)
   'finish.offer': { once: true, text: ({ finish, others = [] }) => `Hear it with a finish? ${cap(finish)} is on; ${others.map(cap).join(' and ')} ${others.length === 1 ? 'is' : 'are'} a press away.` },
-  'finish.chosen': { text: ({ finish, than, db }) => (Number(db) > 0.5 ? `${cap(finish)}: the same mix, pushed. About ${Math.round(Number(db))} dB louder than ${cap(than)}.` : `${cap(finish)} is on.`) },
+  'finish.chosen': {
+    text: ({ finish, than, db, pushed }) => {
+      const d = Math.round(Number(db) || 0);
+      if (d >= 1) return pushed ? `${cap(finish)}: the same mix, pushed. About ${d} dB louder than ${cap(than)}.` : `${cap(finish)} is on: about ${d} dB louder than ${cap(than)}.`;
+      if (d <= -1) return `${cap(finish)} is on: about ${-d} dB quieter than ${cap(than)}.`;
+      return `${cap(finish)} is on: about as loud as ${cap(than)}.`;
+    },
+  },
+  'finish.hearing': { text: ({ finish, than, matched }) => (matched ? `Hearing ${cap(finish)} at ${cap(than)}’s level. Press it to put it on.` : `Hearing ${cap(finish)}. Press it to put it on.`) },
+  'finish.on': { text: ({ finish }) => `${cap(finish)} is on.` },
   // your bass (§4.5)
   'bass.yours': { text: ({ part }) => `Bass is in on the ${lower(part)}: yours. The house’s is off there.` },
 };

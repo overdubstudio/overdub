@@ -368,7 +368,7 @@ export async function run(T, ctx) {
     const g0 = await E(() => window.overdub.store.get().master.gain || 0);
     await page.hover('.lr-chip[data-finish="loud"]');
     await settle(150);
-    const pv = await E(() => ({ gain: window.overdub.store.get().master.gain || 0, hist: window.overdub.store.history.length, run: window.overdub.ui.state.liveRoom.run, limiter: window.overdub.store.get().master.inserts.find((x) => x.device === 'core.limiter')?.params?.gain }));
+    const pv = await E(() => ({ gain: window.overdub.store.get().master.gain || 0, hist: window.overdub.store.history.length, run: window.overdub.ui.state.liveRoom.run, limiter: window.overdub.store.get().master.inserts.find((x) => x.device === 'core.limiter')?.params?.gain, line: document.querySelector('.lr-tb-line')?.textContent || '' }));
     const nH = (await history(page)).length;
     await page.click('.lr-chip[data-finish="loud"]');
     await settle(150);
@@ -380,6 +380,19 @@ export async function run(T, ctx) {
       `measured on this song: Tight ${L.tight}, Loud ${L.loud}, Room ${L.room} LUFS; Loud focused plays it with the master ${(pv.gain - g0).toFixed(2)} dB (level-matched), nothing in History`);
     T.ok(h.length === nH + 1 && h.at(-1).by === 'you' && h.at(-1).reason === 'room:finish' && chosen === `Loud: the same mix, pushed. About ${Math.round(db)} dB louder than Tight.` && (await E(() => window.overdub.store.get().room.finish)) === 'loud',
       `choosing Loud is one step by you ("${h.at(-1).label}"): "${chosen}"`);
+    // the line up matches the chips: the focused one's preview while it's heard, the chosen one's number once pressed,
+    // what's on when a focus goes; the offer never comes back over them
+    const upChosen = await E(() => document.querySelector('.lr-tb-line')?.textContent || '');
+    await page.hover('.lr-chip[data-finish="room"]');
+    await settle(150);
+    const upRoom = await E(() => document.querySelector('.lr-tb-line')?.textContent || '');
+    await page.mouse.move(4, 4);
+    await settle(150);
+    const upOff = await E(() => document.querySelector('.lr-tb-line')?.textContent || '');
+    await E(() => new Promise((r) => setTimeout(r, 2800)));
+    const upLater = await E(() => ({ line: document.querySelector('.lr-tb-line')?.textContent || '', pressed: document.querySelector('.lr-chip[aria-pressed="true"]')?.dataset.finish }));
+    T.ok(pv.line === 'Hearing Loud at Tight’s level. Press it to put it on.' && upChosen === chosen && upRoom === 'Hearing Room at Loud’s level. Press it to put it on.' && upOff === 'Loud is on.' && upLater.line === upOff && upLater.pressed === 'loud',
+      `the line up follows the chips: focused "${pv.line}"; chosen "${upChosen}"; Room focused "${upRoom}"; the focus gone "${upOff}", and still "${upLater.line}" later (${upLater.pressed} pressed)`);
     await press(page, 'Escape');
     await settle();
     // the menu: every item one step by you, undone exactly

@@ -484,7 +484,9 @@ screens.add({
         if (fins.length && v.place !== 'kitchen') {
           const cur = v.finish && fins.includes(v.finish) ? v.finish : fins[0];
           const nm = (f) => NAMES.finish[f] || f;
-          setTimeout(() => { if (L.run === 'idle' && !S.pass) say('finish.offer', { finish: nm(cur), others: fins.filter((f) => f !== cur).map(nm) }); }, 2500);
+          // (not once a chip has been focused or pressed, nor over another finish: the line up says what's on)
+          S.finTouched = false;
+          setTimeout(() => { if (L.run === 'idle' && !S.pass && !S.finTouched && view().finish === v.finish) say('finish.offer', { finish: nm(cur), others: fins.filter((f) => f !== cur).map(nm) }); }, 2500);
           finishLevels();
         }
       }
@@ -522,24 +524,36 @@ screens.add({
       return out;
     }
     const finishDb = (f, than) => { const m = S.finishes?.lufs; return m && Number.isFinite(m[f]) && Number.isFinite(m[than]) ? m[f] - m[than] : null; };
+    const finName = (f) => NAMES.finish[f] || f;
+    // the finish on now: the song's, else the place's first (the chip shown pressed)
+    const finOn = (v = view()) => { const fins = FINISHES[v.place] || []; return v.finish && fins.includes(v.finish) ? v.finish : fins[0] || null; };
+    // The finish's lines answer the chip at once, never queued behind an older one: the line up is always what's heard
+    // (focused: that finish, previewed), or what's on (chosen, or the focus gone)
+    const sayNow = (id, vars) => { try { room?.__lrTalkback?.pressed?.(); } catch { /* fine */ } return say(id, vars); };
     // a chip focused: its finish heard, level-matched, the part playing if nothing was (released on blur)
     function finishFocus(f) {
-      finishBlur();
-      const v = view(), cur = v.finish;
+      finishBlur({ quiet: true });
+      const v = view(), cur = finOn(v);
       if (!f || f === cur || busy()) return;
+      S.finTouched = true;
       const pl = planFinish(song(), { finish: f });
       const db = finishDb(f, cur);
       const ops = [...pl.ops];
       if (Number.isFinite(db)) ops.push({ type: 'master.set', patch: { gain: Math.round(((song().master?.gain || 0) - db) * 100) / 100 } });
       try { S.focusFin = { id: f, preview: store.preview(ops, { by: 'you' }), played: false }; } catch (x) { console.error('liveroom: a finish\'s preview', x); return; }
       if (L.run !== 'play') { hearFrom(false); if (L.run === 'play') S.focusFin.played = true; }
+      sayNow('finish.hearing', { finish: finName(f), than: finName(cur), matched: Number.isFinite(db) });
+      S.focusFin.line = room?.__lrTalkback?.text ?? null;
     }
-    function finishBlur() {
+    // the focus gone without a press: its preview out (and the part it started); the line back to what's on, when the
+    // line up is still the preview's
+    function finishBlur({ quiet = false } = {}) {
       const F = S.focusFin;
       if (!F) return;
       S.focusFin = null;
       try { F.preview?.release(); } catch { /* gone */ }
       if (F.played && L.run === 'play') stopPlay(false);
+      if (!quiet && F.line && room?.__lrTalkback?.text === F.line) { const on = finOn(); if (on) sayNow('finish.on', { finish: finName(on) }); }
     }
     function finishChip(f) {
       // (the focused chip's preview out first: what's on is the song's own finish)
@@ -547,16 +561,24 @@ screens.add({
       if (F) { S.focusFin = null; try { F.preview?.release(); } catch { /* gone */ } }
       const v = view(), fins = FINISHES[v.place] || [];
       if (!fins.includes(f)) return { ok: false, error: 'There’s no finish called that here.' };
-      const than = v.finish && fins.includes(v.finish) ? v.finish : fins[0];
-      if (f === than) return { ok: true };
+      S.finTouched = true;
+      const than = finOn(v);
+      if (f === than) { sayNow('finish.on', { finish: finName(f) }); return { ok: true }; }
       const pl = planFinish(song(), { finish: f });
       if (!pl.ops.length) return { ok: false, error: 'Nothing to change there.' };
       const r = runPlan(store, pl, { by: 'you' });
       if (!r.ok) return r;
-      // (the number is the measurement's, made when the song was first heard top to bottom: said when it's in)
-      const words = () => { const db = finishDb(f, than); say('finish.chosen', { finish: NAMES.finish[f] || f, than: NAMES.finish[than] || than, db: Number.isFinite(db) ? db : 0 }); };
-      if (Number.isFinite(finishDb(f, than)) || !S.measuring) words();
-      else Promise.race([S.measuring, new Promise((res) => setTimeout(res, 8000))]).then(words, words);
+      // (the number is the measurement's, made when the song was first heard top to bottom: said with it when it's in;
+      // until then the line says what's on, and the number follows if the finish is still this one)
+      const vars = () => ({ finish: finName(f), than: finName(than), db: finishDb(f, than), pushed: f === 'loud' });
+      if (Number.isFinite(finishDb(f, than))) sayNow('finish.chosen', vars());
+      else {
+        sayNow('finish.on', { finish: finName(f) });
+        if (S.measuring) {
+          const words = () => { if (finOn() === f && Number.isFinite(finishDb(f, than))) say('finish.chosen', vars()); };
+          Promise.race([S.measuring, new Promise((res) => setTimeout(res, 8000))]).then(words, words);
+        }
+      }
       return { ok: true };
     }
 
@@ -1032,7 +1054,7 @@ screens.add({
         try { lock?.release?.(); } catch { /* fine */ }
         lock = null;
         releasePreview();
-        finishBlur();
+        finishBlur({ quiet: true });
         S.widePending = null;
         const sendBtn = room?.querySelector('.lr-send');
         if (sendBtn) sendBtn.hidden = true;

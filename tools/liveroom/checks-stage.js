@@ -10,7 +10,8 @@
 // the input, never to a speaker), each pass's count lined up with the part it plays (harness.js alignCount's sum: the
 // count's `at` given to the deck's countIn), the deck's latency 0 (the fake has none). Hear it all and the wide
 // playback after the other side are moved on by seeking near their end: what's checked is where they start and that
-// they stop and say so, not a minute and fifty-one seconds of listening.
+// they stop and say so, not a minute and fifty-one seconds of listening. The control room's click, left on, is held off
+// through every play in the room and given back as it was when the room closes.
 
 import path from 'node:path';
 import { press as pressRoom, offered, stopBeat } from '../../app/src/core/liveroom/session.js';
@@ -68,6 +69,13 @@ const INSTALL = async ({ parts }) => {
   deck.take = (a = {}) => { window.__lr.takes.push(JSON.parse(JSON.stringify(a))); return take(a); };
   deck.stop = (a = {}) => { window.__lr.stops.push(JSON.parse(JSON.stringify(a))); return stop(a); };
   window.__lr.fileT0 = fileT0;
+  // the control room's click on (not only while recording), as a person might have left it there: the room holds it
+  // off from when it opens (the door is up at ?room: through the glass first, so the click is the control room's)
+  if (o.liveRoom.isOpen()) o.liveRoom.close();
+  o.transport.click.set({ on: true, whileRecording: false });
+  window.__lr.clickWas = { ...o.engine.click };
+  window.__lr.clicks = [];
+  o.engine.on('transport', (e) => { if (e.why === 'play' || e.why === 'stop') window.__lr.clicks.push({ why: e.why, on: !!o.engine.click.on }); });
   o.liveRoom.open({ screen: 'stage' });
   return r.ok;
 };
@@ -337,8 +345,10 @@ export async function run(T, ctx) {
     await press(page, 'Space');
     await settle();
     r = await E(READ);
+    const clickH = await E(() => ({ on: window.overdub.engine.click.on, set: window.overdub.transport.click.get().on }));
     const playsH = await s.plays();
     T.ok(r.run === 'play' && playsH.at(-1)?.from === 0 && r.primary === 'Stop' && sendHidden0 === true, `Hear it all plays from the top (${playsH.at(-1)?.from}), and Space is Stop; Send isn't offered before it (hidden: ${sendHidden0})`);
+    T.ok(!clickH.on && clickH.set === true, `the band is the time: the control room's click, on, is held off while Hear it all plays (engine ${clickH.on}; what you set reads ${clickH.set})`);
     r0 = r;
     await E(() => window.overdub.engine.seek(window.overdub.engine.songEnd() - 1.5));
     await waitFor(() => window.overdub.ui.state.liveRoom.run === 'idle', null, 30000);
@@ -467,6 +477,23 @@ export async function run(T, ctx) {
     await settle(200);
     const sent = await E(() => ({ screen: window.overdub.ui.state.liveRoom.screen, up: !!document.querySelector('.lr-screen[data-screen="send"]') }));
     T.ok(sent.screen === 'send' && sent.up, `Send in the header opens the send screen (${sent.screen})`);
+
+    // the click, held off whenever the room played (every play and stop in it: the takes, Hear it all, the wide
+    // playbacks, the previews), given back exactly as it was when the room closes
+    const ck = await E(() => { const o = window.overdub, during = window.__lr.clicks.slice(); o.liveRoom.close(); return { during, was: window.__lr.clickWas, now: { ...o.engine.click }, open: o.liveRoom.isOpen() }; });
+    const roomPlays = ck.during.filter((x) => x.why === 'play');
+    T.ok(roomPlays.length >= 6 && ck.during.every((x) => !x.on) && !ck.open && json(ck.now) === json(ck.was),
+      `the click: off through all ${roomPlays.length} plays in the room, and back as it was when the room closes (${json(ck.now)}${json(ck.now) === json(ck.was) ? '' : `, was ${json(ck.was)}`})${ck.during.some((x) => x.on) ? `; on at ${ck.during.map((x, i) => (x.on ? `${x.why} ${i}` : '')).filter(Boolean).join(', ')} of ${ck.during.length}` : ''}`);
+    // one turned on while the room is open (an agent's, straight on the engine): held off while the room plays, and
+    // there again when the play stops; the room closed, it's as that agent left it
+    await E(() => { const o = window.overdub; o.engine.click = { on: false }; o.liveRoom.open({ screen: 'stage' }); o.engine.click = { on: true }; o.liveRoom.press('home'); });
+    await waitFor(() => window.overdub.engine.playing, null, 10000);
+    await settle(100);
+    const ag = await E(() => ({ playing: window.overdub.engine.click.on }));
+    await E(() => window.overdub.liveRoom.press('stop'));
+    await settle(100);
+    const ag2 = await E(() => { const o = window.overdub, idle = o.engine.click.on; o.liveRoom.close(); return { idle, closed: o.engine.click.on }; });
+    T.ok(!ag.playing && ag2.idle && ag2.closed, `a click turned on in the room: off while it plays (${ag.playing}), on again when it stops (${ag2.idle}) and after (${ag2.closed})`);
 
     const errs = s.errors.filter((e) => !ignorable(e));
     T.ok(!errs.length, `no page errors on the stage${errs.length ? ': ' + errs.slice(0, 3).join(' | ').slice(0, 400) : ''}`);

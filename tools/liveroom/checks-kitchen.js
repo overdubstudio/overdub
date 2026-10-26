@@ -1,6 +1,578 @@
-// The live room's checks: the kitchen table [stream D] (docs/research/LIVE-ROOM-MODE.md §11.7).
-// Run by tools/liveroom-test.js (ONLY=kitchen), whose header says what a checks module exports. Empty until stream D
-// writes them.
+// The live room's checks: the kitchen table [stream D] (docs/research/LIVE-ROOM-MODE.md §11.7). Run by
+// tools/liveroom-test.js (ONLY=kitchen), whose header says what a checks module exports.
+//   1. the paper (Node): ChordPro and chords-over-words fixtures read into sections, lines and anchored chords;
+//      format(parse(x)) is stable; capo 3 on G shapes sounds in Bb; Nashville numbers read; a chord nobody reads is
+//      kept as text and plays nothing; an edited line keeps each chord on its syllable
+//   2. the time (Node): the analyser on synthesized strummed takes (72-120 BPM, drifting up to 4%) reads the tempo
+//      within 3%, or offers it as Twice or Half as fast; a take in free time over a fifth of it says so
+//   3. the chords (Node): the paper's chords lined up with those takes, a voice 5 LU over the guitar, put each change
+//      within a beat of where it was played on 90% of changes or more; a chorus played twice offers Chorus ×2; a
+//      section left out is left out; nothing plays where the paper has no chord
+//   4. the levels (Node, the canonical renderer; LEVELS=0 skips them): each player under the take by its LU (shaker
+//      and cajón -12, bass -9, strings -14, within 1.5); the three finishes (Bare about -16 to -14 LUFS, Warm, Close
+//      about -13) under -1 dBTP
+//   5. the flow (muted Chromium): §2.5 end to end, 8 presses, with a stand-in deck (the room's deck is stream A's:
+//      // needs A) and the door and the send stood in for (// needs F); on speakers the band is held muted for the
+//      whole take and nothing is played
+//   6. signing: an mcp:test sheet.line.set shows its byline in --ink-agent; the house's chord lines are unsigned; every
+//      step's author in History
+import { parseSheet, formatSheet, soundingKey, sheetChords, setWords, pasteOps } from '../../app/src/core/liveroom/sheet-text.js';
+import { readTape, alignChords, timeWords } from '../../app/src/core/liveroom/tape.js';
+import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, offeredKitchen, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen-plans.js';
+import { createStore } from '../../app/src/core/store.js';
+import { createProject } from '../../app/src/core/project.js';
+import '../../app/src/devices/builtin/index.js';
+import { getDevice } from '../../app/src/devices/registry.js';
+import { renderSong } from '../../app/src/engine/node/render.js';
+import { measure } from '../../app/src/audio/measure.js';
+import { checkTargets } from '../../app/src/audio/targets.js';
+import { strum, voice, mix, rng, SR } from './fake.js';
+import { mapBeat, mapSec } from '../../app/src/core/music.js';
+import { openRoom, history } from './harness.js';
+
 export const name = 'kitchen';
 export const pages = true;
-export async function run(T, ctx) {}
+
+const r2 = (x) => Math.round(x * 100) / 100;
+
+/* ------------------------------------------------------------------------------------------------ fixtures */
+export const UG = `Paper Moon chords
+Capo 3
+
+[Verse 1]
+G         Em
+Somewhere a paper moon is hanging
+C                    D
+over the roofs of the town
+
+[Chorus]
+C       G
+Hold on hold on
+D            G
+until the morning
+
+[Verse 2]
+G           Em
+Something about the way
+C       D
+it goes
+
+[Chorus]
+C       G
+Hold on hold on
+D            G
+until the morning
+
+[Bridge]
+Am      C
+Down the stairs
+D               D
+out into the rain
+`;
+export const CHO = `{title: Paper Moon}
+{key: G}
+{capo: 2}
+{time: 3/4}
+{start_of_verse: Verse 1}
+Somewhere a [G]paper [Em]moon is hanging
+over the [C]roofs of the [D]town
+{end_of_verse}
+{start_of_chorus}
+[C]Hold on, hold [G]on
+{end_of_chorus}
+{chorus}
+{c: Bridge}
+[Am]Down the [Hm7]stairs
+`;
+
+// The sounding chords of the take as played: shapes plus the capo. One chord a bar.
+const VOICINGS = { Bb: [46, 50, 53, 58, 62], Gm: [43, 50, 55, 58, 62], Eb: [51, 55, 58, 63, 67], F: [41, 48, 53, 57, 60, 65], Cm: [48, 51, 55, 60, 63], 'C#m': [49, 56, 61, 64, 68] };
+const SCALE = [58, 60, 62, 63, 65, 67, 69, 70, 72];
+const TONES = { Bb: [58, 62, 65, 70], Gm: [62, 67, 70], Eb: [63, 67, 70], F: [60, 65, 69, 72], Cm: [60, 63, 67], 'C#m': [61, 64, 68] };
+// a take: bars of sounding chords, strummed at a tempo that drifts (bar by bar, `drift` of the tempo at most, a slow
+// sine), a voice singing the chords' tones and steps between them `voiceLU` over the guitar; lead seconds before
+export const takeOf = (bars, { bpm = 84, drift = 0, voiceLU = 5, seed = 1, lead = 2, free = null } = {}) => {
+  const R = rng(seed);
+  const parts = [], vparts = [], played = [];
+  let t = lead;
+  bars.forEach((c, i) => {
+    const tempo = bpm * (1 + drift * Math.sin((2 * Math.PI * i) / Math.max(8, bars.length)));
+    // free time: the bars in [a, b) are played out of time (each beat stretched or squeezed up to 30%)
+    const loose = free && i >= free[0] && i < free[1];
+    const spb = 60 / tempo;
+    if (loose) {
+      // out of time: one chord let ring, then the next whenever it comes (1.5 to 4 s apart), as a rubato intro is played
+      const len = 1.5 + 2.5 * R();
+      const s = strum([{ beat: 0, notes: VOICINGS[c], beats: 1 }], { bpm: 60 / len, seed: seed * 100 + i, tail: 0, pattern: [0] });
+      parts.push({ buf: s.buf, at: t });
+      played.push({ chord: c, at: t, free: true });
+      t += len;
+      return;
+    }
+    const s = strum([{ beat: 0, notes: VOICINGS[c], beats: 4 }], { bpm: tempo, seed: seed * 100 + i, tail: 0 });
+    parts.push({ buf: s.buf, at: t });
+    const tones = TONES[c];
+    const v = voice([[0.5, tones[i % tones.length], 1.4], [2.5, SCALE[(i * 3) % SCALE.length], 1.2]], { bpm: tempo, seed: seed * 7 + i, tail: 0 });
+    vparts.push({ buf: v.buf, at: t });
+    played.push({ chord: c, at: t });
+    t += 4 * spb;
+  });
+  const g = mix(parts, { length: Math.ceil((t + 1) * SR) }), vo = mix(vparts, { length: Math.ceil((t + 1) * SR) });
+  // the voice set voiceLU over the guitar by loudness, then the two mixed to a -14 dBFS peak
+  const lg = measure({ sr: SR, channels: [g] }).lufs, lv = measure({ sr: SR, channels: [vo] }).lufs;
+  const gain = Number.isFinite(lv) ? 10 ** ((lg + voiceLU - lv) / 20) : 0;
+  return { buf: mix([{ buf: g, at: 0 }, { buf: vo, at: 0, gain }], { peak: -14 }), played, end: t };
+};
+const V = ['Bb', 'Gm', 'Eb', 'F'], C = ['Eb', 'Bb', 'F', 'Bb'], B = ['Cm', 'Eb', 'F', 'F'];
+// the paper's form as played: verse, verse, chorus, chorus, bridge, chorus, chorus
+const FORM = [...V, ...V, ...C, ...C, ...B, ...C, ...C];
+
+/* ------------------------------------------------------------------------------------------------ helpers */
+const ok = (r) => { if (!r.ok) throw new Error(r.error || 'dispatch refused'); return r; };
+// a song at the kitchen with the paper pasted and a take on its track
+function songWith(buf, paper = UG) {
+  const st = createStore(createProject({ tempo: 84, title: 'Paper Moon' }), { getDevice });
+  ok(st.dispatch(pasteOps(st.get(), parseSheet(paper)).ops, { by: 'you', label: 'The paper' }));
+  ok(st.dispatch(kitchenOps(st.get(), { mic: 'one' }).ops, { by: 'overdub', label: 'The kitchen table' }));
+  const track = st.get().room.tracks.take;
+  const dur = buf.length / SR;
+  const r = ok(st.dispatch([{ type: 'asset.add', asset: { id: 'tape1', kind: 'audio', name: 'take 1', sr: SR, channels: 1, duration: dur } }, { type: 'clip.add', track, ref: 'c', clip: { kind: 'audio', asset: 'tape1', start: 0, length: (dur * 84) / 60, name: 'Paper Moon · take 1 · capo 3' } }], { by: 'you', label: 'Take 1' }));
+  return { st, track, clip: r.created.c };
+}
+// where the played changes fell on the song's beats, against where the alignment put them
+function changesHit(changes, beats, played) {
+  let hit = 0, total = 0;
+  for (let i = 0; i < played.length; i++) {
+    if (i && played[i].chord === played[i - 1].chord) continue;
+    total++;
+    // a change counts when the alignment changes to that chord within a beat of where it was played
+    const spb = i + 1 < played.length ? (played[i + 1].at - played[i].at) / 4 : 0.7;
+    if (changes.some((c) => c.sounding === played[i].chord && Math.abs(beats[c.beat] - played[i].at) <= spb + 0.02)) hit++;
+  }
+  return { hit, total, share: total ? hit / total : 0 };
+}
+
+/* ------------------------------------------------------------------------------------------------ the checks */
+export async function run(T, ctx) {
+  // (KITCHEN_ONLY=flow: the browser part alone, while working on it)
+  if (process.env.KITCHEN_ONLY === 'flow') { if (ctx.pages) await flow(T, ctx); return; }
+  // 1. the paper
+  {
+    const ug = parseSheet(UG), cho = parseSheet(CHO);
+    T.ok(ug.sections.map((s) => s.name).join(',') === 'Verse 1,Chorus,Verse 2,Bridge' && ug.capo === 3 && ug.title === 'Paper Moon', `the paper: chords over words read into ${ug.sections.length} sections, capo ${ug.capo}, each written once`);
+    T.ok(ug.sections[0].lines[0].text === '[G]Somewhere [Em]a paper moon is hanging' && ug.sections[0].lines[1].text === '[C]over the roofs of the [D]town', 'the paper: each chord anchored by column to the syllable under it');
+    T.ok(cho.sections.map((s) => s.name).join(',') === 'Verse 1,Chorus,Bridge' && cho.capo === 2 && cho.time?.join('/') === '3/4' && cho.key?.root === 'G', 'the paper: ChordPro read (directives, environments, {chorus} recalled once, {c: Bridge})');
+    let stable = true;
+    for (const src of [UG, CHO]) for (const as of ['text', 'chordpro']) {
+      const a = parseSheet(src), t1 = formatSheet(a, { as, title: a.title, key: a.key }), b = parseSheet(t1);
+      stable = stable && JSON.stringify(b.sections) === JSON.stringify(a.sections) && b.capo === a.capo && formatSheet(b, { as, title: b.title, key: b.key }) === t1;
+    }
+    T.ok(stable, 'the paper: format(parse(x)) is stable, as text and as ChordPro, both fixtures');
+    const sk = soundingKey(ug, {});
+    T.ok(sk?.root === 'Bb' && sk.scale === 'major', `the paper: capo 3 on G shapes sounds in ${sk?.root} ${sk?.scale} (Bb, not E)`);
+    const nash = sheetChords(parseSheet('{key: G}\n[Verse]\n1 4 6- 5/7\n'), {})[0].chords.map((c) => c.chord?.name);
+    T.ok(nash.join(' ') === 'G C Em D/F#', `the paper: Nashville numbers read in the key (1 4 6- 5/7 -> ${nash.join(' ')})`);
+    const br = sheetChords(cho, {}).find((s) => s.name === 'Bridge');
+    T.ok(br.chords[1].sym === 'Hm7' && br.chords[1].chord === null && cho.sections[2].lines[0].text.includes('[Hm7]'), 'the paper: a chord nobody reads (Hm7) is kept as written and plays nothing');
+    const ed = setWords('Somewhere a [G]paper [Em]moon is hanging', 'Somewhere out there a silver moon is hanging');
+    T.ok(ed === 'Somewhere out there a [G]silver [Em]moon is hanging', `the paper: an edit keeps each chord on its syllable ("${ed}")`);
+  }
+
+  // 2 and 3. the time and the chords, on synthesized takes
+  const takes = [];
+  for (const [bpm, drift, seed] of [[72, 0.02, 1], [84, 0.04, 2], [96, 0.03, 3], [108, 0, 4], [120, 0.04, 5]]) {
+    const tk = takeOf(FORM, { bpm, drift, seed });
+    const read = readTape(tk.buf, SR);
+    const R = read.result.readings;
+    const near = (x) => Math.abs(x - bpm) / bpm <= 0.03;
+    const found = R.find((r) => r.id === 'found');
+    const offered = R.find((r) => (r.id === 'double' || r.id === 'half') && near(r.tempo));
+    T.ok(near(found.tempo) || !!offered, `the time: a take at ${bpm} drifting ${Math.round(drift * 100)}% reads ${r2(found.tempo)}${near(found.tempo) ? '' : `, offered as ${offered?.id} ${r2(offered?.tempo)}`}`);
+    takes.push({ bpm, drift, seed, tk, read });
+  }
+  {
+    const tk = takeOf(FORM.slice(0, 16), { bpm: 84, seed: 9, free: [3, 9] });
+    const read = readTape(tk.buf, SR);
+    const tw = timeWords(read.result, 'found');
+    const { st, track, clip } = songWith(tk.buf);
+    const t = planTime(st.get(), { take: { track, clip, read }, reading: 'found' });
+    T.ok(tw && tw.free > 0.2 && t.moves, `the time: a take a third in free time says so (free ${tw ? Math.round(tw.free * 100) : '?'}% of it)`);
+  }
+  for (const { bpm, tk, read } of takes) {
+    const sheet = parseSheet(UG);
+    // the grid of the reading the musician keeps by ear: the one at the tempo they played (found, else half or double)
+    const near = (x) => Math.abs(x - bpm) / bpm <= 0.03;
+    const R = read.result.readings.find((r) => r.id === 'found' && near(r.tempo)) || read.result.readings.find((r) => near(r.tempo)) || read.result.readings[0];
+    const s0 = mapSec(R.anchors, R.start), b0 = Math.ceil(R.start), b1 = Math.floor(mapBeat(R.anchors, s0 + read.result.duration));
+    const beats = [];
+    for (let b = b0; b <= b1; b++) beats.push(mapSec(R.anchors, b) - s0);
+    const phase = (((-b0) % R.bpb) + R.bpb) % R.bpb;
+    const ch = alignChords(read.chroma, beats, sheetChords(sheet, {}), { bpb: R.bpb, phase });
+    const hit = changesHit(ch, beats, tk.played);
+    T.ok(hit.share >= 0.9, `the chords: at ${bpm}, ${hit.hit} of ${hit.total} changes within a beat of where they were played (${Math.round(hit.share * 100)}%)`);
+  }
+  {
+    // the read into the song: the chorus played twice offers Chorus ×2; the bridge left out is left out; a stretch
+    // that isn't on the paper (C#m) gets no chord, and the bass rests there
+    const bars = [...V, ...C, ...C, 'C#m', 'C#m', 'C#m', 'C#m', ...V, ...C];
+    const tk = takeOf(bars, { bpm: 90, seed: 12, drift: 0.02 });
+    const read = readTape(tk.buf, SR);
+    const { st, track, clip } = songWith(tk.buf);
+    const take = { track, clip, read };
+    const t = planTime(st.get(), { take, reading: 'found' });
+    ok(st.dispatch(t.ops, { by: 'you', label: t.label }));
+    const r = planRead(st.get(), { take });
+    ok(st.dispatch(r.ops, { by: 'overdub', label: r.label }));
+    const p = st.get();
+    const names = p.sections.map((s) => s.name);
+    T.ok(r.form.some((f) => /^Chorus/.test(f.name) && f.times === 2), `the chords: a chorus played twice offers Chorus ×2 (${names.join(', ')})`);
+    T.ok(r.skipped.includes('Bridge') && !names.some((n) => /^Bridge/.test(n)), `the chords: the bridge left out is left out (skipped: ${r.skipped.join(', ') || 'none'})`);
+    // the bars of C#m: where they were played, in song beats
+    const s0 = clip && p.tempoMap ? p.tempoMap.anchors : null;
+    const tl = chordsTimeline(p);
+    const csm = tk.played.findIndex((x) => x.chord === 'C#m');
+    const csmEnd = tk.played.findIndex((x, i) => i > csm && x.chord !== 'C#m');
+    const cs = p.tracks.find((x) => x.id === track).clips[0];
+    const off = mapSec(s0, cs.start);
+    const a = mapBeat(s0, off + tk.played[csm].at) + 1, b = mapBeat(s0, off + tk.played[csmEnd].at) - 1;
+    const chordThere = tl.filter((s) => s.b > a && s.a < b);
+    const pb = planPlayer(p, { player: 'bass', section: p.sections.map((s) => s.id) });
+    ok(st.dispatch(pb.ops, { by: 'you', label: pb.label }));
+    const bt = st.get().tracks.find((x) => x.id === st.get().room.tracks.kbass);
+    const bassThere = (bt?.clips || []).flatMap((c) => c.notes.map((n) => c.start + n.t)).filter((x) => x > a && x < b);
+    T.ok(!chordThere.length && !bassThere.length, `the chords: nothing plays where the paper has no chord (beats ${r2(a)}-${r2(b)}: ${chordThere.length} chords, ${bassThere.length} bass notes)`);
+    // the read is the house's; the time was yours
+    const by = st.history.map((x) => `${x.label}:${x.by}`);
+    T.ok(by.some((x) => /^On the beat.*:you$/.test(x)) && by.some((x) => /^The band read take 1:overdub$/.test(x)), `signing: the time a step by you, the read the house's (${by.slice(-2).join(' · ')})`);
+  }
+
+  {
+    // Count me in (§6.3): a take counted in at 84 is on the song's grid by construction. The band reads its chords on
+    // that grid, and nothing reads its time (no tempo map; the take is the master at 84)
+    const bars = [...V, ...C, ...V, ...C];
+    const tk = takeOf(bars, { bpm: 84, seed: 41, lead: 0 });
+    const read = readTape(tk.buf, SR);
+    const { st, track, clip } = songWith(tk.buf);
+    const take = { track, clip, read, counted: true };
+    const r = planRead(st.get(), { take });
+    ok(st.dispatch(r.ops, { by: 'overdub', label: r.label }));
+    const p = st.get();
+    const tl = chordsTimeline(p);
+    let hit = 0, total = 0;
+    tk.played.forEach((x, i) => {
+      if (i && x.chord === tk.played[i - 1].chord) return;
+      total++;
+      const beat = (x.at * 84) / 60;
+      if (tl.some((s) => s.chord.name === x.chord && Math.abs(s.a - beat) <= 1.01)) hit++;   // (the names as the capo spells them: Bb)
+    });
+    const noTime = !r.ops.some((o) => o.type === 'tempo.map') && !p.tempoMap && p.tempo === 84;
+    T.ok(noTime && p.room.master === clip && p.sections[0]?.start === 0 && hit / total >= 0.9, `Count me in: a counted take keeps the song's time (no tempo map: ${noTime}; at 84) and the band reads its chords on that grid (${hit} of ${total} changes within a beat; ${p.sections.map((s) => s.name).join(', ')})`);
+    // a fresh song at the kitchen starts at the kitchen's 84, the tempo Count me in offers
+    const fresh = createStore(createProject({ tempo: 120 }), { getDevice });
+    ok(fresh.dispatch(kitchenOps(fresh.get(), { mic: 'one' }).ops, { by: 'overdub' }));
+    T.ok(fresh.get().tempo === 84, `Count me in: a fresh song at the kitchen table starts at ${fresh.get().tempo} BPM`);
+  }
+  {
+    // a paper in Nashville numbers: the Chords track plays them in the key of the shapes (G), not in C
+    const st = createStore(createProject({ tempo: 84 }), { getDevice });
+    ok(st.dispatch(pasteOps(st.get(), parseSheet('{key: G}\n[Verse]\n| 1 | 4 | 6- | 5 |\n')).ops, { by: 'you' }));
+    ok(st.dispatch([{ type: 'track.add', ref: 'c', track: { name: 'Chords', kind: 'instrument', instrument: { device: 'core.keys' }, mute: true } }, ...['1', '4', '6-', '5'].map((n, i) => ({ type: 'clip.add', track: '$c', clip: { kind: 'notes', start: i * 4, length: 4, name: n, notes: [] } }))], { by: 'overdub' }));
+    const names = chordsTimeline(st.get()).map((x) => x.chord.name).join(' ');
+    T.ok(names === 'G C Em D', `the chords: Nashville numbers on the Chords track play in the paper's key (1 4 6- 5 in G: ${names})`);
+  }
+  {
+    // where the time moves, the players rest: a take with a third of it in free time, the shaker kept over all of it
+    const tk = takeOf([...V, ...V, ...C, ...C], { bpm: 84, seed: 9, free: [3, 9] });
+    const read = readTape(tk.buf, SR);
+    const { st, track, clip } = songWith(tk.buf);
+    const take = { track, clip, read };
+    ok(st.dispatch(planTime(st.get(), { take, reading: 'found' }).ops, { by: 'you' }));
+    ok(st.dispatch(planRead(st.get(), { take }).ops, { by: 'overdub' }));
+    const p = st.get();
+    const pp = planPlayer(p, { player: 'shaker', section: p.sections.map((s) => s.id), free: read.result.free });
+    ok(st.dispatch(pp.ops, { by: 'you' }));
+    const q = st.get(), A = q.tempoMap.anchors, c = q.tracks.find((t) => t.id === track).clips[0];
+    const s0 = mapSec(A, c.start) - (c.offset || 0);
+    const spans = read.result.free.map(([a, b]) => [mapBeat(A, s0 + a), mapBeat(A, s0 + b)]);
+    const sh = q.tracks.find((t) => t.id === q.room.tracks.shaker);
+    const at = sh.clips.flatMap((cl) => cl.notes.map((n) => cl.start + n.t));
+    const inFree = at.filter((t) => spans.some(([a, b]) => t >= a && t < b)).length;
+    T.ok(spans.length > 0 && at.length > 0 && inFree === 0, `the time: the players rest where the time moves (${at.length} shaker notes, ${inFree} in ${spans.length} free span${spans.length === 1 ? '' : 's'})`);
+  }
+
+  // 4. the levels
+  if (ctx.levels !== false) {
+    const tk = takeOf([...V, ...V, ...C, ...C, ...B, ...C, ...C], { bpm: 84, seed: 21, drift: 0.02 });
+    const read = readTape(tk.buf, SR);
+    const { st, track, clip } = songWith(tk.buf);
+    const take = { track, clip, read };
+    ok(st.dispatch(planTime(st.get(), { take, reading: 'found' }).ops, { by: 'you' }));
+    ok(st.dispatch(planRead(st.get(), { take }).ops, { by: 'overdub' }));
+    for (const id of PLAYER_ORDER) { const r = planPlayer(st.get(), { player: id }); if (r.ops.length) ok(st.dispatch(r.ops, { by: 'you', label: r.label })); }
+    const p = st.get(), assets = { tape1: { sr: SR, channels: [tk.buf] } };
+    const span = (secs) => [Math.min(...secs.map((s) => s.start)), Math.max(...secs.map((s) => s.start + s.length))];
+    // (the levels on the tracks, before the master's chain)
+    const dry = { ...p, master: { ...p.master, inserts: [] } };
+    const lu = (tracks, [from, to]) => measure(renderSong(dry, { from, to, tracks, tail: 0, assets })).lufs;
+    const secs = p.sections;
+    const where = { shaker: secs.filter((s) => /^Chorus/.test(s.name)), cajon: secs.filter((s) => /^Verse/.test(s.name)), bass: secs.slice(secs.findIndex((s) => /^Chorus/.test(s.name))), strings: secs.filter((s) => /^Bridge/.test(s.name)) };
+    const takeAll = lu([p.room.tracks.take], span(secs));
+    T.ok(Math.abs(takeAll - TAKE_LEVEL) <= 1.5, `the levels: the take after its chain at ${r2(takeAll)} LUFS (${TAKE_LEVEL}, trimmed from ${r2(read.level)})`);
+    for (const id of PLAYER_ORDER) {
+      const P = PLAYERS[id], sp = span(where[id]);
+      const under = lu([p.room.tracks[P.role]], sp) - lu([p.room.tracks.take], sp);
+      T.ok(Math.abs(under - P.under) <= 1.5, `the levels: ${P.name} ${r2(under)} LU under the take (${P.under})`);
+    }
+    for (const [f, lo, hi] of [['bare', -16.5, -14], ['warm', -16, -13.5], ['close', -14, -12]]) {
+      ok(st.dispatch(planKitchenFinish(st.get(), { finish: f }).ops, { by: 'you' }));
+      const m = measure(renderSong(st.get(), { tail: 1, assets }));
+      const rows = checkTargets(m, 'acoustic', { window: 'song' });
+      const tp = rows.find((x) => x.metric === 'truePeak');
+      T.ok(m.lufs >= lo && m.lufs <= hi && m.truePeak <= -0.9, `the levels: ${f} at ${r2(m.lufs)} LUFS, ${r2(m.truePeak)} dBTP, PLR ${r2(m.truePeak - m.lufs)}${tp?.ok ? '' : ' (true peak over)'}`);
+    }
+  } else T.note('the levels: skipped (LEVELS=0)');
+
+  // the offered move, in order (§7.4)
+  {
+    const v = { cards: [{ name: 'Verse' }, { name: 'Chorus' }, { name: 'Bridge' }] };
+    const seq = [offeredKitchen(v, {}), offeredKitchen(v, { rolling: true }), offeredKitchen(v, { takes: 1, ask: 'time' }), offeredKitchen(v, { takes: 1 }), offeredKitchen(v, { takes: 1, offer: 'shaker' }), offeredKitchen(v, { takes: 1, done: PLAYER_ORDER }), offeredKitchen(v, { takes: 1, done: PLAYER_ORDER, again: true })].map((o) => o?.id);
+    T.ok(seq.join(' ') === 'tape stop time offer.shaker keep again hear', `the offered move: ${seq.join(' → ')}`);
+    T.ok(offeredKitchen({ cards: [{ name: 'Verse' }] }, { takes: 1, done: ['shaker', 'cajon', 'bass'] })?.id === 'again', 'the offered move: strings only with a bridge');
+    const form = offeredKitchen(v, { takes: 1, ask: 'form', offer: null })?.id, bare = offeredKitchen({ cards: [] }, { takes: 1 })?.id, noChorus = offeredKitchen({ cards: [{ name: 'Verse 1' }] }, { takes: 1 })?.id;
+    T.ok(form === 'form' && bare === 'again' && noChorus === 'offer.cajon', `the offered move: the form asked before the players (${form}); no parts, no players (${bare}); no chorus, no shaker (${noChorus})`);
+  }
+
+  if (!ctx.pages) { T.note('the flow: skipped (PAGES=0)'); return; }
+  await flow(T, ctx);
+}
+
+/* ------------------------------------------------------------------------------------------------ the flow */
+// §2.5 in muted Chromium: the presses counted as a musician makes them. The deck is a stand-in (the room's deck is
+// stream A's; // needs A): it records nothing, it lays the fixture take on the take track when the tape stops, as the
+// deck does (an asset and an audio clip by you), and its level() reads the balance's two moments (the strum, then a
+// voice 5 dB over it). The door (// needs F) and the send screen (// needs F) are stood in for by opening the screen.
+const STANDIN = String.raw`
+window.__kitchenDeck = (opts) => {
+  const log = [];
+  let t1 = null;
+  let rolling = false;
+  const deck = {
+    log,
+    state: { run: 'idle', device: 'MacBook Pro Microphone', output: opts.output, settings: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, channels: 1 },
+    on: () => () => {},
+    // the balance: quiet, then three seconds and more of a strum, then a voice 5 dB over it (from the first reading)
+    level() { if (t1 == null) t1 = performance.now(); const s = (performance.now() - t1) / 1000; if (s < 0.3) return -90; return s < 3.6 ? -30 : -25; },
+    tuner: () => null,
+    latency: 0.01,
+    async countIn(o) { log.push({ kind: 'countIn', ...o }); return { ok: true }; },
+    async take(o) { log.push({ kind: 'take', ...o }); rolling = true; deck.state.run = 'take'; return { ok: true }; },
+    async stop(o) {
+      log.push({ kind: 'stop', ...o });
+      if (!rolling) return { ok: false };
+      rolling = false; deck.state.run = 'idle';
+      const app = window.overdub || window.app;
+      const pcm = Uint8Array.from(atob(opts.pcm), (c) => c.charCodeAt(0));
+      const n = pcm.length / 2, x = new Float32Array(n), dv = new DataView(pcm.buffer);
+      for (let i = 0; i < n; i++) x[i] = dv.getInt16(i * 2, true) / 32767;
+      const id = 'kt_' + log.length;
+      await app.engine.assets.put(id, { sr: opts.sr, channels: [x] });
+      const track = opts.track();
+      const r = app.store.dispatch([{ type: 'asset.add', asset: { id, kind: 'audio', name: 'take', sr: opts.sr, channels: 1, duration: n / opts.sr } }, { type: 'clip.add', track, clip: { kind: 'audio', asset: id, start: 0, length: (n / opts.sr) * (app.store.get().tempo || 84) / 60 } }], { by: 'you', label: 'Take' });
+      return { ok: r.ok, txn: r.txn };
+    },
+    keepAfterAll: async () => ({ ok: false }),
+  };
+  return deck;
+};`;
+
+async function flow(T, ctx) {
+  // the fixture: 16 bars at 96, verse chorus verse chorus, a voice 5 LU over the guitar, at 22.05 kHz for the page
+  const bars = [...V, ...C, ...V, ...C];
+  const tk = takeOf(bars, { bpm: 96, seed: 31, lead: 2 });
+  const sr = 22050, n = Math.floor((tk.buf.length * sr) / SR), pcm = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, tk.buf[Math.floor((i * SR) / sr)])) * 32767), i * 2);
+  const b64 = pcm.toString('base64');
+  for (const phones of [true, false]) {
+    // an output whose name doesn't say, so the room asks
+    const output = 'Built-in Output';
+    let S;
+    try { S = await openRoom('/app/?room', { name: `kitchen-${phones ? 'phones' : 'speakers'}`, init: STANDIN }); } catch (e) { T.ok(false, `the flow: the room opened (${e.message})`); return; }
+    const { page, E } = S;
+    const warns = [];
+    page.on('console', (m) => { if (/overdub (kitchen|paper)/.test(m.text())) warns.push(m.text()); });
+    let presses = 0;
+    const press = async (key) => { presses++; await page.keyboard.press(key); await page.waitForTimeout(120); };
+    try {
+      // the stand-in deck, before the screen mounts
+      await E(async ({ b64, sr, output }) => {
+        const m = await import('/app/src/ui/liveroom/kitchen.js');
+        const app = window.overdub || window.app;
+        const d = window.__kitchenDeck({ pcm: b64, sr, output, track: () => { const r = app.store.get().room; return r?.tracks?.take; } });
+        window.__deck = d;
+        window.__kstate = m.kitchenState;
+        window.__lines = [];
+        app.liveRoom.on('say', (e) => window.__lines.push(e.text));
+        m.setKitchenDeck(d);
+      }, { b64, sr, output });
+      // press 1: the door's kitchen table (// needs F: the door is stood in for by opening the screen)
+      presses++;
+      await E(() => (window.overdub || window.app).liveRoom.open({ screen: 'kitchen' }));
+      await page.waitForSelector('.kt', { timeout: 10000 });
+      // press 2: Allow (Chromium's fake capture allows itself; the deck's input is stream A's)
+      presses++;
+      const st0 = await E(() => window.__kstate());
+      T.ok(st0?.step === 'phones' && st0.mic === 'laptop', `the flow (${phones ? 'headphones' : 'speakers'}): the mic picked from what the room sees (${st0?.mic}), then Headphones on?`);
+      // press 3: the headphones question
+      if (phones) await press('Space'); else { presses++; await page.click('[data-act="phones.no"]'); }
+      // the balance: the strum, then a voice 5 dB over it
+      await page.waitForFunction(() => window.__kstate()?.step === 'paper', null, { timeout: 15000 });
+      const tb = await E(() => document.querySelector('.lr-tb-text')?.textContent || '');
+      T.ok(/Good: your voice sits [45] dB over the guitar/.test(tb) || /Good:/.test(tb), `the flow: the balance line from a voice 5 dB over (${tb})`);
+      // the paper, pasted (typing isn't a press)
+      await E(async (text) => {
+        const app = window.overdub || window.app;
+        const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
+        app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
+      }, `Paper Moon\nCapo 3\n\n[Verse]\nG       Em\nSomewhere a paper moon\nC          D\nover the roofs of town\n\n[Chorus]\nC       G\nHold on hold on\nD            G\nuntil the morning\n`);
+      // press 4 and 5: the tape, then the stop
+      const playsBefore = (await S.plays()).length;
+      await press('Space');
+      await page.waitForTimeout(400);
+      const rolling = await E(() => window.__kstate());
+      T.ok(rolling?.rolling && (await S.plays()).length === playsBefore, 'the flow: the work tape rolls with no count, no click and no band (nothing played)');
+      await press('Space');
+      const log = await E(() => window.__deck.log.map((x) => `${x.kind}${x.voice ? ':' + x.voice : ''}`));
+      T.ok(log.join(' ').startsWith('countIn:none take stop'), `the flow: the work tape through the deck (${log.join(' ')}) // needs A`);
+      // the read, in a Worker; then the time question with the shaker on it
+      await page.waitForFunction(() => window.__kstate()?.ask === 'time', null, { timeout: 60000 });
+      const line = await E(() => document.querySelector('.lr-tb-text')?.textContent || '');
+      T.ok(/The band’s read it: around \d+/.test(line), `the flow: the read's question (${line})`);
+      // press 6: On the beat
+      await press('Space');
+      await page.waitForFunction(() => window.__kstate()?.offer === 'shaker', null, { timeout: 20000 });
+      await page.waitForFunction(() => window.__lines.includes('Want a shaker in the chorus?'), null, { timeout: 10000 }).catch(() => {});
+      const said = await E(() => window.__lines.slice(-3));
+      const chordsLine = said.find((x) => /The band has your chords/.test(x)) || said.join(' | ');
+      // press 7: Keep it, the shaker
+      await press('Space');
+      await page.waitForFunction(() => window.__kstate()?.done.includes('shaker'), null, { timeout: 10000 });
+      if (!phones) {
+        // on speakers: Again, with the shaker in the song. The band is held muted for the whole take and nothing plays
+        const before = (await S.plays()).length;
+        await E(() => (window.overdub || window.app).liveRoom.press('again'));
+        await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 10000 });
+        await page.waitForTimeout(600);
+        const during = await E(() => { const app = window.overdub || window.app; const p = app.store.get(); const id = p.room?.tracks?.shaker; return { muted: !!p.tracks.find((t) => t.id === id)?.mute, hold: window.__kstate().hold, playing: !!app.engine.playing }; });
+        const playsDuring = (await S.plays()).length - before;
+        await E(() => (window.overdub || window.app).liveRoom.press('stop'));
+        await page.waitForFunction(() => window.__kstate()?.rolling === false, null, { timeout: 10000 });
+        const after = await E(() => { const app = window.overdub || window.app; const p = app.store.get(); const id = p.room?.tracks?.shaker; return !p.tracks.find((t) => t.id === id)?.mute; });
+        T.ok(during.muted && during.hold && !during.playing && playsDuring === 0 && after, `the flow (speakers): nothing plays during a take (${playsDuring} plays; the shaker held muted ${during.muted}, back after ${after})`);
+      }
+      if (phones) {
+        // signing on the paper: an agent's line in --ink-agent, the house's chord lines unsigned
+        await E(async () => {
+          const app = window.overdub || window.app;
+          const sh = app.store.get().sheet;
+          app.store.dispatch([{ type: 'sheet.line.set', section: sh.sections[0].id, line: sh.sections[0].lines[0].id, patch: { text: 'Somewhere a [G]silver [Em]moon' } }], { by: 'mcp:test', label: 'A line' });
+          app.store.dispatch([{ type: 'sheet.section.add', section: { name: 'Bridge', lines: [{ text: '| Am | C | D |' }] } }], { by: 'overdub', label: 'The chords from the take' });
+        });
+        await page.waitForTimeout(200);
+        const ink = await E(() => {
+          const by = document.querySelector('.pp .pp-line .by');
+          const want = getComputedStyle(document.documentElement).getPropertyValue('--ink-agent').trim();
+          const probe = document.createElement('span'); probe.style.color = want; document.body.append(probe); const w = getComputedStyle(probe).color; probe.remove();
+          const house = [...document.querySelectorAll('.pp .pp-line')].find((l) => /Am/.test(l.textContent));
+          return { color: by ? getComputedStyle(by).color : null, want: w, text: by?.textContent || '', house: house ? !house.querySelector('.by') : null };
+        });
+        T.ok(ink.color && ink.color === ink.want && /test/i.test(ink.text), `signing: an mcp:test line carries its byline in --ink-agent (${ink.text} ${ink.color})`);
+        T.ok(ink.house === true, 'signing: the house\'s chord lines are unsigned');
+        await S.shot?.('kitchen-paper');
+      }
+      // a finish (Bare is on) and press 8: Send a mix (// needs F: the send screen)
+      presses++;
+      await page.click('[data-act="send"]');
+      const H = await history(page);
+      const steps = H.map((x) => `${x.label}:${x.by}`);
+      const time = H.find((x) => /^On the beat/.test(x.label));
+      const read = H.find((x) => /^The band read/.test(x.label));
+      const shaker = H.find((x) => /^Shaker/.test(x.label));
+      T.ok(presses === 8, `the flow: §2.5 in ${presses} presses`);
+      T.ok(time?.by === 'you' && time.ops.includes('tempo.map') && read?.by === 'overdub' && shaker?.by === 'you', `the flow: the time by you (tempo.map), the read by the house, the shaker kept by you (${steps.slice(-4).join(' · ')})`);
+      T.ok(/^The band has your chords: .+ in the (verse|chorus)\.$/.test(chordsLine) && said.some((x) => x === 'Want a shaker in the chorus?'), `the flow: the chords line, then the shaker's offer (${said.join(' | ')})`);
+      const clipBy = await E(() => { const app = window.overdub || window.app; const p = app.store.get(); const t = p.tracks.find((x) => x.id === p.room.tracks.shaker); return t ? [...new Set(t.clips.map((c) => c.by))] : []; });
+      T.ok(clipBy.join() === 'overdub', `signing: the shaker's clips the house's (${clipBy.join()})`);
+    } catch (e) {
+      let why = '';
+      try { const k = await E(() => { const s = window.__kstate(); return s && { step: s.step, ask: s.ask, offer: s.offer, done: s.done, takes: s.takes, reading: s.reading, offered: s.offered?.id, sections: (window.overdub.store.get().sections || []).length, tb: document.querySelector('.lr-tb-text')?.textContent }; }); why = ` ${JSON.stringify(k)}`; } catch { /* the page is gone */ }
+      const errs = (S.errors || []).slice(-3).map((x) => String(x.message || x).split('\n')[0]).join(' | ');
+      T.ok(false, `the flow (${phones ? 'headphones' : 'speakers'}): ${e.message.split('\n')[0]}${why}${errs ? ` errors: ${errs}` : ''}${warns.length ? ` warnings: ${warns.slice(-3).join(' | ')}` : ''}`);
+    } finally {
+      await S.close();
+    }
+  }
+  await countedFlow(T);
+}
+
+// Count me in (§6.3), the other way in on headphones: the tempo set first with → and ⇧→, one bar of sticks, the
+// shaker under the take (a preview), and on the stop no question about the time: the band reads the chords on the
+// song's grid at once. The deck is the stand-in (// needs A); the take is played at that tempo from beat 0.
+async function countedFlow(T) {
+  const bars = [...V, ...C, ...V, ...C];
+  const tk = takeOf(bars, { bpm: 96, seed: 33, lead: 0 });
+  const sr = 22050, n = Math.floor((tk.buf.length * sr) / SR), pcm = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, tk.buf[Math.floor((i * SR) / sr)])) * 32767), i * 2);
+  const b64 = pcm.toString('base64');
+  let S;
+  try { S = await openRoom('/app/?room', { name: 'kitchen-counted', init: STANDIN }); } catch (e) { T.ok(false, `Count me in: the room opened (${e.message})`); return; }
+  const { page, E } = S;
+  try {
+    await E(async ({ b64, sr }) => {
+      const m = await import('/app/src/ui/liveroom/kitchen.js');
+      const app = window.overdub || window.app;
+      const d = window.__kitchenDeck({ pcm: b64, sr, output: 'Built-in Output', track: () => app.store.get().room?.tracks?.take });
+      window.__deck = d;
+      window.__kstate = m.kitchenState;
+      window.__asked = [];
+      m.setKitchenDeck(d);
+    }, { b64, sr });
+    await E(() => (window.overdub || window.app).liveRoom.open({ screen: 'kitchen' }));
+    await page.waitForSelector('.kt', { timeout: 10000 });
+    await page.keyboard.press('Space');   // Headphones on? Yes
+    await page.waitForFunction(() => window.__kstate()?.step === 'paper', null, { timeout: 15000 });
+    await E(async (text) => {
+      const app = window.overdub || window.app;
+      const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
+      app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
+    }, `Paper Moon\nCapo 3\n\n[Verse]\nG       Em\nSomewhere a paper moon\nC          D\nover the roofs of town\n\n[Chorus]\nC       G\nHold on hold on\nD            G\nuntil the morning\n`);
+    const chip0 = await E(() => document.querySelector('[data-act="count"]')?.textContent || '');
+    // 84 to 96: ⇧→ is ten, → is one
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(150);
+    const chip1 = await E(() => document.querySelector('[data-act="count"]')?.textContent || '');
+    const offered = await E(() => window.__kstate()?.offered?.id);
+    T.ok(chip0 === 'Count me in at 84' && chip1 === 'Count me in at 96' && offered === 'tape', `Count me in: beside the bare tape on headphones (${chip0} → ${chip1}; Space is still ${offered})`);
+    await page.click('[data-act="count"]');
+    await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 10000 });
+    const during = await E(() => { const app = window.overdub || window.app; const p = app.store.get(); const sh = p.tracks.find((t) => t.id === p.room?.tracks?.shaker); return { hold: window.__kstate().hold, shaker: sh ? sh.clips.reduce((a, c) => a + c.notes.length, 0) : 0, tempo: p.tempo, log: window.__deck.log.map((x) => `${x.kind}${x.voice ? ':' + x.voice : ''}${x.bars != null ? ':' + x.bars : ''}`).join(' ') }; });
+    T.ok(during.hold && during.shaker > 100 && during.tempo === 96 && /^countIn:sticks:1 take/.test(during.log), `Count me in: one bar of sticks, the shaker on 96 under the take (${during.log}; ${during.shaker} shaker notes, a preview) // needs A`);
+    await page.keyboard.press('Space');   // That's a take
+    await page.waitForFunction(() => window.__kstate()?.offer === 'shaker', null, { timeout: 60000 });
+    const after = await E(() => {
+      const app = window.overdub || window.app, p = app.store.get();
+      const take = p.tracks.find((t) => t.id === p.room.tracks.take).clips.find((c) => c.kind === 'audio');
+      return { map: !!p.tempoMap, tempo: p.tempo, master: p.room.master === take?.id, name: take?.name, sections: p.sections.map((s) => s.name), steps: app.store.history.map((x) => `${x.label}:${x.by}`), shakerLeft: !(p.room.tracks?.shaker) || window.__kstate().preview };
+    });
+    const asked = after.steps.some((x) => /^On the beat/.test(x));
+    T.ok(!after.map && after.tempo === 96 && after.master && !asked && after.sections.length >= 2 && after.steps.some((x) => /^96 BPM:you$/.test(x)) && after.steps.some((x) => /^The band read take 1:overdub$/.test(x)), `Count me in: no question about the time, the band read the chords on 96 (${after.sections.join(', ')}; ${after.steps.slice(-3).join(' · ')})`);
+    T.ok(/· take 1 · capo 3 · 96$/.test(after.name || ''), `Count me in: the take named with its tempo (${after.name})`);
+  } catch (e) {
+    let why = '';
+    try { const k = await E(() => { const s = window.__kstate(); return s && { step: s.step, ask: s.ask, offer: s.offer, rolling: s.rolling, reading: s.reading, offered: s.offered?.id, tb: document.querySelector('.lr-tb-text')?.textContent }; }); why = ` ${JSON.stringify(k)}`; } catch { /* the page is gone */ }
+    T.ok(false, `Count me in: ${e.message.split('\n')[0]}${why}`);
+  } finally {
+    await S.close();
+  }
+}

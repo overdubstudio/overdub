@@ -54,6 +54,19 @@ export const TARGETS = {
     },
     provisional: ['crest', 'lra', 'bands'],
   },
+  // acoustic (the kitchen table: guitar and voice, the small band under them; docs/research/LIVE-ROOM-MODE.md §6.7):
+  // the whole master only. Singer-songwriter and folk masters sit well under the loudness of rock: -16 to -12 LUFS
+  // integrated keeps the strum's transients (PLR 9-14 dB), the peak held to -1 dBTP for the codecs (AES TD1008).
+  acoustic: {
+    name: 'acoustic (guitar and voice, a small band)',
+    sources: ['AES TD1008 (2021)', 'Spotify for Artists "Loudness normalization"', 'EBU Tech 3342'],
+    song: { lufs: [-16, -12], truePeak: [-Infinity, -1], plr: [9, 14] },
+    drop: {},
+    bands: {},
+    bandsIn: 'song',
+    parts: {},
+    provisional: ['plr'],
+  },
 };
 export const GENRES = Object.keys(TARGETS);
 

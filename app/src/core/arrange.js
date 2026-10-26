@@ -10,7 +10,7 @@
 //        ops for ONE dispatch: track.add (named, coloured, a fitting device, a balanced gain) + clip.add per part
 //   checkArrangement(seedNotes, parts, { key, meter, start, length, segments }) -> { outOfKey, clashes, roots, ... }
 //   STYLES, STYLE_IDS, PARTS, strongTimes(...), harmonyKeyOf(key), levelFor(style, part)
-//   drumBar, bassLine, chordPart, voice, nearestPitch: the part builders, for a chart of chords made elsewhere (the Jam
+//   drumBar, bassLine, chordPart, voice, nearestPitch, genericRows: the part builders, for a chart of chords made elsewhere (the Jam
 //        room's jam tracks, core/jam.js, play a progression they are given rather than one harmonized here)
 //
 // How it decides. The clip is cut into units, one per strong beat (beats 1 and 3 in 4/4, the bar in 3/4). For a melody,
@@ -513,7 +513,10 @@ export function drumBar(S, style, meter, S16, i, R) {
   return { notes, fill, from };
 }
 // The same ideas outside 4/4: a waltz, a compound 6/8 lilt, or kick-on-one / snare-in-the-middle.
-function genericRows(style, meter, S16) {
+// genericRows(style, meter, S16) -> { kick, snare, hat }: one bar's rows (a step a character: X accent, x hit, o soft,
+// . rest) for a meter the style's grid isn't in: 3/4, 6/8 and their kin. Exported for the kitchen table's shaker and
+// cajón, which play in three where the groove library is 4/4 only (docs/research/LIVE-ROOM-MODE.md §6.5).
+export function genericRows(style, meter, S16) {
   const row = (hits) => { const a = Array(S16).fill('.'); for (const [i, c] of hits) if (i < S16) a[i] = c; return a.join(''); };
   const eighths = (ch, off) => row(Array.from({ length: Math.ceil(S16 / 2) }, (_, j) => [j * 2, j % 2 ? off : ch]));
   const [n, d] = meter;

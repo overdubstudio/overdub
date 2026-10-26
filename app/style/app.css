@@ -3,6 +3,11 @@
 ::selection { background: var(--accent-wash, rgba(217, 243, 106, .16)); }
 a { color: var(--accent); }
 
+/* A load that opens in the live room (main.js sets data-room on <html> when ui/liveroom/door-decide.js says 'room'):
+   the studio is laid out but out of sight until the room has mounted over it and cleared the attribute, so the
+   control room never flashes first. Hidden, not undisplayed: the panels measure their sizes under it. */
+html[data-room] #studio { visibility: hidden; }
+
 /* ================================================================================ Liner notes: the shared kit
    The studio is set like the back of a record sleeve (design/DECISION.md). Every class here is described, with when to
    use it, in design/LINER-NOTES-KIT.md; surfaces build on these instead of inventing their own. In short: hairline

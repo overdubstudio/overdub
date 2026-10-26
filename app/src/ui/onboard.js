@@ -89,8 +89,15 @@ export default function (app) {
   const playedText = ({ hits, notes }) => [hits ? plural(hits, 'hit') : '', notes ? plural(notes, 'note') : ''].filter(Boolean).join(' and ') || 'nothing yet';
 
   /* ---------------------------------------------------------------- starting and stopping */
+  // (the live room covers the studio: the tour waits for it to close, then starts as asked, ui/liveroom/index.js)
+  let waiting = null, waitOff = null;
   function start({ force = false, restart = false } = {}) {
     if (!force && navigator.webdriver) return false;
+    if (!force && app.liveRoom?.isOpen?.()) {
+      waiting = { restart };
+      if (!waitOff && app.liveRoom.on) waitOff = app.liveRoom.on('close', () => { const w = waiting; waiting = null; if (w) start(w); });
+      return false;
+    }
     paused = false;
     const was = ls.get();
     if (!force && was && (was.state === 'done' || was.state === 'dismissed')) return false;

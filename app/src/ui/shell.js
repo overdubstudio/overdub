@@ -5,6 +5,9 @@
 //   bottom  detail (tabs)            right   agent (tabs)
 //   ui.dock the strip's slot at the foot of the arranger, over the bottom pane (ui/coach-strip.js docks there)
 //   ui.point(el, { ms = 2000 }) -> { el, remove() } | null: grease-pencil crop marks on a control the studio names
+//   ui.covered  the id of a panel whose screen covers the studio (the live room, ui/liveroom/index.js), or null:
+//               while it is set, only that panel's frame runs, the top bar isn't refitted, and a key nothing took
+//               says nothing about the studio
 //
 // Rules for panels: state lives in the store (the song) or ui.state (the session), never in the DOM; no
 // requestAnimationFrame of your own (use frame(now), called only while you're visible); mount is cheap and
@@ -32,6 +35,7 @@ export function createShell(root, app) {
     state: { selection: { track: null, clip: null, notes: new Set(), range: null, insert: null }, zoom: { pxPerBeat: 28, trackH: phone() ? 72 : 64 }, scrollX: 0, scrollY: 0, focus: null, tool: 'pointer', snap: 0.25 },
     panels,
     regions: {},
+    covered: null,
   };
 
   /* ---------------------------------------------------------------- events */
@@ -365,9 +369,11 @@ export function createShell(root, app) {
   function loop(now) {
     raf = requestAnimationFrame(loop);
     // the chrome's own upkeep, a few times a second: toasts clear of the panel in use, the top bar's items in the bar
-    if (now - chromeAt > 150) { chromeAt = now; placeToasts(); fitTop(); }
+    if (now - chromeAt > 150) { chromeAt = now; placeToasts(); if (!ui.covered) fitTop(); }
     for (const rec of panels.values()) {
       if (!rec.mounted || !rec.view?.frame || !ui.visible(rec.def.id)) continue;
+      // (a screen over the studio paints alone: what's under it is out of sight, ui.covered)
+      if (ui.covered && rec.def.id !== ui.covered) continue;
       try { rec.view.frame(now); } catch (e) { console.error('frame', rec.def.id, e); rec.view.frame = null; }
     }
   }
@@ -478,7 +484,7 @@ export function createShell(root, app) {
       return;
     }
     // nothing here took it: a key other DAWs use says what does that here
-    if (mods === 'mod' && !inField && !owned && !e.repeat) elsewhere(e.code);
+    if (mods === 'mod' && !inField && !owned && !e.repeat && !ui.covered) elsewhere(e.code);
   }, true);
   // ⌘L, ⌘C and ⌘V on a clip do things in other DAWs and nothing here, so a press says what does (the browser still gets
   // the key: ⌘L goes on to the address bar); ⌘E with no clip selected says what it splits. Not while text is selected

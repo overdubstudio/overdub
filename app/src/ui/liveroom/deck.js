@@ -278,13 +278,24 @@ export function createDeck(app) {
       setRun('idle');
       return { ok: true, stopped: true };
     }
+    // A stop already on its way to its line (Space pressed again in the ring): the same landing, once. The line
+    // stays where the first press put it (a press in the ring bar would otherwise be a bar more); Esc ends it now
+    if (armed.landing) {
+      if (at === 'now') r.stop({ keep: capture ? 'capture' : 'song' });
+      return armed.landing;
+    }
     armed.mine = true;   // (this stop lands it: the recorder's 'commit' doesn't too)
-    if (at === 'now') return landed(await r.stop({ keep: capture ? 'capture' : 'song' }));
-    const bpb = bpbNow(), b = Number.isFinite(+beat) && beat != null ? +beat : keyBeat();
-    const line = lineFor(b, armed.from, bpb);
-    state.stopping = { at: line, tail: armed.tail };
-    changed();
-    return landed(await r.stop({ at: line, tail: armed.tail, keep: capture ? 'capture' : 'song' }));
+    let going;
+    if (at === 'now') going = r.stop({ keep: capture ? 'capture' : 'song' });
+    else {
+      const bpb = bpbNow(), b = Number.isFinite(+beat) && beat != null ? +beat : keyBeat();
+      const line = lineFor(b, armed.from, bpb);
+      state.stopping = { at: line, tail: armed.tail };
+      changed();
+      going = r.stop({ at: line, tail: armed.tail, keep: capture ? 'capture' : 'song' });
+    }
+    armed.landing = Promise.resolve(going).then((res) => landed(res));
+    return armed.landing;
   }
 
   async function keepAfterAll() {

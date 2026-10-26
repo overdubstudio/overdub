@@ -263,14 +263,19 @@ async function deckPage(T, ctx) {
     T.note(`takes: the input open (${setup.channels} channels), the deck's latency ${setup.latency} s`);
 
     // a take from bar 1, the stop pressed at `beat` (a key event at that beat); then how it landed
-    const takeAt = (beat, { stall = false } = {}) => E(async ({ beat, stall }) => {
+    const takeAt = (beat, { stall = false, again = null } = {}) => E(async ({ beat, stall, again }) => {
       const app = window.overdub, { store, engine, input } = app, { deck, key, until, sleep, G } = window.__lr;
       const h0 = store.history.length;
+      let landings = 0;
+      const offT = deck.on('take', () => { landings++; });
       const t = await deck.take({ track: G, from: 0 });
-      if (!t.ok) return { error: t.error };
+      if (!t.ok) { offT(); return { error: t.error }; }
       await until(() => engine.playing && engine.beat >= beat);
       const pressed = engine.beat;
       const p = key(() => deck.stop({ at: 'bar' }));
+      // (pressed again in the ring bar, past its first beat: the same stop, not a bar more)
+      let p2 = null;
+      if (again != null) { await until(() => engine.beat >= again); p2 = key(() => deck.stop({ at: 'bar' })); }
       if (stall) {
         // the tab hidden and starved: no frames, no timers, nothing on the main thread for 2.6 s across the line
         const raf = window.requestAnimationFrame;
@@ -284,8 +289,9 @@ async function deckPage(T, ctx) {
         window.requestAnimationFrame = raf;
         document.dispatchEvent(new Event('visibilitychange'));
       }
-      const res = await p;
+      const res = await p, res2 = p2 ? await p2 : res;
       await sleep(50);
+      offT();
       const H = store.history.slice(h0).map((x) => ({ by: x.by, label: x.label, ops: (x.ops || []).map((o) => o.type), assets: (x.ops || []).filter((o) => o.type === 'asset.add').map((o) => o.asset) }));
       let clip = null, secs = null, sr = null;
       if (res?.take) {
@@ -294,8 +300,8 @@ async function deckPage(T, ctx) {
         const buf = await engine.assets.get(res.take.asset);
         secs = buf ? buf.length / buf.sampleRate : null; sr = buf?.sampleRate;
       }
-      return { pressed, res: res && { ok: res.ok, to: res.to, from: res.from, bars: res.bars, tail: res.tail, empty: res.empty, kept: res.kept, txn: !!res.txn, quietLead: res.quietLead, peaks: res.peaks?.bars?.slice(0, 3) }, H, clip, secs, sr, playing: engine.playing, inputSr: input.audio.state.sr };
-    }, { beat, stall });
+      return { pressed, landings, same: res2 === res, res: res && { ok: res.ok, to: res.to, from: res.from, bars: res.bars, tail: res.tail, empty: res.empty, kept: res.kept, txn: !!res.txn, quietLead: res.quietLead, peaks: res.peaks?.bars?.slice(0, 3) }, H, clip, secs, sr, playing: engine.playing, inputSr: input.audio.state.sr };
+    }, { beat, stall, again });
 
     const spb = 60 / 160;
     const landed = (name, r, part) => {
@@ -307,7 +313,9 @@ async function deckPage(T, ctx) {
         `${name}: one step by you (${r.H.map((x) => `${x.by}: ${x.label} [${x.ops.join(', ')}]`).join('; ')}), its asset.add listing rate ${a?.sr}, channels ${a?.channels}, length ${fmt(a?.duration, 3)} s`);
     };
     landed('stop at beat 0.5 of bar 9', await takeAt(32.45), 32);
-    landed('stop at beat 2 of bar 9', await takeAt(34.05), 36);
+    const twice = await takeAt(34.05, { again: 37.4 });
+    landed('stop at beat 2 of bar 9', twice, 36);
+    if (!twice.error) T.ok(twice.landings === 1 && twice.same, `stop at beat 2 of bar 9, pressed again in the ring at beat 2.4 of bar 10: the same stop, landing once (${twice.landings} take event${twice.landings === 1 ? '' : 's'}, the same result: ${twice.same})`);
 
     // Esc during a take: nothing in History, the pass in Capture; ⇧R puts it in at its bars
     const esc = await E(async () => {

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import * as px from '../../app/src/ui/liveroom/pixels/index.js';
 import { pixelBuffer, isRed } from '../../tools/liveroom/checks-pixels.js';
 
-const PLACES = ['metal', 'basement', 'bluesbar', 'kitchen', null];
+const PLACES = ['metal', 'basement', 'bluesbar', 'kitchen', null, 'nowhere', '__proto__', 'toString'];
 const LOUD = {
   reduced: false,
   plugged: true,

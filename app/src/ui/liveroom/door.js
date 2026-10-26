@@ -179,7 +179,13 @@ screens.add({
       previews.stop();
       const p = store.get();
       let plan = null;
-      try { plan = planPlace(p, { place, tuning: null }); } catch (e) { console.error('overdub: planPlace', place, e); plan = null; }
+      try { plan = planPlace(p, { place, tuning: null }); } catch (e) {
+        // (the place's plan failed: the door stays, and says so, rather than opening a stage with no room)
+        console.error('overdub: planPlace', place, e);
+        picking = false;
+        app.liveRoom?.say?.(`${title(place)} didn’t open: ${String(e?.message || e)}`);
+        return false;
+      }
       if (plan && Array.isArray(plan.ops) && plan.ops.length) {
         const r = store.dispatch(plan.ops, { by: 'you', label: plan.label || `Into ${NAMES.place[place]}`, reason: plan.reason || `room:place:${place}` });
         if (!r.ok) { picking = false; app.liveRoom?.say?.(`${title(place)} didn’t open: ${r.error}`); return false; }

@@ -65,7 +65,7 @@ export async function sendMix(app) {
     if (can) {
       try {
         await navigator.share({ files: [file], title: r.name });
-        tell(app, line('send.shared', vars));
+        tell(app, line('send.shared', vars) + (r.out || ''));
         return { ok: true, via: 'share', ...out };
       } catch (e) {
         if (e && e.name === 'AbortError') return { ok: false, cancelled: true, ...out };

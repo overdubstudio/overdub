@@ -21,6 +21,9 @@
 //   inst:core.metalkit#<12 hex>:trigger   Rusty Sticks with its trigger up and its room off: the synthesized layers
 //   fx:core.stack, fx:core.cab, fx:core.bassrig   the amps (tools/amp-scenes.js builds them): Half Stack on its filter
 //               cab, and each on the cab bank as fx:<id>[:cab]#<12 hex>, only when the bank has been fetched
+//   room:metal  the live room's metal club, one verse as the room makes it (tools/liveroom/band-scene.js): the chug
+//               fixture on both sides, the house band learned from the left's read, Tight on the master; only when the
+//               kits it plays have been fetched
 //   fx:core.rooms#<12 hex>, fx:core.rooms:<room>#<12 hex>   Echo Chamber at its defaults (AULA) and on each other room
 //               (aula-far, lecture, stairs, office, meeting), the hex the aachen bank's: only when the bank has been
 //               fetched. `exact: true`: Node and Chromium must agree bit for bit, not within -90 dB (spec 0006 R34)
@@ -33,6 +36,7 @@ import { SHOWCASE } from '../app/src/devices/showcase.js';
 import { demoProject, demoById } from '../app/src/core/demo.js';
 import { createProject } from '../app/src/core/project.js';
 import { ampScenes } from './amp-scenes.js';
+import { roomSong } from './liveroom/band-scene.js';
 import { ROOMS_HASH, ROOM_LABELS } from '../app/src/devices/builtin/rooms-lib.js';
 import { phrase, drumPhrase, diStrum, PHRASE_BPM, PHRASE_BEATS, DRUM_PHRASE_BEATS } from '../app/src/audio/testsignals.js';
 
@@ -245,7 +249,23 @@ function shelfScenes() {
     return [{ name: 'demo:' + id, browser: false, opts: { from: 0, to: p.loop.end, tail: 2 }, assets: {}, project: p }, hashes.every((h) => fs.existsSync(dataPath(h)))];
   });
 }
-export const missingScenes = () => [...sampledScenes(), ...ampHere(), ...roomScenes(), ...shelfScenes()].filter(([, here]) => !here).map(([s]) => s.name);
+// the live room's scene (docs/research/LIVE-ROOM-MODE.md §11.2): the metal club's verse as the room makes it, the
+// chug fixture on both sides (two seeded performances) with the house band learned from the left's read and Tight on
+// the master (tools/liveroom/band-scene.js). Only when the kits it plays are here; built only when it renders.
+const LIVE_DEVICES = ['core.guitar', 'core.stack', 'core.eq8', 'core.metalkit', 'core.drumbus', 'core.ebass', 'core.bassrig', 'core.width', 'core.clipper', 'core.limiter'];
+function liveScenes() {
+  const hashes = LIVE_DEVICES.flatMap((d) => Object.values([...SAMPLED, ...EFFECTS, ...INSTRUMENTS].find((x) => x.id === d)?.data || {}));
+  // (built when it's first read: a read of the DIs and the band's learning is a few seconds the other scenes' users
+  // needn't wait for)
+  let built = null;
+  const build = () => (built ||= roomSong('metal', { parts: 1 }));
+  const scene = { name: 'room:metal', browser: false };
+  Object.defineProperty(scene, 'project', { enumerable: true, get: () => build().p });
+  Object.defineProperty(scene, 'assets', { enumerable: true, get: () => build().assets });
+  Object.defineProperty(scene, 'opts', { enumerable: true, get: () => ({ from: 0, to: build().beats, tail: 2 }) });
+  return [[scene, hashes.every((h) => fs.existsSync(dataPath(h)))]];
+}
+export const missingScenes = () => [...sampledScenes(), ...ampHere(), ...roomScenes(), ...shelfScenes(), ...liveScenes()].filter(([, here]) => !here).map(([s]) => s.name);
 
 export function scenes() {
   const out = [];
@@ -278,5 +298,6 @@ export function scenes() {
   out.push(masterCleanScene());
   out.push(tempoMapScene());
   for (const [s, here] of shelfScenes()) if (here) out.push(s);
+  for (const [s, here] of liveScenes()) if (here) out.push(s);
   return out;
 }

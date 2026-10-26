@@ -358,9 +358,8 @@ Ids: tracks t_…, clips c_…, inserts fx_…, sections s_…. All times are in
   {
     name: 'apply_ops',
     annotations: { title: 'Edit the song', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },   // ops delete and replace too
-    description: `Change the song: dispatch a list of ops as ONE undo step attributed to you, with a short label (shown in History) and the reason, in musician terms. All-or-nothing: if any op fails nothing changes, and you get which op and why.
-Returns created ids (by ref), a diff and the undo hint.
-Small, reversible moves they asked for: make them. Rewriting the human's notes: propose_variations instead.
+    description: `Change the song: a list of ops as ONE undo step signed by you, with a short History label and a reason in musician terms. All-or-nothing: if any op fails nothing changes, and you get which op and why; else the created ids, a diff and the undo hint.
+Small moves they asked for: make them. Rewriting the human's notes: propose_variations instead.
 ${OPS_BRIEF}`,
     input_schema: {
       type: 'object',
@@ -537,8 +536,8 @@ It keeps a baseline per scope: measure BEFORE a change and again AFTER, and you 
 bypass: [insert ids] and mute: [tracks] apply to this render only (a scratch copy: no History entries), e.g. your effect on vs bypassed in two calls.
 per_track: true measures balance in one call (is the hook buried?): each track on its own and the rest of the mix without it, with its level against the mix and the rest, and its main band against the rest of the mix in that band. The summed mix's loudness and tone can stay put while one track moves 2 LU, so use this for balance.
 series: "bars" adds per-bar numbers over the range (lufsShortMax, rms, centroid for each bar), so a fade or a sweep can be checked as numbers ("bars 1–4: −41, −29, −22, −17 LUFS short-term, rising").
-targets: "bass-music" or "metal" checks the render against the genre's measured targets (bass music: window "drop": short-term loudness, crest, the low end's mono-ness, the bands; "song": integrated loudness, true peak; metal: window "song", every number on the whole master), the misses first.`,
-    input_schema: { type: 'object', properties: { ...RANGE_PROPS, series: { type: 'string', enum: ['bars'], description: 'bars: per-bar loudness and brightness over the range (to check a fade or a sweep)' }, tracks: { type: 'array', items: { type: 'string' }, description: 'track ids or names (default: the mix)' }, spectrogram: { type: 'boolean' }, compare_to: { type: 'string', description: '"previous" (default) | "none" | a save_as name' }, save_as: { type: 'string' }, bypass: { type: 'array', items: { type: 'string' }, description: 'insert ids to bypass in this render only' }, mute: { type: 'array', items: { type: 'string' }, description: 'tracks to mute in this render only' }, per_track: { type: 'boolean', description: 'balance: every audible track (or the tracks given) against the rest of the mix' }, targets: { type: 'string', enum: ['bass-music', 'metal'], description: 'a genre: check against its targets' }, window: { type: 'string', enum: ['drop', 'song'], description: 'with targets: a drop\'s numbers (default) or the whole song\'s' } }, additionalProperties: false },
+targets: "bass-music", "metal" or "acoustic" checks the render against the genre's measured targets (bass music: window "drop": short-term loudness, crest, the low end's mono-ness, the bands; "song": integrated loudness, true peak; metal: window "song", every number on the whole master; acoustic: the whole song), the misses first.`,
+    input_schema: { type: 'object', properties: { ...RANGE_PROPS, series: { type: 'string', enum: ['bars'], description: 'bars: per-bar loudness and brightness over the range (to check a fade or a sweep)' }, tracks: { type: 'array', items: { type: 'string' }, description: 'track ids or names (default: the mix)' }, spectrogram: { type: 'boolean' }, compare_to: { type: 'string', description: '"previous" (default) | "none" | a save_as name' }, save_as: { type: 'string' }, bypass: { type: 'array', items: { type: 'string' }, description: 'insert ids to bypass in this render only' }, mute: { type: 'array', items: { type: 'string' }, description: 'tracks to mute in this render only' }, per_track: { type: 'boolean', description: 'balance: every audible track (or the tracks given) against the rest of the mix' }, targets: { type: 'string', enum: ['bass-music', 'metal', 'acoustic'], description: 'a genre: check against its targets' }, window: { type: 'string', enum: ['drop', 'song'], description: 'with targets: a drop\'s numbers (default) or the whole song\'s' } }, additionalProperties: false },
     run(input, { app, signal }) { return renderAndMeasure(app, input, signal); },
   },
   {
@@ -662,12 +661,16 @@ measure: true renders each take before showing it (a scratch copy over the targe
   {
     name: 'say',
     annotations: { title: 'Post a message in the studio', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    description: 'Post a short message to the human in the Agent panel (outside agents use this to talk to the person at the studio; keep it to 1–3 sentences).',
+    description: 'Post a short message to the human: in the Agent panel, or the live room\'s talkback while it\'s open (outside agents use this to talk to the person at the studio; 1–3 sentences, two in the room).',
     input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
     run(input, { app, by }) {
       if (!input.text) return err('text is empty');
-      app.ui?.emit('agent:say', { by, text: String(input.text).slice(0, 4000), at: Date.now() });
-      return { ok: true, shown: true };
+      const text = String(input.text).slice(0, 4000);
+      // while the live room is open the Agent panel is behind it (inert), so the line goes to the talkback, signed
+      let room = false;
+      try { if (app.liveRoom?.isOpen?.()) { app.liveRoom.say(text, { by }); room = true; } } catch (e) { console.warn('overdub: the talkback', e); }
+      app.ui?.emit('agent:say', { by, text, at: Date.now(), ...(room ? { room: true } : {}) });
+      return { ok: true, shown: true, ...(room ? { where: 'the live room\'s talkback' } : {}) };
     },
   },
   {
@@ -810,11 +813,15 @@ export async function runTool(name, input, { by = 'claude', app = globalThis.win
 // tracks it records onto or the timeline under it: those calls come back { error: 'recording', hint }. Edits to other
 // tracks go through (the engine takes edits inside its lookahead), and so does everything that only reads.
 const NEVER_BLOCKED = new Set(['get_project', 'get_guide', 'get_selection', 'get_history', 'list_devices', 'get_device', 'get_capture', 'get_recording', 'get_variation_result', 'say', 'highlight', 'render_and_measure', 'compare_to_reference', 'share_link', 'provenance_report', 'ask_human', 'suggest_sounds']);   // (suggest_sounds: rows on the person's sound card, the song changes only when they Keep one. Each refuses itself while a take records)
-const TIME_OPS = new Set(['time.insert', 'time.remove', 'section.add', 'section.set', 'section.remove', 'section.duplicate']);
+const TIME_OPS = new Set(['time.insert', 'time.remove', 'section.add', 'section.set', 'section.remove', 'section.duplicate', 'section.move']);
 const TIME_ARRANGE = new Set(['duplicate_section', 'insert_bars', 'remove_bars']);
+const liveRoomBusy = (app) => { try { return !!app.liveRoom?.busy?.(); } catch { return false; } };
 function recordingBlock(app, name, input, by) {
   // (a take being played on Start a song's stage, ui/start.js: nothing in the song changes under it until it lands)
   if (app.start?.busy && !NEVER_BLOCKED.has(name)) return err('recording', 'The human is playing their first idea on the Start a song stage. Try again in a moment, once it is in the song.', { recording: { state: 'start', tracks: [], blocked: 'the song' } });
+  // (a count, a take or the band's read running in the live room, ui/liveroom/index.js: the room joins the part's ops to
+  // the take's step, so nothing in the song changes under it until it lands; docs/research/LIVE-ROOM-MODE.md §3.16)
+  if (!NEVER_BLOCKED.has(name) && liveRoomBusy(app)) return err('recording', 'The human is playing a take in the live room (a count, a take, or the band learning it). Try again in a moment, once it is in the song (get_recording with wait_seconds waits for it).', { recording: { state: 'room', tracks: [], blocked: 'the song' } });
   const rec = app.input?.recorder;
   if (!rec || rec.state === 'idle' || NEVER_BLOCKED.has(name)) return null;
   const p = P(app);
@@ -1181,6 +1188,16 @@ const OP_EXAMPLES = {
   'instrument.set': '{ "type": "instrument.set", "track": "Bass", "params": { "cutoff": 900 } }',
   'notes.set': '{ "type": "notes.set", "track": "Bass", "clip": "c_ab12cd", "notes": [{ "id": "n3", "v": 0.95 }] }',
   'section.duplicate': '{ "type": "section.duplicate", "section": "Chorus", "push": true }',
+  'section.move': '{ "type": "section.move", "section": "Chorus", "before": "Verse" } (before: a section id or name, or null for the end)',
+  'sheet.set': '{ "type": "sheet.set", "patch": { "capo": 3, "time": [3, 4] } }',
+  'sheet.section.add': '{ "type": "sheet.section.add", "ref": "ch", "section": { "name": "Chorus", "lines": [{ "text": "Somewhere a [G]paper [Em]moon" }] } }',
+  'sheet.section.set': '{ "type": "sheet.section.set", "section": "Verse", "patch": { "name": "Verse 1" } } (a section of the sheet by id or name)',
+  'sheet.section.remove': '{ "type": "sheet.section.remove", "section": "Bridge" }',
+  'sheet.line.add': '{ "type": "sheet.line.add", "section": "Verse 1", "line": { "text": "over the [C]roofs of the [D]town" }, "index": 1 }',
+  'sheet.line.set': '{ "type": "sheet.line.set", "section": "Verse 1", "line": "sl_ab12cd", "patch": { "text": "over the [C]roofs" } } (get_project\'s sheet has the line ids)',
+  'sheet.line.remove': '{ "type": "sheet.line.remove", "section": "Verse 1", "line": "sl_ab12cd" }',
+  'room.set': '{ "type": "room.set", "patch": { "finish": "loud" } } (the live room\'s own: get_project\'s room line says what it holds)',
+  'room.part.set': '{ "type": "room.part.set", "section": "Verse", "patch": { "feel": "gallop", "busy": 1 } } (the live room\'s own; the band\'s clips don\'t follow it)',
   'time.insert': '{ "type": "time.insert", "at": 16, "length": 8 }',
   'time.remove': '{ "type": "time.remove", "at": 16, "length": 8 }',
   'clip.repeat': '{ "type": "clip.repeat", "track": "Bass", "clip": "c_ab12cd", "times": 4 }',
@@ -1191,7 +1208,7 @@ const OP_EXAMPLES = {
 };
 function hintFor(message, op) {
   const m = String(message);
-  if (/unknown op type/.test(m)) return 'op types: project.set track.add track.remove track.move track.set instrument.set insert.add insert.remove insert.move insert.set clip.add clip.remove clip.set clip.move notes.add notes.remove notes.set notes.replace section.add section.set section.remove section.duplicate time.insert time.remove clip.repeat clip.split auto.write auto.clear auto.set (devices: the define_device tool; the arrangement moves are also the arrange_song tool)';
+  if (/unknown op type/.test(m)) return 'op types: project.set track.add track.remove track.move track.set instrument.set insert.add insert.remove insert.move insert.set clip.add clip.remove clip.set clip.move notes.add notes.remove notes.set notes.replace section.add section.set section.remove section.duplicate section.move time.insert time.remove clip.repeat clip.split auto.write auto.clear auto.set tempo.map master.set sheet.set sheet.section.add sheet.section.set sheet.section.remove sheet.line.add sheet.line.set sheet.line.remove room.set room.part.set (devices: the define_device tool; the arrangement moves are also the arrange_song tool; room.* is the live room\'s own)';
   if (/no device/.test(m)) return 'list_devices (or define_device) first; built-ins are core.*, pedal.*, amp.*';
   if (/bad point|points must be/.test(m)) return `points: "beat:value" space separated, e.g. "0:-60 16:-6" (beats; the param's own units), ~curve to bend: "32:400~0.5 48:8000"`;
   if (op && /^auto\./.test(op.type) && /lane|param|insert|no such/.test(m)) return `${OP_EXAMPLES[op.type]}; get_project lists each track's lanes and inserts, list_devices each device's param keys`;
@@ -1799,9 +1816,11 @@ async function renderAndMeasure(app, input, signal) {
   // a genre's targets (audio/targets.js): each row in words, the misses first
   if (input.targets) {
     const TG = await import('../audio/targets.js');
-    const rows = TG.checkTargets(m, input.targets, { window: input.window === 'song' ? 'song' : 'drop' });
+    // (a genre with no drop numbers, acoustic, is measured on the whole song)
+    const win = input.window === 'song' || (!input.window && !Object.keys(TG.TARGETS[input.targets]?.drop || {}).length) ? 'song' : 'drop';
+    const rows = TG.checkTargets(m, input.targets, { window: win });
     const miss = rows.filter((r) => !r.ok);
-    out.targets = { genre: input.targets, window: input.window === 'song' ? 'song' : 'drop', met: rows.length - miss.length, of: rows.length, rows: rows.map(TG.targetWords) };
+    out.targets = { genre: input.targets, window: win, met: rows.length - miss.length, of: rows.length, rows: rows.map(TG.targetWords) };
     out.low_end = { lowSideDb: m.lowSideDb, lowCorrelation: m.lowCorrelation, lufsShortMax: m.lufsShortMax };
     out.targets_hint = miss.length ? 'say what you will change first, then the numbers on one line; the provisional rows (crest, PLR, bands) are house starting points, not law' : 'every target met';
   }

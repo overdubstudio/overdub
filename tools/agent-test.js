@@ -391,6 +391,52 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     rec.state = 'idle'; rec.tracks = []; rec.target = null;
     app.ui.state.selection = { track: null, clip: null, notes: [] };
 
+    // the live room (docs/research/LIVE-ROOM-MODE.md §11.9): section.move moves time, so it waits while a take records;
+    // apply_ops takes the room's ten ops, signed by the agent; while the room counts, takes or learns every
+    // song-changing tool waits; and say goes to the room's talkback while it's open, signed
+    {
+      const secs = store.dispatch([{ type: 'section.add', ref: 'v', section: { name: 'Verse', start: 0, length: 16 } }, { type: 'section.add', ref: 'c', section: { name: 'Chorus', start: 16, length: 16 } }], { by: 'you' }).created;
+      recordOn(KEYS);
+      const mv = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'section.move', section: 'Chorus', before: 'Verse' }] }, { by: 'mcp:probe' });
+      rec.state = 'idle'; rec.tracks = []; rec.target = null;
+      t.ok(mv.error === 'recording' && mv.recording?.blocked === 'the timeline' && store.get().sections.find((s) => s.id === secs.c).start === 16, `node: section.move waits while a take records (${mv.error}, ${mv.recording?.blocked})`);
+      const ten = [
+        { type: 'room.set', patch: { place: 'metal', tuning: 'drop-c', finish: 'tight' } },
+        { type: 'room.part.set', section: 'Verse', patch: { feel: 'gallop', busy: 1 } },
+        { type: 'sheet.set', patch: { capo: 3, time: [3, 4] } },
+        { type: 'sheet.section.add', ref: 'ss', section: { name: 'Verse 1', lines: [{ text: 'Somewhere a [G]paper [Em]moon', by: 'you' }] } },
+        { type: 'sheet.line.add', ref: 'l2', section: '$ss', line: { text: 'over the [C]roofs' } },
+        { type: 'sheet.line.set', section: '$ss', line: '$l2', patch: { text: 'over the [C]roofs of the [D]town' } },
+        { type: 'sheet.section.add', ref: 'br', section: { name: 'Bridge' } },
+        { type: 'sheet.section.set', section: '$br', patch: { name: 'Middle' } },
+        { type: 'sheet.section.remove', section: '$br' },
+        { type: 'section.move', section: 'Chorus', before: 'Verse' },
+      ];
+      const all = await app.tools.run('apply_ops', { label: 'the room', reason: 'probe', ops: ten }, { by: 'mcp:probe' });
+      const q = store.get(), last = store.history[store.history.length - 1];
+      const lines = q.sheet?.sections?.[0]?.lines || [];
+      const kinds = new Set(ten.map((o) => o.type));
+      t.ok(all.ok && kinds.size === 10 && last.by === 'mcp:probe' && q.room?.place === 'metal' && q.room?.parts?.[secs.v]?.feel === 'gallop' && q.sheet?.capo === 3 && lines.length === 2 && lines.every((l) => l.by === 'mcp:probe')
+        && q.sections.find((s) => s.id === secs.c).start === 0 && /room|sheet|moved Chorus/.test(all.summary || '') && (all.diff || []).some((l) => /^(room|sheet): /.test(l)),
+        `node: apply_ops takes the room's ten ops in one step, signed by the agent (a line given by: 'you' is the agent's): "${all.summary || all.error}"; diff ${JSON.stringify((all.diff || []).filter((l) => /^(room|sheet)/.test(l)).slice(0, 3))}`);
+      const bad = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'sheet.lines.add', section: 'Verse 1' }] }, { by: 'mcp:probe' });
+      t.ok(bad.error && /sheet\.line\.add/.test(bad.hint || '') && /section\.move/.test(bad.hint || '') && /room\.part\.set/.test(bad.hint || ''), `node: an unknown op's hint names the room's and the sheet's ops (${String(bad.hint).slice(0, 80)}…)`);
+      const ex = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'sheet.line.set', section: 'Verse 1', line: 'sl_nope', patch: { text: 'x' } }] }, { by: 'mcp:probe' });
+      t.ok(ex.error && /sheet\.line\.set/.test(ex.hint || ''), `node: a failed sheet op comes back with an example (${String(ex.hint).slice(0, 90)})`);
+      // the room, busy and open
+      const said = [];
+      let busy = true;
+      app.liveRoom = { isOpen: () => true, busy: () => busy, say: (text, o = {}) => said.push({ text, by: o.by }) };
+      const held = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'track.set', track: 'Bass', patch: { gain: -1 } }] }, { by: 'mcp:probe' });
+      const read = await app.tools.run('get_history', {}, { by: 'mcp:probe' });
+      const sayR = await app.tools.run('say', { text: 'The chorus is first now.' }, { by: 'mcp:probe' });
+      busy = false;
+      const after = await app.tools.run('apply_ops', { label: 'probe', ops: [{ type: 'track.set', track: 'Bass', patch: { gain: -1 } }] }, { by: 'mcp:probe' });
+      delete app.liveRoom;
+      t.ok(held.error === 'recording' && held.recording?.state === 'room' && /live room/.test(held.hint) && !read.error && sayR.ok && /talkback/.test(sayR.where || '') && said.length === 1 && said[0].by === 'mcp:probe' && after.ok,
+        `node: while the room counts, takes or learns, a song-changing tool waits ("${held.hint}") and reading doesn't; say goes to the room's talkback, signed (${JSON.stringify(said[0])}); after the take the edit goes through`);
+    }
+
     // the play tool's stop at the end is its own: a stop, a seek or a take after it lets it go
     let p1 = await app.tools.run('play', { bars: [1, 1] }, { by: 'claude' });   // 4 beats = 0.08 s here
     engine.stop(); engine.play(0);                                              // the human stops and plays (or records)

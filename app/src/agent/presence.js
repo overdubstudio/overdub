@@ -190,7 +190,8 @@ export function installPresence(app) {
     if (e.kind === 'do' || e.kind === 'redo') speak(e.by, e.txn?.label);
     else if (e.kind === 'undo') speak(e.by, e.reverted ? `reverted ${e.reverted.length} change${e.reverted.length === 1 ? '' : 's'}` : `undid ${e.txn?.label || 'a change'}`);
   });
-  ui.on?.('agent:say', ({ by, text } = {}) => { if (by && text && !(by === 'claude' && app.agent?.busy)) speak(by, `says “${String(text).replace(/\s+/g, ' ').trim()}”`); });
+  // (a line in the live room's talkback is read out by the talkback's own live region)
+  ui.on?.('agent:say', ({ by, text, room } = {}) => { if (by && text && !room && !(by === 'claude' && app.agent?.busy)) speak(by, `says “${String(text).replace(/\s+/g, ' ').trim()}”`); });
 
   /* ---------------------------------------------------------------- the floating pill (agent pane closed) */
   css('presence', PRESENCE_CSS);

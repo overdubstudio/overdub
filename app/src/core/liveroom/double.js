@@ -22,7 +22,7 @@
 //   roleTrack(p, role) -> the role's track (room.tracks, else by the name its place gives it) | null
 //   PAN_RAMP   seconds, the lane's ramp at a boundary
 
-import { roomOf, partOf, NAMES } from './model.js';
+import { roomOf, partOf } from './model.js';
 import { placeOf, guitarChain, guitarGain } from './places.js';
 
 const EPS = 1e-6;
@@ -158,7 +158,3 @@ export function planUseAsRight(p, { section = null, clip = null } = {}) {
   const k = sides.L.indexOf(c.id) + 1;
   return { ops, label: `Take ${k} is the right side of the ${String(s.name).toLowerCase()}`, reason: `room:useright:${s.id}` };
 }
-
-// (what a part is called in a line: "the verse")
-export const partName = (s) => String(s?.name || 'part').toLowerCase();
-export { NAMES };

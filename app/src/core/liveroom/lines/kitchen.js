@@ -50,8 +50,14 @@ export const LINES = {
   'k.offer.cajon': { text: () => 'The cajón under the verses?' },
   'k.offer.bass': { text: () => 'The bass from the first chorus?' },
   'k.offer.strings': { text: () => 'Strings in the bridge?' },
-  'k.player.in': { text: ({ player = 'Shaker', where = 'the chorus' } = {}) => `${cap(player)}’s in ${where.replace(/^from /, 'from ')}: it follows your time.`.replace(' in from ', ' in, from ') },
+  // "Shaker's in the chorus", "Bass is in from the first chorus", "Strings are in the bridge"
+  'k.player.in': {
+    text: ({ player = 'Shaker', where = 'the chorus' } = {}) => {
+      const p = cap(player), many = /s$/i.test(p) && !/ss$/i.test(p);
+      return `${p}${many ? ' are' : /s$/i.test(p) ? ' is' : '’s'} in ${where}: ${many ? 'they follow' : 'it follows'} your time.`;
+    },
+  },
   'k.master': { text: ({ n: k = 1, tempo = null } = {}) => `Take ${k} is the master now: the band follows it${tempo ? `, around ${tempo}` : ''}.` },
   'k.both.or.voice': { text: () => 'Both, or just the voice?' },
-  'k.pickup.needed': { text: () => 'Two inputs needs a guitar with a pickup.' },
+  'k.pickup.needed': { text: () => 'Two inputs need a guitar with a pickup.' },
 };

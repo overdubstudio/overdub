@@ -1,4 +1,4 @@
-// The paper (core/liveroom/sheet.js): ChordPro and chords over words in and out, chords kept on their syllables, the
+// The paper (core/liveroom/sheet-text.js, behind the frozen sheet.js): ChordPro and chords over words in and out, chords kept on their syllables, the
 // capo's direction, Nashville numbers (docs/research/LIVE-ROOM-MODE.md §6.1, §11.7 "The paper").
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +21,7 @@ import {
   describeSheet,
   isBars,
   barsOf,
-} from '../../app/src/core/liveroom/sheet.js';
+} from '../../app/src/core/liveroom/sheet-text.js';
 import { createStore } from '../../app/src/core/store.js';
 import { createProject } from '../../app/src/core/project.js';
 

@@ -16,9 +16,9 @@
 //      whole take and nothing is played
 //   6. signing: an mcp:test sheet.line.set shows its byline in --ink-agent; the house's chord lines are unsigned; every
 //      step's author in History
-import { parseSheet, formatSheet, soundingKey, sheetChords, setWords, pasteOps } from '../../app/src/core/liveroom/sheet.js';
-import { readTape, alignChords, timeWords } from '../../app/src/core/liveroom/align.js';
-import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, offeredKitchen, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen.js';
+import { parseSheet, formatSheet, soundingKey, sheetChords, setWords, pasteOps } from '../../app/src/core/liveroom/sheet-text.js';
+import { readTape, alignChords, timeWords } from '../../app/src/core/liveroom/tape.js';
+import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, offeredKitchen, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen-plans.js';
 import { createStore } from '../../app/src/core/store.js';
 import { createProject } from '../../app/src/core/project.js';
 import '../../app/src/devices/builtin/index.js';
@@ -375,7 +375,7 @@ async function flow(T, ctx) {
       // the paper, pasted (typing isn't a press)
       await E(async (text) => {
         const app = window.overdub || window.app;
-        const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet.js');
+        const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
         app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
       }, `Paper Moon\nCapo 3\n\n[Verse]\nG       Em\nSomewhere a paper moon\nC          D\nover the roofs of town\n\n[Chorus]\nC       G\nHold on hold on\nD            G\nuntil the morning\n`);
       // press 4 and 5: the tape, then the stop

@@ -16,12 +16,12 @@ import { screens } from './screens.js';
 import { createPaper } from './paper.js';
 import { W, H } from './pixels/index.js';
 import { roomOf, sheetOf } from '../../core/liveroom/model.js';
-import { readTapeInWorker } from '../../core/liveroom/align.js';
+import { readTapeInWorker } from '../../core/liveroom/tape.js';
 import {
   kitchenOps, planTime, planRead, planPlayer, planMaster, planKitchenFinish, offeredKitchen, offerSections, takeName,
   takeNumber, chordsWords, PLAYERS, PLAYER_ORDER, fromTakeOps, after,
-} from '../../core/liveroom/kitchen.js';
-import { capoChoices } from '../../core/liveroom/sheet.js';
+} from '../../core/liveroom/kitchen-plans.js';
+import { capoChoices } from '../../core/liveroom/sheet-text.js';
 
 const CSS = `
 .kt { display: grid; grid-template-columns: minmax(0, 512px) minmax(0, 640px); gap: 20px; width: 100%; max-width: 1180px; align-items: start; }

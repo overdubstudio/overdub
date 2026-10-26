@@ -16,7 +16,7 @@ import { h, css, byline } from '../dom.js';
 import {
   parseSheet, pasteOps, lineParts, lineWords, chordsOf, setWords, isBars, readChord, chordRow, shapesKey, soundingKey,
   keyName, newVerse, describeSheet, transposeChord,
-} from '../../core/liveroom/sheet.js';
+} from '../../core/liveroom/sheet-text.js';
 import { roomOf, sheetOf } from '../../core/liveroom/model.js';
 import { beatsPerBar } from '../../core/music.js';
 import { LINES } from '../../core/liveroom/lines/kitchen.js';

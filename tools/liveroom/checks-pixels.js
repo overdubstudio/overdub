@@ -18,8 +18,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { fileURLToPath } from 'node:url';
-import { open } from '../pw.js';
 import * as px from '../../app/src/ui/liveroom/pixels/index.js';
 import * as sc from '../../app/src/ui/liveroom/pixels/scenes.js';
 import { paletteOf } from '../../app/src/ui/liveroom/pixels/cover.js';
@@ -29,7 +27,6 @@ import { LEDGE_PARTS } from '../../app/src/ui/liveroom/pixels/gear.js';
 export const name = 'pixels';
 export const pages = true;
 
-void fileURLToPath;
 
 /* ------------------------------------------------------------------------------------------------ the Node canvas */
 // A 2D context with only what the scenes may use: fillStyle ('#rrggbb'), globalAlpha and fillRect at whole pixels,
@@ -283,6 +280,8 @@ export async function run(T, ctx) {
     T.ok(!wrong.length, `each signal moves what it drives and nothing else: ${lines.join(', ')}${wrong.length ? '; ' + wrong.slice(0, 6).join('; ') : ''}`);
     const counts = PLACES.map((p) => findText(draw(p, { count: 3 }), '3', p === 'kitchen' ? '#d9f36a' : sc.LOOK[p].headInk, 2).length);
     T.ok(counts.every((n) => n >= 1), `the count is on the kick head while it counts (a 3 on ${PLACES.slice(0, 3).map((p, i) => `${sc.KICKS[p]} ${counts[i] ? 'yes' : 'no'}`).join(', ')}; the kitchen's on the laptop ${counts[3] ? 'yes' : 'no'})`);
+    const loads = PLACES.slice(0, 3).map((p) => findText(draw(p, { loading: 0.7 }), '70%', sc.LOOK[p].headInk).length > 0 && same(draw(p, { loading: 1 }), draw(p, {})));
+    T.ok(loads.every(Boolean), `while the kit loads its kick head says how much is in (70% on ${PLACES.slice(0, 3).map((p, i) => `${sc.KICKS[p]} ${loads[i] ? 'yes' : 'no'}`).join(', ')}), and its word comes back once it's in`);
     const flyer = findText(draw('basement', { title: 'Void Weather' }), 'VOID', '#16130f').length;
     T.ok(flyer >= 1, `the basement's flyer carries the song's title once it has one (VOID ${flyer ? 'found' : 'missing'}), and 'Untitled' is no title: ${same(draw('basement', { title: 'Untitled' }), draw('basement', {})) ? 'the same flyer' : 'a different flyer'}`);
     const cover = PLACES.slice(0, 2).map((p) => {
@@ -423,6 +422,8 @@ export async function run(T, ctx) {
 
   /* ---------------------------------------------------------------------------------------------- 8. in the browser */
   if (!ctx.pages) { T.note('PAGES=0: the browser checks skipped'); return; }
+  // (pw.js only now, so the unit tests that use this module's buffer don't load the server)
+  const { open } = await import('../pw.js');
   const s = await open('/app/src/ui/liveroom/pixels/index.js', { width: 1440, height: 900 });
   try {
     const { page } = s;

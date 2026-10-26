@@ -30,9 +30,10 @@
 //       input (your amp follows it, the right one while you play the other side); L, R: each guitar side's own meter
 //       (the left from Guitar L, the right from Guitar R, or the blues bar's Lead); bass: the Bass track's meter;
 //       master: the master's meter per side (the ledge's VU needles)
-//   run: the deck's state ('count', 'take', 'double', 'play', 'read', ...); rolling (boolean): the tape rolls (left
-//       out: any run but 'read'); beat: the heard beat (the reels turn a quarter turn a beat while the tape rolls);
-//       bar: the counter's bar (left out: from the beat); count: the count's number on the kick head while it counts
+//   run: the deck's state ('count', 'take', 'double', 'punch', 'play', 'loop', 'read', ...); rolling (boolean): the
+//       tape rolls (left out: while run is any of those but 'read'); beat: the heard beat (the reels turn a quarter turn a beat while the tape rolls);
+//       bar: the counter's bar (left out: from the beat); count: the count's number on the kick head while it counts;
+//       loading: how much of the drummer's kit is in, 0..1, on the kick head until it is (the count waits for it)
 //   side: 'L' | 'R', which side you're playing; doubled: the second amp's cover is off (left out: once a card has a
 //       right take, or while you play the right); plugged: the input is open (the pilot lamps; left out: input > 0);
 //       learning: the band is reading a take (the bass rig's lamp warms; left out: run 'read'); talk: a new line on the

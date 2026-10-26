@@ -85,6 +85,7 @@ export function signalsOf(view) {
     vu: [clamp01(master[0]), clamp01(master[1] ?? master[0])],
     plugged: typeof v.plugged === 'boolean' ? v.plugged : input > 0,
     rolling, beat, bar, count, side,
+    loading: Number.isFinite(v.loading) && v.loading >= 0 && v.loading < 1 ? v.loading : null,
     doubled: typeof v.doubled === 'boolean' ? v.doubled : side === 'R' || cards.some((c) => c?.takes?.R?.length),
     learning: typeof v.learning === 'boolean' ? v.learning : run === 'read',
     learned: cards.some((c) => Array.isArray(c?.band) && c.band.some((b) => b && b.track === roles.bass)),

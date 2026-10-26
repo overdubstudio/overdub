@@ -5,8 +5,8 @@
 // words with its author.
 // Muted Chromium: G both ways, the console ledge, Control room → and the studio's 40 px Live room key; going through
 // leaves History as it was, the studio doesn't paint under the room (ui.covered) and the room's frame doesn't run
-// behind the glass; an edit made in the control room is said on the way back, signed when an agent made it. The
-// place's tracks are a stand-in setup (core/liveroom/places.js setupOf has none until stream B). // needs B
+// behind the glass; an edit made in the control room is said on the way back, signed when an agent made it. The song is
+// the metal club's as the door makes it (core/liveroom/plans.js planPlace, places.js setupOf).
 
 import { createStore } from '../../app/src/core/store.js';
 import { createProject } from '../../app/src/core/project.js';
@@ -18,16 +18,6 @@ export const pages = true;
 
 const json = (x) => JSON.stringify(x);
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|the server responded with a status of 404/.test(e);
-const SETUP = {
-  tempo: 132, meter: [4, 4], grid: 4, count: { beats: 4, voice: 'sticks' },
-  tracks: [
-    { role: 'guitarL', name: 'Guitar L', kind: 'audio', pan: -0.8 },
-    { role: 'guitarR', name: 'Guitar R', kind: 'audio', pan: 0.8 },
-    { role: 'drums', name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} }, gain: -6 },
-    { role: 'bass', name: 'Bass', kind: 'instrument', instrument: { device: 'core.poly', params: {} }, gain: -6 },
-  ],
-  master: [],
-};
 
 // a take on Guitar L over bars 1-8 and its part, as the stage would leave them (one step by you)
 const TAKE = [
@@ -43,13 +33,13 @@ export async function run(T, ctx) {
   {
     const { snapshot, readBack } = await import('../../app/src/ui/liveroom/view.js');
     const s = createStore(createProject({ tempo: 120 }));
-    s.dispatch(planPlace(s.get(), { place: 'metal', setup: SETUP }).ops, { by: 'you' });
+    s.dispatch(planPlace(s.get(), { place: 'metal' }).ops, { by: 'you' });
     const L = s.get().tracks.find((t) => t.name === 'Guitar L').id;
     s.dispatch(TAKE.map((o) => (o.track === '$L' ? { ...o, track: L } : o)), { by: 'you', label: 'Verse take 1' });
     const snap = snapshot(s.get());
     const at = s.history.length;
     const bass = s.get().tracks.find((t) => t.name === 'Bass').id;
-    s.dispatch({ type: 'track.set', track: bass, patch: { gain: -4 } }, { by: 'mcp:test', label: 'bass up' });
+    s.dispatch({ type: 'track.set', track: bass, patch: { gain: -2 } }, { by: 'mcp:test', label: 'bass up' });
     s.dispatch({ type: 'track.add', track: { name: 'Synth', kind: 'instrument', instrument: { device: 'core.poly', params: {} } } }, { by: 'mcp:test', label: 'a synth' });
     s.dispatch({ type: 'section.set', section: 's_glassv', patch: { name: 'Riff' } }, { by: 'you', label: 'rename' });
     s.dispatch({ type: 'project.set', patch: { tempo: 140 } }, { by: 'you' });
@@ -68,7 +58,7 @@ export async function run(T, ctx) {
   const { page, E } = s;
   const settle = (ms = 80) => page.evaluate((ms) => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), ms)), ms);
   try {
-    const ok = await E(async ({ setup, take }) => {
+    const ok = await E(async ({ take }) => {
       const o = window.overdub;
       const { screens } = await import('/app/src/ui/liveroom/screens.js');
       const { planPlace } = await import('/app/src/core/liveroom/plans.js');
@@ -84,12 +74,12 @@ export async function run(T, ctx) {
       window.__lrPreviews = { open: 0 };
       const pv = o.store.preview.bind(o.store);
       o.store.preview = (...a) => { const h = pv(...a); window.__lrPreviews.open++; const rel = h.release.bind(h); h.release = () => { window.__lrPreviews.open--; return rel(); }; return h; };
-      const r = o.store.dispatch(planPlace(o.store.get(), { place: 'metal', setup }).ops, { by: 'you', label: 'Into the metal club', reason: 'room:place' });
+      const r = o.store.dispatch(planPlace(o.store.get(), { place: 'metal' }).ops, { by: 'you', label: 'Into the metal club', reason: 'room:place' });
       const L = o.store.get().tracks.find((t) => t.name === 'Guitar L').id;
       const t = o.store.dispatch(take.map((x) => (x.track === '$L' ? { ...x, track: L } : x)), { by: 'you', label: 'Verse take 1', reason: 'room:take:s_glassv' });
       o.liveRoom.open({ screen: 'stage' });
       return r.ok && t.ok;
-    }, { setup: SETUP, take: TAKE });
+    }, { take: TAKE });
     await settle(200);
     const st0 = await E(() => ({ open: window.overdub.liveRoom.isOpen(), screen: window.overdub.ui.state.liveRoom.screen, covered: window.overdub.ui.covered, draws: window.__lrDraws }));
     T.ok(ok && st0.open && st0.screen === 'stage' && st0.covered === 'liveroom' && st0.draws > 0, `the stage is up over the studio, which doesn't paint under it (ui.covered ${st0.covered}); the room's frame draws the scene (${st0.draws} frames)`);
@@ -122,7 +112,7 @@ export async function run(T, ctx) {
     // an agent's edits in the control room are said on the way back, signed with its byline
     await E(() => {
       const o = window.overdub, p = o.store.get(), bass = p.tracks.find((t) => t.name === 'Bass').id;
-      o.store.dispatch({ type: 'track.set', track: bass, patch: { gain: -4 } }, { by: 'mcp:test', label: 'bass up' });
+      o.store.dispatch({ type: 'track.set', track: bass, patch: { gain: -2 } }, { by: 'mcp:test', label: 'bass up' });
       o.store.dispatch({ type: 'track.add', track: { name: 'Synth', kind: 'instrument', instrument: { device: 'core.poly', params: {} } } }, { by: 'mcp:test', label: 'a synth' });
     });
     await page.click('[data-panel="liveroom"] .lr-key');

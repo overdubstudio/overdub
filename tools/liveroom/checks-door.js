@@ -1,8 +1,7 @@
 // The live room's checks: the door and sending [stream F] (docs/research/LIVE-ROOM-MODE.md §2.1, §3.1, §3.14, §11.8).
 // Run by tools/liveroom-test.js (ONLY=door), whose header says what a checks module exports.
 //   1. the door's previews in Node: one bar of each place's band renders through the canonical renderer to a level the
-//      door can bring to about −18 LUFS (needs B for the real band: until places.js setupOf has tracks, it's the
-//      prototype's kit and bass)
+//      door can bring to about −18 LUFS: the drums and bass of places.js setupOf, the kitchen's shaker player
 //   2. the front door (muted Chromium, navigator.webdriver read as false, as a visitor's browser has it): a first visit
 //      to bare /app/ shows the door and #studio is never visible before the room mounts; the four cards, their crops,
 //      slates and lines; a preview only after a gesture, and nothing in History from it; 1-4 picks a place (one step by
@@ -15,8 +14,7 @@
 //      the canonical render; the share sheet when navigator.canShare says yes (stubbed), else a download
 //   5. Send the song: the zip holds the song and its recordings as 32-bit float WAVs; opened with ⌘O in a fresh browser
 //      context it puts every recording back bit for bit and opens the room
-// The stage, its planPlace and the pixels are other streams' (C, E): where a check needs planPlace to make a room, a
-// stand-in plans.js is served in its place for that page (STAND_IN_PLANS, below), never by editing C's file.
+// A place picked at the door is core/liveroom/plans.js planPlace's step, the place's whole setup (places.js setupOf).
 import crypto from 'node:crypto';
 import { openRoom, history } from './harness.js';
 import { riffDI, SR } from './fake.js';
@@ -32,30 +30,6 @@ export const name = 'door';
 export const pages = true;
 
 /* ------------------------------------------------------------------------------------------------ shared with checks-shelf */
-// A stand-in for stream C's planPlace (core/liveroom/plans.js), served in its place: the tempo, two guitar tracks and
-// room.set, one step. needs C: the real one makes the place's whole setup.
-export const STAND_IN_PLANS = `
-const none = () => ({ ops: [], label: '', reason: '' });
-const TEMPO = { metal: 132, basement: 172, bluesbar: 96, kitchen: 84 };
-export function planPlace(p, { place = 'metal' } = {}) {
-  return { label: 'Into ' + place, reason: 'room:place:' + place, ops: [
-    { type: 'project.set', patch: { tempo: TEMPO[place] || 120 } },
-    { type: 'track.add', ref: 'gl', track: { name: 'Guitar L', kind: 'audio' } },
-    { type: 'track.add', ref: 'gr', track: { name: 'Guitar R', kind: 'audio' } },
-    { type: 'room.set', patch: { place, tracks: { guitarL: '$gl', guitarR: '$gr' } } },
-  ] };
-}
-export function takeOps() { return none(); }
-export function planLayout() { return none(); }
-export function planTwice() { return none(); }
-export function planMove() { return none(); }
-export function planShorter() { return none(); }
-export function planRemove() { return none(); }
-export function planEnd() { return none(); }
-`;
-export async function standIn(context) {
-  await context.route('**/src/core/liveroom/plans.js', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: STAND_IN_PLANS }));
-}
 // this origin's storage emptied, as a browser that has never been here (the page then navigates)
 export async function forget(s) {
   await s.E(async () => {
@@ -168,7 +142,6 @@ export async function run(T, ctx) {
       let L = -Infinity, err = '';
       try { const r = renderSong(p, { from: 0, to: 4, sr: SR, tail: 1.2 }); L = lufs({ sampleRate: r.sr, channels: r.channels }); } catch (e) { err = e.message; }
       const gain = PREVIEW_LUFS - L;
-      // needs B: the band of setupOf's tracks (until then the prototype's kit and bass)
       T.ok(Number.isFinite(L) && L > -60 && gain >= -30 && gain <= 12, `the door’s preview of ${place}: one bar renders at ${Number.isFinite(L) ? L.toFixed(1) : err || 'silence'} LUFS, brought to ${PREVIEW_LUFS} by ${gain.toFixed(1)} dB`);
     }
   }
@@ -207,7 +180,7 @@ async function frontDoor(T, ctx) {
       return { place: c.dataset.place, name: c.querySelector('.lrd-name')?.textContent, slate: c.querySelector('.lrd-slate')?.textContent, line: c.querySelector('.lrd-line')?.textContent, kick: c.querySelector('.lrd-kick')?.textContent, lit, w: cv.width, h: cv.height };
     }));
     T.ok(cards.map((c) => c.place).join() === 'metal,basement,bluesbar,kitchen', `four places, in order: ${cards.map((c) => c.place).join(', ')}`);
-    T.ok(cards.every((c) => c.lit > c.w * c.h * 0.5), `each card draws its room’s crop (${cards.map((c) => `${c.place} ${c.lit}/${c.w * c.h}`).join(', ')})`); // needs E for the kitchen's own room
+    T.ok(cards.every((c) => c.lit > c.w * c.h * 0.5), `each card draws its room’s crop (${cards.map((c) => `${c.place} ${c.lit}/${c.w * c.h}`).join(', ')})`);
     T.ok(cards[0].slate === 'ELECTRIC · 132 · TWO STACKS AND A BIG KIT' && cards[0].kick === 'VOID' && /kick locks to your chugs/.test(cards[0].line) && cards[3].slate === 'ACOUSTIC AND VOICE · YOUR TEMPO', `the cards’ slates, kick heads and lines (“${cards[0].slate}”, ${cards.map((c) => c.kick).join(', ')})`);
     const quiet = await s.E(() => [...document.querySelectorAll('.lrd-quiet button, .lrd-quiet p')].map((x) => x.textContent));
     T.ok(quiet.join(' | ') === 'No guitar? Hum, tap or play keys in the control room. | Hear one the house made: Boiler Room. | Your takes stay in this browser.', `the quiet links under the cards: ${quiet.join(' | ')}`);
@@ -234,8 +207,7 @@ async function frontDoor(T, ctx) {
     const reopened = await s.E(() => ({ focused: document.activeElement?.dataset?.place || null, played: window.__lrPrev.length }));
     T.ok(reopened.focused === 'metal' && reopened.played === 0, `the door opening again puts focus on the first card and plays nothing for it (focus ${reopened.focused}, ${reopened.played} played)`);
 
-    // 1-4 picks (planPlace stood in: needs C)
-    await standIn(s.context);
+    // 1-4 picks
     await forget(s);
     await go(s, '/app/');
     await s.page.keyboard.press('Digit1');
@@ -249,7 +221,7 @@ async function frontDoor(T, ctx) {
     await until(s, () => /where you left it/.test(document.querySelector('.lr-tb-line')?.textContent || ''), null, 8000);
     st = await state(s);
     T.ok(st.open && st.screen === 'stage' && st.door.side === 'room' && st.door.song === 'saved' && st.room?.place === 'metal', `coming back after the room opens the room on the saved song (${JSON.stringify(st.door)})`);
-    T.ok(/^Untitled · 132, where you left it: nothing on tape yet\.$/.test(st.talk), `…and says where you left it: “${st.talk}”`);
+    T.ok(/^Untitled · 132 · drop C, where you left it: nothing on tape yet\.$/.test(st.talk), `…and says where you left it: “${st.talk}”`);
     // after the control room: the control room
     await s.E(() => window.overdub.liveRoom.close());
     await go(s, '/app/');

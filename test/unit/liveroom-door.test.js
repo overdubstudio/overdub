@@ -3,7 +3,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { decideDoor } from '../../app/src/ui/liveroom/door-decide.js';
-import { labelOf, titleDice, noteParts, whereLeft, listWords } from '../../app/src/core/liveroom/label.js';
+import { labelOf, titleDice } from '../../app/src/core/liveroom/label.js';
 import { createProject } from '../../app/src/core/project.js';
 
 const room = (side) => ({ v: 1, side, place: null, outputs: {}, said: {} });
@@ -63,7 +63,15 @@ describe('decideDoor: every row of §2.1', () => {
     assert.deepEqual(D({ search: '?new&device=core.bass' }), { side: 'control', song: 'new' });
     // (a community shelf link opens like a device link; a checkout comes back to the Agent tab's Top up)
     assert.deepEqual(D({ search: '?new&community-device=ana.fuzz' }), { side: 'control', song: 'new' });
-    for (const k of ['jam', 'flip', 'view=simple', 'coach', 'device=core.bass', 'community-device=ana.fuzz', 'plus=done&ref=abcd1234']) {
+    for (const k of [
+      'jam',
+      'flip',
+      'view=simple',
+      'coach',
+      'device=core.bass',
+      'community-device=ana.fuzz',
+      'plus=done&ref=abcd1234',
+    ]) {
       assert.deepEqual(D({ search: '?' + k }), { side: 'control', song: 'demo' }, k);
       assert.deepEqual(
         D({ search: '?' + k, saved: { room: true }, room: room('room') }),
@@ -209,9 +217,9 @@ describe('the tape box: its label from the song', () => {
     assert.equal(labelOf(q).note, 'Nothing on tape yet.');
   });
   test('coming back’s clause, and at most three sentences', () => {
-    assert.equal(whereLeft(metalSong()), 'verse doubled; chorus wants its other side; the breakdown’s still empty');
-    assert.ok(noteParts(metalSong()).length <= 3);
-    assert.equal(listWords(['a', 'b', 'c']), 'a, b and c');
+    const L = labelOf(metalSong());
+    assert.equal(L.where, 'verse doubled; chorus wants its other side; the breakdown’s still empty');
+    assert.ok(L.notes.length <= 3 && L.notes.join(' ') === L.note);
   });
   test('the dice: three different titles, the same three for the same song', () => {
     const p = metalSong();

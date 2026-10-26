@@ -23,7 +23,7 @@ import { screens } from './screens.js';
 import * as db from './shelf-db.js';
 import { prefs } from './prefs.js';
 import { drawCover } from './pixels/index.js';
-import { labelOf, titleDice, whereLeft } from '../../core/liveroom/label.js';
+import { labelOf, titleDice } from '../../core/liveroom/label.js';
 import { LINES } from '../../core/liveroom/lines/shelf.js';
 import { songAssets } from '../export.js';
 
@@ -94,7 +94,7 @@ export async function comeBack(app) {
   const p = app.store.get();
   if (!roomy(p)) return [];
   const L = labelOf(p), said = [];
-  const text = line('note.back', { title: L.title, note: whereLeft(p) });
+  const text = line('note.back', { title: L.title, note: L.where });
   app.liveRoom?.say?.(text);
   said.push(text);
   const ids = songAssets(p);

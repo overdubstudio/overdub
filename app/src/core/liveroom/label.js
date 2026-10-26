@@ -10,11 +10,11 @@
 //       still empty."); cover: what pixels/index.js drawCover draws (below)
 //   titleDice(p) -> [three titles]   names to try for an untitled song, from a word bank seeded by the song (its id and
 //       place): the same song always gets the same three
-// And, beside them (additions, not frozen):
-//   labelOf(p).named     whether the song has a title of its own
-//   labelOf(p).finished  every part has a take on every side it has (the shelf record's finished)
-//   noteParts(p)         the note's sentences as a list (the shelf and coming back use them)
-//   whereLeft(p)         the note as one clause for coming back ("verse and chorus doubled; the breakdown's empty")
+// And, on labelOf's result beside them (fields a reader can skip; the module exports nothing else, §14.2):
+//   named     whether the song has a title of its own
+//   finished  every part has a take on every side it has (the shelf record's finished)
+//   notes     the note's sentences as a list (three at most)
+//   where     the note as one clause, for coming back ("verse and chorus doubled; the breakdown's still empty")
 //
 // The cover (labelOf(p).cover), for drawCover:
 //   { title, slate, place, seed, bars, key, tempo }
@@ -40,7 +40,7 @@ const COMMON = /^(intro|verse|pre-chorus|prechorus|chorus|post-chorus|bridge|bre
 const inSentence = (name) => (COMMON.test(name) ? name.toLowerCase() : name);
 const capFirst = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 // ["verse", "chorus", "bridge"] -> "verse, chorus and bridge"
-export function listWords(xs) {
+function listWords(xs) {
   if (xs.length <= 1) return xs[0] || '';
   return `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
 }
@@ -101,7 +101,7 @@ function kitchenTakes(p, view) {
 
 /* ------------------------------------------------------------------------------------------------ the note */
 // The note's sentences (three at most): what's in, what wants its other side, what's still empty. Never a nag.
-export function noteParts(p, { cap = true } = {}) {
+function noteParts(p, { cap = true } = {}) {
   const C = cap ? capFirst : (x) => x;
   const { view, parts } = partsOf(p);
   const room = roomOf(p);
@@ -129,7 +129,7 @@ export function noteParts(p, { cap = true } = {}) {
   return out.slice(0, 3);
 }
 // the note as one clause, for coming back's line: "verse and chorus doubled; the breakdown's still empty"
-export function whereLeft(p) {
+function whereLeft(p) {
   return noteParts(p, { cap: false }).map((x) => x.replace(/\.$/, '').replace(/^(The|Nothing|Take) /, (m) => m.toLowerCase())).join('; ');
 }
 
@@ -178,9 +178,9 @@ export function labelOf(p) {
   for (const s of sections) if (s && typeof s.name === 'string' && s.name && !parts.some((x) => x.toLowerCase() === s.name.toLowerCase())) parts.push(s.name);
   const { parts: ps } = partsOf(p);
   const finished = ps.length > 0 && ps.every((x) => x.done);
-  const note = noteParts(p).join(' ');
+  const notes = noteParts(p), note = notes.join(' ');
   const cover = { title, slate, place: room.place || null, seed: strHash(`${named ? p.title : ''}|${key}|${tempo}`), bars: barEnergy(p), key, tempo };
-  return { title, slate, parts, note, cover, named, finished };
+  return { title, slate, parts, note, cover, named, finished, notes, where: whereLeft(p) };
 }
 
 /* ------------------------------------------------------------------------------------------------ the name dice */

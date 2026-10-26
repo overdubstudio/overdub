@@ -15,6 +15,7 @@
 // No share link: a link carries the notes and the devices and leaves the recordings behind, so it would send the band
 // without you.
 //
+// Inside (not exported: the module's names are §14.2's):
 //   sizes(app) -> Promise of { seconds, mixBytes, songBytes, recordings }   what the screen's two choices say
 //   mixFor(app) -> Promise of releaseRender's result                    the mix of the song as it is now: the screen
 //       starts it as it opens, so a press shares the file at once (a share sheet wants the press it came from, and a
@@ -36,7 +37,7 @@ let sending = null;
 // the mix the send screen made ahead: { app, ver, p } (ver: the song's changes, counted while the screen is up, which
 // is the only time one is kept: with no screen to count them, every send renders the song as it is)
 let ahead = null, ver = 0, watching = 0;
-export function mixFor(app) {
+function mixFor(app) {
   if (ahead && ahead.app === app && ahead.ver === ver) return ahead.p;
   const p = Promise.resolve().then(() => app.exporter.releaseRender({ bits: 16 }));
   if (!watching) return p;
@@ -92,7 +93,7 @@ export async function sendSong(app) {
 
 // What the two choices say before either is pressed: the mix's length and size (16-bit stereo at 48 kHz, from the
 // song's length), and the song's (its JSON and each recording as 32-bit float, as the zip will hold them)
-export async function sizes(app) {
+async function sizes(app) {
   const p = app.store.get();
   let beats = 0;
   try { beats = app.engine?.songEnd?.() || 0; } catch { beats = 0; }

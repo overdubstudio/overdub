@@ -34,6 +34,7 @@ export const FROZEN = {
   'core/liveroom/sheet-ops.js': ['SHEET_OPS'],
   'core/liveroom/places.js': ['PLACES', 'placeOf', 'RIGS', 'rigChain', 'rigLabel', 'setupOf', 'feelsOf', 'finishChain', 'earOf', 'chordAt'],
   'core/liveroom/read.js': ['readTake', 'readInWorker'],
+  'core/liveroom/read-worker.js': [],
   'core/liveroom/band.js': ['guideOps', 'planLearn', 'planFeel', 'planFinish', 'planBassYours', 'bandFor'],
   'core/liveroom/tight.js': ['measurePair'],
   'core/liveroom/double.js': ['planDouble', 'planUseAsRight'],
@@ -55,7 +56,7 @@ export const FROZEN = {
   'ui/liveroom/send.js': ['sendMix', 'sendSong'],
 };
 // the skeleton's other modules: each its stream's to fill, so only that they load (the page loads only if they do)
-const OTHERS = ['core/liveroom/read-worker.js', 'ui/liveroom/view.js', 'ui/liveroom/style.js', 'ui/liveroom/stage.js', 'ui/liveroom/setlist.js', 'ui/liveroom/menu.js', 'ui/liveroom/talkback.js', 'ui/liveroom/paper.js', 'ui/liveroom/kitchen.js', 'ui/liveroom/door.js', 'ui/liveroom/shelf.js', 'ui/liveroom/pixels/scenes.js'];
+const OTHERS = ['ui/liveroom/view.js', 'ui/liveroom/style.js', 'ui/liveroom/stage.js', 'ui/liveroom/setlist.js', 'ui/liveroom/menu.js', 'ui/liveroom/talkback.js', 'ui/liveroom/paper.js', 'ui/liveroom/kitchen.js', 'ui/liveroom/door.js', 'ui/liveroom/shelf.js', 'ui/liveroom/pixels/scenes.js'];
 const TEN = ['room.set', 'room.part.set', 'sheet.set', 'sheet.section.add', 'sheet.section.set', 'sheet.section.remove', 'sheet.line.add', 'sheet.line.set', 'sheet.line.remove', 'section.move'];
 
 const json = (x) => JSON.stringify(x);
@@ -93,7 +94,7 @@ export async function run(T, ctx) {
         const m = await import(APP + file);
         loaded[file] = m;
         const got = Object.keys(m).sort(), exp = [...want].sort();
-        if (json(got) !== json(exp)) wrong.push(`${file}: ${got.join(' ') || 'nothing'} (frozen: ${exp.join(' ')})`);
+        if (json(got) !== json(exp)) wrong.push(`${file}: ${got.join(' ') || 'nothing'} (frozen: ${exp.join(' ') || 'nothing'})`);
       } catch (e) { wrong.push(`${file} doesn't load: ${msg(e)}`); }
     }
     T.ok(!wrong.length, `every module of §14.2 imports in Node and exports exactly its frozen names (${Object.keys(FROZEN).length} modules)${wrong.length ? ': ' + wrong.join('; ') : ''}`);

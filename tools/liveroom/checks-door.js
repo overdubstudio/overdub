@@ -342,6 +342,9 @@ async function sending(T, ctx) {
     await s.E(() => { const x = window.overdub.exporter, r = x.releaseRender; window.__lrRenders = 0; x.releaseRender = (o) => { window.__lrRenders++; return r(o); }; window.overdub.liveRoom.open({ screen: 'send' }); });
     await until(s, () => /^Send a mix: \d+:\d\d, about \d+ MB\.$/.test(document.querySelector('.lrs-mix')?.textContent || '') && window.__lrRenders === 1, null, 30000);
     const choices = await s.E(() => [...document.querySelectorAll('.lrs-choice')].map((b) => b.textContent));
+    // (what was said before is the stage's, not sending's: the talkback opens empty, in the choices' column)
+    const tbSend = await s.E(() => { const tb = document.querySelector('.lr-talkback'), c = document.querySelector('.lrs-mix'); return { line: document.querySelector('.lr-tb-line')?.textContent || '', left: Math.round(tb.getBoundingClientRect().left), col: Math.round(c.getBoundingClientRect().left) }; });
+    T.ok(tbSend.line === '' && Math.abs(tbSend.left - tbSend.col) <= 1, `the send screen opens with the talkback empty (“${tbSend.line}”) and in the choices’ column (${tbSend.left} px against ${tbSend.col} px)`);
     await s.page.click('.lrs-mix');
     await until(s, () => window.__lrShared && document.querySelector('.lrs-mix') && !document.querySelector('.lrs-mix').disabled, null, 30000);
     const pressed = await s.E(() => window.__lrRenders);

@@ -122,6 +122,8 @@ const CSS = `
 .lrs-choice b { font-size: 18px; font-weight: 600; }
 .lrs-choice span { font-size: 14px; color: var(--text-2); }
 .lrs-back { align-self: center; }
+/* (the talkback under the two choices, in their column) */
+.lr[data-screen="send"] > .lr-talkback { width: min(100%, 720px); }
 `;
 
 screens.add({
@@ -130,6 +132,8 @@ screens.add({
     const { app, ui, store } = ctx;
     css('liveroom-send', CSS);
     let gone = false;
+    // (what the stage or the table last said was about them: the talkback starts empty here, for what sending says)
+    try { /** @type {any} */ (el.closest('.lr'))?.__lrTalkback?.clear?.(); } catch { /* fine */ }
     // (each choice is its line once the sizes are known: "Send a mix: about 1:51 and 21 MB." from the song's length, then
     // "Send a mix: 1:51, about 21 MB." once the mix has rendered)
     const mixSays = h('b', 'Send a mix'), songSays = h('b', 'Send the song');

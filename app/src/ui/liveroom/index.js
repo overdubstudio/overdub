@@ -46,7 +46,8 @@ import { createDeck } from './deck.js';
 import { prefs } from './prefs.js';
 import { sceneOf } from './pixels/index.js';
 import { readRoom } from '../../core/liveroom/session.js';
-import { roomOf } from '../../core/liveroom/model.js';
+import { roomOf, NAMES } from '../../core/liveroom/model.js';
+import { pairAt, redoPair, learnAlone, snapshot, readBack, listWords } from './view.js';
 import { LINES as SOUNDCHECK } from '../../core/liveroom/lines/soundcheck.js';
 import { LINES as DOUBLE } from '../../core/liveroom/lines/double.js';
 import { LINES as STAGE } from '../../core/liveroom/lines/stage.js';
@@ -83,6 +84,8 @@ export default function installLiveRoom(app) {
 
   const deck = createDeck(app);
   const talkback = createTalkback({ app });
+  // (the stage moves the strip between the scene and the setlist, and opens it for typing to the agent)
+  talkback.el.__lrTalkback = talkback;
 
   // the room's view of the song, read again after a change
   let viewed = null, stale = true;
@@ -111,6 +114,7 @@ export default function installLiveRoom(app) {
   const ctx = { app, ui, store, deck, view, say: sayLine, prefs, get scene() { return sceneNow(); } };
 
   /* ------------------------------------------------------------------------------------------- the overlay */
+  let whereEl = null;
   let el = null, body = null, current = null, opener = null, focusWas = null, wasInert = null, watcher = null, openedOnce = false;
   // what's under the room: the page's other top elements but the toasts and a dialog (the keys sheet, ?, comes up over
   // the room and is the person's to use)
@@ -140,11 +144,14 @@ export default function installLiveRoom(app) {
     body = h('div.lr-body');
     // a region over an inert studio, as Start a song's stage is (not an aria-modal dialog: the shell leaves a modal's
     // keys to the modal, and the room's keys are ui.keys like everyone's)
+    whereEl = h('span.lr-where', 'The live room');
     el = h('section.lr', { role: 'region', 'aria-label': 'The live room', tabindex: -1, hidden: true },
       h('header.lr-top',
-        h('span.lr-brand.disp-s', 'Overdub'), h('span.lr-where', 'The live room'), h('span.lr-gap'),
+        h('span.lr-brand.disp-s', 'Overdub'), whereEl, h('span.lr-gap'),
+        h('button.btn.btn-txt.lr-shelf', { type: 'button', onclick: () => press('shelf') }, 'Shelf'),
         h('button.btn.btn-txt.lr-glass', { type: 'button', onclick: () => close() }, 'Control room →')),
       body, talkback.el);
+    el.__lrTalkback = talkback;
     document.body.append(el);
   }
   function unmountScreen() {
@@ -152,6 +159,8 @@ export default function installLiveRoom(app) {
     current = null;
     if (was?.view?.unmount) { try { was.view.unmount(); } catch (e) { console.error('liveroom unmount', was.id, e); } }
     body?.replaceChildren();
+    // (the talkback home again, wherever the screen had it)
+    if (el && talkback.el.parentNode !== el) el.append(talkback.el);
   }
   function go(id) {
     const def = screens.get(id) || screens.get('door');
@@ -196,14 +205,14 @@ export default function installLiveRoom(app) {
     if (!L.open) return;
     const fresh = !entered;
     // (the holds again, over every key declared by now: the screen's own, added as it mounts, go before them)
-    if (fresh) { unhold(); hold(); }
+    if (fresh) { unhold(); hold(); roomKeys(true); }
     const want = asked || (!fresh && current && L.screen) || (roomOf(store.get()) ? 'stage' : 'door');
     asked = null;
     if (fresh || want !== L.screen || !current) go(want);
     entered = true;
     delete document.documentElement.dataset.room;
     try { prefs.set({ side: 'room' }); } catch { /* storage: fine */ }
-    if (fresh) emit('open', { screen: L.screen });
+    if (fresh) { emit('open', { screen: L.screen }); sayBack(); }
   }
   // (after every 'ready' listener has run: the keys they declare are held too)
   ui.on?.('ready', () => queueMicrotask(() => { up = true; enter(); }));
@@ -216,6 +225,8 @@ export default function installLiveRoom(app) {
     asked = null;
     el.hidden = true;
     unhold();
+    roomKeys(false);
+    try { left = { snap: snapshot(store.get()), at: store.history.length, top: store.history.at(-1)?.id || null }; } catch (e) { console.error('liveroom: the snapshot', e); left = null; }
     releaseUnder();
     if (ui.covered === 'liveroom') ui.covered = null;
     if (ui.state.focus === 'liveroom') ui.state.focus = focusWas ?? null;
@@ -234,6 +245,7 @@ export default function installLiveRoom(app) {
     }
     if (r == null || r === false) {
       if (id === 'glass') r = L.open ? (close(), { ok: true }) : (open(), { ok: true });
+      else if (id === 'shelf' && L.open && screens.has('shelf')) r = (open({ screen: 'shelf' }), { ok: true });
       else r = { ok: false, error: L.open ? `Nothing in the room is called ${id}.` : 'The live room isn’t open.' };
     }
     if (r === true) r = { ok: true };
@@ -244,9 +256,13 @@ export default function installLiveRoom(app) {
   /* ------------------------------------------------------------------------------------------- the panel and the loop */
   // The studio's Live room key, in the top bar before Song: on a song with a room, and for the rest of the page once
   // the room has been open. Registered when it's first needed, so a song with no room has the top bar it always had.
-  let key = null, panelEl = null;
+  let key = null, panelEl = null, studioG = null;
   const wanted = () => openedOnce || !!roomOf(store.get());
   function showKey() {
+    if (!key && wanted() && !studioG) {
+      // G in the studio: back through the glass (a View key, there only once the Live room key is)
+      studioG = ui.keys.add({ key: 'KeyG', run: () => open(), when: () => !L.open && wanted() && !ui.covered, label: 'The live room', group: 'View' });
+    }
     if (!key && wanted()) {
       ui.panel({
         id: 'liveroom', region: 'top', title: 'Live room',
@@ -263,6 +279,10 @@ export default function installLiveRoom(app) {
   store.on('change', (e) => { if (e?.kind === 'load' || key || roomOf(store.get())) showKey(); });
   function frame(now) {
     if (!L.open) return;
+    if (whereEl) {
+      const pl = view().place, t = pl && NAMES.place[pl] ? `The live room · ${NAMES.place[pl][0].toUpperCase()}${NAMES.place[pl].slice(1)}` : 'The live room';
+      if (whereEl.textContent !== t) whereEl.textContent = t;
+    }
     if (current?.view?.frame) {
       try { current.view.frame(now); } catch (e) { console.error('liveroom frame', current.id, e); current.view.frame = null; }
     }
@@ -286,6 +306,76 @@ export default function installLiveRoom(app) {
     for (const [s, k] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: holding, run: () => {}, label: 'Held while the live room is open', group: 'Live room' }));
   }
   function unhold() { for (const off of held.values()) off(); held.clear(); }
+
+  /* ------------------------------------------------------------------------------------------- the room's own keys */
+  // Declared while the room is open (in the group 'Live room', first): G back through the glass, and ⌘Z ⇧⌘Z where one
+  // press is a take and the band's learning of it (§7.3). Their when() is true only then, so ⌘Z and ⇧⌘Z keep the
+  // studio's meaning everywhere else.
+  let roomOffs = [];
+  const free = () => L.open && !document.querySelector('body > [aria-modal=true]:not(.ew-region)');
+  const partName = (s) => (store.get().sections || []).find((x) => x.id === s)?.name || 'part';
+  const takeNo = (label) => { const m = /take (\d+)/i.exec(String(label || '')); return m ? Number(m[1]) : 1; };
+  function roomKeys(on) {
+    for (const o of roomOffs) o();
+    roomOffs = [];
+    if (!on) return;
+    const k = (o) => roomOffs.push(ui.keys.add({ first: true, group: 'Live room', ...o }));
+    k({ key: 'KeyG', when: free, run: () => press('glass'), label: 'Through the glass, to the control room' });
+    k({
+      key: 'KeyZ', mod: 'mod', label: 'Undo the take and the band’s learning together',
+      when: () => free() && !!(pairAt(store.history) || learnAlone(store.history)),
+      run: () => {
+        const pr = pairAt(store.history);
+        if (pr) {
+          const part = partName(pr.section), n = takeNo(pr.take.label);
+          const a = store.undo();
+          const b = a.ok ? store.undo() : a;
+          if (b.ok) sayLine('undo.pair', { part, take: n, back: n > 1 ? n - 1 : null });
+          return;
+        }
+        const al = learnAlone(store.history);
+        const part = al ? partName(al.section) : '';
+        if (al && store.undo().ok) sayLine('undo.alone', { part });
+      },
+    });
+    const redoIt = () => {
+      const pr = redoPair(store.redoable);
+      if (!pr) return;
+      const a = store.redo();
+      const b = a.ok ? store.redo() : a;
+      if (b.ok) sayLine('redo.pair', { part: partName(pr.section), take: takeNo(pr.take.label) });
+    };
+    k({ key: 'KeyZ', mod: 'mod+shift', label: 'Redo the take and the band’s learning together', when: () => free() && !!redoPair(store.redoable), run: redoIt });
+    k({ key: 'KeyY', mod: 'mod', label: 'Redo the take and the band’s learning together', when: () => free() && !!redoPair(store.redoable), run: redoIt });
+  }
+
+  /* ------------------------------------------------------------------------------------------- the read-back */
+  // Coming back through the glass, the room reads the song and History since it was left and says what changed in
+  // one line (§3.15, §7.5), signed when an agent made all of it; a once-only line is said once per song.
+  let left = null;
+  function sayBack() {
+    const was = left;
+    left = null;
+    if (!was || !was.snap?.room) return;
+    const steps = store.history.slice(Math.max(0, store.history.findIndex((t) => t.id === was.top) + 1));
+    if (was.top == null) steps.splice(0, steps.length, ...store.history);
+    if (!steps.length) return;
+    let back;
+    try { back = readBack(was.snap, store.get(), steps); } catch (e) { console.error('liveroom: the read-back', e); return; }
+    const song = store.get();
+    const fresh = back.changes.filter((c) => !(c.kind === 'level' || c.kind === 'track') || !prefs.said(song, c.id.slice(0, 64)));
+    if (fresh.length) {
+      const bys = [...new Set(fresh.map((c) => c.by))];
+      const by = bys.length === 1 && bys[0] !== 'you' && bys[0] !== 'overdub' ? bys[0] : 'overdub';
+      const words = listWords(fresh.slice(0, 3).map((c) => c.text)) + (fresh.length > 3 ? `, and ${fresh.length - 3} more` : '');
+      const line = LINES['glass.back'];
+      say(line.text({ changes: words }), { by });
+      for (const c of fresh) if (c.kind === 'level' || c.kind === 'track') { try { prefs.mark(song, c.id.slice(0, 64)); } catch { /* fine */ } }
+    }
+    // (a tempo or a meter that moved is said once per song, and then it's the line: it says more than the list)
+    if (back.tempo) sayLine('glass.tempo', back.tempo);
+    else if (back.meter) sayLine('glass.meter', back.meter);
+  }
 
   app.liveRoom = {
     isOpen,

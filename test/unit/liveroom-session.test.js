@@ -216,6 +216,18 @@ describe("the session: the room's view", () => {
     void t2;
   });
 
+  test("a new part: the other side's ring ends on its seam too, so the part before isn't a take of it", () => {
+    const s = metalSong();
+    const v0 = takeIn(s, { name: 'Verse', from: 0, to: 32 });
+    takeIn(s, { section: v0.section, from: 0, to: 32, role: 'guitarR' });
+    takeIn(s, { name: 'Chorus', from: 32, to: 64 });
+    const v = readRoom(s.get());
+    const R = s.get().tracks.find((t) => t.id === v.roles.guitarR).clips[0];
+    assert.ok(R.start + R.length < 32, `the right side's ring stops at the chorus's seam (${R.start + R.length})`);
+    assert.equal(v.parts[1].takes.R.length, 0, 'the chorus has no right side yet');
+    assert.equal(offered(v, { run: 'idle', last: v.parts[1].id }).id, 'other', 'so the other side is offered for it');
+  });
+
   test("the End: one bar after the last part (two at the blues bar), and planEnd when it's already there is nothing", () => {
     const s = metalSong();
     takeIn(s, { name: 'Verse', from: 0, to: 32 });

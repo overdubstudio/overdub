@@ -28,6 +28,15 @@
 //   redo.pair      { part, take }                           ⇧⌘Z put them back
 //   undo.alone     { part }                                 ⌘Z took the learning out alone (something landed between)
 //   take.none      {}                                       a pass ended with nothing to keep
+//   pass.capture   {}                                       Esc in a pass: nothing went in, it's in Capture
+//   other.now      {}                                       the other side's pass is next
+//   feel.on        { feel }                                 another feel (its name)
+//   band.busy      { step }                                 Simpler · Busier (-1, 0, 1)
+//   band.loud      { step }                                 Softer · Louder (-1, 0, 1)
+//   bass.yours     {}                                       Play the bass yourself
+//   take.pick      { part, take }                           ↑ ↓: which take plays in a part
+//   take.one       { part }                                 ↑ ↓ on a part with one take
+//   take.edge      { part, take, first }                    ↑ ↓ past the first or the last take
 
 const cap = (s) => { const t = String(s ?? ''); return t ? t[0].toUpperCase() + t.slice(1) : t; };
 const low = (s) => String(s ?? '').toLowerCase();
@@ -54,4 +63,13 @@ export const LINES = {
   'redo.pair': { text: ({ part, take }) => `Back in: ${low(part)} take ${take}, and the band’s learning with it.` },
   'undo.alone': { text: ({ part }) => `Undone: what the band learned on the ${low(part)}. Something came in after the take, so the take stays.` },
   'take.none': { text: () => 'Nothing to keep from that one.' },
+  'pass.capture': { text: () => 'Not that one: it’s in Capture. ⇧R puts it in after all.' },
+  'other.now': { text: () => 'Now the other side.' },
+  'feel.on': { text: ({ feel }) => `${cap(feel)}. F for another.` },
+  'band.busy': { text: ({ step }) => (step < 0 ? 'Simpler: no fills, the kick on the accents.' : step > 0 ? 'Busier: fills into the turns.' : 'Back to how the drummer had it.') },
+  'band.loud': { text: ({ step }) => (step < 0 ? 'Brought down: hats instead of the crash.' : step > 0 ? 'Up: the crash instead of the hats.' : 'Back to how the drummer had it.') },
+  'bass.yours': { text: () => 'The bass is yours on this part: plug it in, then Space.' },
+  'take.pick': { text: ({ part, take }) => `Take ${take} plays on the ${low(part)}.` },
+  'take.one': { text: ({ part }) => `The ${low(part)} has one take so far.` },
+  'take.edge': { text: ({ part, take, first }) => `Take ${take} is the ${first ? 'first' : 'last'} on the ${low(part)}.` },
 };

@@ -239,6 +239,20 @@ export function takeOps(take, { part = null } = {}) {
       }
     }
   }
+  // a new part: the ring of the part before it on the other take tracks (the other side's, the lead's) ends on its
+  // seam too, so nothing of the last part sounds into the new one
+  if (!existing && from > EPS) {
+    const side = Object.values(readRoom(p).roles);
+    const takeTracks = (p.tracks || []).filter((x) => x.kind === 'audio' && x.id !== take.track && side.includes(x.id));
+    for (const x of takeTracks) {
+      for (const c of x.clips) {
+        if (c.start < head - EPS && c.start + c.length > head + EPS && c.start + c.length <= to + endBars(roomOf(p)?.place) * bpb + EPS) {
+          const len = r4(head - c.start);
+          if (len >= MIN_CLIP) ops.push({ type: 'clip.set', track: x.id, clip: c.id, patch: { length: len } });
+        }
+      }
+    }
+  }
   // the End follows the last part: planned on the song with the part in it
   const q = clone(p);
   if (!existing) q.sections.push({ id, name, start: from, length: r4(to - from) });
@@ -247,7 +261,9 @@ export function takeOps(take, { part = null } = {}) {
   // the label: which take of the part this is, on its side
   const role = Object.entries(readRoom(p).roles).find(([, tid]) => tid === take.track)?.[0] || '';
   const sec = { start: from, length: to - from };
-  const n = t ? new Set(t.clips.filter((c) => Math.min(c.start + c.length, sec.start + sec.length) - Math.max(c.start, sec.start) > 0.25).map((c) => c.take || c.id)).size : 1;
+  // (the takes of this part: the clips that start in it or cover most of it, the ring of the one before aside)
+  const ov = (c) => Math.min(c.start + c.length, sec.start + sec.length) - Math.max(c.start, sec.start);
+  const n = t ? new Set(t.clips.filter((c) => ov(c) > 0.25 && (c.start >= sec.start - 0.5 || ov(c) > sec.length / 2)).map((c) => c.take || c.id)).size : 1;
   const label = role === 'guitarR' ? `${name}, the other side${n > 1 ? ` (take ${n})` : ''}` : `${name} take ${Math.max(1, n)}`;
   return { ops, label, reason: `room:take:${id}`, section: id };
 }

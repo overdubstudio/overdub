@@ -98,15 +98,19 @@ export function readRoom(p) {
   }
   const bpb = beatsPerBar(p?.meter || [4, 4]);
   const parts = isObj(room.parts) ? room.parts : {};
-  const within = (c, s) => Math.min(c.start + c.length, s.start + s.length) - Math.max(c.start, s.start) > OVER;
+  const overlap = (c, s) => Math.min(c.start + c.length, s.start + s.length) - Math.max(c.start, s.start);
+  const within = (c, s) => overlap(c, s) > OVER;
+  // (a take of a part starts in it, its 30 ms lead aside, or covers most of it: the ring of the part before, a bar or
+  // two into it, isn't one)
+  const takeIn = (c, s) => within(c, s) && (c.start >= s.start - 0.5 || overlap(c, s) > s.length / 2);
   const clipsIn = (role, s) => {
     const t = role ? byId(roles[role]) : null;
     if (!t) return [];
-    return t.clips.filter((c) => within(c, s)).sort((a, b) => Number(!!a.mute) - Number(!!b.mute)).map((c) => c.id);
+    return t.clips.filter((c) => takeIn(c, s)).sort((a, b) => Number(!!a.mute) - Number(!!b.mute)).map((c) => c.id);
   };
   const playingIn = (role, s) => {
     const t = role ? byId(roles[role]) : null;
-    return t?.clips.find((c) => within(c, s) && !c.mute)?.id || null;
+    return t?.clips.find((c) => takeIn(c, s) && !c.mute)?.id || null;
   };
   // (a section made behind the glass is a card too; a room.parts entry whose section went is skipped: time.remove and
   // section.remove leave them, and cleanRoom prunes them only on load)

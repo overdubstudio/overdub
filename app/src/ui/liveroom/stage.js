@@ -37,6 +37,7 @@ import { measurePair } from '../../core/liveroom/tight.js';
 import { readInWorker } from '../../core/liveroom/read.js';
 import { setupOf, feelsOf, placeOf, rigLabel } from '../../core/liveroom/places.js';
 import { LINES as DOUBLE } from '../../core/liveroom/lines/double.js';
+import { LINES as SOUNDCHECK } from '../../core/liveroom/lines/soundcheck.js';
 import { LINES as STAGE } from '../../core/liveroom/lines/stage.js';
 
 const title = (place) => { const n = NAMES.place[place]; return n ? cap(n) : 'The stage'; };
@@ -59,7 +60,7 @@ screens.add({
     const L = ui.state.liveRoom || (ui.state.liveRoom = { open: true, screen: 'stage', card: null, menu: null, run: 'idle', side: 'L' });
     const eng = () => app.engine || null;
     const offs = [];
-    const has = (id) => Object.hasOwn(STAGE, id) || Object.hasOwn(DOUBLE, id);
+    const has = (id) => Object.hasOwn(STAGE, id) || Object.hasOwn(DOUBLE, id) || Object.hasOwn(SOUNDCHECK, id);
     const say = (id, vars) => (has(id) ? ctx.say(id, vars) : false);
 
     /* --------------------------------------------------------------------------------------------- the layout */
@@ -200,7 +201,7 @@ screens.add({
     function nothingKept(r) {
       S.pass = null; releasePreview(); L.run = 'idle'; tbHold(false);
       if (r?.cancelled) return;
-      if (!(typeof r?.line === 'string' && ctx.say(r.line))) ctx.say('take.none');
+      if (!(typeof r?.line === 'string' && say(r.line))) say('take.none');
     }
     // What the deck hands back for a landed take, as the stage reads it: a commit ({ txn, track, clip | clips, from,
     // to, samples?, sr? }), or the deck's take ({ ok, txn, take: { track, clip, asset }, takes, from, to, quietLead }).
@@ -338,7 +339,8 @@ screens.add({
       L.run = 'idle';
       tbHold(false);
       S.kept = P;
-      say('pass.capture');
+      // (A's line for it, take.esc, when the deck's lines are in; the stage's own until then)
+      if (!say('take.esc')) say('pass.capture');
       return { ok: true };
     }
     async function keepAfterAll() {
@@ -456,9 +458,11 @@ screens.add({
         const r = runPlan(store, plan, { by: 'you' });
         if (!r.ok) return r;
       }
-      if (kind === 'feel') say('feel.on', { feel: NAMES.feel[patch.feel] || patch.feel });
-      else if (kind === 'simpler' || kind === 'busier') say('band.busy', { step: patch.busy });
-      else say('band.loud', { step: patch.loud });
+      // (the band's lines are stream B's, lines/double.js: feel.named, busy.*, loud.*) // needs B
+      const fname = NAMES.feel[patch.feel] || patch.feel;
+      if (kind === 'feel') say('feel.named', { feel: fname, name: fname, part: c.name });
+      else if (kind === 'simpler' || kind === 'busier') { if (patch.busy) say(patch.busy < 0 ? 'busy.simpler' : 'busy.busier', { part: c.name, step: patch.busy }); }
+      else if (patch.loud) say(patch.loud < 0 ? 'loud.softer' : 'loud.louder', { part: c.name, step: patch.loud });
       return { ok: true };
     }
     function pickTake(dir) {
@@ -567,7 +571,7 @@ screens.add({
           if (v.place === 'basement') { try { prefs.mark(song(), 'basement.other'); } catch { /* fine */ } }
           const d = planDouble(song(), { section: c.id });
           if (d?.ops?.length) { const r = runPlan(store, d, { by: 'overdub' }); if (!r.ok) return r; }
-          say('other.now');
+          if (!say('side.now')) say('other.now');
           L.side = 'R';
           return pass('other', c.id);
         }

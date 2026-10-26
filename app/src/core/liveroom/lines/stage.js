@@ -30,10 +30,6 @@
 //   take.none      {}                                       a pass ended with nothing to keep
 //   pass.capture   {}                                       Esc in a pass: nothing went in, it's in Capture
 //   other.now      {}                                       the other side's pass is next
-//   feel.on        { feel }                                 another feel (its name)
-//   band.busy      { step }                                 Simpler · Busier (-1, 0, 1)
-//   band.loud      { step }                                 Softer · Louder (-1, 0, 1)
-//   bass.yours     {}                                       Play the bass yourself
 //   take.pick      { part, take }                           ↑ ↓: which take plays in a part
 //   take.one       { part }                                 ↑ ↓ on a part with one take
 //   take.edge      { part, take, first }                    ↑ ↓ past the first or the last take
@@ -65,10 +61,6 @@ export const LINES = {
   'take.none': { text: () => 'Nothing to keep from that one.' },
   'pass.capture': { text: () => 'Not that one: it’s in Capture. ⇧R puts it in after all.' },
   'other.now': { text: () => 'Now the other side.' },
-  'feel.on': { text: ({ feel }) => `${cap(feel)}. F for another.` },
-  'band.busy': { text: ({ step }) => (step < 0 ? 'Simpler: no fills, the kick on the accents.' : step > 0 ? 'Busier: fills into the turns.' : 'Back to how the drummer had it.') },
-  'band.loud': { text: ({ step }) => (step < 0 ? 'Brought down: hats instead of the crash.' : step > 0 ? 'Up: the crash instead of the hats.' : 'Back to how the drummer had it.') },
-  'bass.yours': { text: () => 'The bass is yours on this part: plug it in, then Space.' },
   'take.pick': { text: ({ part, take }) => `Take ${take} plays on the ${low(part)}.` },
   'take.one': { text: ({ part }) => `The ${low(part)} has one take so far.` },
   'take.edge': { text: ({ part, take, first }) => `Take ${take} is the ${first ? 'first' : 'last'} on the ${low(part)}.` },

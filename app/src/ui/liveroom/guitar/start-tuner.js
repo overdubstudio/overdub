@@ -78,7 +78,7 @@ const CSS = `
 .gr-tp-go { justify-self: start; display: inline-flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 14px; border: 1px solid var(--accent); border-radius: var(--r-press);
   background: var(--accent); color: var(--bg); font: 600 14px/1 var(--font-ui); cursor: pointer; }
 .gr-tp-go[data-on="0"] { background: none; color: var(--text); border-color: var(--line-2); }
-.gr-tp kbd, .gr-tf kbd { font: 400 11px/1 var(--font-mono); border: 1px solid currentColor; border-radius: var(--r-press); padding: 2px 4px; opacity: .72; }
+.gr-tp kbd, .gr-tf kbd { font: 400 11px/1 var(--font-mono); color: inherit; border: 1px solid currentColor; border-radius: var(--r-press); padding: 2px 4px; opacity: .72; }
 .gr-tp .gg-tuner { margin-top: 2px; }
 @media (prefers-reduced-motion: reduce) { .gr-tf-sw:active { transform: translateX(-50%); } }
 `;
@@ -206,8 +206,9 @@ export function createTunerPanel(el, { source, tuning, style, onStomp, onTuning,
       gauge.frame(now);
       reading = gauge.reading;
       const r = reading, s = r.string;
-      // a string is in once it has read in tune, settled, for a quarter second
-      if (r.live && r.settled && r.inTune && s && s.near) {
+      // a string is in once it has read in tune to its own note, settled, for a quarter second (r.inTune is to the
+      // nearest note: a C string tuned to C♯ is near it, and in tune to the wrong note)
+      if (r.live && r.settled && r.inTune && s && s.near && (s.open == null || r.p === s.open)) {
         if (inS !== s.s) { inS = s.s; inAt = now; }
         else if (now - inAt >= 250 && !done.has(s.s)) done.add(s.s);
       } else if (!r.inTune) inS = -1;

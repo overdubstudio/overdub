@@ -167,10 +167,13 @@ export function tunerSays(r, { n = 0, of = 6, tuning = '' } = {}) {
   const where = s ? `${s.name} string (${s.number})` : `${r.note}${r.octave}`;
   if (r.held) return `${where}: let it ring, or play the next.`;
   if (r.shown == null) return `${where}.`;
-  if (r.inTune) return n >= of && of ? W.tuneDone(strumsWord(n, of), tuning) : `${where} is in tune.`;
-  const c = s && Math.abs(s.cents) > 50 ? Math.round(s.cents) : r.shown;
+  // (in tune is in tune to the string's own note: a reading's inTune is to the nearest note, and C♯ dead on is a
+  // semitone sharp of a C string)
+  const offString = !!s && ((s.open != null && r.p !== s.open) || Math.abs(s.cents) > 50);
+  if (r.inTune && !offString) return n >= of && of ? W.tuneDone(strumsWord(n, of), tuning) : `${where} is in tune.`;
+  const c = offString ? Math.round(s.cents) : r.shown;
   const off = Math.abs(c);
-  if (s && Math.abs(s.cents) > 50) return `${where}: tune ${c < 0 ? 'up' : 'down'} to ${s.name.replace(/^(Low|High) /, '')}, ${off} cents ${c < 0 ? 'flat' : 'sharp'}.`;
+  if (offString) return `${where}: tune ${c < 0 ? 'up' : 'down'} to ${s.name.replace(/^(Low|High) /, '')}, ${off} cents ${c < 0 ? 'flat' : 'sharp'}.`;
   return `${where}: ${off} ${off === 1 ? 'cent' : 'cents'} ${c < 0 ? 'flat' : 'sharp'}.`;
 }
 

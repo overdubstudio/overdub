@@ -130,11 +130,13 @@ export function mount(R) {
   };
 
   // the monitor: muted while the tuner's on, put back as it was when it goes off
+  // (monitorWas is true once the tuner has turned monitoring off, and only then: an input that wasn't open yet, or
+  // failed to open, when the tuner came on and turns monitoring on by itself later is muted and still put back)
   function mute() {
     const a = audio();
-    if (!a || !gr.tuner.on) return;
-    if (gr.tuner.monitorWas == null) gr.tuner.monitorWas = !!a.state.monitoring;
-    if (a.state.monitoring) { try { a.monitor(false); } catch (e) { console.error('the tuner: mute', e); } }
+    if (!a || !gr.tuner.on || !a.state.open || !a.state.monitoring) return;
+    gr.tuner.monitorWas = true;
+    try { a.monitor(false); } catch (e) { console.error('the tuner: mute', e); }
   }
   function unmute() {
     const a = audio(), was = gr.tuner.monitorWas;
@@ -209,7 +211,7 @@ export function mount(R) {
         return false;
       } finally {
         opening = null;
-        if (G.step) paintSlate();
+        if (G.step && !gone) paintSlate();
       }
     })();
     if (G.step) paintSlate();

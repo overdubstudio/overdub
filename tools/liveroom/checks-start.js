@@ -181,11 +181,21 @@ export async function run(T, ctx) {
       st.tuner(false);
       // monitoring was off before: it stays off after
       a.monitor(false); st.tuner(true); await tick(); st.tuner(false); out.stayOff = !a.state.monitoring;
+      // on with the input closed and its open failing (monitoring off then), the interface opened after with
+      // monitoring on: muted while it's on, and put back when it goes off
+      const dev = { device: a.state.deviceId, channel: a.state.channel }, realOpen = a.open;
+      a.close(); a.monitor(false);
+      a.open = async () => { throw new Error('denied'); };
+      st.tuner(true); await new Promise((r) => setTimeout(r, 100));
+      a.open = realOpen;
+      await a.open({ ...dev, capture: true, monitor: true }); await tick(); await tick();
+      out.late = { muted: !a.state.monitoring };
+      st.tuner(false); out.late.back = a.state.monitoring;
       a.monitor(true);
       return out;
     });
-    T.ok(never.muted && !never.take.on && never.take.mon && never.refused && !never.skip.on && never.skip.mon && never.held && never.stayOff,
-      `the tuner never leaves you muted: a take turns it off (monitoring ${never.take.mon}) and it waits while one runs; skipped past (${never.skip.step}), back on; an input that comes back on is muted again; off before, off after`);
+    T.ok(never.muted && !never.take.on && never.take.mon && never.refused && !never.skip.on && never.skip.mon && never.held && never.stayOff && never.late.muted && never.late.back,
+      `the tuner never leaves you muted: a take turns it off (monitoring ${never.take.mon}) and it waits while one runs; skipped past (${never.skip.step}), back on; an input that comes back on is muted again; off before, off after; an input opened late with monitoring on is put back (${never.late.back})`);
 
     // 5. timing (the step after skipping Tune)
     await E(async () => {

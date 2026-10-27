@@ -91,6 +91,22 @@ describe('Getting started: the words', () => {
       tunerSays({ ...r, string: { name: 'C', number: 6, cents: 140 }, shown: 40 }),
       'C string (6): tune down to C, 140 cents sharp.',
     );
+    // C♯ dead on is in tune to C♯, a semitone sharp of the C string: never "in tune"
+    assert.equal(
+      tunerSays({
+        ...r,
+        p: 37,
+        note: 'C♯',
+        inTune: true,
+        shown: 0,
+        string: { name: 'C', number: 6, open: 36, cents: 100, near: true },
+      }),
+      'C string (6): tune down to C, 100 cents sharp.',
+    );
+    assert.equal(
+      tunerSays({ ...r, inTune: true, shown: 0, string: { name: 'C', number: 6, open: 36, cents: 0, near: true } }),
+      'C string (6) is in tune.',
+    );
     assert.equal(tunerSays({ ...r, string: null }), 'C2: 9 cents flat.');
     assert.match(tunerSays({ ...r, live: false, held: true }), /let it ring/);
     assert.equal(tunerSays({ ...r, shown: null }), 'C string (6).');

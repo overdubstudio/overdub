@@ -117,7 +117,7 @@ function cleanKey(k, sure = false) {
   return { root: k.root, scale, sure: k.sure === true || sure === true };
 }
 const cleanTuning = (t) => (typeof t === 'string' && TUNING_RE.test(t) ? t : null);
-const cleanNotes = (s) => (typeof s === 'string' ? s.replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, '').slice(0, NOTES_MAX) : '');
+const cleanNotes = (s) => (typeof s === 'string' ? s.replace(/[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').slice(0, NOTES_MAX) : '');
 function cleanMeter(m) {
   return Array.isArray(m) && m.length === 2 && Number.isInteger(m[0]) && Number.isInteger(m[1]) && m[0] >= 1 && m[0] <= 32 && [1, 2, 4, 8, 16].includes(m[1]) ? [m[0], m[1]] : [4, 4];
 }

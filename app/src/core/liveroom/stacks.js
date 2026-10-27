@@ -85,7 +85,7 @@ export function ampOf(chain) {
   return null;
 }
 
-const cleanText = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f‪-‮⁦-⁩]/g, '').trim().slice(0, max) : '');
+const cleanText = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, max) : '');
 
 export function cleanStack(x) {
   const chain = cleanChain(Array.isArray(x) ? x : isObj(x) ? x.chain : null);

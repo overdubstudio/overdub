@@ -42,6 +42,8 @@ export async function run(T, ctx) {
     const V = [
       { part: 'Chorus', take: 2, bars: 4, ring: 1.5, next: 'Bridge', stopped: 3, n: 2, side: 'L', where: 'before the chorus', tape: true },
       { part: 'Verse', take: 1, bars: 1, ring: 0, next: null, stopped: 1, n: 1, side: 'R', where: '', tape: false },
+      // (the other side's verdicts, measurePair's)
+      ...['tight', 'fine', 'bar', 'loose'].map((verdict, i) => ({ part: 'Rdn Intro', take: 1, bars: 4, ring: 0, next: null, stopped: 4, n: 1, side: 'R', where: '', tape: false, verdict, ms: [4, -12.6, 58, 31][i], bar: i + 1, dir: i % 2 ? 'late' : 'early' })),
     ];
     const bad = [];
     for (const id of Object.keys(LINES)) {

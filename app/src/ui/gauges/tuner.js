@@ -125,7 +125,13 @@ export function mountTuner(el, { source, tuning = 'standard', style = 'needle', 
     el: root,
     tuner,
     get reading() { return reading; },
-    setTuning(/** @type {any} */ t) { tuner.setTuning(t); key = ''; root.dataset.tuning = t == null ? '' : tuningOf(t).id; root.setAttribute('aria-label', t == null ? 'Tuner' : `Tuner, ${tuningName(tuningOf(t))}`); },
+    setTuning(/** @type {any} */ t) {
+      tuner.setTuning(t); key = '';
+      // (a tuning given as bare { strings } has no id or name: the label stays plain)
+      const T = t == null ? null : tuningOf(t), name = T ? tuningName(T) : '';
+      root.dataset.tuning = T?.id || '';
+      root.setAttribute('aria-label', name ? `Tuner, ${name}` : 'Tuner');
+    },
     setStyle(/** @type {'needle' | 'strobe'} */ s) { st = s === 'strobe' ? 'strobe' : 'needle'; root.dataset.style = st; },
     /** @param {number} now */
     frame(now) {

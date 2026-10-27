@@ -80,6 +80,8 @@ import { installTools } from '../agent/tools.js';
 import { JAM_SCHEMA, JAM_TRACK_SCHEMA, TONE_SCHEMA, FRETBOARD_SCHEMA, capText } from '../agent/extra-schemas.js';
 import { installTabs } from './tabs.js';
 import { Strip, trackSpec } from '../engine/strip.js';
+import { planStacks } from '../core/stacks.js';
+import { roomOf } from '../core/liveroom/model.js';
 
 let faces = null;
 const facesReady = import('./faces.js').then((m) => { faces = m; return m; }).catch(() => null);
@@ -202,7 +204,9 @@ export default function (app) {
 
   /* ------------------------------------------------------------------------------------------- the Guitar track */
   function guitars(p = store.get()) {
-    const ins = p.tracks.filter((t) => t.kind === 'instrument' && !isDrums(t));
+    // (not the live room's Riff (as heard): a muted DI Box holding the read's notes, never a guitar you play)
+    const heard = roomOf(p)?.tracks?.heard || null;
+    const ins = p.tracks.filter((t) => t.kind === 'instrument' && !isDrums(t) && t.id !== heard);
     const keys = ins.find(isKeysGuitar) || ins.find(guitarName) || null;
     const aud = p.tracks.filter((t) => t.kind === 'audio');
     const audio = aud.find((t) => t.arm && guitarName(t)) || aud.find(guitarName) || null;
@@ -406,7 +410,8 @@ export default function (app) {
     const free = targets.filter((t) => !busy.includes(t.id));
     if (!free.length) return { error: 'recording', hint: `${targets[0].name} is recording: set the tone when the take stops` };
     const gt = guitarTrack(), main = free.find((t) => t.id === gt?.id) || free[0];
-    const ops = free.flatMap((t) => G.rigOps(t.id, r, { replace: t.inserts.map((x) => x.id) }));
+    // (core/stacks.js: the devices the old chain and the rig share stay built and glide to the rig's settings)
+    const ops = planStacks(store.get(), free.map((t) => ({ track: t.id, stack: r }))).ops;
     const who = free.map((t) => t.name).join(' and ');
     const res = store.dispatch(ops, { by, label: `${who}: ${r.name}`, reason: reason || '' });
     if (!res.ok) { if (toast) ui.toast(res.error, { kind: 'bad' }); return { error: res.error }; }

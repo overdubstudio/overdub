@@ -15,6 +15,19 @@
 //   planShorter(p, { section, bars })    time.remove of the bars cut
 //   planRemove(p, { section })           time.remove over the part
 //   planEnd(p)                           the End: one bar after the last part, its ring kept
+// Added for the guitar room (docs/research/GUITAR-ROOM.md §2.2, §2.9):
+//   planRig(p, { rig }) -> { ops, label, reason, rig, tracks } | { ops: [], error }
+//       the amp's setting swapped on the room's guitars in one step by you: each guitar track the room has (Guitar L
+//       and Guitar R at the metal club and the basement, Guitar at the blues bar; the Lead keeps its own) gets the
+//       rig's whole chain for its side (places.js guitarChain: the amp with the side's cab, Slide Rule for the
+//       tuning), as core/stacks.js planStack makes it (what lines up stays and is set in place, the rest swapped),
+//       whatever was on it before (a Jam room tone, pedals added in the control room), and room.set { rig }. The
+//       label is the rig's name ("Half Stack, Djent"), the reason room:rig. A rig the place doesn't have, or a song
+//       with no room or no guitar, is { ops: [], error }. Already on that rig: room.set alone when room.rig differs,
+//       else no ops.
+//   rigNow(p) -> { rig, matches, label }   what's on the room's first guitar now: rig (room.rig), matches (its chain
+//       is exactly that rig's, as planRig makes it), label (rigLabel, or the amp's name and ", your own" when the
+//       chain was changed since: a tone from the Jam room, a pedal added; '' with no room)
 //
 // What each takes and returns, beside the frozen shape:
 //   planPlace(p, { place, tuning, finish, mic, setup })   setup: what the place sets up (setupOf's shape; the default
@@ -42,7 +55,9 @@
 //   planEnd(p) -> { ops, label, reason }   by the house, reason room:end
 
 import { roomOf, partOf, NAMES, FINISHES } from './model.js';
-import { setupOf, placeOf } from './places.js';
+import { setupOf, placeOf, guitarChain, rigLabel, RIGS } from './places.js';
+import { planStacks, sameChain } from '../stacks.js';
+import { getDevice } from '../../devices/registry.js';
 import { kitchenOps } from './kitchen-plans.js';
 import { planFeel } from './band.js';
 import { readRoom } from './session.js';
@@ -78,6 +93,39 @@ function minter(p) {
   return (prefix) => { for (;;) { const id = newId(prefix); if (!used.has(id)) { used.add(id); return id; } } };
 }
 const lead = (p, at) => r4(beatsBefore(p, at, LEAD));
+
+/* ------------------------------------------------------------------------------------------------ the rig */
+// the room's guitar tracks and the side each plays: [{ role, track, side }]
+const GUITARS = [['guitarL', 'L'], ['guitarR', 'R'], ['guitar', 'L']];
+function roomGuitars(p) {
+  const roles = readRoom(p).roles || {};
+  return GUITARS.map(([role, side]) => ({ role, side, track: roles[role] })).filter((x) => x.track && (p.tracks || []).some((t) => t.id === x.track));
+}
+const tuningOf = (p) => roomOf(p)?.tuning || (roomOf(p)?.place === 'metal' ? 'drop-c' : 'standard');
+export function planRig(p, { rig = null } = {}) {
+  const room = roomOf(p);
+  if (!room || !room.place || room.place === 'kitchen') return { ops: [], label: '', reason: '', error: 'There’s no amp in this room.' };
+  if (!RIGS[rig] || !(placeOf(room.place).rigs || []).includes(rig)) return { ops: [], label: '', reason: '', error: `The ${placeOf(room.place).name.replace(/^The /, '').toLowerCase()} has no "${rig}" setting.` };
+  const gs = roomGuitars(p);
+  if (!gs.length) return { ops: [], label: '', reason: '', error: 'There’s no guitar track in this room.' };
+  const tune = tuningOf(p);
+  const plan = planStacks(p, gs.map((g) => ({ track: g.track, stack: { chain: guitarChain(rig, g.side, tune) } })));
+  const ops = [...plan.ops];
+  if (room.rig !== rig) ops.push({ type: 'room.set', patch: { rig } });
+  return { ops, label: rigLabel(rig), reason: 'room:rig', rig, tracks: gs.map((g) => g.track) };
+}
+export function rigNow(p) {
+  const room = roomOf(p);
+  if (!room || !room.place || room.place === 'kitchen') return { rig: null, matches: false, label: '' };
+  const rig = RIGS[room.rig] ? room.rig : placeOf(room.place).rigs?.[0] || null;
+  const g = roomGuitars(p)[0];
+  const t = g && p.tracks.find((x) => x.id === g.track);
+  if (!rig || !t) return { rig, matches: false, label: rig ? rigLabel(rig) : '' };
+  const matches = sameChain(t.inserts || [], guitarChain(rig, g.side, tuningOf(p)));
+  if (matches) return { rig, matches, label: rigLabel(rig) };
+  const amp = (t.inserts || []).map((x) => getDevice(x.device)).find((d) => d && d.cat === 'amp');
+  return { rig, matches, label: amp ? `${amp.name}, your own` : 'Your own chain' };
+}
 
 /* ------------------------------------------------------------------------------------------------ the place */
 export function planPlace(p, { place = null, tuning = null, finish = null, mic = 'one', setup = null } = {}) {

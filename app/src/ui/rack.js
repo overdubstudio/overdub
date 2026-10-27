@@ -10,7 +10,8 @@
 //   isMismatch(def, track, project) -> true when putting instrument def on that track would play its notes on the wrong
 //                         kind of sound: a melodic instrument on a drum track, or a kit on a pitched track that has
 //                         notes (the browser's click asks first, a drop on a lane makes a new track instead)
-//   applyRig(app, rig, { track, replace, index }) -> dispatch result (a guitar rig's whole chain, one undo step)
+//   applyRig(app, rig, { track, replace, index }) -> dispatch result (a guitar rig's whole chain, one undo step; in place
+//                         of the track's whole chain it's core/stacks.js planStack: what the two share stays built)
 //   guitar()            -> Promise<{ RIGS, RIG_BANKS, rigOps } | null>   (devices/guitar/index.js, if it's there)
 //   popover(anchor, content, { onClose, align }) -> { el, close() }   a non-modal floating card (Esc / outside closes)
 //   devicePicker(app, anchor, { kind, track, onPick(def), only(def) }) -> the popover: Add an effect's search (the Jam
@@ -55,6 +56,7 @@ import { DEVICE_CATS, paramValues, presetParams, presetOf, normParam, getDevice,
 import { popFocus, popLabel, menu as kitMenu, songColor, isHexColor, touchFirst } from './arrange-kit.js';
 import { laneAt, specFor, valueAt, toPos } from '../core/automation.js';
 import { dataState, onData } from '../kernel/data.js';
+import { planStack } from '../core/stacks.js';
 
 let faces = null; // ui/faces.js (renderFace); FALLBACK below until/unless it loads
 const facesReady = import('./faces.js').then((m) => { faces = m; return m; }).catch((e) => { console.warn('rack: faces.js did not load, using plain faces', e.message); return null; });
@@ -208,7 +210,9 @@ export async function applyRig(app, rig, { track = currentTrack(app), replace = 
   if (!track || !rig) return { ok: false };
   const list = track === 'master' ? app.store.get().master.inserts : app.store.track(track)?.inserts || [];
   const rep = replace === null ? (index == null ? list.map((x) => x.id) : []) : replace;
-  const ops = g.rigOps(track, rig, { replace: rep, index });
+  // (in place of the whole chain: core/stacks.js planStack, so the devices the two chains share stay built and glide)
+  const whole = index == null && rep.length === list.length && list.every((x) => rep.includes(x.id));
+  const ops = whole ? planStack(app.store.get(), { track, stack: rig }).ops : g.rigOps(track, rig, { replace: rep, index });
   const r = app.store.dispatch(ops, { by, label: `rig: ${rig.name}` });
   if (!r.ok) { toast && app.ui.toast(r.error, { kind: 'bad' }); return r; }
   const tn = track === 'master' ? 'the master' : app.store.track(track)?.name;

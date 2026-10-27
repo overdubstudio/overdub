@@ -1617,7 +1617,7 @@ whole cents shown with hysteresis, in tune within ±2 (out past ±4). <code>TUNE
 plus <code>drop-a</code>, <code>7-standard</code> and <code>7-drop-a</code>; <code>tuningsFromLow(midi)</code> asks which a low string is, <code>guessTuning(heard)</code>
 settles it from the strings heard, <code>stringOf(midi, tuning)</code> names the string. Measured in <code>tools/input-test.js</code> on
 Karplus-Strong strings (<code>tools/strings.js</code>) from E1 to E4 at 48 and 96 kHz: named within 100 ms of the pluck,
-within 3 cents within 180 ms, a tenth of a cent clean and half a cent with hum at -48 dBFS at the median.
+within 3 cents within 180 ms, a tenth of a cent clean and six tenths with hum at -48 dBFS at the median.
 <code>ui/gauges/tuner.js</code>: <code>mountTuner(el, { source, tuning, style: 'needle' | 'strobe', size: 'big' | 'small', onReading })</code> -&gt; <code>{ frame(now), reading, setTuning, setStyle, tuner, el, unmount() }</code>.</li>
 <li><strong>The level</strong> (<code>input/level.js</code>): <code>createLevel({ lo: -12, hi: -6, device })</code> -&gt; <code>{ push(samples | { peak } | peak, nowMs) -&gt; state, state, reset(), clearClip() }</code>; the state is <code>{ db (the bar), peak, hold, clip, clips, strum (the hardest in 3 s), verdict: 'none' | 'quiet' | 'low' | 'ok' | 'hot' | 'clip', advice: { id, text, turn: 'up' | 'down' | null, by (dB) }, inWindow, good (ms in the window) }</code>; <code>levelAdvice(verdict, db, { device })</code> is
 the words alone (the knob on the interface; on a Focusrite, the ring round it). <code>ui/gauges/level.js</code>:

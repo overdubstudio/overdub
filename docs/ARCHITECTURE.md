@@ -1735,7 +1735,7 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, â
     plus `drop-a`, `7-standard` and `7-drop-a`; `tuningsFromLow(midi)` asks which a low string is, `guessTuning(heard)`
     settles it from the strings heard, `stringOf(midi, tuning)` names the string. Measured in `tools/input-test.js` on
     Karplus-Strong strings (`tools/strings.js`) from E1 to E4 at 48 and 96 kHz: named within 100 ms of the pluck,
-    within 3 cents within 180 ms, a tenth of a cent clean and half a cent with hum at -48 dBFS at the median.
+    within 3 cents within 180 ms, a tenth of a cent clean and six tenths with hum at -48 dBFS at the median.
     `ui/gauges/tuner.js`: `mountTuner(el, { source, tuning, style: 'needle' | 'strobe', size: 'big' | 'small',
     onReading })` -> `{ frame(now), reading, setTuning, setStyle, tuner, el, unmount() }`.
   - **The level** (`input/level.js`): `createLevel({ lo: -12, hi: -6, device })` -> `{ push(samples | { peak } |

@@ -100,6 +100,8 @@ overdub/
                          rounds.js (Start a song: the loop, folding rounds, the 1, the readings, the timing words),
                          recorder.js (R: takes into the song), autorec.js (knob moves into lanes), latency.js
                          (calibration), capture.js (never lose an idea), importers.js (MIDI and audio files in),
+                         tape.js + tape-core.js + tape-worklet.js (the rolling tape: the last minute of the input
+                         on the band's grid, its default selection and grab),
                          index.js (app.input)                                                           [input]
   app/src/ui/            shell.js + dom.js (fixed frame), workspace.js + workspace-view.js (Find anything), 
                          transport.js, arranger.js, lanes.js (automation lanes),
@@ -1584,7 +1586,7 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
 
 ## Capture and bringing material in
 
-`app.input` (`input/index.js`) = `{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec }`.
+`app.input` (`input/index.js`) = `{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec, tape }`.
 
 - **Recording into the song** (`input/recorder.js`, `app.input.recorder`; the spec is
   `docs/research/RECORDING-UX.md` 3.2-3.17). One Record for every source: R (the transport's key and button) calls
@@ -1758,6 +1760,26 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
   key, C major). The line over the keys says what they do, "Snapping to 1/16, in C minor", each part a click that turns
   its helper off ("Your timing", "every note") and on: `qwerty.snapLine({ touch })`, its words `snapWords(...)` (pure).
   A MIDI keyboard's notes are never moved.
+- **The rolling tape** (`input/tape.js`, `app.input.tape`; `docs/research/GUITAR-ROOM.md` §1.4, §2.3, §4.3). While
+  the guitar room is open (`tape.start()`; `tape.stop()` lets it go) the picked input is always on tape: mono 16-bit
+  at the device's rate in a ring in the audio thread (`input/tape-worklet.js`, `'ew-tape'`, fed by `audio.tap(node)`
+  through every reopen and channel change), 60 s by default, 15 to 300 (`tape.setSeconds`, `localStorage
+  overdub:tape`): 5.3 MB a minute at 44.1 kHz, 5.8 at 48. The ring is indexed by the audio-clock frame, so it neither
+  copies nor allocates as it rolls (a 256-frame peak bin goes to the page a few times a second for the waveform;
+  `test/unit/tape.test.js` measures a minute: about 1 µs and nothing allocated a quantum, the posts aside). The
+  band's grid rides alongside as linear pieces read off the engine's clock at every peak post and transport event
+  (`input/tape-core.js` `createGrid`: a tempo change splits a piece where the two lines meet, a loop wrap where the
+  song beat reached the loop's end, a new run from its start), and frames meet beats by the recorder's rule: input
+  frame f was played to the band's scheduled time f / sr − (the measured round trip + the engine's delay
+  compensation), so a grab lines up with a deck take to the sample (`tools/liveroom/checks-tape.js`). The UI reads
+  `span()`, `peaks(from, to, n, out)`, `lines(from, to)` (the drummer's bars, numbered), `beatAt`, `frameAt` and `snap`
+  in its frame; `select()` is the default selection (`defaultSelection`: the last phrase from the attacks,
+  `input/onsets.js` with `pitch: false`, snapped to its bar lines, a lone downbeat hit left out as the ending, over
+  four bars the shortest pass that repeats the one before it, else the last four; free time when no band played);
+  `grab(range)` copies frames into an asset in `engine.assets` (the recording format: `{ id, kind: 'audio', name, sr,
+  channels: 1, duration }`) with its place (`start`, `from`, `to`, `beats`, `length`, `bars`, `bpm`) and touches
+  nothing else; a riff goes in the song only when it's kept, as `tape.ops(grab, { track, at })` (`riffOps`:
+  `asset.add` and the clip, one dispatch by whoever keeps it). The full API is `input/tape.js`'s header.
 - **Latency** (`input/latency.js`): tap along to eight clicks, or a loopback, once per input device; takes, hums and
   beatbox are shifted by the measured round trip.
 - **Audio inputs** (`input/audioin.js`): an interface opens with all its channels (`channelCount` up to what the

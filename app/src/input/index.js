@@ -1,6 +1,7 @@
 // @ts-check
 // Inputs: meet the musician where they are. Hum it, tap it, play it, record it, and never lose an idea.
-// Builds app.input = { pitch, audio, hum, tap, midi, qwerty, capture, recorder } (docs/ARCHITECTURE.md, "Capture") plus:
+// Builds app.input = { pitch, audio, hum, tap, midi, qwerty, capture, recorder, tape } (docs/ARCHITECTURE.md, "Capture";
+// tape: the rolling tape, input/tape.js, idle until the room starts it) plus:
 //   input.on(type, fn) -> off ; input.emit(type, detail)
 //     'audio' (input state) 'take' (an audio take landed) 'hum' 'beatbox' 'qwerty' 'midi' 'mode' 'capture' 'note'
 //     'record' (the recorder's state) 'devices' (an input was plugged in or out)
@@ -26,6 +27,7 @@ import { createMidi } from './midi.js';
 import { createQwerty } from './qwerty.js';
 import { createCapture } from './capture.js';
 import { createRecorder } from './recorder.js';
+import { createTape } from './tape.js';
 
 export default function (app) {
   if (app.input) return app.input; // (ui/sketch.js may have started it first)
@@ -101,6 +103,7 @@ export default function (app) {
   input.tap = createTap(app, input);
   input.midi = createMidi(app, input);
   input.qwerty = createQwerty(app, input);
+  input.tape = createTape(app, input);
   // musical typing turned on with the keys aimed at a new track: the track is made first, so the strip names it and
   // the first key sounds there
   const qtoggle = input.qwerty.toggle;

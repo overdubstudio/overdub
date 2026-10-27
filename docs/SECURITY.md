@@ -94,8 +94,8 @@ runs; and text in a song written to steer an agent.
 - **The page.** The studio, the device library and the gallery carry a Content Security Policy (a `<meta>` tag, first
   in the head; `app/index.html` says why each allowance is there). Scripts come from the site itself, worklet modules
   included: each is a file there (`kernel/processor.js`, `devices/worklets/`, `vendor/clawd/worklets/`,
-  `input/cap-worklet.js`), so no script comes from a `data:` or `blob:` URL (`blob:` stays in `worker-src` for the
-  engine's timer Worker). Connections go to the site and the relay (and loopback, for local work; a deploy that switches
+  `input/cap-worklet.js`, `input/tape-worklet.js`), so no script comes from a `data:` or `blob:` URL (`blob:` stays in
+  `worker-src` for the engine's timer Worker). Connections go to the site and the relay (and loopback, for local work; a deploy that switches
   on the hosted agent adds its service; signing in to it is a popup on the service's own origin, not a frame), images to
   the site, `data:` and `blob:`, media to the site and `blob:`, and fonts and stylesheets to the site alone: the faces
   are files there (`app/style/fonts.css`, each family beside its licence), so no other host's CSS is on the studio's

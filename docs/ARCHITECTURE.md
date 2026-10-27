@@ -139,7 +139,8 @@ overdub/
                          index.js (the frame, R, the router), keys.js (the one key table), camera.js, layout.js,
                          state.js (ui.state.liveRoom.gr), bind.js (the gear bound to the song), prefs.js
                          (overdub:guitar-room), style.js; one module per stream: stage.js [room], shop.js [shop],
-                         drummer.js [drummer], start.js [start], takes.js [takes], tape.js [tape]
+                         drummer.js [drummer], start.js [start], takes.js [takes] (takes-*.js, parts-*.js: the
+                         recording view, the review, the part line and its plans), tape.js [tape]
   app/src/core/liveroom/guitar/ the guitar room's pure part: setup.js (the club's setup and stack, GUITAR_DB), rig.js
                          (the rig on both guitars and its plans), beats.js (the riser's beats and cards) [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
@@ -2260,6 +2261,19 @@ which draws nothing itself:
   `room.part.set`. The club's setup (`core/liveroom/guitar/setup.js` `planGuitarRoom`) is one step: both guitars on
   the club's stack (`CLUB_STACK`: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
   `GUITAR_DB` (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.
+- **Takes and the part line** (`takes.js`; `parts-plans.js` is its pure part). A part is a section, in start order;
+  the room adds none unasked. R records the selected part (fixed length; what rings past it is the take's tail, the
+  deck's `tailFrom`) or a new part at the end (whole bars to the bar line before the stop, the ring its tail). The
+  count is the deck's, the engine's sticks its voice while the count-in is on; the drummer is told
+  (`R.parts.drummer.countIn({ bars, bpm, at, from, sounded })`, `sounded: true` when the engine sounds it) and a
+  drummer that sounds the count itself sets `countsAloud: true`, the engine's voice then `'none'`. A take and its part
+  are one step by you: the part's section, its drums (`beatOps`) and, for the other side, the pans are dispatched with
+  `join` on the recorder's transaction, and so is every trim and pick in review, so Toss (`store.undo({ id, redo:
+  false })`) leaves History as it was. Each part-line move (a new part, before, moved, deleted, a riff placed) is one
+  step by you. Beside the frozen API: `place()` returns a Promise; `summary()` → `{ parts, bars, secs }` and the bus's
+  `takes:parts` (the same, when it changes) for the strip; `takes:landed` when a take is in; `dropAt(x, y, { final,
+  kind })` → the index a riff dragged there lands at (the tape's drag). The drawer's two columns (the tray's 340 px,
+  the part line's the rest) are set in `takes-style.js`.
 - **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
   stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 

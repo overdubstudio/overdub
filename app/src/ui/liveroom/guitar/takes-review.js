@@ -81,7 +81,7 @@ export function createReview(R, on) {
       : `${plural(part.bars, 'bar')}${ring > 0.05 * bpb ? `, and ${plural(ring / bpb, 'bar')} rang past ${next ? `into ${next.name}` : 'the end'}` : ''}. It’s all on the take.`;
     note.textContent = T.isNew ? 'The out handle sits where you stopped; the amber one is where the part ends. Drag either.' : 'The out handle sits where you stopped. Drag it back to cut the ring.';
     const kept = takesIn(p, { section: part.id, side: T.side });
-    list.replaceChildren(...(kept.length > 1 ? ['takes: ', ...kept.map((x, k) => [h(x.mute ? 'span' : 'b', `take ${k + 1}`), k < kept.length - 1 ? ' ' : ''])] : ['the first take of this part on this side']));
+    list.replaceChildren(...(kept.length > 1 ? ['takes: ', ...kept.flatMap((x, k) => [h(x.mute ? 'span' : 'b', `take ${k + 1}`), k < kept.length - 1 ? ' ' : ''])] : ['the first take of this part on this side']));
     tl.classList.toggle('grt-two', T.side === 'R');
     hPe.hidden = !T.isNew;
     draw();
@@ -134,7 +134,7 @@ export function createReview(R, on) {
       for (let x = xe - hh; x < xo + hh; x += 9 * d) { g.beginPath(); g.moveTo(x, hh); g.lineTo(x + (hh - top), top); g.stroke(); }
       g.restore();
       g.fillStyle = col.t2; g.font = `${12 * d}px ${ui}`; g.textBaseline = 'bottom';
-      g.fillText(`rings ${V.next ? `under ${V.next.name}` : 'past the end'}`, xe + 6 * d, hh - 6 * d);
+      g.fillText(`rings ${V.next ? `under ${V.next.name}` : 'past the end'}`, xe + 16 * d, hh - 6 * d);
     }
     // the waveforms: your left take (dim) when this is the other side, then this take
     const lanes = V.T.side === 'R' && V.left ? [[V.left, top + 18 * d, (hh - top - 26 * d) / 2, 'L  your kept take'], [V.c, top + 18 * d + (hh - top - 26 * d) / 2, (hh - top - 26 * d) / 2, 'R  this take']] : [[V.c, top + 18 * d, hh - top - 26 * d, '']];

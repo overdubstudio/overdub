@@ -117,8 +117,8 @@ export function createRecView(R) {
       const v = Math.max(1, Math.sqrt(Math.min(1, pk)) * amp);
       g.fillRect(x, Math.round(mid - v), Math.max(1, 2 * d - 1), Math.round(v * 2));
     }
-    // (the take in progress: the record light's colour, the one place red is)
-    g.fillStyle = C('--rec', '#ff4d4d');
+    // (where the take is now: red stays the record light's alone, by the words above)
+    g.fillStyle = C('--accent', '#d9f36a');
     g.fillRect(Math.round(X(Math.max(0, el))), 0, 2 * d, hh);
   }
   return {

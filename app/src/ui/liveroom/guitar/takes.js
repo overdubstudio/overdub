@@ -553,7 +553,7 @@ export function mount(R) {
         if (no) return no;
         const sec = selected();
         if (!sec) return { ok: false, error: 'Pick a part first.' };
-        const ln = lineNow(), i = ln.parts.indexOf(sec);
+        const ln = lineNow(), i = ln.parts.findIndex((x) => x.id === sec.id);
         const r = step(PP.planRemovePart(store.get(), { section: sec.id }));
         if (!r.ok) return r;
         const after = lineNow().parts;
@@ -564,7 +564,7 @@ export function mount(R) {
       case 'part:left': case 'part:right': {
         const sec = selected();
         if (!sec) return { ok: false, error: 'Pick a part first.' };
-        const ln = lineNow(), i = ln.parts.indexOf(sec);
+        const ln = lineNow(), i = ln.parts.findIndex((x) => x.id === sec.id);
         if (s === 'part:left' && i === 0) { tell('gpart.first'); return { ok: false, error: 'It’s the first part.' }; }
         if (s === 'part:right' && i === ln.parts.length - 1) { tell('gpart.last'); return { ok: false, error: 'It’s the last part.' }; }
         return movePart(sec.id, s === 'part:left' ? i - 1 : i + 2);

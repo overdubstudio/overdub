@@ -85,7 +85,8 @@ export function createPartLine(R, on) {
   function rename(cardEl, c) {
     if (cardEl.querySelector('input')) return;
     const input = h('input.grt-rename', { type: 'text', value: c.name, maxlength: 40, 'aria-label': `A name for ${c.name}`, autocomplete: 'off', dataset: { typing: '1' } });
-    const done = (ok) => { if (!input.isConnected) return; const v = input.value.trim(); input.remove(); if (ok && v && v !== c.name) on.rename(c.id, v); };
+    let closed = false;
+    const done = (ok) => { if (closed) return; closed = true; const v = input.value.trim(); input.remove(); if (ok && v && v !== c.name) on.rename(c.id, v); else if (model) render(model); };
     input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); done(false); } });
     input.addEventListener('blur', () => done(true));
     input.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -96,21 +97,22 @@ export function createPartLine(R, on) {
 
   function render(m) {
     model = m;
-    if (drag?.started) return;
+    // (not under a drag, nor while a name's being typed on a card: the card stays till it's done)
+    if (drag?.started || lane.querySelector('input.grt-rename')) return;
     const { line, sel } = m;
     const n = line.parts.length;
     const bars = line.parts.reduce((a, c) => a + c.bars, 0);
     const secs = (bars * line.bpb * 60) / (line.tempo || 120);
     const selCard = line.parts.find((c) => c.id === sel);
-    head.replaceChildren(
+    head.replaceChildren(...[
       h('span.grt-name', 'The part line'),
       h('span', n ? `${plural(n, 'part')}, ${plural(bars, 'bar')}, ${Math.round(secs)} s` : 'empty'),
       h('span.grt-gap'),
       m.canOther ? h('button.grt-txt', { type: 'button', onclick: () => on.other() }, 'The other side', kbd('D')) : null,
       selCard ? h('span.grt-help', kbd('Enter'), 'play from the selected part') : null,
       n ? h('span.grt-help', kbd('Home'), 'from the top') : null,
-      h('span.grt-help', kbd('N'), 'a new part', kbd('⇧N'), 'before'),
-    );
+      n ? h('span.grt-help', kbd('N'), 'a new part', kbd('⇧N'), 'before') : h('span.grt-help', kbd('N'), 'a new part'),
+    ].filter(Boolean));
     const kids = [];
     if (!n) {
       kids.push(h('div.grt-empty', { dataset: { drop: '0' }, role: 'option', 'aria-selected': sel === 'new' ? 'true' : 'false', onclick: () => on.pick('new') },

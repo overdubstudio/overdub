@@ -29,6 +29,7 @@ export const CSS = `
 .grt-txt:focus-visible, .grt-card:focus-visible, .grt-add:focus-visible, .grt-b:focus-visible, .grt-h:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .grt-lane { position: relative; display: flex; align-items: center; gap: 0; overflow-x: auto; overflow-y: hidden; padding: 8px 2px 10px; min-height: 150px;
   scrollbar-width: thin; background: linear-gradient(transparent 44%, var(--bg-3) 44%, var(--bg-3) 70%, transparent 70%); outline: none; }
+.grt-lane:has(> .grt-empty) { background: none; }
 .grt-lane:focus-visible { box-shadow: inset 0 0 0 1px var(--accent-2); }
 .grt-card { position: relative; flex: none; width: 200px; height: 128px; background: var(--bg-2); border: var(--rule-2); border-radius: var(--r-press);
   cursor: grab; user-select: none; touch-action: none; box-sizing: border-box; }

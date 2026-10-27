@@ -45,7 +45,7 @@
       <summary>On this page</summary>
       <nav aria-label="On this page"><ol>
 <li><a href="#your-first-overdub-in-five-minutes">Your first overdub in five minutes</a></li>
-<li><a href="#the-live-room">The live room</a><ol><li><a href="#on-the-stage">On the stage</a></li><li><a href="#the-talkback">The talkback</a></li><li><a href="#the-kitchen-table">The kitchen table</a></li><li><a href="#the-shelf-and-sending">The shelf and sending</a></li></ol></li>
+<li><a href="#the-live-room">The live room</a><ol><li><a href="#the-stage">The stage</a></li><li><a href="#the-drummer">The drummer</a></li><li><a href="#takes-and-the-part-line">Takes and the part line</a></li><li><a href="#the-tape-the-riffs-and-claude">The tape, the riffs and Claude</a></li><li><a href="#the-shop">The shop</a></li><li><a href="#the-shelf-and-sending">The shelf and sending</a></li></ol></li>
 <li><a href="#start-a-song">Start a song</a></li>
 <li><a href="#flip-a-song">Flip a song</a></li>
 <li><a href="#find-anything">Find anything</a></li>
@@ -126,66 +126,62 @@ agent gave. <code>⌘Z</code> undoes the latest edit.
 <strong>Revert all Claude's changes (keep mine)</strong> takes back everything the agent did and leaves your edits alone, and
 <code>⇧⌘Z</code> puts it back, as it does after <strong>Undo</strong> on one of the agent's lines there.</p>
 <h2 id="the-live-room"><a class="h-link" href="#the-live-room">The live room</a></h2>
-<p>The live room is the other side of the glass: you bring a guitar (or an acoustic and your voice), pick a place, count
-in and play, and a band learns your part from the take. Everything in it is the same song, signed the same way:
-<strong>Control room →</strong> at the top right (or <code>G</code>) goes through the glass to the arranger with the song as it is, and <code>G</code>
-in the control room comes back. Your takes stay in this browser.</p>
-<p><strong>Where are we playing?</strong> The door has four places, each with its own band, tempo and amp, drawn in pixels with the
-kick drum's name on it. <code>1</code> to <code>4</code> picks one.</p>
-<ul>
-<li><strong>The metal club</strong> (VOID): an electric at 132 BPM, two stacks and a big kit; the kick locks to your chugs.</li>
-<li><strong>The basement</strong> (SUMP PUMP): an electric at 172 BPM, one amp, fast and loud, with a two-bar count.</li>
-<li><strong>The blues bar</strong> (LAST CALL): an electric at 96 BPM, a small amp and a shuffle, twelve bars at a time.</li>
-<li><strong>The kitchen table</strong> (COOLER): an acoustic and your voice, on the laptop's mic, at your tempo.</li>
-</ul>
-<h3 id="on-the-stage"><a class="h-link" href="#on-the-stage">On the stage</a></h3>
-<ol>
-<li><strong>Soundcheck.</strong> The column beside the stage says what it heard: <strong>Plug in</strong> (an electric wants an interface; the
-laptop's mic is fine at the kitchen table), <strong>Level</strong>, <strong>Tune</strong> (<code>U</code>) and <strong>Line it up</strong> (strum on each of eight
-clicks, so your takes land on the drums). <code>[</code> and <code>]</code> step through the amp's settings. Before the first take,
-<code>←</code> <code>→</code> move the drummer's tempo (<code>⇧</code> for ten), and <code>T</code> four times taps it.</li>
-<li><strong>Count me in.</strong> <code>Space</code> counts you in and the tape rolls. Play the part as many times round as you like; <code>Space</code>
-again is <em>That's a take</em>. It lands as a part (a verse, say), and the talkback says what went in (&quot;Verse is in: 8
-bars at 132. The band's learning it.&quot;): the drums and bass learn its rhythm and its notes, and play it back with
-you. <code>⌘Z</code> takes the take and the band's learning out together; <code>⇧⌘Z</code> puts both back.</li>
-<li><strong>The other side.</strong> A heavy part is played twice, once per speaker. At the metal club, after each part's first
-take, <code>Space</code> offers <em>The other side</em>; at the basement it's offered once, after the second part. <code>D</code> plays the
-other side of the selected part at either, and you play it again.</li>
-<li><strong>Next part.</strong> <code>N</code>, or <strong>+ Next part</strong> under the cards, counts you into the next one (a chorus, then a bridge).
-Once a part is in, <code>Space</code> offers <em>Next part</em> too.</li>
-<li><strong>Lay it out.</strong> Once two parts are in, <code>Space</code> offers <em>Lay it out</em>: the parts as a song, with how many bars and
-how long. <strong>Hear it all</strong> (<code>Home</code> then <code>Enter</code>) plays it top to bottom; <code>Enter</code> alone plays from the selected card.</li>
-</ol>
-<p>Each part is a card. <code>←</code> <code>→</code> select one (after the first take), <code>↑</code> <code>↓</code> pick which of its takes plays, and its menu
-has, one step each: <strong>Again</strong> (<code>R</code>), <strong>The other side</strong> (<code>D</code>, not at the blues bar), <strong>Another feel</strong> (<code>F</code>),
-<strong>Simpler</strong> · <strong>Busier</strong>, <strong>Softer</strong> · <strong>Louder</strong>, <strong>×2</strong> (<code>X</code>), <strong>Round and round</strong> (<code>L</code>, the part on a loop:
-<code>Space</code> hears it, <code>R</code> records it), <strong>Earlier</strong> · <strong>Later</strong> (<code>⌥←</code> · <code>⌥→</code>) and <strong>Remove</strong> (<code>⌫</code>; <code>⌘Z</code> brings it back).
-<code>Esc</code> in a take is <em>Not that one</em>: nothing goes in the song, and it's in Capture; <code>⇧R</code> puts it in after all.</p>
-<p>A page-turner pedal works the stage: <code>PageDown</code> is the offered move (the same as <code>Space</code>) and <code>PageUp</code> is <strong>Again</strong>.
-So does a sustain pedal on a MIDI keyboard (CC 64), as <code>Space</code>, while no instrument track is armed.</p>
-<h3 id="the-talkback"><a class="h-link" href="#the-talkback">The talkback</a></h3>
-<p>The line under the stage is the house talking, unsigned. <code>/</code> talks to Claude: what you type goes to the agent, and
-what it says back comes through the talkback, signed <strong>Claude</strong>, in cool. While you're playing a take, Claude's tools
-wait until you stop.</p>
-<h3 id="the-kitchen-table"><a class="h-link" href="#the-kitchen-table">The kitchen table</a></h3>
-<p>The kitchen table records an acoustic and your voice on one mic (the laptop's, a mic on the interface, or a mic and a
-pickup). It asks whether you're on headphones (<code>Y</code> · <code>N</code>): on speakers the band never plays during a take.</p>
-<ul>
-<li><strong>The paper.</strong> A sheet of words and chords, typed or pasted (ChordPro, or chords over the words), one line at a
-time; the pencil tick follows the playhead. Each line is signed by whoever wrote it; yours and the house's carry no
-name.</li>
-<li><strong>The work tape.</strong> <strong>Start the tape</strong> (<code>Space</code>) and play the song as you would at the table, at your own time. The
-band reads it: the tempo (<strong>On the beat</strong> keeps it), the parts and the chords. On headphones, <strong>Count me in</strong> gives
-one bar of sticks and a shaker on the song's time instead.</li>
-<li><strong>The players.</strong> Then the band is offered one player at a time, where each would play: <strong>A shaker in the chorus</strong>,
-<strong>The cajón under the verses</strong>, <strong>The bass from the first chorus</strong>, <strong>Strings in the bridge</strong>. <strong>Keep it</strong> or
-<strong>No thanks</strong>. <code>↑</code> <code>↓</code> hear the takes, and <strong>Use this one</strong> picks the master.</li>
-</ul>
+<p>The live room is the other side of the glass: you bring a guitar and an interface, the stage is the screen, and the
+rig on it is the song's. Everything in it is the same song, signed the same way: <strong>Control room →</strong> at the top right
+(or <code>⌘G</code>) goes through the glass to the arranger with the song as it is, and <code>G</code> in the control room comes back. Your
+takes stay in this browser.</p>
+<p><strong>Where are we playing?</strong> The door offers the metal club (VOID: an electric at 132 BPM, one stack and a big kit),
+and the control room for anyone without a guitar. <code>1</code> walks in.</p>
+<h3 id="the-stage"><a class="h-link" href="#the-stage">The stage</a></h3>
+<p>The screen is the stage seen from the front, and everything on it is a real control: the amp head on its cab (turn a
+knob: drag it, scroll it, or focus it and use the arrow keys; double-click puts it back), the pedalboard along the
+front (<code>1</code>–<code>8</code> stomp the pedals, a drag along the board reorders them, × puts one back in the case, <strong>+ Pedal</strong> opens
+the shop's case), the input meter on the head, the drummer on the riser and the tape machine by the door. Every change
+is one step by you on both sides of the stack, and <code>⌘Z</code> takes it back. Edits go to this song's copy of the stack;
+nothing goes to the rack unless you say so.</p>
+<p>The camera goes closer: <code>H</code> the head (every knob), <code>C</code> the cab (which cab, the mics on the cones, their distance and
+angle, a second mic), <code>K</code> the kit and the drummer's book, <code>B</code> the board, <code>U</code> the tuner, <code>G</code> the tape. <code>Esc</code> steps back
+one at a time, and never further than the stage.</p>
+<p><strong>Getting started</strong> (the button at the top) comes up by itself the first time, in the room: <strong>Plug in</strong> (the cable
+goes into the first pedal's jack, and the meter on the head wants your hardest strum between −12 and −6 dBFS),
+<strong>Tune</strong> (Tuna Fork, first on the board: <code>U</code> stomps it and mutes you while it's on), <strong>Timing</strong> (the drummer clicks
+their sticks eight times and you strum on each, so takes land on the beat), <strong>Your sound</strong> (keep the club's stack, or
+go through the door), and a short tour. <code>Esc</code> pauses it; the button carries on where you left it.</p>
+<h3 id="the-drummer"><a class="h-link" href="#the-drummer">The drummer</a></h3>
+<p><code>Space</code> starts the drummer and stops them: a plain guide beat by default, played where the song has no drums of its
+own, never kept. The beat cards on the riser are this song's few (<code>[</code> <code>]</code> or a click picks one); <code>K</code> opens the book,
+every groove the drummer knows, where you edit the cards on the riser, pin a new one or play one now. <code>←</code> <code>→</code> move
+the tempo (<code>⇧</code> for ten) until there's a take, and <code>T</code> taps it. Nothing else plays unless you ask: no bass, no fills.</p>
+<h3 id="takes-and-the-part-line"><a class="h-link" href="#takes-and-the-part-line">Takes and the part line</a></h3>
+<p><code>R</code> records the selected part, or a new one at the end, counted in by a bar of sticks (<code>⇧K</code> turns the count-in off).
+The room dims and says what's happening: <code>Space</code> stops, <code>R</code> starts again, <code>Esc</code> tosses it. A take doesn't stop at the
+part's end: play past it, and what rings on is kept under the next part. Then it plays back once: <strong>Keep</strong> (<code>Enter</code>),
+<strong>Toss</strong> (<code>⌫</code>) or <strong>Again</strong> (<code>R</code>), and the handles trim it on the bar grid. <code>↑</code> <code>↓</code> pick which kept take plays. <code>D</code>
+records the other side of the part on the same rig, against your first, and Keep plays both, wide.</p>
+<p>The part line (<code>L</code> puts it up over the board) is the song in order: <code>Enter</code> plays from the selected part, <code>Home</code> from the top,
+<code>N</code> adds a part after it and <code>⇧N</code> one before (an intro), <code>⌥←</code> <code>⌥→</code> or a drag move it, <code>⌫</code> deletes it, and <code>⌘Z</code> puts
+any of it back. Played top to bottom, the song puts <strong>Send</strong> at the top.</p>
+<h3 id="the-tape-the-riffs-and-claude"><a class="h-link" href="#the-tape-the-riffs-and-claude">The tape, the riffs and Claude</a></h3>
+<p>The tape is always rolling, quietly: a faint line at the left of the drawer <code>L</code> puts up. When something was the one, <code>G</code> (or the
+tape machine) opens the last minute on the drummer's bar lines with the last thing you played picked; the handles
+trim it (<code>B</code> snaps them to bars), and <code>Enter</code> keeps it as a riff. Riffs go in the tray beside the part line: a click
+hears one through your rig, a drag puts it on the part line, <code>Enter</code> puts it after the selected part. <code>⇧L</code> is the
+library, every song's riffs, each tagged with its song, to search and filter.</p>
+<p><code>/</code> talks through the glass to the agent you started in the control room: what you type goes to Claude, and what it
+says back comes through the talkback, signed <strong>Claude</strong>, in cool. When Claude is connected from outside (claude.ai or
+Claude Code), the header says so and what it says comes through the talkback the same way. Whatever it changes is
+signed too, one step <code>⌘Z</code> takes back.</p>
+<h3 id="the-shop"><a class="h-link" href="#the-shop">The shop</a></h3>
+<p>The door under NO STAIRWAY (<code>S</code>) is the shop: the amp wall in sections (clean, crunch, weird, high gain, bass; <code>A</code>),
+the pedal case in drawers by type (<code>P</code>, <code>[</code> <code>]</code> between drawers), and your stack big in the try-out corner (<code>H</code> the
+head, <code>C</code> the cab). Look at something to read its card; hold the look and you're hearing it; a click or <code>Enter</code>
+carries it onto your stack. <strong>Save to rack</strong> keeps a stack under a name, and the rack loads one back into the song in
+one step (the song keeps its own copy). <code>S</code> goes back to the stage.</p>
 <h3 id="the-shelf-and-sending"><a class="h-link" href="#the-shelf-and-sending">The shelf and sending</a></h3>
 <p><strong>Shelf</strong> at the top right shows the room's songs as tape boxes, newest first, each with its label, its parts, its
 day and its engineer's note. The die on an untitled box offers three titles. A box opens its song on the stage, and
 <strong>Take it off the shelf</strong> asks first.</p>
-<p><strong>Send</strong> (on a box, or <strong>Send a mix</strong> at the kitchen table) has two choices. <strong>Send a mix</strong> is the song as a WAV,
+<p><strong>Send</strong> (on a box, or at the top once the song's been heard top to bottom) has two choices. <strong>Send a mix</strong> is the song as a WAV,
 through your device's share sheet where it has one, else a download. <strong>Send the song</strong> is one <code>.overdub.zip</code>: the
 song and its recordings. <code>⌘O</code> opens it again, here or in another browser, and puts the recordings back; it's also
 the shelf's backup. There's no share link from the room: a link carries the notes and the devices and leaves your

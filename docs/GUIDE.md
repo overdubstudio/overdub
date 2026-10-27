@@ -56,66 +56,72 @@ agent gave. `⌘Z` undoes the latest edit.
 
 ## The live room
 
-The live room is the other side of the glass: you bring a guitar (or an acoustic and your voice), pick a place, count
-in and play, and a band learns your part from the take. Everything in it is the same song, signed the same way:
-**Control room →** at the top right (or `G`) goes through the glass to the arranger with the song as it is, and `G`
-in the control room comes back. Your takes stay in this browser.
+The live room is the other side of the glass: you bring a guitar and an interface, the stage is the screen, and the
+rig on it is the song's. Everything in it is the same song, signed the same way: **Control room →** at the top right
+(or `⌘G`) goes through the glass to the arranger with the song as it is, and `G` in the control room comes back. Your
+takes stay in this browser.
 
-**Where are we playing?** The door has four places, each with its own band, tempo and amp, drawn in pixels with the
-kick drum's name on it. `1` to `4` picks one.
+**Where are we playing?** The door offers the metal club (VOID: an electric at 132 BPM, one stack and a big kit),
+and the control room for anyone without a guitar. `1` walks in.
 
-- **The metal club** (VOID): an electric at 132 BPM, two stacks and a big kit; the kick locks to your chugs.
-- **The basement** (SUMP PUMP): an electric at 172 BPM, one amp, fast and loud, with a two-bar count.
-- **The blues bar** (LAST CALL): an electric at 96 BPM, a small amp and a shuffle, twelve bars at a time.
-- **The kitchen table** (COOLER): an acoustic and your voice, on the laptop's mic, at your tempo.
+### The stage
 
-### On the stage
+The screen is the stage seen from the front, and everything on it is a real control: the amp head on its cab (turn a
+knob: drag it, scroll it, or focus it and use the arrow keys; double-click puts it back), the pedalboard along the
+front (`1`–`8` stomp the pedals, a drag along the board reorders them, × puts one back in the case, **+ Pedal** opens
+the shop's case), the input meter on the head, the drummer on the riser and the tape machine by the door. Every change
+is one step by you on both sides of the stack, and `⌘Z` takes it back. Edits go to this song's copy of the stack;
+nothing goes to the rack unless you say so.
 
-1. **Soundcheck.** The column beside the stage says what it heard: **Plug in** (an electric wants an interface; the
-   laptop's mic is fine at the kitchen table), **Level**, **Tune** (`U`) and **Line it up** (strum on each of eight
-   clicks, so your takes land on the drums). `[` and `]` step through the amp's settings. Before the first take,
-   `←` `→` move the drummer's tempo (`⇧` for ten), and `T` four times taps it.
-2. **Count me in.** `Space` counts you in and the tape rolls. Play the part as many times round as you like; `Space`
-   again is *That's a take*. It lands as a part (a verse, say), and the talkback says what went in ("Verse is in: 8
-   bars at 132. The band's learning it."): the drums and bass learn its rhythm and its notes, and play it back with
-   you. `⌘Z` takes the take and the band's learning out together; `⇧⌘Z` puts both back.
-3. **The other side.** A heavy part is played twice, once per speaker. At the metal club, after each part's first
-   take, `Space` offers *The other side*; at the basement it's offered once, after the second part. `D` plays the
-   other side of the selected part at either, and you play it again.
-4. **Next part.** `N`, or **+ Next part** under the cards, counts you into the next one (a chorus, then a bridge).
-   Once a part is in, `Space` offers *Next part* too.
-5. **Lay it out.** Once two parts are in, `Space` offers *Lay it out*: the parts as a song, with how many bars and
-   how long. **Hear it all** (`Home` then `Enter`) plays it top to bottom; `Enter` alone plays from the selected card.
+The camera goes closer: `H` the head (every knob), `C` the cab (which cab, the mics on the cones, their distance and
+angle, a second mic), `K` the kit and the drummer's book, `B` the board, `U` the tuner, `G` the tape. `Esc` steps back
+one at a time, and never further than the stage.
 
-Each part is a card. `←` `→` select one (after the first take), `↑` `↓` pick which of its takes plays, and its menu
-has, one step each: **Again** (`R`), **The other side** (`D`, not at the blues bar), **Another feel** (`F`),
-**Simpler** · **Busier**, **Softer** · **Louder**, **×2** (`X`), **Round and round** (`L`, the part on a loop:
-`Space` hears it, `R` records it), **Earlier** · **Later** (`⌥←` · `⌥→`) and **Remove** (`⌫`; `⌘Z` brings it back).
-`Esc` in a take is *Not that one*: nothing goes in the song, and it's in Capture; `⇧R` puts it in after all.
+**Getting started** (the button at the top) comes up by itself the first time, in the room: **Plug in** (the cable
+goes into the first pedal's jack, and the meter on the head wants your hardest strum between −12 and −6 dBFS),
+**Tune** (Tuna Fork, first on the board: `U` stomps it and mutes you while it's on), **Timing** (the drummer clicks
+their sticks eight times and you strum on each, so takes land on the beat), **Your sound** (keep the club's stack, or
+go through the door), and a short tour. `Esc` pauses it; the button carries on where you left it.
 
-A page-turner pedal works the stage: `PageDown` is the offered move (the same as `Space`) and `PageUp` is **Again**.
-So does a sustain pedal on a MIDI keyboard (CC 64), as `Space`, while no instrument track is armed.
+### The drummer
 
-### The talkback
+`Space` starts the drummer and stops them: a plain guide beat by default, played where the song has no drums of its
+own, never kept. The beat cards on the riser are this song's few (`[` `]` or a click picks one); `K` opens the book,
+every groove the drummer knows, where you edit the cards on the riser, pin a new one or play one now. `←` `→` move
+the tempo (`⇧` for ten) until there's a take, and `T` taps it. Nothing else plays unless you ask: no bass, no fills.
 
-The line under the stage is the house talking, unsigned. `/` talks to Claude: what you type goes to the agent, and
-what it says back comes through the talkback, signed **Claude**, in cool. While you're playing a take, Claude's tools
-wait until you stop.
+### Takes and the part line
 
-### The kitchen table
+`R` records the selected part, or a new one at the end, counted in by a bar of sticks (`⇧K` turns the count-in off).
+The room dims and says what's happening: `Space` stops, `R` starts again, `Esc` tosses it. A take doesn't stop at the
+part's end: play past it, and what rings on is kept under the next part. Then it plays back once: **Keep** (`Enter`),
+**Toss** (`⌫`) or **Again** (`R`), and the handles trim it on the bar grid. `↑` `↓` pick which kept take plays. `D`
+records the other side of the part on the same rig, against your first, and Keep plays both, wide.
 
-The kitchen table records an acoustic and your voice on one mic (the laptop's, a mic on the interface, or a mic and a
-pickup). It asks whether you're on headphones (`Y` · `N`): on speakers the band never plays during a take.
+The part line (`L` puts it up over the board) is the song in order: `Enter` plays from the selected part, `Home` from the top,
+`N` adds a part after it and `⇧N` one before (an intro), `⌥←` `⌥→` or a drag move it, `⌫` deletes it, and `⌘Z` puts
+any of it back. Played top to bottom, the song puts **Send** at the top.
 
-- **The paper.** A sheet of words and chords, typed or pasted (ChordPro, or chords over the words), one line at a
-  time; the pencil tick follows the playhead. Each line is signed by whoever wrote it; yours and the house's carry no
-  name.
-- **The work tape.** **Start the tape** (`Space`) and play the song as you would at the table, at your own time. The
-  band reads it: the tempo (**On the beat** keeps it), the parts and the chords. On headphones, **Count me in** gives
-  one bar of sticks and a shaker on the song's time instead.
-- **The players.** Then the band is offered one player at a time, where each would play: **A shaker in the chorus**,
-  **The cajón under the verses**, **The bass from the first chorus**, **Strings in the bridge**. **Keep it** or
-  **No thanks**. `↑` `↓` hear the takes, and **Use this one** picks the master.
+### The tape, the riffs and Claude
+
+The tape is always rolling, quietly: a faint line at the left of the drawer `L` puts up. When something was the one, `G` (or the
+tape machine) opens the last minute on the drummer's bar lines with the last thing you played picked; the handles
+trim it (`B` snaps them to bars), and `Enter` keeps it as a riff. Riffs go in the tray beside the part line: a click
+hears one through your rig, a drag puts it on the part line, `Enter` puts it after the selected part. `⇧L` is the
+library, every song's riffs, each tagged with its song, to search and filter.
+
+`/` talks through the glass to the agent you started in the control room: what you type goes to Claude, and what it
+says back comes through the talkback, signed **Claude**, in cool. When Claude is connected from outside (claude.ai or
+Claude Code), the header says so and what it says comes through the talkback the same way. Whatever it changes is
+signed too, one step `⌘Z` takes back.
+
+### The shop
+
+The door under NO STAIRWAY (`S`) is the shop: the amp wall in sections (clean, crunch, weird, high gain, bass; `A`),
+the pedal case in drawers by type (`P`, `[` `]` between drawers), and your stack big in the try-out corner (`H` the
+head, `C` the cab). Look at something to read its card; hold the look and you're hearing it; a click or `Enter`
+carries it onto your stack. **Save to rack** keeps a stack under a name, and the rack loads one back into the song in
+one step (the song keeps its own copy). `S` goes back to the stage.
 
 ### The shelf and sending
 
@@ -123,7 +129,7 @@ pickup). It asks whether you're on headphones (`Y` · `N`): on speakers the band
 day and its engineer's note. The die on an untitled box offers three titles. A box opens its song on the stage, and
 **Take it off the shelf** asks first.
 
-**Send** (on a box, or **Send a mix** at the kitchen table) has two choices. **Send a mix** is the song as a WAV,
+**Send** (on a box, or at the top once the song's been heard top to bottom) has two choices. **Send a mix** is the song as a WAV,
 through your device's share sheet where it has one, else a download. **Send the song** is one `.overdub.zip`: the
 song and its recordings. `⌘O` opens it again, here or in another browser, and puts the recordings back; it's also
 the shelf's backup. There's no share link from the room: a link carries the notes and the devices and leaves your

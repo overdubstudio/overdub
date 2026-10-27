@@ -95,6 +95,7 @@ const trials = [
   { type: 'clip.repeat', track: tr.id, clip: cl.id, times: 3 },
   { type: 'clip.repeat', track: tr.id, clip: cl.id, times: 2, mode: 'loop' },
   { type: 'clip.split', track: tr.id, clip: cl.id, at: cl.start + 2.5 },
+  { type: 'clip.trim', track: tr.id, clip: cl.id, end: cl.start + cl.length - 0.6, snap: 'beat' },
   // automation (core/automation.js; tools/automation-test.js has the fuzz)
   { type: 'auto.write', track: tr.id, param: 'gain', points: '0:-60 16:-6~0.5 32:-6' },
   // the live room (core/liveroom/; tools/liveroom/checks-model.js has the rest): each makes its field when the song has none

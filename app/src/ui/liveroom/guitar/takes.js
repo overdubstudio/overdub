@@ -325,7 +325,7 @@ export function mount(R) {
             said = true;
             const mm = Math.round(Math.abs(m.median ?? 0));
             T.pairWords = m.verdict === 'bar' && m.worst ? `Bar ${m.worst.bar} runs ${m.worst.dir === 'early' ? 'early' : 'late'} against your left, about ${Math.max(5, Math.round(Math.abs(m.worst.ms) / 5) * 5)} ms.`
-              : m.verdict === 'loose' ? `It wanders from your left from bar ${m.from || 1}.` : `Within ${Math.max(1, mm)} ms of your left take, on the median.`;
+              : m.verdict === 'loose' ? `It wanders off your left from bar ${m.from || 1}.` : `Within ${Math.max(1, mm)} ms of your left take, on the median.`;
             review.render();
           }
         }

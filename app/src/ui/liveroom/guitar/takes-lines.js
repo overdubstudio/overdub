@@ -41,7 +41,7 @@ export const LINES = {
       if (verdict === 'tight') return `The other side is in: within ${m} ms of your left all the way. Keep it?`;
       if (verdict === 'fine') return `The other side is in: within ${m} ms of your left. Keep it?`;
       if (verdict === 'bar') return `The other side is in: bar ${bar} runs ${dir === 'early' ? 'early' : 'late'} against your left, about ${Math.max(5, Math.round(m / 5) * 5)} ms. Keep it, or R for again?`;
-      if (verdict === 'loose') return `The other side is in: it wanders from your left from bar ${bar || 1}. Keep it, or R for again?`;
+      if (verdict === 'loose') return `The other side is in: it wanders off your left from bar ${bar || 1}. Keep it, or R for again?`;
       return 'The other side is in. Keep it?';
     },
   },

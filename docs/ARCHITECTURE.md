@@ -70,6 +70,8 @@ overdub/
                          tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
                          sheet-text.js (the paper's words and chords), label.js (the tape box), lines/ (everything
                          the house says in the talkback, by id)                                       [room]
+                         riffs.js (what a riff is: its row, detail and audio, the filters, into a song), stacks.js
+                         (a guitar chain as data: read off a track, put back on one as ops)  [guitar room]
   app/src/engine/        engine.js (context, transport, scheduler, tracks, mixer), strip.js (channel strips),
                          schedule.js (what plays when), click.js (the click's sound), render.js (offline, in the browser), node/render.js (the
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
@@ -131,6 +133,8 @@ overdub/
                          shelf.js + shelf-db.js (overdub-shelf), send.js, talkback.js, deck.js (count-in, takes,
                          the tuner on the audio clock), view.js, prefs.js (overdub:room), style.js, pixels/ (the
                          scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
+                         riffs-db.js (the riff library, overdub-riffs), rack-db.js (the stack rack, overdub-rack),
+                         idb.js (their opener)                                                         [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -2143,6 +2147,49 @@ count, a take and the band's read, and the agent's song-changing tools refuse wh
 last used, the place, headphones or speakers per output, the once-only lines said per song); the room's songs are
 kept in IndexedDB `overdub-shelf` (`ui/liveroom/shelf-db.js`), beside `overdub:project`. Both names are forever. Straight after the shell,
 `installWorkspace(ui, app)` gives it `ui.workspace`, before any module mounts a panel.
+
+**The riff library and the stack rack** (`docs/research/GUITAR-ROOM.md` §2.4, §2.9, §4.3) are the guitar room's
+storage, across songs, with no UI of their own: the room's tray, the part line and the tone room are built on them.
+Both are modules of Promises that never throw (`import * as riffs from './ui/liveroom/riffs-db.js'`), and both keep the
+visit's in memory when IndexedDB is refused or the disk is full, with `where()` (`'disk' | 'memory'`) and `note()` (a
+line for the talkback, or null) saying so. The databases' names are forever: `overdub-riffs` and `overdub-rack`.
+
+- **A riff** (`core/liveroom/riffs.js`, pure) is kept three ways so a listing never loads audio: a **row** (about 1 KB:
+  `id` `rf_xxxxxx`, `name` ("Riff N" until named), `at`, `starred` 0 | 1, `song` (the song's id) and `songTitle` (only
+  once the song is named), `tempo`, `beats`, `bars`, `meter`, `offset` (s into the audio of its first beat), `tail` (s
+  rung past its last beat), `tuning`, `key` `{ root, scale, sure }` (a read, `sure: false` until confirmed), `stack`
+  `{ name, amp }`, `duration`, `sr`, `channels`, `bytes`, `peaks` (Int8Array, 256 columns of min and max), `peak`,
+  `notes`), a **detail** (`{ chain, stackId }`: the stack it went through) and its **audio** (`{ sr, channels:
+  [Float32Array] }`, an asset store record: the dry input, mono, at the device's rate, as a recording is kept).
+- **The library** (`ui/liveroom/riffs-db.js`): `add(input)` (`{ audio, tempo, beats? | bars?, meter?, offset?, name?,
+  tuning?, key?, stack?, song?, starred?, notes? }`) → `{ ok, id, row, where, note? }`; `list(filter)` → `{ rows, next }`
+  with `filter = { q, song, tuning, tempo: [lo, hi], from, to, starred, order: 'new' | 'old', limit (50, up to 500),
+  after: next }` (q: each word in the name or the song's title; this session's riffs first is `from: sessionStart`);
+  `get(id)` (the row and its chain), `audio(id)`, `buffer(id)` (an AudioBuffer, for a preview), `update(id, { name?,
+  starred?, notes?, key? (confirms it), tuning? })`, `rename`, `star`, `remove(id)` → the whole riff, `restore(it)`,
+  `count()`, `facets()` → `{ total, starred, songs: [{ id, title, count }], tunings: [{ id, count }] }`, `tagSong(songId,
+  title)` (a song just named: its riffs take the title), `usage()` → `{ count, bytes }`, and `intoSong(id, { project,
+  track?, start? })` → `{ ok, ops, asset, clip, beats, bars, fits, ratio, tail, chain, stackName }`: the audio is put in
+  `engine.assets` once as `a_<riff id>` (shared by every song it goes into, and still there if the riff is deleted),
+  and the ops (`asset.add` when the song doesn't describe it, `clip.add` on `track` at `start`, ref `riff`) are
+  dispatched by the caller with its `by`. `fits` is false when the song's tempo isn't the riff's: nothing is stretched,
+  and the clip keeps the audio's time. Stores: `riffs` (the rows; indexes `new` [rat, id], `song` [song, rat, id],
+  `star` [starred, rat, id], `tuning` [tuning, rat, id] with rat = −at, and `songs`, `tunings`, `bytes`), `details`,
+  `audio`. A page reads its index in batches, newest first, and checks each row against the rest of the filter; 2,000
+  riffs list in a few milliseconds (`tools/liveroom/checks-library.js`).
+- **A stack** (`core/liveroom/stacks.js`, pure) is `{ name, chain: [{ device, params, on }], amp }`: the guitar's gear
+  in signal order (pedals, the amp with its cab and mics as its own params, a `core.cab`, pedals after). On a track it's
+  the run of inserts from the first piece of gear (`isGear`: `pedal.*`, `amp.*`, `cab.*`, `core.stack`, `core.cab`, or
+  a device of cat `amp`) to the last; inserts outside the run (the room's Slide Rule EQ) aren't the stack's.
+  `stackOf(track)` reads it (what Save to rack keeps), `loadOps(track, stack)` → `{ ops, label, by: 'you', replaced }`
+  swaps the run for the stack in place (the top of the chain when there's none) in one undo step, `chainKey` /
+  `sameChain` / `matchStack(chain, stacks)` say whether the song's copy is still a saved stack, and
+  `houseStacks(place)` gives the place's own (Half Stack at its settings), never stored.
+- **The rack** (`ui/liveroom/rack-db.js`): `save(stack, { id?, name?, song? })` (a new stack; with `id`, that stack of
+  yours takes the chain and keeps its name: the only way a saved stack's sound changes), `list()` (the last changed
+  first), `get(id)` (a house id too), `load(id, track)` → the ops for the song (the rack is read, never written: the
+  song keeps its own copy, the track's inserts, and edits on the stage are `insert.set`s on it), `rename`, `remove(id)`
+  → the stack, `restore(it)`, `house(place)`. Store `stacks` (keyPath `id`, index `modified`).
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,

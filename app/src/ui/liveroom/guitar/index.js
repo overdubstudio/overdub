@@ -284,7 +284,8 @@ function mountGuitar(el, ctx) {
       return r && (r.ok || ownerOf(id) || /^(space|back|shop|cam:)/.test(id)) ? r : false;
     },
     where() {
-      const cam = gr.world === 'shop' ? 'The shop' : gr.cam === 'stage' ? 'The stage' : `The stage · ${{ head: 'the head', cab: 'the cab', kit: 'the drummer’s book', board: 'the board', tuner: 'the tuner', tape: 'the tape machine' }[gr.cam] || gr.cam}`;
+      // (the camera's 'gs' target is Getting started's, ./start.js: the header reads it as that)
+      const cam = gr.world === 'shop' ? 'The shop' : gr.cam === 'stage' ? 'The stage' : `The stage · ${{ head: 'the head', cab: 'the cab', kit: 'the drummer’s book', board: 'the board', tuner: 'the tuner', tape: 'the tape machine', gs: 'Getting started' }[gr.cam] || gr.cam}`;
       return `The metal club · ${cam}`;
     },
     frame(now) {

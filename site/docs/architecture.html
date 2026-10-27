@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 156 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 157 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -2105,6 +2105,18 @@ by you: a knob is <code>insert.set</code> (a drag coalesces), a footswitch the i
 <code>room.part.set</code>. The club's setup (<code>core/liveroom/guitar/setup.js</code> <code>planGuitarRoom</code>) is one step: both guitars on
 the club's stack (<code>CLUB_STACK</code>: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
 <code>GUITAR_DB</code> (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.</li>
+<li><strong>Getting started and the tuner</strong> (<code>start.js</code> [start], with <code>start-plan.js</code> (pure: the steps, the tour, the shots,
+the words), <code>start-tuner.js</code> and <code>start-style.js</code>): plug in, tune, timing, your sound and a tour, on the stage itself
+on the gauges (<code>ui/gauges/</code>). Each step registers the camera target <code>gs</code> (the step's shot, the slate's side kept
+clear; the header's <code>where()</code> reads it as &quot;Getting started&quot;), stands the slate (<code>R.el.callout</code>) beside it and dims
+the stage round a pool of light on what it's about (<code>R.el.stage.spot</code>, in world units, so it glides with the
+camera). It comes up by itself once in a visitor's browser (never under <code>navigator.webdriver</code>), Esc pauses it where
+it is (<code>gprefs</code> <code>gs.step</code>; the header's button carries on), and the tour's Done sets <code>gs.done</code>. The tuner pedal,
+Tuna Fork, is the room's own (nothing in the song): drawn by the start stream at the room's <code>rect('tuner')</code>, U or
+its footswitch stomps it, the camera goes to it (<code>R.panel('tuner')</code>: the gauge, the strings lighting as each comes
+in, the tunings), and while it's on the monitor is muted (<code>audio.monitor(false)</code>), put back as it was when it goes
+off, when a take starts, or when the screen goes. A tuning picked on it that the song knows is the song's: one step
+by you (<code>room.set { tuning }</code> and the guitars' low cut). Bus: <code>start:gs</code>, <code>start:tuner</code>, <code>start:plug</code>.</li>
 <li><strong>Checks</strong>: <code>tools/liveroom/checks-guitar.js</code> holds the seams; each stream has its own <code>checks-&lt;stream&gt;.js</code> (the tape
 stream's is <code>checks-tape.js</code>, beside the rolling tape's), run with <code>ONLY=&lt;name&gt; node tools/liveroom-test.js</code>.</li>
 </ul>

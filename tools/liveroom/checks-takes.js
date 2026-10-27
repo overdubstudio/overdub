@@ -381,6 +381,16 @@ export async function run(T, ctx) {
     await settle(200);
     await shot(s, 'riff');
 
+    // heard top to bottom: Home, and the song plays to its end by itself; Send comes up in the header
+    const send0 = await E(() => !!document.querySelector('.lr-send') && !document.querySelector('.lr-send').hidden);
+    await E(() => { const R = document.querySelector('.gr').__gr; R.drawer(false); document.activeElement?.blur?.(); });
+    await press(page, 'Home');
+    await waitFor(() => window.overdub.ui.state.liveRoom.run === 'play', null, 5000).catch(() => {});
+    await waitFor(() => window.overdub.ui.state.liveRoom.run === 'idle', null, 60000).catch(() => {});
+    await settle(300);
+    const sent = await E(() => ({ send: !!document.querySelector('.lr-send') && !document.querySelector('.lr-send').hidden, said: window.__tk.said.at(-1) || '' }));
+    T.ok(!send0 && sent.send && /top to bottom/.test(sent.said), `Home, played to the end: Send comes up in the header ("${sent.said}"; before it ${send0 ? 'was' : 'wasn’t'} up)`);
+
     const form = await E(() => ({ sel: document.querySelectorAll('.gr select').length, range: document.querySelectorAll('.gr input[type=range]').length }));
     T.ok(!form.sel && !form.range, `no <select> and no range slider (${form.sel}, ${form.range})`);
     const errs = errors.filter((e) => !ignorable(e));

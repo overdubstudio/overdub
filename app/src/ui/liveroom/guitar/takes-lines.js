@@ -10,7 +10,8 @@
 //
 // Vars: part (the part's name as the song has it), take (its number on its side), bars, ring (bars that rang past),
 // next (the part after, or null), stopped (the bar the stop came in, 1 is the part's first), n (how many), side ('L' |
-// 'R'), where ('before Chorus' | 'after Verse' | ''), tape (the rolling tape kept it: true | false).
+// 'R'), where ('before Chorus' | 'after Verse' | ''), tape (the rolling tape kept it: true | false), secs (the song's
+// length in seconds).
 
 const num = (x) => { const v = Math.round((Number(x) || 0) * 10) / 10; return Number.isInteger(v) ? String(v) : v.toFixed(1); };
 const bars = (x) => `${num(x)} bar${Math.abs((Number(x) || 0) - 1) < 0.05 ? '' : 's'}`;
@@ -62,6 +63,7 @@ export const LINES = {
   'gpart.named': { text: ({ part }) => `It’s ${part} now.` },
   'gpart.from': { text: ({ part }) => `Playing from ${part}.` },
   'gpart.top': { text: () => 'Playing from the top.' },
+  'gpart.heard': { text: ({ n, secs }) => `That’s the song top to bottom: ${n} part${n === 1 ? '' : 's'}, ${Math.floor((Number(secs) || 0) / 60)}:${String(Math.round(Number(secs) || 0) % 60).padStart(2, '0')}. Send is up top.` },
   'gpart.first': { text: () => 'It’s the first part.' },
   'gpart.last': { text: () => 'It’s the last part.' },
 };

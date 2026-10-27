@@ -68,6 +68,9 @@ import { beatOps, jamOps, beatOf, grooveOfBeat } from '../../../core/liveroom/gu
 const EPS = 1e-6;
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 
+// (the songs heard top to bottom in this page's life, by id: Send stays up for them)
+const HEARD = new Set();
+
 export function mount(R) {
   css('gr-takes', CSS);
   const { store, L, gr, app } = R;
@@ -82,6 +85,7 @@ export function mount(R) {
   let dirty = true;
   let lastSummary = '';
   let playAt = 0;        // when the room last started playback (the engine starts a beat later)
+  let top = null;        // a play from the top: { song, reached } (heard to the end, Send comes up in the header)
 
   /* ------------------------------------------------------------------------------------------- the views */
   const line = createPartLine(R, {
@@ -138,10 +142,22 @@ export function mount(R) {
     L.run = 'play';
     playAt = performance.now();
     hearing = until != null ? { until } : null;
+    top = beat <= EPS && until == null ? { song: songId(), reached: 0 } : null;
     return { ok: true };
+  }
+  // Send (the live room's, in the header: ui/liveroom/index.js .lr-send, the send screen): up once the song has been
+  // heard from the top to its end, in this page's life, as the stage had it (§3.14); never while a take runs
+  const songId = () => { const p = store.get(); return String(p?.meta?.id || p?.id || 'song'); };
+  const sendBtn = () => R.el.root.closest('.lr')?.querySelector('.lr-send') || null;
+  function showSend() {
+    const b = sendBtn();
+    if (!b) return;
+    const on = HEARD.has(songId()) && !R.busy() && lineNow().parts.length > 0;
+    if (b.hidden === on) b.hidden = !on;
   }
   function stopPlay() {
     const e = eng();
+    top = null;
     try { if (e?.playing) e.stop(); } catch { /* fine */ }
     if (L.run === 'play') L.run = 'idle';
     hearing = null;
@@ -638,7 +654,20 @@ export function mount(R) {
       } else if (P) P.idleAt = null;
       if (P) rec.frame(P);
     }
-    if (L.run === 'play' && e && !e.playing && performance.now() - playAt > 1500) { L.run = 'idle'; hearing = null; if (gr.take) gr.take.hear = null; }
+    if (top && L.run === 'play' && e?.playing) top.reached = Math.max(top.reached, e.beat);
+    if (L.run === 'play' && e && !e.playing && performance.now() - playAt > 1500) {
+      // (stopped by itself at the song's end, from the top: heard top to bottom)
+      const ln = lineNow();
+      if (top && top.song === songId() && ln.parts.length && top.reached >= ln.end - 0.5 && !HEARD.has(top.song)) {
+        HEARD.add(top.song);
+        const sm = summary();
+        tell('gpart.heard', { n: sm.parts, secs: sm.secs });
+      }
+      top = null;
+      L.run = 'idle'; hearing = null; if (gr.take) gr.take.hear = null;
+    }
+    if (L.run !== 'play') top = null;
+    showSend();
     if (L.run === 'play' && hearing && e?.playing && e.beat >= hearing.until) stopPlay();
     if (gr.take?.hear) review.frame();
     // the selection stays on something that's there
@@ -678,6 +707,8 @@ export function mount(R) {
       review.dispose();
       R.el.drawer.parts.replaceChildren();
       R.el.over.replaceChildren();
+      const b = sendBtn();
+      if (b) b.hidden = true;
     },
     inReview: () => !!gr.take && gr.overlay === 'review',
     part: () => (L.card && L.card !== 'new' ? L.card : null),

@@ -210,6 +210,22 @@ export async function run(T, ctx) {
     T.ok(withP.board.length === before.board.length + 1 && withP.board.includes('pedal.chorus') && withP.same && hp1.length === hp0 + 1 && hp1.at(-1).by === 'you',
       `a click puts a pedal on your board: one step by you, both guitars (${withP.board.join(', ')})`);
 
+    // the board along the front: drag a pedal to move it, × puts it back in the case
+    const order0 = (await rig()).board, hb0 = (await history(page)).length;
+    const box = async (sel) => page.locator(sel).boundingBox();
+    const g0 = await box('.gr .grs-slot[data-device="pedal.gate"]'), m0 = await box('.gr .grs-slot[data-device="pedal.mantisboost"]');
+    await page.mouse.move(g0.x + g0.width / 2, g0.y + 8);
+    await page.mouse.down();
+    await page.mouse.move(g0.x + g0.width / 2 + 20, g0.y + 8, { steps: 3 });
+    await page.mouse.move(m0.x + m0.width * 0.9, g0.y + 8, { steps: 6 });
+    await page.mouse.up();
+    await wait(150);
+    const order1 = (await rig()).board, hb1 = await history(page);
+    await page.click('.gr .grs-slot[data-device="pedal.chorus"] .rm');
+    await wait(150);
+    const order2 = await rig(), hb2 = await history(page);
+    T.ok(order1.indexOf('pedal.gate') === order0.indexOf('pedal.gate') + 1 && hb1.length === hb0 + 1 && !order2.board.includes('pedal.chorus') && order2.same && hb2.length === hb0 + 2 && hb2.slice(-2).every((x) => x.by === 'you'),
+      `on the board, a drag moves a pedal (${order1.slice(0, 2).join(', ')}) and × puts one back in the case (${order2.board.length} left), a step each by you`);
     // the rack: Save to rack, a name, Enter
     await E(() => window.overdub.liveRoom.press('rack'));
     await wait(400);
@@ -252,6 +268,18 @@ export async function run(T, ctx) {
     T.ok(loads.a && loads.b && loads.club === 'amp.recto' && loads.same1 && loads.st1.id === 'house.metal.club' && loads.st2.id === saved.id && loads.steps.join() === '1,1' && loads.by === 'you' && loads.back && loads.undone === 'house.metal.club' && loads.undoneAmp === 'amp.recto' && !loads.changed,
       `the rack loads the club's stack and the saved one onto both guitars with the song's stack, one step each (undo takes the stack and its name back together: ${loads.undone}, ${loads.undoneAmp})`);
 
+    // the rack: take one off, put it back
+    await E(() => window.overdub.liveRoom.press('rack'));
+    await wait(300);
+    await E((id) => document.querySelector(`.gr .grs-unit[data-id="${id}"]`)?.focus(), saved.id);
+    await wait(60);
+    await E(() => [...document.querySelectorAll('.gr .grs-sheet button')].find((b) => /off the rack/.test(b.textContent))?.click());
+    await wait(250);
+    const off = await E(async (id) => (await (await import('/app/src/ui/liveroom/rack-db.js')).list()).some((x) => x.id === id), saved.id);
+    await E(() => [...document.querySelectorAll('.gr .grs-sheet button')].find((b) => /Put it back/.test(b.textContent))?.click());
+    await wait(250);
+    const back = await E(async (id) => (await (await import('/app/src/ui/liveroom/rack-db.js')).list()).some((x) => x.id === id), saved.id);
+    T.ok(!off && back, `a stack of yours comes off the rack and goes back on (off: ${!off}, back: ${back})`);
     // the try-out corner: the head (a knob focused, keys still land), the cab builder
     await E(() => window.overdub.liveRoom.press('shop:head'));
     await wait(450);
@@ -276,6 +304,17 @@ export async function run(T, ctx) {
     await s.shot('liveroom/gr-shop-cab');
     T.ok(cb1.amp.params.cab !== cb0.amp.params.cab && cb2.amp.params.micdist > (cb1.amp.params.micdist ?? 1) && cb2.same && hc2.length === hc0 + 2 && hc2.slice(-2).every((x) => x.by === 'you') && mics >= 1,
       `C opens the cab builder at the grille (${mics} mic on it): a cab chip and a distance fader turn the amp's own params on both guitars, a step each (cab ${cb0.amp.params.cab} to ${cb1.amp.params.cab}, mic ${cb2.amp.params.micdist}″ back)`);
+    // a mic dragged across the cone
+    const md0 = (await rig()).amp.params.micpos ?? 0.3, hm0 = (await history(page)).length;
+    const mb = await box('.gr .grs-cab.open .grs-mic .mic-body');
+    await page.mouse.move(mb.x + mb.width / 2, mb.y + mb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(mb.x + mb.width / 2 + 40, mb.y + mb.height / 2 + 30, { steps: 4 });
+    await page.mouse.move(mb.x + mb.width / 2 + 90, mb.y + mb.height / 2 + 60, { steps: 6 });
+    await page.mouse.up();
+    await wait(120);
+    const md1 = await rig(), hm1 = await history(page);
+    T.ok(md1.amp.params.micpos !== md0 && md1.same && hm1.length === hm0 + 1 && hm1.at(-1).by === 'you', `a mic dragged across the cone moves on both guitars, one step by you (on the cone ${md0} to ${md1.amp.params.micpos})`);
     // Esc back out: the corner, the case, the stage
     const esc = [];
     for (let i = 0; i < 3; i++) { await press(page, 'Escape'); await wait(i === 2 ? 600 : 80); esc.push((await at()).cam); }
@@ -287,6 +326,15 @@ export async function run(T, ctx) {
     await s.shot('liveroom/gr-shop-stagecab');
     await press(page, 'Escape');
     T.ok(stageCab.cam === 'cab' && stageCab.chips > 8 && stageCab.mics >= 1, `on the stage, C's cab zoom is the cab builder too (${stageCab.chips} cabs, ${stageCab.mics} mic on the small cab)`);
+    // the Half Stack carried: its measured cabs are chips, its head draws no menu
+    const hsr = await E(() => document.querySelector('.gr').__gr.parts.shop.carry({ link: { device: 'core.stack' } }));
+    await press(page, 'KeyC');
+    await wait(450);
+    const hs = await E(() => ({ chips: [...document.querySelectorAll('.gr-panel[data-target=cab] .grs-cablist .grs-chip')].map((b) => b.textContent), head: document.querySelector('.gr .grs-head')?.dataset.amp }));
+    await s.shot('liveroom/gr-shop-stackcab');
+    await press(page, 'Escape');
+    const stackCabs = getDevice('core.stack').params.find((p) => p.key === 'cab').opts;
+    T.ok(hsr.ok && hs.head === 'core.stack' && hs.chips.length === stackCabs.length, `the Half Stack carried: the cab zoom offers its ${hs.chips.length} measured cabs as chips (${hs.chips.slice(0, 3).join(', ')}, …)`);
     const form = await E(() => ({ sel: document.querySelectorAll('.gr select').length, range: document.querySelectorAll('.gr input[type=range]').length }));
     T.ok(!form.sel && !form.range, `no <select> and no range slider in the shop (${form.sel}, ${form.range})`);
     T.ok(!errors.length, `no console or page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);

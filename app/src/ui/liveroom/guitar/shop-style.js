@@ -207,6 +207,7 @@ export const CSS = `
 .gr .grs-panel .row > label, .gr .grs-panel .row > .lab { width: 78px; color: var(--text-3); font-size: 13px; flex: none; }
 .gr .grs-panel .row output { font: 500 13px/1 var(--font-mono); width: 60px; text-align: right; color: var(--text); flex: none; }
 .gr .grs-panel .grs-b { margin: 2px 0; }
+.gr .grs-panel .acts { display: flex; flex-wrap: wrap; gap: 8px; }
 .gr .grs-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .gr .grs-chip { border: 1px solid var(--line-2); background: none; color: var(--text-2); border-radius: 2px; padding: 6px 8px; font: 500 12.5px/1.2 var(--font-ui); cursor: pointer; text-align: left; }
 .gr .grs-chip:hover { color: var(--text); border-color: var(--text-3); }

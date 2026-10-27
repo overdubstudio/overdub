@@ -2287,6 +2287,18 @@ which draws nothing itself:
   the take armed after it records from the 1. The guide plays as written (it sits with the club's verse beat, measured);
   the library's grooves at the house's touch. The drummer's lines are `core/liveroom/lines/drummer.js`, said through
   `R.say`.
+- **Getting started and the tuner** (`start.js` [start], with `start-plan.js` (pure: the steps, the tour, the shots,
+  the words), `start-tuner.js` and `start-style.js`): plug in, tune, timing, your sound and a tour, on the stage itself
+  on the gauges (`ui/gauges/`). Each step registers the camera target `gs` (the step's shot, the slate's side kept
+  clear; the header's `where()` reads it as "Getting started"), stands the slate (`R.el.callout`) beside it and dims
+  the stage round a pool of light on what it's about (`R.el.stage.spot`, in world units, so it glides with the
+  camera). It comes up by itself once in a visitor's browser (never under `navigator.webdriver`), Esc pauses it where
+  it is (`gprefs` `gs.step`; the header's button carries on), and the tour's Done sets `gs.done`. The tuner pedal,
+  Tuna Fork, is the room's own (nothing in the song): drawn by the start stream at the room's `rect('tuner')`, U or
+  its footswitch stomps it, the camera goes to it (`R.panel('tuner')`: the gauge, the strings lighting as each comes
+  in, the tunings), and while it's on the monitor is muted (`audio.monitor(false)`), put back as it was when it goes
+  off, when a take starts, or when the screen goes. A tuning picked on it that the song knows is the song's: one step
+  by you (`room.set { tuning }` and the guitars' low cut). Bus: `start:gs`, `start:tuner`, `start:plug`.
 - **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
   stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 

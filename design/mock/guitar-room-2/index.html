@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guitar room, second mock</title>
+<meta name="description" content="A clickable mock of Overdub's guitar room, round two: the stage and the shop as a physical room at real size, the camera zooms, and Getting started in the room. It makes no sound and opens no mic: everything on it is fake state.">
+<link rel="icon" href="/app/assets/favicon.svg">
+<link rel="stylesheet" href="/app/style/tokens.css">
+<link rel="stylesheet" href="./room.css">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <span class="brand disp">Overdub</span>
+    <nav class="where" id="where" aria-label="Where you are"></nav>
+    <span class="gap"></span>
+    <span class="presence" id="presence"><i></i><span><span class="by-agent">Claude</span> is on the talkback</span></span>
+    <button class="tbtn" type="button" id="gsbtn">Getting started</button>
+    <div class="screens" id="screens"><button class="tbtn" type="button" id="screensbtn" aria-expanded="false">Screens</button><menu id="screenmenu" hidden></menu></div>
+  </header>
+  <main class="view" id="view">
+    <div class="world" id="stage" aria-label="The stage"></div>
+    <div class="world" id="shop" aria-label="The shop" hidden></div>
+    <div class="spot" id="spot" hidden></div>
+    <aside class="panel" id="panel" hidden></aside>
+    <section class="book" id="book" hidden aria-label="The drummer’s book"></section>
+    <section class="tapesheet" id="tapesheet" hidden aria-label="The last minute of tape"></section>
+    <div class="callout" id="callout" hidden role="dialog" aria-live="polite"></div>
+    <div class="idcard" id="idcard" aria-hidden="true"></div>
+    <button class="backout" id="backout" type="button" hidden></button>
+    <div class="fade" id="fade"></div>
+  </main>
+  <footer class="strip" id="strip"></footer>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

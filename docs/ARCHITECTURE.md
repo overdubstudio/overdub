@@ -2284,9 +2284,12 @@ which draws nothing itself:
   reorder, a card's bar edited as `hits [{ t, row, v }]`). The drummer plays where the song has no drums: a jam (Space:
   the room's beat from the song's end) and the bars under a take (`countIn`) are `jamOps` bars through `store.preview`,
   a bar at a time two ahead, named `Jam` by the house, released behind the playhead and when the transport stops; never
-  in History, and no plan touches a `Jam` clip. `countIn({ bars, at, from, beat })` is the deck's count (`voice:
-  'sticks'`, or none with the count-in off) and resolves once it's on the audio clock (`downbeat` in the result), so
-  the take armed after it records from the 1. The guide plays as written (it sits with the club's verse beat, measured);
+  in History, and no plan touches a `Jam` clip (the studio's autosave leaves them out too, `kept()` in `main.js`).
+  `countIn({ bars, at, from, beat })` is the deck's count (`voice: 'sticks'`, or none with the count-in off) and
+  resolves once it's on the audio clock (`downbeat` in the result), so the take armed after it records from the 1;
+  with `counted: true` the deck's count is someone else's (the takes stream's) and the drummer only starts the bars
+  under the take. While Getting started's Timing listens, its clicks are the drummer's sticks (`R.gr.sticks`: `{ count,
+  tap }`). The guide plays as written (it sits with the club's verse beat, measured);
   the library's grooves at the house's touch. The drummer's lines are `core/liveroom/lines/drummer.js`, said through
   `R.say`.
 - **Getting started and the tuner** (`start.js` [start], with `start-plan.js` (pure: the steps, the tour, the shots,
@@ -2296,16 +2299,18 @@ which draws nothing itself:
   the stage round a pool of light on what it's about (`R.el.stage.spot`, in world units, so it glides with the
   camera). It comes up by itself once in a visitor's browser (never under `navigator.webdriver`), Esc pauses it where
   it is (`gprefs` `gs.step`; the header's button carries on), and the tour's Done sets `gs.done`. The tuner pedal,
-  Tuna Fork, is the room's own (nothing in the song): drawn by the start stream at the room's `rect('tuner')`, U or
-  its footswitch stomps it, the camera goes to it (`R.panel('tuner')`: the gauge, the strings lighting as each comes
+  Tuna Fork, is the room's own (nothing in the song): drawn once, by the room stream on the board (`room-rig.js`
+  `tunerFace`), from the reading the start stream puts at `R.gr.tuner.reading` (`{ note, octave, cents, string,
+  inTune, held, input }`); U or its footswitch stomps it, the camera goes to it (`R.panel('tuner')`: the gauge, the strings lighting as each comes
   in, the tunings), and while it's on the monitor is muted (`audio.monitor(false)`), put back as it was when it goes
   off, when a take starts, or when the screen goes. A tuning picked on it that the song knows is the song's: one step
   by you (`room.set { tuning }` and the guitars' low cut). Bus: `start:gs`, `start:tuner`, `start:plug`.
 - **Takes and the part line** (`takes.js`; `parts-plans.js` is its pure part). A part is a section, in start order;
   the room adds none unasked. R records the selected part (fixed length; what rings past it is the take's tail, the
   deck's `tailFrom`) or a new part at the end (whole bars to the bar line before the stop, the ring its tail). The
-  count is the deck's, the engine's sticks its voice while the count-in is on; the drummer is told
-  (`R.parts.drummer.countIn({ bars, bpm, at, from, sounded })`, `sounded: true` when the engine sounds it) and a
+  count is the deck's, the engine's sticks its voice while the count-in is on; the drummer is told first
+  (`R.parts.drummer.countIn({ bars, bpm, from, beat, sounded, counted: true })`, `sounded: true` when the engine sounds
+  it) and plays the bars under the take, stopped when it's done (with no drummer the stream previews them itself); a
   drummer that sounds the count itself sets `countsAloud: true`, the engine's voice then `'none'`. A take and its part
   are one step by you: the part's section, its drums (`beatOps`) and, for the other side, the pans are dispatched with
   `join` on the recorder's transaction, and so is every trim and pick in review, so Toss (`store.undo({ id, redo:
@@ -2325,7 +2330,10 @@ which draws nothing itself:
   only through the takes stream's `place(riff, { at, after })`, one step by you. Beside the frozen view the stream
   adds `place`, `claude()` (who's on the talkback) and its pieces, and says `'tape:grab'` ({ riff }) and
   `'tape:drag'` ({ riff, x, y, over, at, phase }) on the bus. / opens a field for Claude in the strip; the agent acts
-  through ops signed `claude`, and its reply goes to the talkback (`R.say`, by `claude`).
+  through ops signed `claude`, and its reply goes to the talkback (`R.say`, by `claude`). The header says who's on it (`.gr-r-who`, from `claude()`); the
+  strip has the one Talk to Claude and the header the one Getting started.
+- **Send** (the live room's `.lr-send`, the send screen) comes up once the song has been heard from the top to its
+  end (Home, played out), for as long as the page lives, and never while a take runs: the takes stream shows it.
 - **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
   stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 

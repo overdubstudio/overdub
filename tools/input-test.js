@@ -16,6 +16,7 @@ import vm from 'node:vm';
 import { hear, transcribe, guessKey, keyChosen } from '../app/src/input/hum.js';
 import { beatbox, toDrums, onsets } from '../app/src/input/tap.js';
 import { onset, xcorr, chirp, hits, median } from '../app/src/input/latency.js';
+import * as LAT from '../app/src/input/latency.js';
 import { noteName } from '../app/src/core/music.js';
 import { createCapture } from '../app/src/input/capture.js';
 import { createStore } from '../app/src/core/store.js';
@@ -281,6 +282,100 @@ const E2 = 440 * 2 ** ((40 - 69) / 12), FRET22 = 440 * 2 ** ((86 - 69) / 12);   
     `tuner: cents only once a note has settled, never past ±50, through the lick's changes too (${loud.length ? loud.slice(0, 4).map((r) => `${noteName(r.p)} ${r.cents} at ${r.t.toFixed(2)} s`).join(', ') : 'none past ±50 or unsettled'})`);
   const low = reads.filter((r) => r.p < 40), chordSettled = reads.filter((r) => r.at?.kind === 'chord' && r.stable);
   T.ok(!low.length && !chordSettled.length, `tuner: with a guitar's range nothing reads under the low E, and nothing settles during the A7, D7, E7 and A5 (${low.length ? low.slice(0, 3).map((r) => noteName(r.p)).join(', ') + ' under it; ' : ''}${chordSettled.length} settled readings on chords)`);
+}
+
+/* ------------------------------------------------------------------ Getting started's tuner, on plucked strings (the guitar room) */
+// input/tuner.js across a guitar's and a bass's range, at 48 and 96 kHz: Karplus-Strong strings (tools/strings.js) with a
+// known pitch, 13 cents flat, through a bridge pickup (which thins a low string's fundamental), read the way
+// ui/gauges/tuner.js reads the input (a window every 40 ms). Four conditions: clean; played (the pick's attack 10 cents
+// sharp and falling back over 250 ms, a single coil's hum at -60 dBFS, a floor at -70); wobbly (played, and the pitch
+// itself wandering ±1 cent, 25 times a second: the shown cents must hold still); harsh (hum at -48, a floor at -62).
+// The error is the reading against the string's true pitch at the window's middle.
+const STR = await import('./strings.js');
+const TUN = await import('../app/src/input/tuner.js');
+function readTuner(buf, sr, tuning, until) {
+  const W = TUN.windowFor(sr), tu = TUN.createSteadyTuner({ tuning }), win = new Float32Array(W), out = [];
+  for (let t = 0; t < until; t += 0.04) {
+    const e = Math.round(t * sr);
+    for (let i = 0; i < W; i++) { const j = e - W + i; win[i] = j >= 0 && j < buf.length ? buf[j] : 0; }
+    out.push({ t, r: { ...tu.push(win, sr, t) } });
+  }
+  return out;
+}
+{
+  const NOTES = [[28, { strings: [28, 33, 38, 43] }, 'a bass’s low E1'], [30, { strings: [30, 35, 40, 45, 50, 55, 59, 64] }, 'an eight-string’s F♯1'], [33, '7-drop-a', 'drop A'], [35, '7-standard', 'a seven-string’s B1'],
+    [36, 'drop-c', 'drop C'], [38, 'drop-d', 'drop D'], [40, 'standard', 'E2'], [45, 'standard', 'A2'], [50, 'standard', 'D3'], [55, 'standard', 'G3'], [59, 'standard', 'B3'], [64, 'standard', 'E4']];
+  const wob = (seed) => { const r = STR.rng(seed), v = Array.from({ length: 200 }, () => r() * 2 - 1); return (t) => v[Math.min(199, Math.max(0, Math.floor(t * 25)))]; };
+  const COND = { clean: () => ({}), played: () => ({ glide: 10, hum: -60, noise: -70 }), wobbly: (m) => ({ glide: 10, hum: -60, noise: -70, bend: wob(m) }), harsh: () => ({ glide: 10, hum: -48, noise: -62 }) };
+  const at = 0.5, cents = -13, rows = {};
+  for (const sr of [48000, 96000]) for (const [cname, co] of Object.entries(COND)) {
+    const R = (rows[`${sr / 1000} kHz ${cname}`] = { named: [], settle: [], errs: [], wrong: 0, flick: 0, lows: [] });
+    for (const [m, tuning] of NOTES) {
+      const s = STR.string(m, { sr, dur: 3, cents, at, peak: -14, pickup: 0.1, ...co(m) });
+      const reads = readTuner(s.buf, sr, tuning, at + 3.5), half = TUN.windowFor(sr) / sr / 2;
+      const truth = (t) => 1200 * Math.log2(s.truth(t - half) / 440) + 6900 - m * 100;
+      const after = reads.filter((x) => x.t > at);
+      const named = after.find((x) => x.r.live && x.r.p === m), settle = after.find((x) => x.r.live && x.r.settled && Math.abs((x.r.midi - m) * 100 - truth(x.t)) <= 3);
+      R.named.push(named ? named.t - at : Infinity); R.settle.push(settle ? settle.t - at : Infinity);
+      const live = after.filter((x) => x.r.live && x.r.settled);
+      for (const x of live) R.errs.push(Math.abs((x.r.midi - m) * 100 - truth(x.t)));
+      R.wrong += reads.filter((x) => x.r.p && x.r.p !== m).length;
+      // the shown cents in the steady part (after the glide): one number, or two neighbours at most
+      const shown = new Set(live.filter((x) => x.t > at + 1).map((x) => x.r.shown));
+      if (shown.size > 2) R.flick++;
+      R.lows.push(m);
+    }
+  }
+  const med = (a) => median(a), mx = (a) => Math.max(...a);
+  const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : '–'), ms = (x) => (Number.isFinite(x) ? Math.round(x * 1000) : '–');
+  for (const [k, R] of Object.entries(rows)) {
+    // (the worst is in the attack's first 300 ms, the smoother behind a pitch still falling; clean, it's a tenth)
+    const clean = /clean/.test(k), lim = clean ? 0.5 : /wobbly/.test(k) ? 3.5 : 3;
+    T.ok(R.wrong === 0 && mx(R.named) <= 0.2 && mx(R.settle) <= (clean ? 0.25 : 0.35) && med(R.errs) <= (clean ? 0.2 : 0.6) && mx(R.errs) <= lim && R.flick === 0,
+      `tuner, ${k}: ${NOTES.length} strings E1 to E4 (drop C's C2, a seven-string's B1, drop A, a bass's E1) 13 cents flat: the note named within ${ms(mx(R.named))} ms of the pluck, within 3 cents within ${ms(mx(R.settle))} ms, then off by ${f1(med(R.errs))} cents at the median and ${f1(mx(R.errs))} at worst (${R.errs.length} readings; ${R.wrong} wrong notes; ${R.flick} strings whose shown cents flickered)`);
+  }
+}
+{
+  // the strings, read in turn: each tuning's open strings, plucked one after another, name themselves
+  const sr = 48000, bad = [];
+  for (const id of ['standard', 'drop-d', 'd-standard', 'drop-c', 'b-standard', 'drop-b', 'drop-a', '7-standard', '7-drop-a']) {
+    const t = TUN.TUNER_TUNINGS[id], at0 = 0.5, len = at0 + t.strings.length * 1.0 + 1, buf = new Float32Array(Math.round(len * sr));
+    t.strings.forEach((m, i) => { const s = STR.string(m, { sr, dur: 0.95, at: at0 + i, len, peak: -14, seed: 11 + i, hum: -62 }); for (let j = 0; j < buf.length; j++) buf[j] += s.buf[j]; });
+    const reads = readTuner(buf, sr, id, len);
+    t.strings.forEach((m, i) => {
+      const mid = reads.filter((x) => x.t > at0 + i + 0.12 && x.t < at0 + i + 0.5 && x.r.live);
+      const ok = mid.length >= 5 && mid.every((x) => x.r.p === m && x.r.string?.open === m && x.r.string?.number === t.strings.length - i);
+      if (!ok) bad.push(`${id} string ${t.strings.length - i}: ${mid.slice(0, 2).map((x) => `${x.r.note}${x.r.octave} as ${x.r.string?.name}`).join(', ') || 'nothing'}`);
+    });
+  }
+  T.ok(!bad.length, `tuner: nine tunings' open strings (E standard to a seven-string's drop A), plucked in turn, each read as its note on its own string${bad.length ? '; wrong: ' + bad.slice(0, 4).join('; ') : ''}`);
+  // the low string names the tuning, and the strings heard settle it
+  const low = [36, 35, 33].map((m) => `${noteName(m)}: ${TUN.tuningsFromLow(m).map((x) => x.name).join(' or ')}`);
+  const g = (hs) => TUN.guessTuning(hs)[0]?.id;
+  T.ok(TUN.tuningsFromLow(36)[0].id === 'drop-c' && g([35, 42]) === 'drop-b' && g([35, 40, 45, 50, 54]) === 'b-standard' && g([35, 40, 45, 50, 55]) === '7-standard' && g([36, 43]) === 'drop-c' && g([36, 41]) === 'c-standard',
+    `tuner: a low string asks which tuning (${low.join('; ')}), and the strings heard after it settle it (B then F♯: drop B; B E A D F♯: B standard; B E A D G: seven-string; C then G: drop C; C then F: C standard)`);
+}
+{
+  // a peg turned while the string rings (B1 from 40 cents flat up to pitch over two seconds): the reading follows it
+  const sr = 48000, s = STR.string(35, { sr, dur: 4, cents: -40, at: 0.5, bend: (t) => Math.min(40, Math.max(0, (t - 0.5) * 20)), peak: -12 });
+  const reads = readTuner(s.buf, sr, '7-standard', 5), half = TUN.windowFor(sr) / sr / 2;
+  const live = reads.filter((x) => x.r.live && x.r.settled);
+  const lag = Math.max(...live.map((x) => Math.abs((x.r.midi - 35) * 100 - (1200 * Math.log2(s.truth(x.t - half) / 440) + 6900 - 3500))));
+  const end = live.filter((x) => x.t > 3.3).map((x) => x.r.shown);
+  T.ok(lag <= 8 && end.length >= 5 && end.every((c) => c === 0), `tuner: a peg turned 20 cents a second while B1 rings is followed within ${lag.toFixed(1)} cents, and reads 0 once it stops (${[...new Set(end)].join(', ')})`);
+}
+{
+  // calibration: a strum along recorded (muted chops, each its own few ms late, one missed, one caught late) through
+  // latency.js's onsets and judgeTaps: the round trip it finds against the one played
+  const sr = 48000, beat = 0.6, t0 = 0.9, clicks = Array.from({ length: 8 }, (_, i) => t0 + i * beat), r = STR.rng(5);
+  const late = [0.004, 0.01, 0.0142, 0.0161, 0.0128, null, 0.0153, 0.0139], hitsAt = clicks.map((c, i) => (late[i] == null ? null : c + late[i]));
+  hitsAt[6] += 0.045; // (one strum caught on the way: 45 ms late)
+  const { buf } = STR.strum([40, 47, 52], hitsAt.filter((x) => x != null), { sr, len: t0 + 8 * beat + 0.6, peak: -12, mute: true });
+  for (let i = 0; i < buf.length; i++) buf[i] += (r() - 0.5) * 2e-4;
+  const hs = hits(buf, sr, clicks.map((c) => Math.round(c * sr)));
+  const j = LAT.judgeTaps(hs), want = median(late.slice(2).filter((x) => x != null)) * 1000;
+  T.ok(j.grade === 'good' && j.dropped != null && j.used === 4 && Math.abs(j.ms - want) <= 1 && j.confidence >= 0.8,
+    `calibration: a strum along with one missed and one 45 ms late finds ${j.ms.toFixed(1)} ms (played ${want.toFixed(1)}), the late one left out, ${j.grade} at ${Math.round(j.confidence * 100)}% sure`);
 }
 
 /* ------------------------------------------------------------------ monitoring by itself, and the feedback guard (AJ, fresh eyes 6) */
@@ -653,6 +748,117 @@ function drum(kind, sr, len = 0.25) {
       `audio.tune({ lo, hi }) over the fake mic's guitar: the G reads ${gc} cents (tuned −15), nothing under the low E (${low.length ? low.slice(0, 4).map((x) => noteName(x.p)).join(', ') : 'none'}), cents only once settled (${r.reads.length} readings)`);
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `monitoring and the tuner: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
+  } finally { await close(); }
+}
+
+/* ------------------------------------------------------------------ Getting started's gauges on a fake guitar (the guitar room) */
+// ui/gauges/: the tuner, the level meter and the timing step mounted over the studio in muted Chromium, the input a
+// fake: drop C's low C, 13 cents flat, plucked every 2 s and peaking at -9 dBFS over a little hum. The tuner names it
+// (C2, -13 cents, the 6th string), the meter puts it in the window and says so, and the strobe moves (it's flat). The
+// timing step runs with latency.measure swapped for a fake that calls onStep as the real one does (the clicks are
+// sound, and nothing may play here): a good one is kept with its confidence, a loose one waits for Keep it. At 1440 and
+// 390 wide (no sideways scroll); then the bench page (design/bench/getting-started/) on the same fake. Screenshots
+// tools/.out/input-gauges-1440.png, -390.png and -bench.png.
+{
+  const sr = 48000, len = 6, buf = new Float32Array(sr * len);
+  for (const at of [0.05, 2.05, 4.05]) { const s = STR.string(36, { sr, dur: 1.9, cents: -13, at, len, peak: -9, pickup: 0.1, hum: -66, noise: -78, seed: Math.round(at * 10) }); for (let i = 0; i < buf.length; i++) buf[i] += s.buf[i] * (i < s.buf.length ? 1 : 0); }
+  let pk = 0; for (let i = 0; i < buf.length; i++) pk = Math.max(pk, Math.abs(buf[i]));
+  for (let i = 0; i < buf.length; i++) buf[i] *= 10 ** (-9 / 20) / pk;
+  const wav = path.join(OUTDIR, 'input-gauges.wav'), pcm = Buffer.alloc(44 + buf.length * 2);
+  pcm.write('RIFF', 0); pcm.writeUInt32LE(36 + buf.length * 2, 4); pcm.write('WAVEfmt ', 8); pcm.writeUInt32LE(16, 16); pcm.writeUInt16LE(1, 20); pcm.writeUInt16LE(1, 22);
+  pcm.writeUInt32LE(sr, 24); pcm.writeUInt32LE(sr * 2, 28); pcm.writeUInt16LE(2, 32); pcm.writeUInt16LE(16, 34); pcm.write('data', 36); pcm.writeUInt32LE(buf.length * 2, 40);
+  for (let i = 0; i < buf.length; i++) pcm.writeInt16LE(Math.round(Math.max(-1, Math.min(1, buf[i])) * 32767), 44 + i * 2);
+  fs.writeFileSync(wav, pcm);
+  const { page, errors, close, shot, base } = await open('/app/', { query: 'new&autostart', fakeAudio: wav });
+  try {
+    await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+    const r = await page.evaluate(async () => {
+      const { input } = window.overdub, a = input.audio;
+      const w = (ms) => new Promise((res) => setTimeout(res, ms));
+      const [{ mountTuner }, { mountLevel }, { mountTiming }] = await Promise.all(['tuner', 'level', 'timing'].map((n) => import(`/app/src/ui/gauges/${n}.js`)));
+      await a.open();
+      const box = document.createElement('div');
+      box.id = 'gg-check';
+      Object.assign(box.style, { position: 'fixed', inset: '0', zIndex: '9999', background: 'var(--bg)', padding: '16px', display: 'grid', gap: '20px', alignContent: 'start', overflow: 'auto', boxSizing: 'border-box' });
+      const slots = ['tuner', 'level', 'timing'].map(() => { const d = document.createElement('section'); d.style.minWidth = '0'; box.append(d); return d; });
+      document.body.append(box);
+      const tuner = mountTuner(slots[0], { source: a, tuning: 'drop-c' });
+      const level = mountLevel(slots[1], { source: a, device: a.state.label });
+      // the clicks are sound: a fake measure that steps as the real one does
+      const lat = a.latency, real = lat.measure;
+      let fakeHits = [12, 9, 14.1, 15.9, 13.2, 15.0, 16.8, 14.4];
+      lat.measure = async ({ onStep, sig }) => {
+        for (let i = 0; i < 8; i++) { if (sig.stop) return null; onStep({ i, click: true }); await w(60); onStep({ i, ms: fakeHits[i] }); }
+        return { how: 'tap', hits: fakeHits.slice(), ...window.__judge(fakeHits) };
+      };
+      window.__judge = (await import('/app/src/input/latency.js')).judgeTaps;
+      const timing = mountTiming(slots[2], { latency: lat, label: () => a.state.label });
+      const reads = [], levels = [];
+      let stop = false;
+      const loop = (now) => { if (stop) return; tuner.frame(now); level.frame(now); timing.frame(now); requestAnimationFrame(loop); };
+      requestAnimationFrame(loop);
+      for (let i = 0; i < 110; i++) { await w(40); const x = tuner.reading; reads.push({ p: x.p, shown: x.shown, cents: x.cents, live: x.live, inTune: x.inTune, string: x.string && x.string.number }); levels.push({ v: level.state?.verdict, strum: level.state?.strum }); }
+      const dom = {
+        note: document.querySelector('.gg-tu-note')?.textContent, cents: document.querySelector('.gg-tu-cents')?.textContent, string: document.querySelector('.gg-tu-string')?.textContent,
+        verdict: document.querySelector('.gg-level')?.dataset.verdict, say: document.querySelector('.gg-lv-say')?.textContent, db: document.querySelector('.gg-lv-db')?.textContent,
+        state: document.querySelector('.gg-tuner')?.dataset.state,
+      };
+      // the strobe moves while it's flat
+      tuner.setStyle('strobe');
+      await w(120);
+      const cv = document.querySelector('.gg-tu-face canvas');
+      const s1 = cv.toDataURL(); await w(150); const s2 = cv.toDataURL();
+      tuner.setStyle('needle');
+      // timing: a good one, kept by itself
+      try { localStorage.removeItem('overdub:latency'); } catch { /* ok */ }
+      await timing.start();
+      await w(100);
+      const good = { say: document.querySelector('.gg-tm-say')?.textContent, got: document.querySelectorAll('.gg-tm-lamp.got').length, dots: document.querySelectorAll('.gg-tm-line circle').length, med: !!document.querySelector('.gg-tm-line line.med'),
+        conf: document.querySelector('.gg-tm-conf span:last-child')?.textContent, keepHidden: document.querySelector('.gg-tm-acts button:nth-child(2)')?.hidden, saved: JSON.parse(localStorage.getItem('overdub:latency') || '{}') };
+      // a loose one: Keep it, then pressed
+      fakeHits = [10, 30, 12, 24, 14, 22, 18, 26];
+      await timing.start();
+      await w(100);
+      const keepBtn = document.querySelector('.gg-tm-acts button:nth-child(2)');
+      const loose = { say: document.querySelector('.gg-tm-say')?.textContent, keepShown: !keepBtn.hidden };
+      keepBtn.click();
+      await w(60);
+      loose.after = document.querySelector('.gg-tm-say')?.textContent;
+      loose.saved = JSON.parse(localStorage.getItem('overdub:latency') || '{}');
+      lat.measure = real;
+      window.__stopGauges = () => { stop = true; };
+      return { reads, levels, dom, strobeMoves: s1 !== s2, good, loose, label: a.state.label };
+    });
+    const live = r.reads.filter((x) => x.live && x.shown != null);
+    const steady = live.filter((x) => x.p === 36 && x.shown === -13 && x.string === 6);
+    T.ok(live.length >= 30 && steady.length >= live.length - 3 && !r.reads.some((x) => x.p && x.p !== 36) && r.dom.note === 'C2' && r.dom.cents === '−13¢' && /^6th string, C/.test(r.dom.string || '') && r.dom.state !== 'intune',
+      `gauges: the tuner on a fake guitar reads drop C's low C as ${r.dom.note} ${r.dom.cents} ("${r.dom.string}") in ${steady.length} of ${live.length} live readings, never another note`);
+    const vs = r.levels.slice(40).map((x) => x.v);
+    T.ok(vs.every((v) => v === 'ok') && r.dom.verdict === 'ok' && /^Right in the window: −9 dBFS/.test(r.dom.say || '') && /^−9\.\d dBFS$/.test(r.dom.db || ''),
+      `gauges: the meter puts the -9 dBFS plucks in the window and holds it (${r.dom.db}): "${r.dom.say}"`);
+    T.ok(r.strobeMoves, 'gauges: the strobe drifts while the string is 13 cents flat');
+    T.ok(/^Round trip 14\.\d ms\. Your strums were within 3\.\d ms of each other: a good one\. Kept/.test(r.good.say || '') && r.good.got === 8 && r.good.dots === 8 && r.good.med && r.good.keepHidden && Object.values(r.good.saved)[0]?.confidence >= 0.9 && Object.values(r.good.saved)[0]?.how === 'tap',
+      `gauges: timing (the clicks faked): a good strum along lights eight lamps and eight dots, is kept by itself with ${r.good.conf} confidence: "${r.good.say}"`);
+    T.ok(r.loose.keepShown && /a little loose\. Keep it, or go again\.$/.test(r.loose.say || '') && /Kept/.test(r.loose.after || '') && Math.abs(Object.values(r.loose.saved)[0]?.ms - 20) < 0.01,
+      `gauges: a loose one waits for Keep it ("${r.loose.say}"), and Keep it keeps it (${Object.values(r.loose.saved)[0]?.ms} ms)`);
+    await shot('input-gauges-1440');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(400);
+    const narrow = await page.evaluate(() => ({ sw: document.querySelector('#gg-check').scrollWidth, cw: document.querySelector('#gg-check').clientWidth, doc: document.documentElement.scrollWidth, face: document.querySelector('.gg-tu-face').getBoundingClientRect().width }));
+    await shot('input-gauges-390');
+    T.ok(narrow.sw <= narrow.cw + 1 && narrow.doc <= 391 && narrow.face > 300, `gauges: 390 wide, nothing scrolls sideways (the tuner's face ${Math.round(narrow.face)} px wide)`);
+    await page.evaluate(() => window.__stopGauges?.());
+    // the bench AJ plays them on (design/bench/getting-started/: the input module on its own, monitoring off)
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(base + '/design/bench/getting-started/', { waitUntil: 'load' });
+    await page.selectOption('#tuning', 'drop-c');
+    await page.click('#open');
+    await page.waitForTimeout(3000);
+    const bench = await page.evaluate(() => ({ note: document.querySelector('.gg-tu-note')?.textContent, verdict: document.querySelector('.gg-level')?.dataset.verdict, status: document.querySelector('#status')?.textContent, lamps: document.querySelectorAll('.gg-tm-lamp').length }));
+    await shot('input-gauges-bench');
+    T.ok(bench.note === 'C2' && bench.verdict === 'ok' && /^Open: /.test(bench.status || '') && bench.lamps === 8, `gauges: the bench page opens the input on its own and reads it (${bench.note}, the level ${bench.verdict}: "${bench.status}")`);
+    const errs = errors.filter((e) => !/Failed to load resource/.test(e));
+    T.ok(errs.length === 0, `gauges: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
 }
 

@@ -21,8 +21,8 @@
 //     midi      the same as a MIDI number with its fraction (40.07: E2, 7 cents sharp)
 //     p         the nearest note (an integer MIDI number); note 'E', 'B♭'; octave 2
 //     cents     how far off p, smoothed, to a tenth (null until the note has settled: a pick's attack goes sharp)
-//     shown     cents as the display shows them: a whole number that moves only when the reading moves by 0.75 or
-//               more, so it never flickers between two numbers
+//     shown     cents as the display shows them: a whole number that moves only once the reading is 0.65 from it
+//               (0.15 past the halfway), so it never flickers between two numbers
 //     inTune    within ±2 cents (and stays so until it's past ±4: the lamp doesn't flicker either)
 //     settled   cents are good to read (the attack is past and the reading has held)
 //     string    the open string it's nearest in the tuning: { s (0 the lowest), number (6 for a six-string's low
@@ -48,8 +48,9 @@
 //   - the held note as YIN's hint: a pick that's a whole multiple of its period (a decaying A2 under hum reads A1) is
 //     the note, while its own dip is nearly as clear;
 //   - the attack's first 40 ms left out (the pick's edge has no period yet), a new note only on a new attack or after it
-//     has held 90 ms, a median of three against single wild frames, and a smoother that starts quick (to get there)
-//     and calms as the note holds (tau 60 ms to 220 ms);
+//     has held 90 ms, a median of three against single wild frames, and a smoother that starts quick (to get there),
+//     calms as the note holds (tau 60 to 200 ms) and quickens while the pitch moves one way (a one-euro filter: the
+//     attack's glide settling, a peg turned);
 //   - cents only once the note has held three readings within 10 cents of each other.
 
 import { yin, ftom, rms, dbOf, median } from './pitch.js';
@@ -145,10 +146,10 @@ export function guessTuning(heard, { tunings = TUNER_TUNINGS } = {}) {
 export const READING_NONE = Object.freeze({ live: false, held: false, hz: 0, midi: 0, p: 0, note: '', octave: 0, cents: null, shown: null, inTune: false, settled: false, string: null, db: -120, floor: -120, since: 0, conf: 0 });
 
 /**
- * @param {{ tuning?: string | Tuning, lo?: number, hi?: number, tau?: [number, number], attack?: number, hold?: number,
+ * @param {{ tuning?: string | Tuning, lo?: number, hi?: number, tau?: [number, number], speed?: number, attack?: number, hold?: number,
  *   gate?: number, minConf?: number, change?: number }} [o]
  */
-export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, tau = [0.06, 0.2], attack = 0.04, hold = 1.5, gate = 10, minConf = 0.5, change = 0.09 } = {}) {
+export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, tau = [0.06, 0.2], speed = 8, attack = 0.04, hold = 1.5, gate = 10, minConf = 0.5, change = 0.09 } = {}) {
   /** @type {Tuning | null} */
   let T = tuning == null ? null : tuningOf(tuning), LO = 30;
   // the range: from a fourth under the tuning's low string (tuned down that far, it still reads; an E5 power chord's
@@ -159,7 +160,7 @@ export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, t
   /** @type {any} */
   let S;
   const fresh = () => ({
-    last: -1, floor: -100, dbs: /** @type {{ t: number, db: number }[]} */ ([]), prev: [-120], attackAt: -1e9, heardAt: -1e9, since: 0, p: 0, sm: 0, cand: 0, candAt: 0,
+    last: -1, floor: -100, dbs: /** @type {{ t: number, db: number }[]} */ ([]), prev: [-120], dv: 0, attackAt: -1e9, heardAt: -1e9, since: 0, p: 0, sm: 0, cand: 0, candAt: 0,
     hist: /** @type {number[]} */ ([]), near: 0, inTune: false, shown: /** @type {number | null} */ (null), conf: 0,
     reading: /** @type {any} */ (READING_NONE),
   });
@@ -203,12 +204,15 @@ export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, t
             // a different note: at once after an attack, else once it has held `change` s (a slide, a wrong frame)
             if (q !== S.cand) { S.cand = q; S.candAt = t; }
             if (!S.p || t - S.attackAt < 0.25 || t - S.candAt >= change) {
-              S.p = q; S.sm = mm; S.since = t; S.near = 1; S.inTune = false; S.shown = null; S.hist = [mm];
+              S.p = q; S.sm = mm; S.dv = 0; S.since = t; S.near = 1; S.inTune = false; S.shown = null; S.hist = [mm];
             }
           } else {
             S.cand = 0;
-            // quick to get there, calmer as it holds
-            const age = t - S.since, tc = Math.min(tau[1], tau[0] + age * 0.4), a = 1 - Math.exp(-dt / tc);
+            // quick to get there, calmer as it holds, and quick again while the pitch moves one way (a pick's attack
+            // settling, a peg turned: a one-euro filter, its cutoff rising with the reading's speed)
+            S.dv += (1 - Math.exp(-dt / 0.16)) * ((mm - S.sm) / dt - S.dv);
+            const age = t - S.since, base = Math.min(tau[1], tau[0] + age * 0.4);
+            const tc = 1 / (1 / base + 2 * Math.PI * speed * Math.abs(S.dv)), a = 1 - Math.exp(-dt / tc);
             S.sm += a * (mm - S.sm);
             // the note's name follows the reading past the half-semitone, with a little hysteresis
             if (Math.abs(S.sm - S.p) > 0.55) S.p = Math.round(S.sm);
@@ -222,9 +226,11 @@ export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, t
       const live = t - S.heardAt <= 0.15, settled = live && S.near >= 3 && t - S.attackAt > 0.1;
       const cents = settled ? Math.round((S.sm - S.p) * 1000) / 10 : null;
       if (cents != null) {
-        if (S.shown == null || Math.abs(cents - S.shown) >= 0.75) S.shown = Math.round(cents);
+        if (S.shown == null || Math.abs(cents - S.shown) > 0.65) S.shown = Math.round(cents);
         S.inTune = S.inTune ? Math.abs(cents) <= 4 : Math.abs(cents) <= 2;
-      } else if (!live) { /* held: the last numbers stay */ } else { S.shown = null; S.inTune = false; }
+      }
+      // (held, or the same string picked again and not settled yet: the last numbers stay, so the cents and the lamp
+      // don't blink at every pick; a new note started them afresh)
       const midi = S.sm;
       return (S.reading = {
         live, held: !live, hz: 440 * 2 ** ((midi - 69) / 12), midi, p: S.p, note: noteName(S.p), octave: octaveOf(S.p),

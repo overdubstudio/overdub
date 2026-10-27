@@ -1569,7 +1569,9 @@ clip runs on with its tail (<code>planTakeFolder</code>'s pass <code>tail</code>
 <li><strong>Trimming it:</strong> the op <code>clip.trim { track, clip, end, snap? }</code> moves the out-point (<code>snap: 'bar' | 'beat' | beats</code>; <code>snapStep(p, snap)</code> gives the step a handle can preview with). An end inside the tail shortens it, past
 it grows it, at the body's end takes it off; into the body it cuts the body as a trim always did. Undo is exact
 (its inverse is <code>clip.set</code>'s, with the old <code>length</code> and <code>tail</code>). <code>clip.set</code> takes <code>tail</code> too, and refuses one as
-long as the clip.</li>
+long as the clip. A plain new length (the Inspector's Length) goes through <code>core/project.js</code>
+<code>clipLengthPatch(clip, length)</code>, the <code>clip.set</code> patch that keeps the body: the tail shortens or grows, and a
+length into the body takes it off. get_project's summary names where a take's part ends and its ring starts.</li>
 <li><strong>Room for a crossfade:</strong> a later field can shape <code>[body end, end)</code> (a fade out over the tail, or a fade in on
 the next take's head); the body, the folder and every planner above stay as they are. An older studio drops
 <code>tail</code> and plays the clip whole, as it is.</li>

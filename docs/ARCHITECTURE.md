@@ -1685,7 +1685,9 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, â
       beats`; `snapStep(p, snap)` gives the step a handle can preview with). An end inside the tail shortens it, past
       it grows it, at the body's end takes it off; into the body it cuts the body as a trim always did. Undo is exact
       (its inverse is `clip.set`'s, with the old `length` and `tail`). `clip.set` takes `tail` too, and refuses one as
-      long as the clip.
+      long as the clip. A plain new length (the Inspector's Length) goes through `core/project.js`
+      `clipLengthPatch(clip, length)`, the `clip.set` patch that keeps the body: the tail shortens or grows, and a
+      length into the body takes it off. get_project's summary names where a take's part ends and its ring starts.
     - **Room for a crossfade:** a later field can shape `[body end, end)` (a fade out over the tail, or a fade in on
       the next take's head); the body, the folder and every planner above stay as they are. An older studio drops
       `tail` and plays the clip whole, as it is.

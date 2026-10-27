@@ -1,5 +1,7 @@
-// Keyboard, touch and assistive-tech checks for the studio [ui]: Space and Enter press the focused button (not the
-// transport), tabs and menus take arrow keys, popovers take focus and give it back, the "?" sheet keeps Tab inside,
+// Keyboard, touch and assistive-tech checks for the studio [ui]: Enter presses the focused button (not the transport)
+// and checks a checkbox; Space is the transport's whatever the mouse last clicked (a button, select, range, checkbox,
+// link, summary) and through a take, a text field still types it, and an open modal or menu owns it only while no take
+// runs; tabs and menus take arrow keys, popovers take focus and give it back, the "?" sheet keeps Tab inside,
 // clips and notes can be reached from the keyboard, a touch hold opens the clip and track menus (iOS sends no
 // contextmenu), the inspector deletes and duplicates without a gesture, reduced motion holds still, toasts with an
 // action wait, single-letter keys can be switched off, labels name their track, and the "Take one" coach keeps focus,
@@ -39,7 +41,8 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   // step is one, so the order that says when a key was registered is the rest of them)
   T.ok(await E(() => { const ks = overdub.ui.keys.list().filter((k) => !k.first); return ks.findIndex((k) => k.key === 'KeyZ' && k.mod === 'mod') < ks.findIndex((k) => k.key === 'Space'); }), '⌘Z is registered before the panels load');
 
-  /* -------- Enter and Space press the focused button, never the transport (issue: the key handler took them first) */
+  /* -------- Enter presses the focused button, never the transport (issue: the key handler took it first); Space is the
+     transport's whatever has focus, outside a text field (the Space block at the end, after mouse clicks) */
   await stopAll();
   const toggle = async (key) => {
     await E(() => document.querySelector('.ew-toggles button[aria-label="Agent (A)"]').focus());
@@ -51,7 +54,8 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   let r = await toggle('Enter');
   T.ok(r.flipped && !r.playing, `Enter on the focused "Agent (A)" toggle presses it (${JSON.stringify(r)})`);
   r = await toggle('Space');
-  T.ok(r.flipped && !r.playing, `Space on it presses it too, and the song doesn't start (${JSON.stringify(r)})`);
+  T.ok(!r.flipped && r.playing, `Space on it plays the song and leaves the toggle alone: Space is the transport's (${JSON.stringify(r)})`);
+  await stopAll();
   const beat0 = await E(() => { overdub.engine.seek(4); return overdub.engine.beat; });
   await E(() => { const t = [...document.querySelectorAll('.ew-region-bottom > .ew-tabs [role=tab]')].find((x) => x.getAttribute('aria-selected') !== 'true'); t.dataset.probe = '1'; t.focus(); });
   await page.keyboard.press('Enter');
@@ -186,6 +190,10 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   T.ok(inside.every(Boolean), `Tab and Shift+Tab stay inside the "?" sheet (${inside.map((x) => (x ? 'in' : 'OUT')).join(' ')})`);
   const toggleBox = await E(() => !!document.querySelector('.tpk #tpk-single'));
   T.ok(toggleBox, 'the sheet has a "Single-key shortcuts" switch');
+  // a modal dialog owns its keys while it's up (no take running): Space checks its checkbox, and Enter does too
+  const box = async (key) => { await E(() => document.querySelector('.tpk #tpk-single').focus()); const a = await E(() => document.querySelector('.tpk #tpk-single').checked); await page.keyboard.press(key); await sleep(60); return { flipped: (await E(() => document.querySelector('.tpk #tpk-single').checked)) !== a, single: await E(() => overdub.ui.keys.single() === document.querySelector('.tpk #tpk-single').checked), playing: await playing() }; };
+  const bxE = await box('Enter'), bxS = await box('Space');
+  T.ok(bxE.flipped && bxE.single && !bxE.playing && bxS.flipped && bxS.single && !bxS.playing, `in the "?" sheet, Enter checks the switch and so does Space, and the song stays stopped (${JSON.stringify({ enter: bxE, space: bxS })})`);
   const l0 = await E(() => overdub.store.get().loop.on);
   await page.keyboard.press('KeyL');
   T.ok((await E(() => overdub.store.get().loop.on)) === l0, 'behind the open sheet, L does nothing');
@@ -280,11 +288,12 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const title = await E(() => document.querySelector('.ob .ob-t')?.textContent || '');
   T.ok(said.startsWith(title) && said.length > title.length, `the step is announced in a live region that lasts ("${said.slice(0, 70)}…")`);
   T.ok(await E(() => document.querySelectorAll('.ob [aria-live]').length === 1), 'one live region in the card, not one per paint');
-  await E(() => document.querySelector('.ob .ob-skip').focus());
+  await E(() => { const k = document.querySelector('.ob .ob-skip'); window.__skips = 0; k.addEventListener('click', () => { window.__skips++; }); k.focus(); });
   await page.keyboard.press('Space');
-  await sleep(150);
-  const b = await E(() => ({ step: overdub.onboard.step, act: document.activeElement?.className, playing: !!overdub.engine.playing }));
-  T.ok(b.step !== a.step && b.act === 'ob-t' && !b.playing, `Space on Skip works the same, and doesn't start the song (${a.step} → ${b.step})`);
+  await sleep(300);
+  const b = await E(() => ({ skips: window.__skips, playing: !!overdub.engine.playing }));
+  T.ok(b.skips === 0 && b.playing, `Space on Skip plays the song and doesn't skip: Space is the transport's, Enter the button's (${JSON.stringify(b)})`);
+  await E(() => { if (overdub.engine.playing) overdub.engine.stop(); overdub.engine.seek(0); });
   // the shortcut to the card
   await E(() => document.querySelector('.ar-scroll').focus());
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Alt+KeyT' : 'Control+Alt+KeyT');
@@ -591,6 +600,125 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `phone: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await ctx.close();
+  await s.close();
+}
+
+/* ======================================================================== Space after a mouse click: the transport's */
+// AJ, on guitar: "space doesn't usually work... some element can take focus and space just selects that element". A
+// control the mouse clicked keeps focus, and Space must still play and stop the song (and stop a take), never press,
+// open or toggle that control, on keydown or keyup. Real controls where the studio has them (Fit, the inspector's
+// Instrument select and Level slider), probes for the kinds its first screen doesn't show (a checkbox, a link, a
+// summary, a menu). An open menu owns Space only while no take runs; a text field always types it.
+{
+  const s = await open('/app/', { query: 'demo' });
+  const { page, errors } = s;
+  await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+  await sleep(400);
+  const E = (fn, arg) => page.evaluate(fn, arg);
+  const stopAll = () => E(() => { if (overdub.engine.playing) overdub.engine.stop(); overdub.engine.seek(0); });
+  await E(() => document.querySelector('.ar-welcome-x')?.click());
+  await E(async () => {
+    await overdub.engine.start();
+    const o = overdub, t = o.store.get().tracks.find((x) => x.kind === 'instrument');
+    o.ui.select({ track: t.id, clip: t.clips?.[0]?.id || null, notes: [], range: null });
+    o.ui.show('inspector');
+    const d = document.createElement('div');
+    d.id = 'space-probe';
+    d.style.cssText = 'position:fixed;left:24px;bottom:24px;z-index:99999;display:flex;gap:16px;align-items:center;padding:8px;background:#fff;color:#000';
+    d.innerHTML = '<input type="checkbox" id="sp-box" aria-label="Probe box"><a href="#sp" id="sp-link">Probe link</a><details id="sp-det"><summary id="sp-sum">Probe summary</summary>more</details><input type="text" id="sp-text" aria-label="Probe text"><div role="menu" aria-label="Probe menu"><button type="button" role="menuitem" id="sp-item">Probe item</button></div>';
+    document.body.append(d);
+    window.__hits = { link: 0, item: 0, fit: 0, change: 0, input: 0 };
+    d.querySelector('#sp-link').addEventListener('click', (e) => { e.preventDefault(); window.__hits.link++; });
+    d.querySelector('#sp-item').addEventListener('click', () => { window.__hits.item++; });
+    document.querySelector('.ar-tool[title="Fit the whole song in view"]').addEventListener('click', () => { window.__hits.fit++; });
+    document.addEventListener('change', () => { window.__hits.change++; }, true);
+    document.addEventListener('input', () => { window.__hits.input++; }, true);
+    // (added after the shell's: what the browser is left to do with each Space)
+    window.__keys = [];
+    for (const t of ['keydown', 'keyup']) window.addEventListener(t, (e) => { if (e.code === 'Space') window.__keys.push(t + (e.defaultPrevented ? ':taken' : ':left')); }, true);
+  });
+  await sleep(400);
+  const look = (sel) => E((q) => { const el = document.querySelector(q); return { focused: !!el && document.activeElement === el, state: JSON.stringify({ c: el?.checked, v: el?.value, o: el?.closest('details')?.open, h: window.__hits }) }; }, sel);
+  const clickOn = async (sel) => { const b = await page.locator(sel).first().boundingBox(); await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); };
+  const state = () => E(() => overdub.input.recorder.state);
+  const waitState = async (want, ms) => { for (let i = 0; i < ms / 50 && (await state()) !== want; i++) await sleep(50); return state(); };
+
+  /* -------- a click, then Space, Space: the song plays and stops, the control stays as it was */
+  const kinds = [
+    ['a button (Fit)', '.ar-tool[title="Fit the whole song in view"]'],
+    ['a select (Instrument)', 'select.in-in', () => page.keyboard.press('Escape')],
+    ['a range input (Level)', 'input.in-range[aria-label="Level"]'],
+    ['a checkbox', '#sp-box'],
+    ['a link', '#sp-link'],
+    ['a summary', '#sp-sum'],
+  ];
+  for (const [name, sel, after] of kinds) {
+    await stopAll();
+    await clickOn(sel);
+    if (after) await after();
+    await sleep(150);
+    await E(() => { window.__keys = []; });
+    const a = await look(sel);
+    await page.keyboard.press('Space');
+    await sleep(400);
+    const b = { ...(await look(sel)), playing: await E(() => !!overdub.engine.playing) };
+    await page.keyboard.press('Space');
+    await sleep(250);
+    const c = { ...(await look(sel)), playing: await E(() => !!overdub.engine.playing), keys: await E(() => window.__keys.join(' ')) };
+    T.ok(a.focused && b.playing && !c.playing && b.state === a.state && c.state === a.state && c.focused && c.keys === 'keydown:taken keyup:taken keydown:taken keyup:taken',
+      `after a mouse click on ${name} (it keeps focus), Space plays and Space stops, and the control isn't pressed, opened or toggled (${JSON.stringify({ focused: a.focused, playing: [b.playing, c.playing], same: b.state === a.state && c.state === a.state, keys: c.keys })}${b.state === a.state ? '' : ` ${a.state} → ${b.state}`})`);
+  }
+  await stopAll();
+
+  /* -------- an open menu owns Space while no take runs; a take counting in or recording takes it back */
+  await clickOn('#sp-item');
+  await sleep(100);
+  const it0 = await E(() => window.__hits.item);
+  await page.keyboard.press('Space');
+  await sleep(200);
+  const it1 = { item: await E(() => window.__hits.item), playing: await E(() => !!overdub.engine.playing) };
+  T.ok(it1.item === it0 + 1 && !it1.playing, `no take running: Space on a menu's item picks it, as a menu's keys do (${JSON.stringify(it1)})`);
+  await page.keyboard.press('KeyR');
+  const cnt = await waitState('count', 2000);
+  const itC = await E(() => window.__hits.item);
+  await page.keyboard.press('Space');
+  await sleep(250);
+  const cancelled = { st: await state(), playing: await E(() => !!overdub.engine.playing), item: await E(() => window.__hits.item) };
+  T.ok(cnt === 'count' && cancelled.st === 'idle' && !cancelled.playing && cancelled.item === itC, `counting in (R) with a menu's item focused: Space calls the take off, and the item stays unpressed (${cnt} → ${JSON.stringify(cancelled)})`);
+  await stopAll();
+  await sleep(200);
+  await page.keyboard.press('KeyR');
+  const rec = await waitState('rec', 8000);
+  const itR = await E(() => window.__hits.item);
+  await E(() => { window.__keys = []; });
+  await page.keyboard.press('Space');
+  await waitState('idle', 4000);
+  const kept = { st: await state(), playing: await E(() => !!overdub.engine.playing), item: await E(() => window.__hits.item), focused: await E(() => document.activeElement?.id), keys: await E(() => window.__keys.join(' ')) };
+  T.ok(rec === 'rec' && kept.st === 'idle' && !kept.playing && kept.item === itR && kept.keys === 'keydown:taken keyup:taken', `recording (the fake input) with a menu's item focused: Space stops the take and keeps it, and the item stays unpressed (${rec} → ${JSON.stringify(kept)})`);
+  await stopAll();
+
+  /* -------- a text field types its space, even while a take records */
+  await clickOn('#sp-text');
+  await page.keyboard.type('a b');
+  await sleep(150);
+  const typed = { v: await E(() => document.querySelector('#sp-text').value), playing: await E(() => !!overdub.engine.playing) };
+  T.ok(typed.v === 'a b' && !typed.playing, `in a text field, Space types a space and the song stays stopped (${JSON.stringify(typed)})`);
+  await clickOn('.ar-tool[title="Fit the whole song in view"]');
+  await sleep(150);
+  await page.keyboard.press('KeyR');
+  const rec2 = await waitState('rec', 8000);
+  await clickOn('#sp-text');
+  await page.keyboard.press('Space');
+  await sleep(200);
+  const typing = { v: await E(() => document.querySelector('#sp-text').value), st: await state() };
+  await clickOn('.ar-tool[title="Fit the whole song in view"]');
+  await page.keyboard.press('Space');
+  await waitState('idle', 4000);
+  const ended = { st: await state(), playing: await E(() => !!overdub.engine.playing) };
+  T.ok(rec2 === 'rec' && typing.v === 'a b ' && typing.st === 'rec' && ended.st === 'idle' && !ended.playing, `while a take records, a text field still types its space (the take runs on), and Space from a clicked button stops it (${JSON.stringify({ rec2, typing, ended })})`);
+
+  const errs = errors.filter((e) => !ignorable(e));
+  T.ok(!errs.length, `space: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
 }
 

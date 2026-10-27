@@ -289,7 +289,7 @@ try {
   await sleep(1900);
   ok(await E(() => !window.overdub.drumroom.flashing('snare') && !document.querySelector('.pw .pk-flash')), 'and the flash fades');
 
-  /* -------- the keyboard: a piece is a button; Enter or Space plays; the arrows walk the kit */
+  /* -------- the keyboard: a piece is a button; Enter plays (Space is the transport's); the arrows walk the kit */
   await notes();
   const kb = await E(async () => {
     const b = document.querySelector('.dr-pc[data-piece="snare"]');
@@ -299,11 +299,12 @@ try {
   });
   await page.keyboard.down('Enter'); await sleep(30); await page.keyboard.up('Enter');
   await page.keyboard.down('Space'); await sleep(30); await page.keyboard.up('Space');
-  await sleep(40);
+  await sleep(200);
   const played = await notes();
   const playing = await E(() => !!window.overdub.engine.playing);
+  await E(() => { if (window.overdub.engine.playing) window.overdub.engine.stop(); });
   ok(kb.focused && kb.tabStops === 1 && kb.sel === 'snare' && /Enter plays it/.test(kb.cap), `a piece takes focus (one Tab stop for the kit) and says how to play it ("${kb.cap.slice(0, 60)}…")`);
-  ok(played.filter((n) => n[0] === 'on' && n[2] === 38).length === 2 && played.filter((n) => n[0] === 'off' && n[2] === 38).length === 2 && !playing, `Enter and Space play the focused piece (and Space doesn't start the song): ${JSON.stringify(played.map((n) => n[0] + n[2]))}`);
+  ok(played.filter((n) => n[0] === 'on' && n[2] === 38).length === 1 && played.filter((n) => n[0] === 'off' && n[2] === 38).length === 1 && playing, `Enter plays the focused piece, and Space plays the song, not the piece: ${JSON.stringify(played.map((n) => n[0] + n[2]))}, song playing ${playing}`);
   await page.keyboard.press('ArrowRight');
   const moved = await E(() => ({ piece: document.activeElement?.dataset.piece, sel: window.overdub.drumroom.selected }));
   ok(moved.piece && moved.piece !== 'snare' && moved.sel === moved.piece, `the arrow keys move to the next piece and select it (${moved.piece})`);

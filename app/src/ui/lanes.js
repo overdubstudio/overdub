@@ -478,7 +478,7 @@ export function laneHead(app, { t, addr, key, lane, info, height, draw, onDraw, 
     'aria-haspopup': onChoose ? 'menu' : null,
     onclick: (e) => {
       e.stopPropagation();
-      // (a pointer's click chooses the param; Enter or Space from the keyboard (detail 0) picks a point, as it did)
+      // (a pointer's click chooses the param; Enter from the keyboard (detail 0) picks a point, as it did)
       if (onChoose && e.detail > 0 && !narrowScreen()) { const r = e.currentTarget.getBoundingClientRect(); onChoose({ x: r.left, y: r.bottom + 2 }); return; }
       onPick();
     },

@@ -1040,6 +1040,13 @@ transport says so under the title. R and Space still record and stop, and M, whi
 In the Jam room (its keys have `when`, so they win there): [ and ] flip the tones, ⇧L loops the section, − and =
 change the practice speed, and R records what you play onto the Guitar track, never a hum.
 
+**Space is always the transport's** outside a place that types text (a text field, a textarea, contenteditable, or
+anything a module marks `data-typing`). A button, select, checkbox, slider or link the mouse last clicked keeps focus,
+so the shell takes Space on keydown and keyup both, prevents the control's default and stops it at the window: no
+control under it sees Space, and none should handle it. Enter presses a focused button (and checks a focused
+checkbox), so the keyboard loses nothing. An open modal dialog or menu owns Space while it is up, except while a take
+counts in or records: then only a text field keeps it. A held Space is one press.
+
 **Phones** (under 900 px): the side panes become full-height sheets (one at a time) and the detail pane a bottom
 sheet whose divider is a drag handle (never taller than the room it has: turning the phone clamps it, so the first
 drag after a turn moves it); the top bar takes two rows. The panels' side is in `app.css` ("phones"): text

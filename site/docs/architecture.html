@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 134 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 135 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -987,6 +987,12 @@ typing, K and L in Tap, where L is an open hat): the shell tries a mode's keys b
 transport says so under the title. R and Space still record and stop, and M, which neither mode plays, still mutes.
 In the Jam room (its keys have <code>when</code>, so they win there): [ and ] flip the tones, ⇧L loops the section, − and =
 change the practice speed, and R records what you play onto the Guitar track, never a hum.</p>
+<p><strong>Space is always the transport's</strong> outside a place that types text (a text field, a textarea, contenteditable, or
+anything a module marks <code>data-typing</code>). A button, select, checkbox, slider or link the mouse last clicked keeps focus,
+so the shell takes Space on keydown and keyup both, prevents the control's default and stops it at the window: no
+control under it sees Space, and none should handle it. Enter presses a focused button (and checks a focused
+checkbox), so the keyboard loses nothing. An open modal dialog or menu owns Space while it is up, except while a take
+counts in or records: then only a text field keeps it. A held Space is one press.</p>
 <p><strong>Phones</strong> (under 900 px): the side panes become full-height sheets (one at a time) and the detail pane a bottom
 sheet whose divider is a drag handle (never taller than the room it has: turning the phone clamps it, so the first
 drag after a turn moves it); the top bar takes two rows. The panels' side is in <code>app.css</code> (&quot;phones&quot;): text

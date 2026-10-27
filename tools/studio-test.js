@@ -146,12 +146,17 @@ for (const [W, H] of [[1440, 900], [1280, 800], [390, 844]]) {
     await page.keyboard.press('Space');
     await sleep(200);
     T.ok(!(await E(() => overdub.engine.playing)), 'and Space stops it again (the clicked button never takes it)');
-    // a button with keyboard focus still keeps Space for itself (Tab to it, Space presses it)
-    await E(() => { window.__fit = 0; const b = document.querySelector('.ar-tool[title="Fit the whole song in view"]'); b.addEventListener('click', () => { window.__fit++; }, { once: true }); b.blur(); b.focus(); });
+    // a button with keyboard focus doesn't keep Space either (Space is the transport's outside a text field); Enter presses it
+    await E(() => { window.__fit = 0; const b = document.querySelector('.ar-tool[title="Fit the whole song in view"]'); b.addEventListener('click', () => { window.__fit++; }); b.blur(); b.focus(); });
+    await page.keyboard.press('Space');
+    await sleep(300);
+    const kb = await E(() => ({ fit: window.__fit, playing: !!overdub.engine.playing }));
     await page.keyboard.press('Space');
     await sleep(200);
-    const kb = await E(() => ({ fit: window.__fit, playing: !!overdub.engine.playing }));
-    T.ok(kb.fit === 1 && !kb.playing, `Space on a keyboard-focused button presses it and leaves the transport alone (${JSON.stringify(kb)})`);
+    await page.keyboard.press('Enter');
+    await sleep(100);
+    const kb2 = await E(() => ({ fit: window.__fit, playing: !!overdub.engine.playing }));
+    T.ok(kb.fit === 0 && kb.playing && kb2.fit === 1 && !kb2.playing, `Space on a keyboard-focused button plays and stops the song without pressing it; Enter presses it (${JSON.stringify({ space: kb, enter: kb2 })})`);
     await page.mouse.click(W / 2, 400); // the lanes: a first gesture
     await E(() => { overdub.engine.playing && overdub.engine.stop?.(); overdub.engine.seek(0); document.activeElement?.blur?.(); });
     await sleep(150);

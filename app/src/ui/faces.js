@@ -273,7 +273,7 @@ function makeTap(p, value, { name, onInput }) {
     const gap = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
     v = clamp(Math.round(600000 / gap) / 10, 40, 300); draw(); onInput(v, true);
   });
-  b.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } });
+  b.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } });
   r.addEventListener('click', () => { if (v < 40) return; v = 0; taps = []; draw(); onInput(0, true); });
   draw();
   w.setValue = (x) => { v = +x || 0; draw(); };

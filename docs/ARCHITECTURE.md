@@ -139,7 +139,11 @@ overdub/
                          index.js (the frame, R, the router), keys.js (the one key table), camera.js, layout.js,
                          state.js (ui.state.liveRoom.gr), bind.js (the gear bound to the song), prefs.js
                          (overdub:guitar-room), style.js; one module per stream: stage.js [room], shop.js [shop],
-                         drummer.js [drummer], start.js [start], takes.js [takes], tape.js [tape]
+                         drummer.js [drummer], start.js [start], takes.js [takes], tape.js [tape]; the room's
+                         room-pixels.js (the stage in pixels, the tape machine, the kit), room-rig.js (the cab, the
+                         mics, Tuna Fork, the cables, a face's menu as a button), room-style.js. stage.js's view adds
+                         kit(state | null) (the drummer drives the kit's hits) and redraw(); R.gr.room holds where
+                         the mics sit on the grille
   app/src/core/liveroom/guitar/ the guitar room's pure part: setup.js (the club's setup and stack, GUITAR_DB), rig.js
                          (the rig on both guitars and its plans), beats.js (the riser's beats and cards) [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]

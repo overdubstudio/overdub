@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 139 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 150 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -107,9 +107,10 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          build, as a file); tools/vendor-clawd.js writes them, never edited here      [guitar]
   app/src/main.js        boot: devices, store, engine, shell, then MODULES; window.overdub             [core]
   app/src/analytics.js   anonymous counts on the live site only                                        [core]
-  app/src/core/          project.js (schema, ids, defaults), ops.js (every op), store.js (dispatch, history,
-                         events), music.js (theory, notes text format, drum grids), arrangement.js (section and
-                         time edits, take folders), automation.js (lanes: values, travel, text form, shapes),
+  app/src/core/          project.js (schema, ids, defaults, a take's tail: clipTail, clipBodyEnd), ops.js (every
+                         op), store.js (dispatch, history, events), music.js (theory, notes text format, drum
+                         grids), arrangement.js (section and time edits, take folders, overlapping takes,
+                         clip.trim and snapStep), automation.js (lanes: values, travel, text form, shapes),
                          transforms.js (note transforms and infill), arrange.js (Build a band),
                          grooves.js + grooves/ (the groove library: a style file per family, feel and humanising,
                          tap-to-find, the song creator), share.js (share links, forks), dawproject.js (DAWproject
@@ -130,6 +131,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
                          sheet-text.js (the paper's words and chords), label.js (the tape box), lines/ (everything
                          the house says in the talkback, by id)                                       [room]
+                         riffs.js (what a riff is: its row, detail and audio, the filters, into a song), stacks.js
+                         (a guitar chain as data: read off a track, put back on one as ops)  [guitar room]
   app/src/engine/        engine.js (context, transport, scheduler, tracks, mixer), strip.js (channel strips),
                          schedule.js (what plays when), click.js (the click's sound), render.js (offline, in the browser), node/render.js (the
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
@@ -160,7 +163,10 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          rounds.js (Start a song: the loop, folding rounds, the 1, the readings, the timing words),
                          recorder.js (R: takes into the song), autorec.js (knob moves into lanes), latency.js
                          (calibration), capture.js (never lose an idea), importers.js (MIDI and audio files in),
-                         index.js (app.input)                                                           [input]
+                         tape.js + tape-core.js + tape-worklet.js (the rolling tape: the last minute of the input
+                         on the band's grid, its default selection and grab),
+                         tuner.js (the steady tuner: strings, tunings), level.js (the gain window and its advice),
+                         calibrate.js (the strum along around latency.js), index.js (app.input)         [input]
   app/src/ui/            shell.js + dom.js (fixed frame), workspace.js + workspace-view.js (Find anything), 
                          transport.js, arranger.js, lanes.js (automation lanes),
                          arrange-kit.js, pianoroll.js, drumgrid.js, grooves.js (the Grooves tab)        [ui-arrange]
@@ -171,6 +177,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          editors/ (generic.js, and the editors the studio's own devices name: eq8.js, shaper.js,
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
+                         gauges/ (Getting started's instruments, mounted by any screen: tuner.js, level.js,
+                         timing.js)                                                                     [input]
                          export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
                          Overdub account, app.songs), account.js (the account key beside Song and its sheet: sign
                          in, the plan and Get Plus, the songs' rows, app.account), provenance.js, share.js,
@@ -186,6 +194,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          shelf.js + shelf-db.js (overdub-shelf), send.js, talkback.js, deck.js (count-in, takes,
                          the tuner on the audio clock), view.js, prefs.js (overdub:room), style.js, pixels/ (the
                          scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
+                         riffs-db.js (the riff library, overdub-riffs), rack-db.js (the stack rack, overdub-rack),
+                         idb.js (their opener)                                                         [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -252,6 +262,9 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
        | { id: 'c_x', kind: 'audio', start, length, asset: 'a_x', offset: 0 /* s into asset */, gain: 0, name?, mute?, by }
          <span class="c">// mute: true keeps the clip and plays it nowhere (live, renders, the Node render); absent = playing</span>
          <span class="c">// take?: 'tk_x' the take group a recording stacked (clips on one track sharing it; the unmuted one plays)</span>
+         <span class="c">// tail?: beats (0 &lt; tail &lt; length) at the clip's end that ring past its part (&quot;Overlapping takes&quot;, below):</span>
+         <span class="c">//   it plays, and claims no beats: a take folder, a new take, a drop and the arrangement's cuts go by the body,</span>
+         <span class="c">//   [start, start + length - tail)</span>
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   <span class="c">// a place on the neck: both or neither</span>
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
@@ -413,7 +426,7 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>insert.set</code></td><td><code>track</code>, <code>insert</code>, <code>patch: { on?, params?, key? }</code> (params merge; key: <code>{ track }</code> or null, below)</td></tr>
 <tr><td><code>clip.add</code></td><td><code>track</code>, <code>clip: Partial&lt;Clip&gt;</code> (notes may be the text format, or <code>grid</code>), <code>ref?</code></td></tr>
 <tr><td><code>clip.remove</code></td><td><code>track</code>, <code>clip</code></td></tr>
-<tr><td><code>clip.set</code></td><td><code>track</code>, <code>clip</code>, <code>patch: { start?, length?, name?, color?, offset?, gain?, mute?, tuning?, capo? }</code> (<code>mute: true</code> silences the clip and keeps it; <code>false</code> stores no flag; <code>tuning</code> and <code>capo</code>, a notes clip's, for its tab: <code>null</code> or capo 0 removes them)</td></tr>
+<tr><td><code>clip.set</code></td><td><code>track</code>, <code>clip</code>, <code>patch: { start?, length?, name?, color?, offset?, gain?, mute?, take?, tuning?, capo?, tail? }</code> (<code>mute: true</code> silences the clip and keeps it; <code>false</code> stores no flag; <code>tuning</code> and <code>capo</code>, a notes clip's, for its tab: <code>null</code> or capo 0 removes them; <code>tail</code>, an audio clip's ring past its part in beats, shorter than the clip: <code>null</code> removes it)</td></tr>
 <tr><td><code>clip.move</code></td><td><code>track</code>, <code>clip</code>, <code>toTrack?</code>, <code>start?</code></td></tr>
 <tr><td><code>notes.add</code></td><td><code>track</code>, <code>clip</code>, <code>notes: [Note] | &quot;text&quot;</code> (or <code>grid</code>)</td></tr>
 <tr><td><code>notes.remove</code></td><td><code>track</code>, <code>clip</code>, <code>ids: [noteId]</code></td></tr>
@@ -433,6 +446,7 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>tempo.map</code></td><td><code>map: { anchors: [{ beat, sec }], clip? } | null</code>, <code>tempo?</code> (sets or clears the tempo map; set, <code>tempo</code> becomes its nominal; cleared, the grid plays at <code>tempo</code> if given, else the nominal it had. The inverse restores both exactly)</td></tr>
 <tr><td><code>clip.repeat</code></td><td><code>track</code>, <code>clip</code>, <code>times</code> (2..64, in all), <code>mode?: 'copies' | 'loop'</code>, <code>ref?</code></td></tr>
 <tr><td><code>clip.split</code></td><td><code>track</code>, <code>clip</code>, <code>at</code> (a song beat inside it), <code>ref?</code> (the right half)</td></tr>
+<tr><td><code>clip.trim</code></td><td><code>track</code>, <code>clip</code>, <code>start?</code>, <code>end?</code> (song beats: its new in- and out-points; one left out stays), <code>snap?</code> (<code>'bar'</code>, <code>'beat'</code> or a step in beats: the edges given land on the nearest line of that grid). An arrangement op (<code>planClipTrim</code>): a folder's playing take trimmed into its body gives back what it no longer covers; a take's tail shortens (or grows) with its end, the body as it was</td></tr>
 <tr><td><code>master.set</code></td><td><code>patch: { gain?, clip? }</code> (gain dB, −96..24; clip <code>'soft'</code> or <code>'clean'</code>, below)</td></tr>
 <tr><td><code>auto.write</code></td><td><code>track</code>, <code>insert?</code>, <code>param</code>, <code>points: [Point] | &quot;text&quot;</code>, <code>from?</code>, <code>to?</code>: replaces the lane's points in [from, to] (default: the span of the points; none with a range clears it), making the lane if there is none; signs it <code>by</code> the writer; values checked against the param's range</td></tr>
 <tr><td><code>auto.clear</code></td><td><code>track</code>, <code>insert?</code>, <code>param</code>, <code>from?</code>, <code>to?</code>: removes the points in the range; with neither, the lane</td></tr>
@@ -442,11 +456,12 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>device.define</code></td><td><code>device: DeviceSource</code> (registers it; a new version if the id exists)</td></tr>
 <tr><td><code>device.remove</code></td><td><code>id</code></td></tr>
 </tbody></table></div>
-<p><strong>Arrangement ops</strong> (<code>core/arrangement.js</code>). <code>planSectionDuplicate</code>, <code>planTimeInsert</code>, <code>planTimeRemove</code>,
-<code>planClipRepeat</code> and <code>planClipSplit</code> are pure functions over the project that return the ordinary ops for the change
-(<code>clip.set</code>/<code>clip.add</code>/<code>clip.remove</code>, <code>notes.replace</code> in its exact restore form, <code>section.*</code>, <code>project.set</code> for the
-loop), plus a one-line summary. <code>ops.js</code> registers <code>section.duplicate</code>, <code>time.insert</code>, <code>time.remove</code>, <code>clip.repeat</code> and
-<code>clip.split</code> as ops that plan from the song as it is and apply those, so their inverse is the primitives' own. Notes
+<p><strong>Arrangement ops</strong> (<code>core/arrangement.js</code>). <code>planSectionDuplicate</code>, <code>planSectionMove</code>, <code>planTimeInsert</code>,
+<code>planTimeRemove</code>, <code>planClipRepeat</code>, <code>planClipSplit</code> and <code>planClipTrim</code> are pure functions over the project that return
+the ordinary ops for the change (<code>clip.set</code>/<code>clip.add</code>/<code>clip.remove</code>, <code>notes.replace</code> in its exact restore form,
+<code>section.*</code>, <code>project.set</code> for the loop), plus a one-line summary. <code>ops.js</code> registers <code>section.duplicate</code>,
+<code>section.move</code>, <code>time.insert</code>, <code>time.remove</code>, <code>clip.repeat</code>, <code>clip.split</code> and <code>clip.trim</code> as ops that plan from the song
+as it is and apply those, so their inverse is the primitives' own. Notes
 keep their sounding part across a cut (a pitched note is cut in two, the halves add up; a drum hit stays whole on its
 side), their ids within a clip and their authors; a copy's clip is signed by whoever asked, a split's right half by
 the clip's maker. A duplicated section brings every clip that plays in it, cut to its bars (a full-length beat that
@@ -1462,7 +1477,7 @@ after a knob moves off it, else &quot;Custom&quot;; picking one is one <code>ins
 shared classes built on them (<code>.btn</code>, <code>.tog</code>, <code>.ledger</code>, <code>.sheet-head</code>, <code>.by</code>, …) are in <code>app/style/app.css</code> and
 <code>design/LINER-NOTES-KIT.md</code>.</p>
 <h2 id="capture-and-bringing-material-in"><a class="h-link" href="#capture-and-bringing-material-in">Capture and bringing material in</a></h2>
-<p><code>app.input</code> (<code>input/index.js</code>) = <code>{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec }</code>.</p>
+<p><code>app.input</code> (<code>input/index.js</code>) = <code>{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec, tape }</code>.</p>
 <ul>
 <li><p><strong>Recording into the song</strong> (<code>input/recorder.js</code>, <code>app.input.recorder</code>; the spec is
 <code>docs/research/RECORDING-UX.md</code> 3.2-3.17). One Record for every source: R (the transport's key and button) calls
@@ -1549,6 +1564,36 @@ the part before keeps the folder, the part after is a folder of its own, a part 
 clip; so every folder is still one range with one take playing in each stretch. A take folder moves whole (a drag
 of any of its clips takes every take along); on a comped folder a drag across the body selects bars (a piece of a
 comp isn't a clip of its own) and its label line moves the folder.</li>
+<li><strong>Overlapping takes</strong> (<code>docs/research/GUITAR-ROOM.md</code> §2.6, §4.3; the guitar room's model). A take recorded for a
+part keeps what it rang past the part's end: its audio clip runs on, and <code>clip.tail</code> says how many beats of it
+are that ring (<code>core/project.js</code> <code>clipTail(clip)</code> → beats, <code>clipBodyEnd(clip)</code> → the song beat its part ends).
+The clip's <strong>body</strong>, <code>[start, start + length - tail)</code>, is the take; the tail plays and claims nothing. A take
+folder is its takes' bodies (<code>takeFolders</code>' <code>start</code>/<code>end</code>, the comp's cuts), so the next part's take over
+<code>[body end, …)</code> on the same track never cuts, folds or mutes the tail ringing under it: both sound, summed, in the
+live engine, the browser's render and the Node render alike (each plays a clip's whole window: <code>engine/schedule.js</code>
+<code>audioIn</code>; nothing in the engine knows tails). Picking another take in a folder mutes the others, tails and all,
+so only the playing take rings. Every planner reckons by the body: a take whose body ends before a <code>time.insert</code>,
+a <code>time.remove</code> or a moved section's edge stays whole, its tail ringing on over what follows; a cut through the
+body leaves the tail on the piece ending where the body did (<code>clip.split</code>, <code>time.remove</code>, comping, a drop); a
+duplicated section brings the tails of takes whose bodies end in it; <code>clip.repeat</code> repeats a take on its body.
+<code>planDropTrim</code> and the live room's seams (<code>core/liveroom/plans.js</code>) leave a tail alone. Without a tail nothing
+changes: a clip is reckoned by its end, and take folders mute what played under them as above.
+<ul>
+<li><strong>Recording one:</strong> <code>recorder.record({ ..., tailFrom })</code> (or <code>stop({ tailFrom })</code>; the deck's <code>take({ tailFrom })</code>):
+the take is for a part ending at <code>tailFrom</code>. It doesn't stop there; when it stops, each audio pass that runs past
+it gets <code>audio.tail</code> (<code>withTails(passes, from)</code>, pure), <code>planTake</code> makes the folder <code>[start, tailFrom)</code> and the
+clip runs on with its tail (<code>planTakeFolder</code>'s pass <code>tail</code>), and the commit's <code>takes[]</code> (and the deck's landed
+<code>take.ringing</code>) say how many beats rang.</li>
+<li><strong>Trimming it:</strong> the op <code>clip.trim { track, clip, end, snap? }</code> moves the out-point (<code>snap: 'bar' | 'beat' | beats</code>; <code>snapStep(p, snap)</code> gives the step a handle can preview with). An end inside the tail shortens it, past
+it grows it, at the body's end takes it off; into the body it cuts the body as a trim always did. Undo is exact
+(its inverse is <code>clip.set</code>'s, with the old <code>length</code> and <code>tail</code>). <code>clip.set</code> takes <code>tail</code> too, and refuses one as
+long as the clip. A plain new length (the Inspector's Length) goes through <code>core/project.js</code>
+<code>clipLengthPatch(clip, length)</code>, the <code>clip.set</code> patch that keeps the body: the tail shortens or grows, and a
+length into the body takes it off. get_project's summary names where a take's part ends and its ring starts.</li>
+<li><strong>Room for a crossfade:</strong> a later field can shape <code>[body end, end)</code> (a fade out over the tail, or a fade in on
+the next take's head); the body, the folder and every planner above stay as they are. An older studio drops
+<code>tail</code> and plays the clip whole, as it is.</li>
+</ul></li>
 <li><strong>The lean at the stop</strong> (<code>relean</code>, <code>input/timing.js</code> <code>placeTake</code>): every note the forgiving grid placed (pads,
 beatbox, a hum against the click) is placed again with the whole take's lean out, and a drum's nervous first hits
 (in its first two beats, before any lands on a beat, 0.25 to 0.5 beat late, on a drum otherwise on the beat) go
@@ -1606,8 +1651,52 @@ turned off and kept in this browser (<code>localStorage overdub:qwerty</code>): 
 key, C major). The line over the keys says what they do, &quot;Snapping to 1/16, in C minor&quot;, each part a click that turns
 its helper off (&quot;Your timing&quot;, &quot;every note&quot;) and on: <code>qwerty.snapLine({ touch })</code>, its words <code>snapWords(...)</code> (pure).
 A MIDI keyboard's notes are never moved.</p></li>
+<li><p><strong>The rolling tape</strong> (<code>input/tape.js</code>, <code>app.input.tape</code>; <code>docs/research/GUITAR-ROOM.md</code> §1.4, §2.3, §4.3). While
+the guitar room is open (<code>tape.start()</code>; <code>tape.stop()</code> lets it go) the picked input is always on tape: mono 16-bit
+at the device's rate in a ring in the audio thread (<code>input/tape-worklet.js</code>, <code>'ew-tape'</code>, fed by <code>audio.tap(node)</code>
+through every reopen and channel change), 60 s by default, 15 to 300 (<code>tape.setSeconds</code>, <code>localStorage overdub:tape</code>): 5.3 MB a minute at 44.1 kHz, 5.8 at 48. The ring is indexed by the audio-clock frame, so it neither
+copies nor allocates as it rolls (a 256-frame peak bin goes to the page a few times a second for the waveform;
+<code>test/unit/tape.test.js</code> measures a minute: about 1 µs and nothing allocated a quantum, the posts aside). The
+band's grid rides alongside as linear pieces read off the engine's clock at every peak post and transport event
+(<code>input/tape-core.js</code> <code>createGrid</code>: a tempo change splits a piece where the two lines meet, a loop wrap where the
+song beat reached the loop's end, a new run from its start), and frames meet beats by the recorder's rule: input
+frame f was played to the band's scheduled time f / sr − (the measured round trip + the engine's delay
+compensation), so a grab lines up with a deck take to the sample (<code>tools/liveroom/checks-tape.js</code>). The UI reads
+<code>span()</code>, <code>peaks(from, to, n, out)</code>, <code>lines(from, to)</code> (the drummer's bars, numbered), <code>beatAt</code>, <code>frameAt</code> and <code>snap</code>
+in its frame; <code>select()</code> is the default selection (<code>defaultSelection</code>: the last phrase from the attacks,
+<code>input/onsets.js</code> with <code>pitch: false</code>, snapped to its bar lines, a lone downbeat hit left out as the ending, over
+four bars the shortest pass that repeats the one before it, else the last four; free time when no band played);
+<code>grab(range)</code> copies frames into an asset in <code>engine.assets</code> (the recording format: <code>{ id, kind: 'audio', name, sr, channels: 1, duration }</code>) with its place (<code>start</code>, <code>from</code>, <code>to</code>, <code>beats</code>, <code>length</code>, <code>bars</code>, <code>bpm</code>) and touches
+nothing else; a riff goes in the song only when it's kept, as <code>tape.ops(grab, { track, at })</code> (<code>riffOps</code>:
+<code>asset.add</code> and the clip, one dispatch by whoever keeps it). The full API is <code>input/tape.js</code>'s header.</p></li>
 <li><p><strong>Latency</strong> (<code>input/latency.js</code>): tap along to eight clicks, or a loopback, once per input device; takes, hums and
-beatbox are shifted by the measured round trip.</p></li>
+beatbox are shifted by the measured round trip. A strum along is judged by <code>judgeTaps(hits)</code> (one wild strum left
+out; grade good, fair, poor or none; a confidence 0 to 1), and the confidence is kept beside the round trip
+(<code>measured.confidence</code>, <code>localStorage overdub:latency</code>, per deviceId).</p></li>
+<li><p><strong>Getting started's gauges</strong> (the guitar room, <code>docs/research/GUITAR-ROOM.md</code> §2.1): three instruments any screen
+mounts, each a pure module under <code>input/</code> and a drawn one under <code>ui/gauges/</code>. The drawn ones own no keys and no
+loop: the host calls <code>frame(now)</code> from its own (the shell's, or the room's), and they read <code>app.input.audio</code>, or
+anything else with <code>samples() -&gt; { buf, sr } | null</code> (a check's fake). <code>audio.samples()</code> is the picked input's
+latest analyser window (4096 samples at 48 kHz, 8192 over 50 kHz).</p>
+<ul>
+<li><strong>The tuner</strong> (<code>input/tuner.js</code>): <code>createSteadyTuner({ tuning })</code> -&gt; <code>{ push(buf, sr, t) -&gt; reading, reading, setTuning(id | { strings } | null), reset() }</code>; a reading is <code>{ live, held, hz, midi, p, note, octave, cents, shown, inTune, settled, string: { s, number, name, open, cents, near } | null, db, floor, since, conf }</code>. YIN
+(<code>pitch.js</code>, with the held note as its <code>hint</code>) in the tuning's range (a fourth under its low string; 30 Hz up with
+no tuning), a noise floor and a gate 10 dB over it, a new note on an attack, a median and a one-euro smoother,
+whole cents shown with hysteresis, in tune within ±2 (out past ±4). <code>TUNER_TUNINGS</code> is the fretboard's tunings
+plus <code>drop-a</code>, <code>7-standard</code> and <code>7-drop-a</code>; <code>tuningsFromLow(midi)</code> asks which a low string is, <code>guessTuning(heard)</code>
+settles it from the strings heard, <code>stringOf(midi, tuning)</code> names the string. Measured in <code>tools/input-test.js</code> on
+Karplus-Strong strings (<code>tools/strings.js</code>) from E1 to E4 at 48 and 96 kHz: named within 100 ms of the pluck,
+within 3 cents within 180 ms, a tenth of a cent clean and six tenths with hum at -48 dBFS at the median.
+<code>ui/gauges/tuner.js</code>: <code>mountTuner(el, { source, tuning, style: 'needle' | 'strobe', size: 'big' | 'small', onReading })</code> -&gt; <code>{ frame(now), reading, setTuning, setStyle, tuner, el, unmount() }</code>.</li>
+<li><strong>The level</strong> (<code>input/level.js</code>): <code>createLevel({ lo: -12, hi: -6, device })</code> -&gt; <code>{ push(samples | { peak } | peak, nowMs) -&gt; state, state, reset(), clearClip() }</code>; the state is <code>{ db (the bar), peak, hold, clip, clips, strum (the hardest in 3 s), verdict: 'none' | 'quiet' | 'low' | 'ok' | 'hot' | 'clip', advice: { id, text, turn: 'up' | 'down' | null, by (dB) }, inWindow, good (ms in the window) }</code>; <code>levelAdvice(verdict, db, { device })</code> is
+the words alone (the knob on the interface; on a Focusrite, the ring round it). <code>ui/gauges/level.js</code>:
+<code>mountLevel(el, { source, device, onPickChannel, advice })</code> -&gt; <code>{ frame(now), state, setDevice, reset(), meter, el, unmount() }</code>.</li>
+<li><strong>Calibration</strong> (<code>input/calibrate.js</code>): <code>createCalibration({ latency, label, autoKeep })</code> -&gt; <code>{ state: { phase: 'idle' | 'listening' | 'done' | 'stopped' | 'error', step, hits, result, kept, measured, estimate, error }, start(), stop(), keep(), again(), forget(), line(), on(fn) }</code>; a good one is kept by itself, a fair or poor one
+waits for keep(); <code>calibrationLine(state)</code> is the words. <code>ui/gauges/timing.js</code>: <code>mountTiming(el, { latency, label })</code> -&gt; <code>{ frame(now), start(), stop(), cal, el, unmount() }</code>. The clicks are sound: a check swaps
+<code>latency.measure</code> for a fake that calls <code>onStep</code> as the real one does.</li>
+<li><code>design/bench/getting-started/</code> (served locally, never deployed) mounts all three on the input module alone, to
+try them on a real guitar.</li>
+</ul></li>
 <li><p><strong>Audio inputs</strong> (<code>input/audioin.js</code>): an interface opens with all its channels (<code>channelCount</code> up to what the
 device reports) and the chosen input is split off (<code>state.channels</code>, <code>state.channel</code> '1'…'32', 'both', 'stereo'); a
 channel the device doesn't have is silence, never input 1. Monitoring plays through the track a take would record
@@ -1914,6 +2003,43 @@ count, a take and the band's read, and the agent's song-changing tools refuse wh
 last used, the place, headphones or speakers per output, the once-only lines said per song); the room's songs are
 kept in IndexedDB <code>overdub-shelf</code> (<code>ui/liveroom/shelf-db.js</code>), beside <code>overdub:project</code>. Both names are forever. Straight after the shell,
 <code>installWorkspace(ui, app)</code> gives it <code>ui.workspace</code>, before any module mounts a panel.</p>
+<p><strong>The riff library and the stack rack</strong> (<code>docs/research/GUITAR-ROOM.md</code> §2.4, §2.9, §4.3) are the guitar room's
+storage, across songs, with no UI of their own: the room's tray, the part line and the tone room are built on them.
+Both are modules of Promises that never throw (<code>import * as riffs from './ui/liveroom/riffs-db.js'</code>), and both keep the
+visit's in memory when IndexedDB is refused or the disk is full, with <code>where()</code> (<code>'disk' | 'memory'</code>) and <code>note()</code> (a
+line for the talkback, or null) saying so. The databases' names are forever: <code>overdub-riffs</code> and <code>overdub-rack</code>.</p>
+<ul>
+<li><strong>A riff</strong> (<code>core/liveroom/riffs.js</code>, pure) is kept three ways so a listing never loads audio: a <strong>row</strong> (about 1 KB:
+<code>id</code> <code>rf_xxxxxx</code>, <code>name</code> (&quot;Riff N&quot; until named), <code>at</code>, <code>starred</code> 0 | 1, <code>song</code> (the song's id) and <code>songTitle</code> (only
+once the song is named), <code>tempo</code>, <code>beats</code>, <code>bars</code>, <code>meter</code>, <code>offset</code> (s into the audio of its first beat), <code>tail</code> (s
+rung past its last beat), <code>tuning</code>, <code>key</code> <code>{ root, scale, sure }</code> (a read, <code>sure: false</code> until confirmed), <code>stack</code>
+<code>{ name, amp }</code>, <code>duration</code>, <code>sr</code>, <code>channels</code>, <code>bytes</code>, <code>peaks</code> (Int8Array, 256 columns of min and max), <code>peak</code>,
+<code>notes</code>), a <strong>detail</strong> (<code>{ chain, stackId }</code>: the stack it went through) and its <strong>audio</strong> (<code>{ sr, channels: [Float32Array] }</code>, an asset store record: the dry input, mono, at the device's rate, as a recording is kept).</li>
+<li><strong>The library</strong> (<code>ui/liveroom/riffs-db.js</code>): <code>add(input)</code> (<code>{ audio, tempo, beats? | bars?, meter?, offset?, name?, tuning?, key?, stack?, song?, starred?, notes? }</code>) → <code>{ ok, id, row, where, note? }</code>; <code>list(filter)</code> → <code>{ rows, next }</code>
+with <code>filter = { q, song, tuning, tempo: [lo, hi], from, to, starred, order: 'new' | 'old', limit (50, up to 500), after: next }</code> (q: each word in the name or the song's title; this session's riffs first is <code>from: sessionStart</code>);
+<code>get(id)</code> (the row and its chain), <code>audio(id)</code>, <code>buffer(id)</code> (an AudioBuffer, for a preview), <code>update(id, { name?, starred?, notes?, key? (confirms it), tuning? })</code>, <code>rename</code>, <code>star</code>, <code>remove(id)</code> → the whole riff, <code>restore(it)</code>,
+<code>count()</code>, <code>facets()</code> → <code>{ total, starred, songs: [{ id, title, count }], tunings: [{ id, count }] }</code>, <code>tagSong(songId, title)</code> (a song just named: its riffs take the title), <code>usage()</code> → <code>{ count, bytes }</code>, and <code>intoSong(id, { project, track?, start? })</code> → <code>{ ok, ops, asset, clip, beats, bars, fits, ratio, tail, chain, stackName }</code>: the audio is put in
+<code>engine.assets</code> once as <code>a_&lt;riff id&gt;</code> (shared by every song it goes into, and still there if the riff is deleted),
+and the ops (<code>asset.add</code> when the song doesn't describe it, <code>clip.add</code> on <code>track</code> at <code>start</code>, ref <code>riff</code>) are
+dispatched by the caller with its <code>by</code>. <code>fits</code> is false when the song's tempo isn't the riff's: nothing is stretched,
+and the clip keeps the audio's time. Stores: <code>riffs</code> (the rows; indexes <code>new</code> [rat, id], <code>song</code> [song, rat, id],
+<code>star</code> [starred, rat, id], <code>tuning</code> [tuning, rat, id] with rat = −at, and <code>songs</code>, <code>tunings</code>, <code>bytes</code>), <code>details</code>,
+<code>audio</code>. A page reads its index in batches, newest first, and checks each row against the rest of the filter; 2,000
+riffs list in a few milliseconds (<code>tools/liveroom/checks-library.js</code>).</li>
+<li><strong>A stack</strong> (<code>core/liveroom/stacks.js</code>, pure) is <code>{ name, chain: [{ device, params, on }], amp }</code>: the guitar's gear
+in signal order (pedals, the amp with its cab and mics as its own params, a <code>core.cab</code>, pedals after). On a track it's
+the run of inserts from the first piece of gear (<code>isGear</code>: <code>pedal.*</code>, <code>amp.*</code>, <code>cab.*</code>, <code>core.stack</code>, <code>core.cab</code>, or
+a device of cat <code>amp</code>) to the last; inserts outside the run (the room's Slide Rule EQ) aren't the stack's.
+<code>stackOf(track)</code> reads it (what Save to rack keeps), <code>loadOps(track, stack)</code> → <code>{ ops, label, by: 'you', replaced }</code>
+swaps the run for the stack in place (the top of the chain when there's none) in one undo step, <code>chainKey</code> /
+<code>sameChain</code> / <code>matchStack(chain, stacks)</code> say whether the song's copy is still a saved stack, and
+<code>houseStacks(place)</code> gives the place's own (Half Stack at its settings), never stored.</li>
+<li><strong>The rack</strong> (<code>ui/liveroom/rack-db.js</code>): <code>save(stack, { id?, name?, song? })</code> (a new stack; with <code>id</code>, that stack of
+yours takes the chain and keeps its name: the only way a saved stack's sound changes), <code>list()</code> (the last changed
+first), <code>get(id)</code> (a house id too), <code>load(id, track)</code> → the ops for the song (the rack is read, never written: the
+song keeps its own copy, the track's inserts, and edits on the stage are <code>insert.set</code>s on it), <code>rename</code>, <code>remove(id)</code>
+→ the stack, <code>restore(it)</code>, <code>house(place)</code>. Store <code>stacks</code> (keyPath <code>id</code>, index <code>modified</code>).</li>
+</ul>
 <p>The app object (<code>window.overdub</code>): <code>{ store, engine, ui, devices, music, summarize, version, opened, trust, agent, tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter, analytics, plugin, jam, songs, site, siteConfig, door, liveRoom }</code> plus the panels that publish an API (<code>arranger</code>, <code>pianoroll</code>, <code>drumgrid</code>, <code>rack</code>, <code>mixer</code>,
 <code>browser</code>, <code>transport</code>). <code>app.site</code> is which site this is (<code>ui/preview.js</code> reads <code>app/site-config.json</code>; deploy/README.md). <code>app.siteConfig</code> is
 <code>loadSiteConfig</code>'s answer as boot read it (main.js waits for it, at most 4 s, <code>CONFIG_WAIT_MS</code>, before the first

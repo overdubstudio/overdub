@@ -12,6 +12,8 @@
 //   3. Fresh eyes 4, Node and the studio: a tune played on round the loop's end stays one take (joinSeams), a fragment
 //      of a last pass never plays over a fuller one (pickActive), the toast says which, and Sketch's Takes lists each
 //      pass once (the played phrase that went into the take isn't a second card).
+//   3b. Overlapping takes: a mic take recorded for a part (tailFrom) keeps its ring past the part as its tail; the next
+//      part's take goes over it without muting it; clip.trim cuts the ring back on the grid, ⌘Z puts it back.
 //   4. Fresh eyes 5: takes are numbered in the order they were recorded (a complete first pass is Take 1 and plays, the
 //      pass the stop cut short is Take 2); a note begun just before the loop comes round, in your own timing and held
 //      over the wrap, is the next pass's downbeat, not a stub at the end of the pass before, and ⌘Z takes it out with
@@ -929,6 +931,36 @@ await close();
     await ev(() => { try { window.__hold.stop(); } catch { /* ok */ } window.overdub.engine.stop(); });
     t.ok(sk.clip && near(sk.clip.start, 16, 0.1) && sk.clip.length > 7 && sk.clip.length < 9 && sk.caps === 1 && sk.last === 'seek', `a seek back to bar 2 during a mic take from bar 5 keeps the take where it was played (${JSON.stringify(sk)})`);
     await resetAll();
+
+    /* ---- overlapping takes (docs/ARCHITECTURE.md "Overlapping takes"): a mic take for bars 5-6 (tailFrom 24) played
+       on two beats past them keeps that ring as its tail; the next part's take from bar 7 goes over it without muting
+       or cutting it; clip.trim cuts the ring back to a beat on the grid, and ⌘Z puts it back */
+    {
+      const held = (hz) => ev((hz) => { const mic = window.__mic, ctx = mic.ctx; const o = ctx.createOscillator(); o.frequency.value = hz; const g = ctx.createGain(); g.gain.value = 0.5; o.connect(g); g.connect(mic.merge, 0, 0); o.start(); window.__hold = o; }, hz);
+      const unhold = () => ev(() => { try { window.__hold.stop(); } catch { /* ok */ } });
+      const takes = () => ev((g) => window.overdub.store.track(g).clips.filter((c) => c.kind === 'audio').map((c) => ({ id: c.id, start: Math.round(c.start * 1000) / 1000, length: Math.round(c.length * 1000) / 1000, tail: c.tail ? Math.round(c.tail * 1000) / 1000 : 0, mute: !!c.mute, take: c.take || null })), ids3.Guitar);
+      await held(220);
+      await ev((g) => { const a = window.overdub; a.ui.select({ track: g }); a.engine.seek(16); }, ids3.Guitar);
+      const r1 = await ev((g) => window.overdub.input.recorder.record({ countIn: 0, audio: g, tailFrom: 24 }).then((x) => !!x), ids3.Guitar);
+      await untilG(26);
+      const c1 = await ev(() => window.overdub.input.recorder.stop().then((x) => x && x.takes && x.takes[0]));
+      await idleR(); await unhold();
+      const after1 = await takes();
+      const v = after1[0];
+      t.ok(r1 && after1.length === 1 && near(v.start, 16, 0.15) && near(v.start + v.length - v.tail, 24, 1e-3) && v.tail > 1.7 && v.tail < 2.6 && !v.mute && c1 && near(c1.tail, v.tail, 1e-3), `a mic take for bars 5-6 played two beats on: its clip runs on, the ring past beat 24 its tail (${JSON.stringify(after1)}; commit's take ${JSON.stringify(c1)})`);
+      await held(330);
+      await ev(() => window.overdub.engine.seek(24));
+      await ev((g) => window.overdub.input.recorder.record({ countIn: 0, audio: g, tailFrom: 32 }), ids3.Guitar);
+      await untilG(33);
+      await ev(() => window.overdub.input.recorder.stop()); await idleR(); await unhold();
+      const after2 = await takes();
+      const v1 = after2.find((c) => c.id === v.id), w = after2.find((c) => c.id !== v.id);
+      t.ok(after2.length === 2 && v1 && !v1.mute && v1.length === v.length && v1.tail === v.tail && w && near(w.start, 24, 0.15) && near(w.start + w.length - w.tail, 32, 1e-3) && w.tail > 0.7 && !w.mute && w.take !== v1.take, `the next part's take from bar 7 goes over the first's ring without muting or cutting it: both play (${JSON.stringify(after2)})`);
+      const tr = await ev(({ g, c }) => { const a = window.overdub; const r = a.store.dispatch({ type: 'clip.trim', track: g, clip: c, end: 25.2, snap: 'beat' }, { by: 'you' }); const x = a.store.track(g).clips.find((y) => y.id === c); const out = { ok: r.ok, length: x.length, tail: x.tail }; a.store.undo(); const y = a.store.track(g).clips.find((z) => z.id === c); out.undone = { length: y.length, tail: y.tail }; return out; }, { g: ids3.Guitar, c: v.id });
+      t.ok(tr.ok && near(v.start + tr.length, 25, 1e-3) && near(tr.tail, 1, 1e-3) && near(tr.undone.length, v.length, 1e-3) && near(tr.undone.tail, v.tail, 1e-3), `clip.trim cuts the first take's ring back to beat 25 on the grid (a beat of tail left), and ⌘Z puts it back exactly (${JSON.stringify(tr)})`);
+      await ev(() => window.overdub.engine.stop());
+      await resetAll();
+    }
 
     /* ---- a looped mic take on a mapped song (a flip): each pass is cut where the map puts it. The loop's two bars
        play at 180 BPM on a map whose nominal tempo is 120, so a pass lasts 2.667 s; one tempo would cut 4 s */

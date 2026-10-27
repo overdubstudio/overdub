@@ -138,6 +138,29 @@ describe('the ring', () => {
     assert.equal(g2.to - g2.from, BIN * 40, 'longer: what it held, no more');
   });
 
+  test('a new length is a few copies into a ring the page made, inside a quantum: measured', (t) => {
+    let best = Infinity;
+    for (let tries = 0; tries < 3; tries++) {
+      const r = rolling(SR * 60);
+      r.run(Math.ceil((SR * 70) / 128), (f) => Math.fround((f % 977) / 977 - 0.5));
+      const head = r.p.w,
+        n2 = SR * 120,
+        ring = new Int16Array(n2);
+      ring.fill(0);
+      const c0 = process.cpuUsage();
+      r.p.msg({ t: 'len', frames: n2, ring });
+      const cu = process.cpuUsage(c0);
+      best = Math.min(best, (cu.user + cu.system) / 1000);
+      assert.ok(r.p.ring === ring, 'the ring it was handed, not one of its own');
+      const got = r.get(0, head);
+      assert.equal(got.to - got.from, SR * 60);
+      for (let i = 0; i < got.d.length; i += 101)
+        assert.equal(got.d[i], pcm16(Math.fround(((got.from + i) % 977) / 977 - 0.5)));
+    }
+    t.diagnostic(`a minute's ring to two minutes: ${best.toFixed(2)} ms on the audio thread`);
+    assert.ok(best < (128 / SR) * 1000, `within a quantum's 2.67 ms (${best.toFixed(2)} ms)`);
+  });
+
   test('rolling allocates nothing a quantum and costs little: measured', (t) => {
     const w = workletScope(SR),
       p = w.make(SR * 60);

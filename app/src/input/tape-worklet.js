@@ -9,7 +9,8 @@
 // the one allocation, a few times a second. The page asks for:
 //   { t: 'get', id, from, to } -> { t: 'got', id, from, to, d: Int16Array }   frames back, clamped to what the tape
 //       holds (the page asks a few seconds at a time, so no copy holds up the audio thread)
-//   { t: 'len', frames }   another length: the newest frames are kept
+//   { t: 'len', frames, ring? }   another length: the newest frames are kept (ring: an Int16Array of it, made and
+//       touched on the page and transferred, so this thread neither allocates nor faults in megabytes)
 //   'off'                  let go of the ring and stop
 // 16-bit as Chromium reads a 16-bit file (and writes one back): v = x < 0 ? round(x * 32768) : round(x * 32767), so
 // x = v < 0 ? v / 32768 : v / 32767. A 16-bit source goes through it unchanged, to the sample.
@@ -31,9 +32,9 @@ class EwTape extends AudioWorkletProcessor {
     this.pb = 0;
     this.port.onmessage = (e) => this.msg(e.data);
   }
-  alloc(frames) {
+  alloc(frames, ring) {
     this.N = Math.max(BIN, Math.ceil(frames / BIN) * BIN);
-    this.ring = new Int16Array(this.N);
+    this.ring = ring instanceof Int16Array && ring.length === this.N ? ring : new Int16Array(this.N);
   }
   msg(m) {
     if (m === 'off') { this.on = false; this.ring = null; return; }
@@ -49,9 +50,15 @@ class EwTape extends AudioWorkletProcessor {
       this.port.postMessage({ t: 'got', id: m.id, from, to: from + n, d }, [d.buffer]);
     } else if (m.t === 'len') {
       const old = this.ring, oN = this.N, held = this.w < 0 ? 0 : Math.min(oN, this.w - this.start);
-      this.alloc(+m.frames || this.N);
+      this.alloc(+m.frames || this.N, m.ring);
       const keep = Math.min(held, this.N);
-      for (let f = this.w - keep; f < this.w; f++) this.ring[f % this.N] = old[f % oN];
+      // (in runs between the two rings' wraps, a few copies rather than a loop over every frame: this is the audio
+      // thread, and five minutes of frames one at a time would hold up the band for ten quanta)
+      for (let f = this.w - keep; f < this.w; ) {
+        const a = f % oN, b = f % this.N, k = Math.min(this.w - f, oN - a, this.N - b);
+        this.ring.set(old.subarray(a, a + k), b);
+        f += k;
+      }
       if (this.w >= 0) this.start = Math.max(this.start, this.w - keep);
     }
   }

@@ -258,7 +258,10 @@ export function createTape(app, input) {
       const n2 = Math.ceil((v * sr) / BIN) * BIN, nb2 = n2 / BIN + 64, p2 = new Float32Array(nb2);
       if (pkEnd >= 0) for (let b = Math.max(0, pkEnd - Math.min(NB, nb2) + 1); b < pkEnd; b++) p2[b % nb2] = pk[b % NB];
       N = n2; NB = nb2; pk = p2;
-      node.port.postMessage({ t: 'len', frames: n2 });
+      // (the new ring made here, its pages touched, and handed over: the audio thread only copies into it)
+      const ring = new Int16Array(n2);
+      ring.fill(0);
+      node.port.postMessage({ t: 'len', frames: n2, ring }, [ring.buffer]);
       state.bytes = n2 * 2; state.from = spanFrom();
     }
     changed();

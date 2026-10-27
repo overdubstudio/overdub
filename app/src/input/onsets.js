@@ -13,7 +13,7 @@
 //     unpitched: an attack whose pitch can't be read is still a note, with p null (the live room's chugs and chords:
 //         its rhythm counts); off, it's dropped (the play-along judges what it can name)
 //     pitch: false: the attacks alone, each at once with p null, no pitch read and no legato notes (the rolling tape's
-//         default selection reads a minute of them in a few milliseconds: input/tape.js)
+//         default selection reads a minute of them in about a tenth of a second, in slices: input/tape.js)
 //     finder.push(samples, frame0) -> [{ f (the onset's frame on the audio clock), p (MIDI, or null), ps (the
 //         candidates, best first), hz, conf, legato }]
 //         blocks as audio.listen gives them (input/audioin.js: { f, d: [Float32Array] }); a block that doesn't follow

@@ -50,6 +50,8 @@ const CHUNK = 4;   // seconds asked back from the audio thread at a time
 const r6 = (x) => Math.round(x * 1e6) / 1e6;
 const clampS = (s) => Math.max(SECONDS.min, Math.min(SECONDS.max, Math.round(+s) || SECONDS.def));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SLICE = 6;   // ms of reading attacks before select() lets the page run
+const yieldNow = () => (typeof globalThis.scheduler?.yield === 'function' ? globalThis.scheduler.yield() : sleep(0));
 
 export function createTape(app, input) {
   const engine = app.engine, store = app.store;
@@ -200,10 +202,14 @@ export function createTape(app, input) {
     const h = head, r = await read(Math.max(spanFrom(), h - Math.round(within * sr)), h);
     if (!r || !r.d.length) return null;
     const fd = createNoteFinder({ sr, pitch: false }), x = new Float32Array(4096), onsets = [];
+    // (a minute of attacks is about a tenth of a second's work: done in slices, so the page, and the band it
+    // schedules a tenth of a second ahead, never wait on it)
+    let t0 = performance.now();
     for (let i = 0; i < r.d.length; i += 4096) {
       const n = Math.min(4096, r.d.length - i);
       fromPcm16(r.d.subarray(i, i + n), x);
       for (const o of fd.push(n === 4096 ? x : x.subarray(0, n), r.from + i)) onsets.push(o.f);
+      if (performance.now() - t0 > SLICE) { await yieldNow(); if (!node) return null; t0 = performance.now(); }
     }
     return defaultSelection({ onsets, sr, head: r.to, at: beatAt, frameOf: (s, near) => frameAt(s, near), level });
   }
@@ -232,7 +238,10 @@ export function createTape(app, input) {
     const x0 = beatAt(r.from), x1 = beatAt(from), x2 = beatAt(to);
     let place = null;
     if (x0 && x1 && x2 && x0.gen === x1.gen && x1.gen === x2.gen) {
-      const exact = range.beats && Number.isFinite(range.beats.from) && Number.isFinite(range.beats.to) && to === want;
+      // (a Selection's beats, while its frames are still the ones they were found at: a handle moved, or the range
+      // spread with new frames, is placed by the grid at its frames instead)
+      const near = (s, f) => { const g = frameAt(s, f); return g != null && Math.abs(g - f) <= 1; };
+      const exact = range.beats && Number.isFinite(range.beats.from) && Number.isFinite(range.beats.to) && to === want && near(range.beats.from, from) && near(range.beats.to, want);
       const lineAt = exact ? range.beats.from : x1.s, beats = exact ? range.beats.to - range.beats.from : x2.g - x1.g, leadB = x1.g - x0.g;
       place = { start: r6(lineAt - leadB), from: r6(lineAt), to: r6(lineAt + beats), beats: r6(beats), length: r6(leadB + beats), bars: r6(beats / x1.bpb), bpm: r6(60 / x1.spb), bpb: x1.bpb, gen: x1.gen };
     }

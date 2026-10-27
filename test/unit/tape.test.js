@@ -506,6 +506,32 @@ describe('that was the one', () => {
     s.tape.stop();
   });
 
+  test('a minute of tape is read in slices: the page is never held up for long', async () => {
+    const s = await session({ riff: RIFF2, passes: 13 });
+    assert.ok(s.tape.span().seconds > 50);
+    let last = performance.now(),
+      worst = 0,
+      ticks = 0;
+    const iv = setInterval(() => {
+      const n = performance.now();
+      worst = Math.max(worst, n - last);
+      last = n;
+      ticks++;
+    }, 1);
+    const t0 = performance.now();
+    const sel = await s.tape.select();
+    const total = performance.now() - t0;
+    clearInterval(iv);
+    worst = Math.max(worst, performance.now() - last);
+    assert.equal(sel.why, 'repeat');
+    // (timers ran between the slices: the longest the page waited is a slice, not the whole read)
+    assert.ok(
+      ticks >= 4 && worst < total / 2,
+      `${ticks} timer ticks over ${total.toFixed(0)} ms, the longest wait ${worst.toFixed(1)} ms`,
+    );
+    s.tape.stop();
+  });
+
   test('nothing on tape: no selection', () => {
     assert.equal(defaultSelection({ onsets: [], sr: SR, head: 1000 }), null);
   });
@@ -536,6 +562,19 @@ describe('grab', () => {
     assert.deepEqual(Object.keys(g.asset).sort(), ['channels', 'duration', 'id', 'kind', 'name', 'sr']);
     assert.equal(g.asset.sr, SR);
     assert.ok(s.sim.engine.stored[g.asset.id], 'in engine.assets');
+    s.tape.stop();
+  });
+
+  test('a selection with a handle moved is placed where its frames are, not where the selection was', async () => {
+    const s = await session({ riff: RIFF2, passes: 2 });
+    const sel = await s.tape.select();
+    // the start handle dragged a beat later (half a second at 120), the selection's other fields spread along
+    const g = await s.tape.grab({ ...sel, from: sel.from + SR / 2 }, { put: false });
+    assert.ok(g.ok, g.error);
+    assert.ok(Math.abs(g.place.from - 1) < 1e-4 && Math.abs(g.place.beats - 15) < 1e-4, JSON.stringify(g.place));
+    // and as it was found, the selection's own beats
+    const g0 = await s.tape.grab(sel, { put: false });
+    assert.deepEqual([g0.place.from, g0.place.to], [0, 16]);
     s.tape.stop();
   });
 

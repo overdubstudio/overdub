@@ -82,12 +82,19 @@ export function mount(R) {
   const beatEl = h('span.grd-beat', '');
   const tapEl = h('button.grd-tap', { type: 'button', 'aria-label': 'Tap the tempo (T)', onclick: () => R.press('tap') }, 'TAP', h('kbd', 'T'));
   const plate = at(h('div.grd-plate', { role: 'group', 'aria-label': 'The drummer' },
-    h('button.grd-go', { type: 'button', 'aria-label': 'The drummer: start or stop (Space)', onclick: () => R.press('space') }, h('i'), 'DRUMMER', h('kbd', 'Space')),
+    // (Space's press, so it stops a take or the song as the key does; in a take's review, where Space hears the take,
+    // the drummer's own)
+    h('button.grd-go', { type: 'button', 'aria-label': 'The drummer: start or stop (Space)', onclick: () => R.press(R.gr.overlay === 'review' ? 'drummer' : 'space') }, h('i'), 'DRUMMER', h('kbd', 'Space')),
     h('div.grd-tempo', h('button', { type: 'button', 'aria-label': 'Slower (←)', onclick: () => R.press('tempo:-1') }, '←'), bpmEl, h('button', { type: 'button', 'aria-label': 'Faster (→)', onclick: () => R.press('tempo:+1') }, '→'), h('small', 'BPM'), barEl),
     h('div.grd-low', beatEl, tapEl)), RZ.x + 8, RZ.y + 8, 176, 84);
   const cardsEl = h('div.grd-cards');
   const ribbon = at(h('button.grd-ribbon', { type: 'button', 'aria-label': 'The drummer’s book (K)', onclick: () => R.press('cam:kit') }, 'The book', h('kbd', 'K')), RZ.x + RZ.w - 100, RZ.y - 28);
   layer.append(plate, cardsEl, ribbon);
+  // (a click with the mouse doesn't leave a button holding the focus: Enter after it is the room's, not the card's
+  // again; Tab still reaches every one)
+  const noFocus = (e) => { if (e.button === 0 && e.target?.closest?.('button')) { e.preventDefault(); document.activeElement?.blur?.(); } };
+  layer.addEventListener('mousedown', noFocus);
+  offs.push(() => layer.removeEventListener('mousedown', noFocus));
 
   /* ------------------------------------------------------------------------------------------- what's on the riser now */
   const riser = () => riserOf(song());
@@ -204,14 +211,14 @@ export function mount(R) {
     if (!r.ok) return r;
     R.run('jam');
     sync();
-    line('drummer.on', { name: nameOf(b), bpm: Math.round(+song().tempo || 120) });
+    line('drummer.on', { name: nameOf(b), bpm: Math.round(+song().tempo || 120), tape: !!R.app.input?.tape?.state?.open });
     R.emit('drummer:jam', { on: true, beat: b, kind: 'jam' });
     drawCards();
     return { ok: true };
   }
-  function stop() {
+  function stop({ drop = false } = {}) {
     const kind = jam.state.kind;
-    const was = jam.stop({ transport: kind === 'jam' });
+    const was = jam.stop({ transport: kind === 'jam', drop });
     if (R.run() === 'jam') R.run('idle');
     sync();
     if (was) R.emit('drummer:jam', { on: false, beat: null, kind });
@@ -242,7 +249,8 @@ export function mount(R) {
   let taps = [], tapFlash = 0;
   function tap() {
     const now = performance.now();
-    taps = [...taps.filter((t) => now - t < 2500), now].slice(-6);
+    // (a run of taps: each within 2 s of the one before, so the drummer's slowest tempo can be tapped too)
+    taps = [...(taps.length && now - taps[taps.length - 1] < 2000 ? taps : []), now].slice(-6);
     tapFlash = now;
     const bpm = tapTempo(taps);
     if (bpm == null) return { ok: true };
@@ -266,11 +274,13 @@ export function mount(R) {
 
   // the book's: the riser's cards set whole (beats.js pinOps), one step by you
   const pinsNow = () => { const p = song(); return (Array.isArray(roomOf(p)?.pins) && roomOf(p).pins.length ? roomOf(p).pins : riser().map((c) => ({ id: c.id, groove: c.groove, name: c.name }))).map((x) => ({ ...x })); };
-  function setPins(pins, { coalesce = null } = {}) {
+  // (beat: the room's beat set in the same step, when pinOps doesn't move it itself)
+  function setPins(pins, { coalesce = null, beat = null } = {}) {
     if (R.busy()) return fail('The riser changes once the take is in.');
     const before = roomOf(song())?.beat;
     const pl = pinOps(song(), { pins });
     if (!pl.ops.length) return { ok: true, same: true };
+    if (beat && beat !== before && pl.ops[0]?.type === 'room.set' && !('beat' in pl.ops[0].patch)) pl.ops[0].patch.beat = beat;
     const r = dispatch(pl.ops, { label: pl.label, reason: pl.reason, coalesce });
     if (!r.ok) return fail(r.error);
     // (the card that was playing went: the drummer plays what it was made from)
@@ -287,6 +297,9 @@ export function mount(R) {
     for (const b of names) named.push({ id: b.slice(4) });
     return nextPinId(named);
   };
+  // the card the room plays, when it's this one by its groove's name (the room starts on 'house/guide', the guide card's
+  // groove): an edit makes it the card's own name, so what you edit is what the drummer plays
+  const own = (id) => { const b = roomBeat(); return b !== `pin:${id}` && cardOf(b)?.id === id ? `pin:${id}` : null; };
   const act = {
     pick: (id) => pick(id),
     audition(gid) {
@@ -331,14 +344,14 @@ export function mount(R) {
       if (!g) return fail('There’s no card there.');
       const hits = stepped(g, row, k, { bpb: bpb() });
       const c = riser().find((x) => x.id === id);
-      const r = setPins(pinsNow().map((x) => (x.id === id ? { ...x, hits } : x)), { coalesce: `room:pins:${id}` });
+      const r = setPins(pinsNow().map((x) => (x.id === id ? { ...x, hits } : x)), { coalesce: `room:pins:${id}`, beat: own(id) });
       if (r.ok && !said(`edited:${id}`)) line('drummer.edited', { name: c?.name || 'The card' });
       // (the drummer playing it: the bar as it is now from the next one on)
       if (r.ok && jam.state.on && jam.state.beat === `pin:${id}`) jam.swap(`pin:${id}`);
       return r;
     },
     reset(id) {
-      const r = setPins(pinsNow().map((x) => { if (x.id !== id) return x; const { hits: _h, ...rest } = x; return rest; }));
+      const r = setPins(pinsNow().map((x) => { if (x.id !== id) return x; const { hits: _h, ...rest } = x; return rest; }), { beat: own(id) });
       if (r.ok && jam.state.on && jam.state.beat === `pin:${id}`) jam.swap(`pin:${id}`);
       return r;
     },
@@ -362,7 +375,8 @@ export function mount(R) {
     const e = engine(), playing = jam.state.on;
     let step = null;
     if (playing && e?.playing) { const into = e.beat - jam.state.start; if (into >= 0) step = Math.floor(((into % bpb()) / bpb()) * STEPS + EPS); }
-    return { riser: riser(), beat: jam.state.on ? jam.state.beat : roomBeat(), playing, audition: R.gr.jam.audition, step, countIn: R.gprefs.get().countIn, max: RISER_MAX };
+    const list = riser(), beat = jam.state.on ? jam.state.beat : roomBeat();
+    return { riser: list, beat, card: cardOf(beat, list)?.id ?? null, playing, audition: R.gr.jam.audition, step, countIn: R.gprefs.get().countIn, max: RISER_MAX };
   };
   const book = createBook({ el: panel, act, look });
   offs.push(R.on('cam', (d) => { if (d?.to === 'kit') book.render(true); }));
@@ -387,6 +401,20 @@ export function mount(R) {
     R.emit('drummer:jam', { on: true, beat: b, kind: 'take' });
     return r;
   }
+
+  /* ------------------------------------------------------------------------------------------- the jam's leftovers */
+  // The jam's bars are previews, but the autosave (main.js) writes the song on every change, previews too: a page
+  // closed or reloaded mid-jam keeps the bars that were in then. Nothing else names a clip 'Jam' by the house, and a
+  // leftover one would play under the next jam's own bars, so they're taken out when the room comes up and when a song
+  // loads, the same way they went in (a preview, never released: nothing in History, the song as it was before the jam)
+  function sweep() {
+    if (jam.state.on) return;
+    const ops = [];
+    for (const t of song().tracks || []) for (const c of t.clips || []) if (c.name === 'Jam' && c.by === 'overdub') ops.push({ type: 'clip.remove', track: t.id, clip: c.id });
+    if (ops.length) store.preview(ops, { by: 'overdub' });
+  }
+  sweep();
+  offs.push(store.on('change', (e) => { if (e?.kind !== 'load') return; if (jam.state.on) stop({ drop: true }); sweep(); }));
 
   /* ------------------------------------------------------------------------------------------- the frame */
   drawCards(true);

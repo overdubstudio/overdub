@@ -12,7 +12,8 @@
 //   createBook({ el, act, look }) -> { render(), frame(), dispose() }
 //     act: { pick(id), audition(groove id), pin(groove id), unpin(id), move(id, ±1), rename(id, name), step(id, row,
 //       k), reset(id), countIn() }
-//     look(): { riser: riserOf(p), beat, playing, audition, step (the step heard now, or null), countIn, max }
+//     look(): { riser: riserOf(p), beat, card (the riser's card that beat is, or null), playing, audition, step (the step
+//       heard now, or null), countIn, max }
 
 import { h } from '../../dom.js';
 import { library } from '../../../core/grooves.js';
@@ -27,6 +28,9 @@ export function createBook({ el, act, look }) {
   let style = shelves()[0]?.id || null;
   let drawn = '', nowAt = '';
   const book = h('div.grd-book');
+  // (a step clicked with the mouse doesn't keep the focus: Enter after it plays from the part, never turns the step
+  // again; the name fields take it as fields do)
+  book.addEventListener('mousedown', (e) => { if (e.button === 0 && e.target?.closest?.('button')) { e.preventDefault(); document.activeElement?.blur?.(); } });
   el.replaceChildren(book);
   el.setAttribute('aria-label', 'The drummer’s book');
 
@@ -37,7 +41,7 @@ export function createBook({ el, act, look }) {
       h('div.grd-count', 'Count-in before each take',
         h('button', { type: 'button', 'aria-pressed': String(!!v.countIn), dataset: { k: 'countin' }, onclick: () => act.countIn() }, v.countIn ? 'On' : 'Off'), h('kbd', '⇧K')));
     v.riser.forEach((c, i) => {
-      const playing = v.beat === `pin:${c.id}` && !v.audition;
+      const playing = v.card === c.id && !v.audition;
       const name = h('input.grd-short', { type: 'text', value: c.name, maxlength: 24, 'aria-label': `Card ${i + 1}’s name on the riser`, dataset: { k: `name:${c.id}` },
         onkeydown: (e) => {
           if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
@@ -78,7 +82,7 @@ export function createBook({ el, act, look }) {
       page.append(h('h3', part.label));
       for (const g of part.grooves) {
         const pinned = v.riser.find((c) => c.groove === g.id && !c.edited) || null;
-        const playing = v.playing && (v.audition === g.id || (!v.audition && pinned && v.beat === `pin:${pinned.id}`));
+        const playing = v.playing && (v.audition === g.id || (!v.audition && pinned && v.card === pinned.id));
         page.append(h('div.grd-gv', { dataset: { on: pinned ? '1' : '', playing: playing ? '1' : '', groove: g.id } },
           h('div.grd-gn', g.name, h('small', bars(g))),
           h('div.grd-acts',
@@ -93,7 +97,7 @@ export function createBook({ el, act, look }) {
   function render(force = false) {
     if (el.hidden && !force) return;
     const v = look();
-    const key = JSON.stringify([v.riser.map((c) => [c.id, c.name, c.groove, c.edited, c.edited ? JSON.stringify(c.g?.hits?.map((x) => [x.t, x.row, x.v])) : '']), v.beat, v.playing, v.audition, v.countIn, style]);
+    const key = JSON.stringify([v.riser.map((c) => [c.id, c.name, c.groove, c.edited, c.edited ? JSON.stringify(c.g?.hits?.map((x) => [x.t, x.row, x.v])) : '']), v.beat, v.card, v.playing, v.audition, v.countIn, style]);
     if (!force && key === drawn) return;
     // (a card's name being typed: drawn again once it's done)
     const a = document.activeElement;
@@ -113,7 +117,7 @@ export function createBook({ el, act, look }) {
       if (el.hidden) return;
       render();
       // the step heard now, under the card that's playing (drawn by hand: the pages aren't drawn again for it)
-      const v = look(), pin = v.playing && !v.audition && typeof v.beat === 'string' && v.beat.startsWith('pin:') ? v.beat.slice(4) : null;
+      const v = look(), pin = v.playing && !v.audition ? v.card : null;
       const want = pin != null && v.step != null ? `${pin}:${v.step}` : '';
       if (want === nowAt) return;
       nowAt = want;

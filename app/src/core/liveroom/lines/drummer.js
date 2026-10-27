@@ -5,7 +5,7 @@
 //
 //   LINES: { [id]: { text(vars) -> string, once? } }   (ids unique across every lines/*.js file)
 //
-//   drummer.on        { name, bpm }        the jam started: the beat and the tempo, and where the tape is
+//   drummer.on        { name, bpm, tape }  the jam started: the beat and the tempo, and (tape: it's rolling) where it is
 //   drummer.off       {}                   the jam stopped
 //   drummer.next      { name }             a card picked while the drummer plays: it comes in at the next bar
 //   drummer.pick      { name, playing }    a card picked while the drummer rests
@@ -24,7 +24,7 @@
 const plain = (s) => String(s ?? '').trim() || 'That beat';
 
 export const LINES = {
-  'drummer.on': { text: ({ name, bpm }) => `${plain(name)} at ${bpm}. The tape’s rolling: the machine, or G, for what you just played.` },
+  'drummer.on': { text: ({ name, bpm, tape }) => (tape ? `${plain(name)} at ${bpm}. The tape’s rolling: the machine, or G, for what you just played.` : `${plain(name)} at ${bpm}.`) },
   'drummer.off': { text: () => 'The drummer’s stopped. The tape kept it.' },
   'drummer.next': { text: ({ name }) => `${plain(name)} at the next bar.` },
   'drummer.pick': { text: ({ name, playing }) => (playing ? `${plain(name)} it is.` : `${plain(name)} it is. Space starts the drummer.`) },

@@ -251,6 +251,20 @@ export async function run(T, ctx) {
     T.ok(ed.hits === 9 && ed.n === n1h + 1 && /h1/.test(ed.cell || '') && ed.card === 'yours', `a click on the guide's grid adds a kick: one step (${ed.label}), drawn on the page and the card (${ed.card})`);
     await shot('book-edited');
     await E(() => window.overdub.store.undo());
+    // the room on the guide by its groove's name (as a new room is): the book has the guide's card playing, and an edit
+    // to it makes the card the room's beat in the same step, so what you edit is what the drummer plays
+    await E(() => window.overdub.store.dispatch([{ type: 'room.set', patch: { beat: 'house/guide' } }], { by: 'you', label: 'the guide' }));
+    await sleep(100);
+    const gb = await E(() => ({ row: document.querySelector('.grd-pin[data-pin="p1"]')?.dataset.playing, n: window.overdub.store.history.length }));
+    await page.click('.grd-pin[data-pin="p1"] .grd-grid button[data-k="step:p1:kick:6"]');
+    await sleep(100);
+    const ge = await E(() => { const o = window.overdub, p = o.store.get(); return { beat: p.room.beat, hits: p.room.pins.find((x) => x.id === 'p1').hits?.length ?? null, n: o.store.history.length, focus: !document.activeElement?.closest?.('button') ? true : `${document.activeElement.tagName} ${document.activeElement.dataset?.k || ''}`, lit: document.querySelector('.grd-card[aria-pressed="true"]')?.dataset.pin || null }; });
+    await E(() => window.overdub.store.undo());
+    const gu = await E(() => { const p = window.overdub.store.get(); return { beat: p.room.beat, hits: p.room.pins.find((x) => x.id === 'p1').hits ?? null }; });
+    await E(() => window.overdub.store.undo());
+    T.ok(gb.row === '1' && ge.beat === 'pin:p1' && ge.hits === 9 && ge.n === gb.n + 1 && ge.lit === 'p1' && gu.beat === 'house/guide' && gu.hits === null,
+      `the room on the guide by name: its card is the one playing in the book; an edit to it is the card's own beat in the same step (${ge.beat}, still lit: ${ge.lit}), undone exactly (${gu.beat})`);
+    T.ok(ge.focus === true, `a step clicked with the mouse leaves no button holding the focus (Enter after it is the room’s; ${ge.focus === true ? 'no button has it' : ge.focus})`);
     // a name typed stays in its field
     await page.click('.grd-pin[data-pin="p2"] input.grd-short', { clickCount: 3 });
     await page.keyboard.type('Chug kb');
@@ -330,6 +344,18 @@ export async function run(T, ctx) {
     await press(page, 'Space');
     await sleep(200);
     T.ok(fc.run === 'jam' && fc.beat === b4, `a beat card with focus: Space is still the drummer's (${fc.run}), the card not pressed (the beat stayed ${fc.beat})`);
+    // a page closed mid-jam saved the bars in then: the room takes them out when it comes up, nothing in History
+    const sweep = await E(async () => {
+      const o = window.overdub, p = o.store.get(), d = p.room.tracks.drums;
+      o.store.preview([{ type: 'clip.add', track: d, clip: { kind: 'notes', start: 64, length: 4, name: 'Jam', by: 'overdub', notes: [{ p: 36, t: 0, d: 0.25, v: 0.8, by: 'overdub' }] } }], { by: 'overdub' });
+      const was = o.store.get().tracks.find((t) => t.id === d).clips.filter((c) => c.name === 'Jam').length, n = o.store.history.length;
+      o.liveRoom.close();
+      await new Promise((r) => setTimeout(r, 200));
+      o.liveRoom.open({ screen: 'guitar' });
+      await new Promise((r) => setTimeout(r, 400));
+      return { was, now: o.store.get().tracks.find((t) => t.id === d).clips.filter((c) => c.name === 'Jam').length, same: o.store.history.length === n };
+    });
+    T.ok(sweep.was === 1 && sweep.now === 0 && sweep.same, `a jam's bar left in the song (a page closed mid-jam) is gone when the room comes up (${sweep.was} -> ${sweep.now}), History as it was`);
     T.ok(!errors.length, `no console or page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   } finally {
     await s.close();

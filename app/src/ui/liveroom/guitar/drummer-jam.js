@@ -10,7 +10,8 @@
 //     jam.start({ from, beat, kind, play }) -> { ok, error? }   the drummer from beat `from` (the jam's 1): kind 'jam'
 //         (the transport started here: play) or 'take' (the deck's count already started it: the drummer follows)
 //     jam.swap(beat) -> bar | null    the beat from the next bar on (null: it's in now, nothing was playing)
-//     jam.stop({ transport }) -> was  every bar released; transport: also stop the engine (the jam's own transport)
+//     jam.stop({ transport, drop }) -> was  every bar released; transport: also stop the engine (the jam's own
+//                                     transport); drop: forgotten, not released (a song loaded over them)
 //     jam.tick()                      from the frame: fill what's ahead, release what's behind, notice the transport
 //                                     stopping by itself (then everything's released)
 //     jam.state = { on, kind, start, beat, bar, held }   bar: the bar heard now (1 the jam's first; null off)
@@ -31,6 +32,8 @@ export function createJam({ store, engine, bpb = () => 4 }) {
   const held = new Map();    // bar index -> { release }
   let idle = 0;              // frames the transport's been stopped while the drummer's on
   let seen = false;          // the transport has played since the drummer started (a take's count may wait on the kit)
+  let starting = 0;          // the jam's own play, still waking the engine (its generation; 0: not waiting)
+  let gen = 0;
 
   const beatAt = (k) => { let b = state.beat; for (const s of swaps) if (s.k <= k) b = s.beat; return b; };
   const B = () => bpb() || 4;
@@ -70,7 +73,13 @@ export function createJam({ store, engine, bpb = () => 4 }) {
       seen = false;
       for (let k = 0; k <= AHEAD; k++) fill(k);
       if (play) {
-        try { e.play(state.start); } catch (err) { jam.stop(); return { ok: false, error: String(err?.message || err) }; }
+        // (the engine's play is async: the audio context waking, the worklets coming in. Until it's playing, the
+        // drummer waits for it, however long that takes; a stop before then cancels it, the engine's own rule)
+        const my = (starting = ++gen);
+        const done = () => { if (starting === my) starting = 0; };
+        try {
+          Promise.resolve(e.play(state.start)).then(done, (err) => { done(); console.error('drummer: the transport didn’t start', err); if (gen === my) jam.stop(); });
+        } catch (err) { done(); jam.stop(); return { ok: false, error: String(err?.message || err) }; }
       }
       state.held = held.size;
       return { ok: true };
@@ -88,9 +97,13 @@ export function createJam({ store, engine, bpb = () => 4 }) {
       jam.tick();
       return k + 1;
     },
-    stop({ transport = false } = {}) {
+    stop({ transport = false, drop = false } = {}) {
       const was = state.on;
-      releaseAll();
+      starting = 0;
+      gen++;
+      // (drop: another song came in, and the bars went with the one they were in: nothing to take back out)
+      if (drop) held.clear();
+      else releaseAll();
       if (was && transport) { try { eng()?.stop?.(); } catch { /* fine */ } }
       Object.assign(state, { on: false, kind: null, bar: null, held: 0 });
       swaps = [];
@@ -101,7 +114,7 @@ export function createJam({ store, engine, bpb = () => 4 }) {
       const e = eng();
       // (the transport stopped by itself, or by someone else: the drummer lets go; a take's drummer waits for the deck's
       // count to start it, however long the kit takes to come in)
-      if (!e?.playing) { if ((seen || state.kind === 'jam') && ++idle > 20) jam.stop(); return; }
+      if (!e?.playing) { if (!starting && (seen || state.kind === 'jam') && ++idle > 20) jam.stop(); return; }
       idle = 0;
       seen = true;
       const k = barNow() ?? 0;

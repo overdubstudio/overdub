@@ -135,17 +135,20 @@ export async function rename(id, name) {
 
 export async function remove(id) {
   if (typeof id !== 'string' || !id || id.startsWith('house.')) return null;
-  if (mem.has(id)) { const r = mem.get(id); mem.delete(id); return copy(r); }
+  // (a stack of yours whose change the disk wouldn't take is in memory and still on disk as it was: both go, or the
+  // old one would come back on the rack)
+  const m = mem.get(id) || null;
+  mem.delete(id);
   const d = await open();
-  if (!d) return null;
+  if (!d) return copy(m);
   try {
     const tx = d.transaction(STORE, 'readwrite');
     const ok = done(tx);
     const r = await req(tx.objectStore(STORE).get(id));
     if (r) tx.objectStore(STORE).delete(id);
     await ok;
-    return r ? copy(r) : null;
-  } catch { return null; }
+    return copy(m || r || null);
+  } catch { return copy(m); }
 }
 
 export async function restore(stack) {

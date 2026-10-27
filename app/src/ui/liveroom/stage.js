@@ -34,12 +34,12 @@ import { menuItems, openMenu } from './menu.js';
 import { liveView, runPlan, clock, tuningWords, low, cap } from './view.js';
 import { leanLine } from './lamps.js';
 import { offered, stopBeat } from '../../core/liveroom/session.js';
-import { takeOps, planLayout, planTwice, planMove, planShorter, planRemove } from '../../core/liveroom/plans.js';
+import { takeOps, planLayout, planTwice, planMove, planShorter, planRemove, planRig, rigNow } from '../../core/liveroom/plans.js';
 import { guideOps, planLearn, planFeel, planBassYours, planFinish } from '../../core/liveroom/band.js';
 import { planDouble, planUseAsRight, planPans } from '../../core/liveroom/double.js';
 import { measurePair } from '../../core/liveroom/tight.js';
 import { readInWorker } from '../../core/liveroom/read.js';
-import { setupOf, feelsOf, placeOf, rigLabel } from '../../core/liveroom/places.js';
+import { setupOf, feelsOf, placeOf } from '../../core/liveroom/places.js';
 import { pcName } from '../../core/music.js';
 import { createStore } from '../../core/store.js';
 import { renderProject } from '../../engine/render.js';
@@ -137,7 +137,10 @@ screens.add({
       return out;
     };
     const mark = (id) => { saidMemo = null; try { prefs.mark(song(), id); } catch { /* storage: fine */ } };
+    // the amp's setting as the readout names it (plans.js rigNow), read again when the song changes
+    let rigShown = null;
     offs.push(store.on('change', (e) => {
+      rigShown = null;
       if (e?.kind === 'load') saidMemo = null;
       // (⌘Z or ⇧⌘Z before a part's wide playback started: the part it was for may be gone, so it doesn't start)
       if (e?.kind === 'undo' || e?.kind === 'redo') S.widePending = null;
@@ -715,12 +718,18 @@ screens.add({
       S.taps = [];
       return tempo(60000 / m - (view().tempo || 120));
     }
+    // [ and ]: the next setting's whole chain on the room's guitars, one step by you (plans.js planRig, core/stacks.js);
+    // from a chain changed since (a Jam room tone), the setting after the one the room was on
     function rig(dir) {
       const v = view(), rigs = placeOf(v.place).rigs || [];
-      if (!rigs.length || v.place === 'kitchen') return { ok: false };
+      if (!rigs.length || !v.place || v.place === 'kitchen') return { ok: false };
+      if (busy()) return { ok: false, error: 'The amp changes once the take is in.' };
       const i = Math.max(0, rigs.indexOf(v.rig));
       const r2 = rigs[(i + dir + rigs.length) % rigs.length];
-      const r = dispatch({ type: 'room.set', patch: { rig: r2 } }, { by: 'you', label: rigLabel(r2), coalesce: 'room:rig' });
+      const pl = planRig(song(), { rig: r2 });
+      if (pl.error) return { ok: false, error: pl.error };
+      if (!pl.ops.length) return { ok: true };
+      const r = dispatch(pl.ops, { by: 'you', label: pl.label, reason: pl.reason });
       return r.ok ? { ok: true } : r;
     }
     function selectCard(which) {
@@ -1003,7 +1012,12 @@ screens.add({
       readKey.textContent = lv.key?.root ? ` · ${lv.key.root} ${lv.key.scale}` : '';
       counter.textContent = (L.run === 'take' || L.run === 'count') && lv.bar ? ` · BAR ${Math.max(1, lv.bar - Math.floor((S.pass?.from || 0) / (lv.bpb || 4)))}` : '';
       rigRow.hidden = !lv.place || lv.place === 'kitchen';
-      rigName.textContent = lv.rig ? rigLabel(lv.rig) : '';
+      if (rigShown == null) { try { rigShown = rigNow(song()).label; } catch (e2) { rigShown = ''; console.error('liveroom: the rig', e2); } }
+      if (rigName.textContent !== rigShown) rigName.textContent = rigShown;
+      // what the input plays through: the guitar the next take goes on (Guitar R for the other side), whatever is armed
+      // or selected in the control room (input/audioin.js monitorVia)
+      const via = (L.side === 'R' ? lv.roles?.guitarR : null) || lv.roles?.guitarL || lv.roles?.guitar || null;
+      if (via !== S.via) { S.via = via; try { app.input?.audio?.monitorVia?.(via); } catch (e2) { console.error('liveroom: the monitor', e2); } }
       tVal.textContent = String(Math.round(lv.tempo || 0));
       steppers.hidden = !!lv.taken || L.run !== 'idle';
       // the offered move, and what's beside it
@@ -1061,6 +1075,8 @@ screens.add({
         finishBlur({ quiet: true });
         if (L.run === 'play') L.run = 'idle';
         current = null;
+        // (the control room monitors as it always did: the armed track, else the selected one)
+        if (S.via) { S.via = null; try { app.input?.audio?.monitorVia?.(null); } catch { /* fine */ } }
         for (const k of K) k();
         for (const o of offs) { try { o(); } catch { /* fine */ } }
         document.removeEventListener('visibilitychange', onVis);

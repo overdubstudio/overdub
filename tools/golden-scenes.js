@@ -11,6 +11,8 @@
 //   sidechain   a bass and a pad ducking under kicks through Dim Switch's key (one key a muted ghost kick), both renderers
 //   master-clean  the same mix through Red Line at -1 dBTP on the master and a clean ceiling (master.clip 'clean')
 //   flip:tempo-map  a drum part on a song whose tempo map follows a recording drifting 92 -> 96 BPM (our own signal)
+//   takes:overlap  overlapping takes on one guitar track (docs/ARCHITECTURE.md "Overlapping takes"): the verse's take
+//               rings 2 beats past its part (clip.tail) under the chorus's take, both sounding; a muted take under it
 //   demo:<id>   a song from the demo shelf (only those listed in SHELF_SCENES), whole, as demoById builds it (its ids
 //               are stable already), its timestamps pinned. Each scene is pinned on purpose, not the whole shelf.
 //   inst:core.wavetable:akwf   Light Table on two of its AKWF tables (the bank in app/src/devices/builtin/akwf.js),
@@ -185,6 +187,31 @@ export function tempoMapScene() {
   };
 }
 
+// takes:overlap: two parts on one audio track, Verse [0, 8) and Chorus [8, 16), each a take folder of the DI strum. The
+// verse's playing take (Take 2) runs 2 beats past its part as its tail, ringing under the chorus's take (its own ring a
+// beat past the chorus); the verse's Take 1, muted, rings nowhere. Both renderers play what the format says: each
+// clip's whole window, summed on the track
+function takesOverlapScene() {
+  if (!STRUM) STRUM = diStrum(8);
+  const take = (id, start, length, offset, take, name, extra = {}) => ({ id, kind: 'audio', start, length, asset: 'a_distrm', offset, gain: 0, name, take, by: 'you', ...extra });
+  return {
+    name: 'takes:overlap', browser: true, opts: { from: 0, to: 16, tail: 2 },
+    assets: { a_distrm: { sr: 48000, channels: [STRUM] } },
+    project: project({
+      title: 'takes: overlap', tempo: 120,
+      assets: { a_distrm: { kind: 'audio', name: 'DI strum', sr: 48000, channels: 1, duration: 8 } },
+      sections: [{ id: 's_gverse', name: 'Verse', start: 0, length: 8 }, { id: 's_gchorus', name: 'Chorus', start: 8, length: 8 }],
+      tracks: [{ id: 't_golden', name: 'Left Rhythm', kind: 'audio', instrument: null, inserts: [],
+        clips: [
+          take('c_verse1', 0, 10, 1, 'tk_gverse', 'Take 1', { tail: 2, mute: true }),
+          take('c_verse2', 0, 10, 0, 'tk_gverse', 'Take 2', { tail: 2 }),
+          take('c_chorus', 8, 9, 3, 'tk_gchorus', 'Take 1', { tail: 1 }),
+        ],
+        gain: -3, pan: 0, mute: false, solo: false, arm: false, by: 'you' }],
+    }),
+  };
+}
+
 // the shelf songs pinned as scenes (kernel devices only; tools/demos-test.js renders them in the browser)
 const SHELF_SCENES = ['sodium', 'red-eye', 'late-checkout', 'wake-up-call', 'lobby-bar', 'room-service', 'turndown', 'ice-machine', 'vacancy', 'service-lift', 'boiler-room'];
 
@@ -297,6 +324,7 @@ export function scenes() {
   out.push(sidechainScene());
   out.push(masterCleanScene());
   out.push(tempoMapScene());
+  out.push(takesOverlapScene());
   for (const [s, here] of shelfScenes()) if (here) out.push(s);
   for (const [s, here] of liveScenes()) if (here) out.push(s);
   return out;

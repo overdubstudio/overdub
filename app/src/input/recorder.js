@@ -44,7 +44,7 @@
 //                                         you played most often stays, input/rounds.js foldRounds), or stacks a new take
 //                                         (everything else, audio always); a choice sticks per track
 //   recorder.countIn / setCountIn(bars)   0, 1 (default) or 2 bars (localStorage overdub:record)
-//   recorder.record({ countIn?, audio?, quantize?, join?, punch?, lead?, quiet? }) -> Promise<take | null>   stopped: the count-in from the playhead;
+//   recorder.record({ countIn?, audio?, quantize?, join?, punch?, lead?, quiet?, tailFrom? }) -> Promise<take | null>   stopped: the count-in from the playhead;
 //                                         playing: recording starts at a bar line with a whole bar to come in on (a loop
 //                                         of 2 bars or less: its top; quantize: false, now), the wait counted ('count',
 //                                         live().counting); before the loop, at its start. join: a transaction (by you)
@@ -56,7 +56,7 @@
 //                                         before the take's first beat kept at the head of its audio clip (the room's
 //                                         30 ms seam, docs/research/LIVE-ROOM-MODE.md §7.2; never before beat 0).
 //                                         quiet: no toasts and no offers (the room says its own lines)
-//   recorder.stop({ keepPlaying?, why?, at?, tail?, keep? }) -> Promise<commit | null>  the take into the song (R punches
+//   recorder.stop({ keepPlaying?, why?, at?, tail?, keep?, tailFrom? }) -> Promise<commit | null>  the take into the song (R punches
 //                                         out and keeps playing; Space stops; the killswitch, a seek or a hidden tab
 //                                         commit too; a seek ends the take where it was, not where the playhead jumped:
 //                                         at). at: the grid it ends at (in a take with no loop, the song beat). An `at`
@@ -70,8 +70,13 @@
 //                                         An audio take's commit describes its recording (asset.add: name, rate,
 //                                         channels, length) in the same step, and its result has txn (the step's id:
 //                                         the room joins its part to it) and takes: [{ track, clip, asset, start,
-//                                         length }] (each audio take that plays). With the input split (audioin open's
+//                                         length, tail }] (each audio take that plays). With the input split (audioin open's
 //                                         split), one take per channel, each onto its track, in that one step.
+//                                         tailFrom (a song beat; record's, or stop's to change it, null for none): the
+//                                         take is for a part that ends there, and what it recorded past there is its
+//                                         tail (core/project.js clipTail): its clip runs on with `tail` set, its take
+//                                         folder ends at tailFrom, and the tail rings under the next part's take on the
+//                                         track, never muted by it. The take doesn't stop at tailFrom; the stop does.
 //   recorder.toggle()                     R: idle -> record, count -> cancel, rec -> punch out
 //   recorder.cancel()                     during the count-in: nothing is recorded (a hum R started stops; one you started
 //                                         with H is yours again)
@@ -157,6 +162,10 @@ export function barsOf(bpb, a, b) {
 }
 
 /* ------------------------------------------------------------------------------------------------ the commit plan */
+
+// An audio pass's tail: beats at the end of its recording past the part it was recorded for (record's tailFrom), 0 for
+// none. Never all of it: at least the shortest clip stays the take's own.
+const tailOf = (au) => (au && Number.isFinite(au.tail) && au.tail > EPS && au.tail <= au.length - MIN_CLIP + EPS ? au.tail : 0);
 
 // The beats a pass recorded (rec: { span, stopPass, stopBeat }, the take's pass map and where it stopped; ps: { n,
 // notes (song beats) }): from where it began (the bar the take began in, on the first pass; the loop's start after a
@@ -333,22 +342,27 @@ export function planTake(p, take) {
         // audio can't be filled out with what played before, so the folder is the beats the take that plays covers:
         // the other passes keep their part of those beats, and what is past them (a pass begun before a take that
         // started inside the loop) stays in capture, never muting bars nothing plays over
-        const act = passes[ai].audio, A = act.start, B = act.start + act.length, spb = 60 / (+p.tempo || 120), mapped = hasTempoMap(p);
+        // (a take's tail, the ring past its part: audio.tail beats at the end of the pass that plays, outside the folder,
+        // ringing on under what comes next: core/project.js clipTail)
+        const act = passes[ai].audio, tl = tailOf(act), A = act.start, B = act.start + act.length - tl, spb = 60 / (+p.tempo || 120), mapped = hasTempoMap(p);
         const ai0 = ai;
         ps2 = [];
         passes.forEach((ps, i) => {
           if (i === ai0) { ai = ps2.length; ps2.push(ps); return; }
           const s0 = Math.max(A, ps.audio.start), e0 = Math.min(B, ps.audio.start + ps.audio.length);
           if (e0 - s0 < MIN_CLIP - EPS) return;
-          ps2.push(Math.abs(s0 - ps.audio.start) < EPS && Math.abs(e0 - s0 - ps.audio.length) < EPS ? ps : { ...ps, audio: { ...ps.audio, start: r4(s0), length: r4(e0 - s0), offset: r4((+ps.audio.offset || 0) + (mapped ? beatSecs(p, s0 - ps.audio.start, ps.audio.start) : (s0 - ps.audio.start) * spb)) } });
+          // (a take kept under the one that plays is muted: no tail of its own)
+          const au = { ...ps.audio };
+          delete au.tail;
+          ps2.push(Math.abs(s0 - au.start) < EPS && Math.abs(e0 - s0 - au.length) < EPS ? { ...ps, audio: au } : { ...ps, audio: { ...au, start: r4(s0), length: r4(e0 - s0), offset: r4((+au.offset || 0) + (mapped ? beatSecs(p, s0 - au.start, au.start) : (s0 - au.start) * spb)) } });
         });
       }
       // a notes pass: the folder is the bars it recorded, the pass the beats it really did (from, to)
-      const spans = ps2.map((ps) => (kind === 'audio' ? [ps.audio.start, ps.audio.start + ps.audio.length] : [ps.clip.start, ps.clip.end]));
+      const spans = ps2.map((ps) => (kind === 'audio' ? [ps.audio.start, ps.audio.start + ps.audio.length - tailOf(ps.audio)] : [ps.clip.start, ps.clip.end]));
       const a = Math.min(...spans.map((x) => x[0])), b = Math.max(...spans.map((x) => x[1]));
       const tf = planTakeFolder(p, {
         track: tid, kind, start: a, end: b, take: take.id, drums: !!part.drums, active: ai, refPrefix: ref() + '_',
-        passes: ps2.map((ps, i) => ({ start: kind === 'audio' ? spans[i][0] : ps.clip.from ?? spans[i][0], end: kind === 'audio' ? spans[i][1] : ps.clip.to ?? spans[i][1], notes: ps.notes, audio: ps.audio })),
+        passes: ps2.map((ps, i) => ({ start: kind === 'audio' ? spans[i][0] : ps.clip.from ?? spans[i][0], end: kind === 'audio' ? spans[i][1] : ps.clip.to ?? spans[i][1], notes: ps.notes, audio: ps.audio, ...(kind === 'audio' && tailOf(ps.audio) ? { tail: tailOf(ps.audio) } : {}) })),
       });
       inRecordedOrder(tf, ps2.length);
       ops.push(...tf.ops);
@@ -431,6 +445,18 @@ function foldPasses(passes, loop) {
 }
 const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 function span(info, a, b) { info.from = Math.min(info.from, a); info.to = Math.max(info.to, b); }
+// The audio passes of a take recorded for a part that ends at song beat `from` (record's tailFrom): what each recorded
+// past it is its tail (audio.tail), the ring that plays on under the next part and is never muted by its take. A pass
+// that ends by `from`, or starts too near it, has none. -> the passes (new objects where one has a tail)
+export function withTails(passes, from) {
+  if (!(from != null && Number.isFinite(from))) return passes;
+  return passes.map((ps) => {
+    const au = ps.audio;
+    if (!au || !(au.start < from - MIN_CLIP + EPS) || !(au.start + au.length > from + 1 / 64)) return ps;
+    return { ...ps, audio: { ...au, tail: r4(au.start + au.length - from) } };
+  });
+}
+
 // A take folder's passes are numbered in the order they were recorded: the first time round is the lowest number
 // whichever of them plays (planTakeFolder names the one that plays last, so a complete first pass stopped in the
 // middle of the second read "Take 2" over a "Take 1" recorded after it). tf: planTakeFolder's plan for n passes, in
@@ -1088,7 +1114,7 @@ export function createRecorder(app, input, opts = {}) {
     const h = store.history, lastTx = h[h.length - 1], t = store.track(m.track);
     if (lastTx && lastTx.id === m.txn && t && !t.clips.length) { try { store.undo({ id: m.txn, redo: false }); } catch { /* ok */ } }
   }
-  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null, punch = null, lead = 0, quiet = false } = {}) {
+  async function record({ countIn = rec.countIn, audio = null, quantize = true, hum = humArmed(), free = null, join = null, punch = null, lead = 0, quiet = false, tailFrom = null } = {}) {
     if (R) return R;
     // (a new take: the pass Esc kept out is no longer the one ⇧R puts in, "right after")
     thrown = null;
@@ -1172,6 +1198,7 @@ export function createRecorder(app, input, opts = {}) {
       startBeat: b0, tempo: p.tempo, meter: p.meter.join('/'), loopKey: JSON.stringify(p.loop || null),
       offset: playing ? 0 : null, started: playing, wasPlaying: playing, newSpan: () => newSpan(r), keeps, humOn, made, capture,
       lead: Math.max(0, Math.min(0.25, +lead || 0)), quiet: !!quiet, punch: pf != null ? { from: pf, to: pt } : null, sched: null, waiters: [],
+      tailFrom: tailFrom != null && fin(+tailFrom) && +tailFrom > start + EPS ? +tailFrom : null,
     };
     // (a punch with an end: the take ends itself there, the transport playing on)
     if (pt != null) r.sched = { at: pt, tail: 0, end: pt, keepPlaying: true, why: 'punch', keep: 'song' };
@@ -1325,9 +1352,11 @@ export function createRecorder(app, input, opts = {}) {
 
   // at: the grid it stopped at, when the transport has already moved on (a seek or a play() jumps the grid to the new
   // place before its event: the take ends where it was, not where the playhead went)
-  async function stop({ keepPlaying = false, why = 'stop', at = null, tail = 0, keep = 'song', end = null, ring = 0, past = false } = {}) {
+  async function stop({ keepPlaying = false, why = 'stop', at = null, tail = 0, keep = 'song', end = null, ring = 0, past = false, tailFrom } = {}) {
     const r = R;
     if (!r) return null;
+    // (where the take's part ends, given now: what it recorded past there is its tail; null: none)
+    if (tailFrom !== undefined) r.tailFrom = tailFrom != null && fin(+tailFrom) && +tailFrom > r.span.b0 + EPS ? +tailFrom : null;
     if (r.closing) return r.closing;
     if (r.free) { r.closing = finishFree(r, why); return r.closing; }
     if (r.state === 'count' && !(fin(at) && at > r.span.g0 + EPS)) { cancel({ stopTransport: !keepPlaying }); return null; }
@@ -1437,7 +1466,7 @@ export function createRecorder(app, input, opts = {}) {
       const t0 = store.track(r.audioTrack) || targetFor('audio');
       for (const tk of [{ track: t0 ? t0.id : null, asset: audioRes.asset, seconds: audioRes.seconds, passes: audioRes.passes }, ...(audioRes.more || [])]) {
         const t = tk.track && store.track(tk.track);
-        if (t) { take.parts.push({ track: t.id, kind: 'audio', mode: 'take', passes: tk.passes, active }); audioTakes.push({ ...tk, track: t.id }); }
+        if (t) { take.parts.push({ track: t.id, kind: 'audio', mode: 'take', passes: withTails(tk.passes, r.tailFrom), active }); audioTakes.push({ ...tk, track: t.id }); }
         if (r.reuse) { try { input.capture.update(r.reuse[tk.asset], { rec: true, thrown: undefined }); } catch { /* ok */ } continue; }
         try { input.capture.add({ src: 'rec', kind: 'audio', audio: tk.asset, seconds: tk.seconds, beat: tk.passes[0]?.audio.start ?? r.span.b0, track: t ? t.id : null, tempo: P().tempo, notes: [], take: r.id, pass: 0, rec: true }); } catch { /* ok */ }
       }
@@ -1501,7 +1530,7 @@ export function createRecorder(app, input, opts = {}) {
     if (audioTakes.length) {
       res.takes = audioTakes.map((tk) => {
         const t = store.track(tk.track), c = t ? t.clips.filter((x) => x.kind === 'audio' && x.asset === tk.asset && !x.mute).pop() || t.clips.filter((x) => x.asset === tk.asset).pop() : null;
-        return c ? { track: t.id, clip: c.id, asset: tk.asset, start: c.start, length: c.length, offset: c.offset || 0, seconds: tk.seconds } : null;
+        return c ? { track: t.id, clip: c.id, asset: tk.asset, start: c.start, length: c.length, offset: c.offset || 0, seconds: tk.seconds, tail: c.tail || 0 } : null;
       }).filter(Boolean);
     }
     // the notes a source moved on their way in (a hum snapped into the key), found in the song now, and the ops that put

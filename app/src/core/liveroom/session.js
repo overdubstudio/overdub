@@ -41,6 +41,7 @@ import { roomOf } from './model.js';
 import { setupOf } from './places.js';
 import { offeredKitchen } from './kitchen.js';
 import { beatsPerBar } from '../music.js';
+import { clipTail } from '../project.js';
 
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 const OVER = 0.25;
@@ -100,7 +101,8 @@ export function readRoom(p) {
   }
   const bpb = beatsPerBar(p?.meter || [4, 4]);
   const parts = isObj(room.parts) ? room.parts : {};
-  const overlap = (c, s) => Math.min(c.start + c.length, s.start + s.length) - Math.max(c.start, s.start);
+  // (a take by its body: its tail, the ring past its part, isn't in the next part: core/project.js clipTail)
+  const overlap = (c, s) => Math.min(c.start + c.length - clipTail(c), s.start + s.length) - Math.max(c.start, s.start);
   const within = (c, s) => overlap(c, s) > OVER;
   // (a take of a part starts in it, its 30 ms lead aside, or covers most of it: the ring of the part before, a bar or
   // two into it, isn't one, nor the piece of it the recorder's take folder keeps muted under a new take, a muted clip

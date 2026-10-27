@@ -71,6 +71,7 @@ import { DEVICE_CATS } from '../devices/registry.js';
 import * as rackKit from './rack.js';
 import { kitHashes, kitState, kitLine } from './kitload.js';
 import { newPartFor } from '../core/sounds.js';
+import { clipTail } from '../core/project.js';
 import {
   LANE_H, LANE_H_PHONE, laneState, trackLanes, shownLanes, laneParams, laneInfo, staticValue, fmtValue, drawLaneRow, laneHead,
   laneEditor, laneKeysOn, SHAPES, laneHeight, setLaneHeight, heightsSig, masterTrack, tipHide, laneSigners,
@@ -1918,7 +1919,7 @@ function mountArranger(el, app) {
       // dropped clip takes those beats, as in Live, so nothing under it plays along
       let trim = null;
       try {
-        trim = planDropTrim(P(), d.items.map((it) => { const s = Math.max(0, it.start + d.dBeat); return { track: tracks()[it.row + d.dRow].id, start: s, end: s + it.c.length }; }), { keep: d.copy ? [] : d.items.map((it) => it.c.id) });
+        trim = planDropTrim(P(), d.items.map((it) => { const s = Math.max(0, it.start + d.dBeat); return { track: tracks()[it.row + d.dRow].id, start: s, end: s + it.c.length - clipTail(it.c) }; }), { keep: d.copy ? [] : d.items.map((it) => it.c.id) });
       } catch (err) { console.warn('drop trim', err); trim = null; }
       if (trim?.ops.length) ops = ops.concat(trim.ops);
       // the clip a tempo map follows, moved by whole bars: the grid goes with it, in the same undo step (spec 0014 R8);

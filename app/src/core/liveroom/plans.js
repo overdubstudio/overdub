@@ -62,7 +62,7 @@ import { kitchenOps } from './kitchen-plans.js';
 import { planFeel } from './band.js';
 import { readRoom } from './session.js';
 import { beatsPerBar, beatsBefore, beatSecs } from '../music.js';
-import { newId } from '../project.js';
+import { newId, clipTail } from '../project.js';
 
 const EPS = 1e-6;
 const MIN_CLIP = 0.25;
@@ -203,15 +203,17 @@ function seamOps(p) {
     const t = (p.tracks || []).find((x) => x.id === v.roles[role]);
     if (!t || seen.has(t.id)) continue;
     seen.add(t.id);
-    const work = t.clips.filter((c) => c.kind === 'audio').map((c) => ({ c, start: c.start, length: c.length, offset: +c.offset || 0, gone: false }));
+    // (a take's tail, its ring past its part, isn't the part's: spans and splices go by the body, and a tail is left to
+    // ring under the next part: core/project.js clipTail)
+    const work = t.clips.filter((c) => c.kind === 'audio').map((c) => ({ c, start: c.start, length: c.length, tail: clipTail(c), offset: +c.offset || 0, gone: false }));
     const live = () => work.filter((w) => !w.gone);
     const spansOf = () => {
       const by = new Map();
       for (const w of live()) {
         const k = w.c.take || w.c.id;
-        if (!by.has(k)) by.set(k, { start: w.start, end: w.start + w.length, clips: [] });
+        if (!by.has(k)) by.set(k, { start: w.start, end: w.start + w.length - w.tail, clips: [] });
         const s = by.get(k);
-        s.start = Math.min(s.start, w.start); s.end = Math.max(s.end, w.start + w.length); s.clips.push(w);
+        s.start = Math.min(s.start, w.start); s.end = Math.max(s.end, w.start + w.length - w.tail); s.clips.push(w);
       }
       return [...by.values()].sort((a, b) => a.start - b.start);
     };
@@ -228,9 +230,9 @@ function seamOps(p) {
       // (a take inside another, a punch, is the comp's: left alone)
       if (b.start < a.start + MIN_CLIP || b.end < a.end - EPS) continue;
       for (const w of a.clips) {
-        if (!(w.start + w.length > b.start + EPS)) continue;
+        if (!(w.start + w.length - w.tail > b.start + EPS)) continue;
         const len = r4(b.start - w.start);
-        if (len >= MIN_CLIP) w.length = len;
+        if (len >= MIN_CLIP) { w.length = len; w.tail = 0; }
       }
     }
     // 2. the End's ring
@@ -270,6 +272,7 @@ function seamOps(p) {
       if (Math.abs(w.start - w.c.start) > EPS) patch.start = w.start;
       if (Math.abs(w.offset - (+w.c.offset || 0)) > 1e-6) patch.offset = w.offset;
       if (Math.abs(w.length - w.c.length) > EPS) patch.length = w.length;
+      if (Math.abs(w.tail - clipTail(w.c)) > EPS) patch.tail = w.tail || null;
       if (Object.keys(patch).length) ops.push({ type: 'clip.set', track: t.id, clip: w.c.id, patch });
     }
   }
@@ -347,7 +350,8 @@ export function takeOps(take, { part = null } = {}) {
     if (start < head - EPS) { off = r4(off + beatSecs(p, head - start, start)); start = head; }
     if (Math.abs(start - c.start) > EPS) patch.start = r4(start);
     if (Math.abs(off - (+c.offset || 0)) > 1e-6) patch.offset = off;
-    const end = Math.min(c.start + c.length - drop, tail);
+    // (a take with a tail keeps it: its ring plays on under the next part, never cut at the seam)
+    const end = clipTail(c) ? c.start + c.length - drop : Math.min(c.start + c.length - drop, tail);
     if (Math.abs(end - start - c.length) > EPS && end - start >= MIN_CLIP) patch.length = r4(end - start);
     if (Object.keys(patch).length) { ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch }); touched.add(c.id); }
     starts.push(start);
@@ -358,9 +362,11 @@ export function takeOps(take, { part = null } = {}) {
     const folder = new Set(mine.map((c) => c.take).filter(Boolean));
     for (const c of t.clips) {
       if (ids.has(c.id) || (c.take && folder.has(c.take)) || c.kind !== 'audio') continue;
+      // (a take whose body ends by here rings on over it: its tail is meant to)
+      if (clipTail(c) && c.start + c.length - clipTail(c) <= start + EPS) continue;
       if (c.start < start - EPS && c.start + c.length > start + EPS && c.start + c.length <= to + endBars(roomOf(p)?.place) * bpb + EPS) {
         const len = r4(start - c.start);
-        if (len >= MIN_CLIP) ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch: { length: len } });
+        if (len >= MIN_CLIP) ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch: { length: len, ...(clipTail(c) ? { tail: null } : {}) } });
       }
     }
   }
@@ -371,9 +377,10 @@ export function takeOps(take, { part = null } = {}) {
     const takeTracks = (p.tracks || []).filter((x) => x.kind === 'audio' && x.id !== take.track && side.includes(x.id));
     for (const x of takeTracks) {
       for (const c of x.clips) {
+        if (clipTail(c) && c.start + c.length - clipTail(c) <= head + EPS) continue;
         if (c.start < head - EPS && c.start + c.length > head + EPS && c.start + c.length <= to + endBars(roomOf(p)?.place) * bpb + EPS) {
           const len = r4(head - c.start);
-          if (len >= MIN_CLIP) ops.push({ type: 'clip.set', track: x.id, clip: c.id, patch: { length: len } });
+          if (len >= MIN_CLIP) ops.push({ type: 'clip.set', track: x.id, clip: c.id, patch: { length: len, ...(clipTail(c) ? { tail: null } : {}) } });
         }
       }
     }
@@ -389,7 +396,7 @@ export function takeOps(take, { part = null } = {}) {
   // (the takes of this part: the clips that start in it or cover most of it, the ring of the one before aside, and
   // the piece of that ring the recorder's take folder keeps muted under this one: a muted clip shorter than half the
   // part is a piece, not a take, as session.js readRoom has it)
-  const ov = (c) => Math.min(c.start + c.length, sec.start + sec.length) - Math.max(c.start, sec.start);
+  const ov = (c) => Math.min(c.start + c.length - clipTail(c), sec.start + sec.length) - Math.max(c.start, sec.start);
   const n = t ? t.clips.filter((c) => c.kind === 'audio' && ov(c) > 0.25 && (c.start >= sec.start - 0.5 || ov(c) > sec.length / 2) && !(c.mute && c.length < sec.length / 2)).length : 1;
   const label = role === 'guitarR' ? `${name}, the other side${n > 1 ? ` (take ${n})` : ''}` : `${name} take ${Math.max(1, n)}`;
   return { ops, label, reason: `room:take:${id}`, section: id };

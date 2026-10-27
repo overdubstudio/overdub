@@ -215,10 +215,30 @@ export function normKey(k) {
 // A take group: the clips one recording stacked on the same span ('tk_' + base36). The playing take is the unmuted one.
 export const isTakeId = (v) => typeof v === 'string' && /^tk_[0-9a-z]{4,16}$/.test(v);
 
+// A take's tail (docs/ARCHITECTURE.md "Overlapping takes"): an audio clip's `tail` is how many beats at the end of its
+// window are its ring past the bars it was recorded for (its part). The clip plays all of its window, tail and all, as
+// every clip does; what changes is what the tail claims: nothing. The clip's body, [start, start + length - tail), is
+// what a take folder covers and what a new take, a drop or the arrangement's cuts reckon with, so the tail rings on
+// under the next part's take on the same track and is never muted, cut or folded by it (a muted take is silent, tail
+// and all). A notes clip has none (its notes carry their own length). 0 < tail < length; an older reader drops the
+// field and plays the clip as it is.
+//   clipTail(clip) -> beats (0: none)     clipBodyEnd(clip) -> the body's end, a song beat (start + length without a tail)
+//   clipLengthPatch(clip, length) -> the clip.set patch for a new length that keeps the body (below)
+export const clipTail = (c) => (c && c.kind === 'audio' && typeof c.tail === 'number' && c.tail > 0 && c.tail < c.length ? c.tail : 0);
+export const clipBodyEnd = (c) => c.start + c.length - clipTail(c);
+// The clip.set patch that gives a clip a new length (the Inspector's Length): with a tail, the length moves the out-point,
+// so the tail shortens or grows and the body stays; a length into the body takes the tail off. Without one, { length }.
+export function clipLengthPatch(c, length) {
+  const tl = clipTail(c);
+  if (!tl) return { length };
+  const body = c.length - tl;
+  return { length, tail: length > body + 1e-6 ? Math.round((length - body) * 1e4) / 1e4 : null };
+}
+
 // A clip as a song holds it (normClip): notes clips carry notes, audio clips asset, offset and gain.
 /**
  * @typedef {{ id: string, kind: string, start: number, length: number, by: string, name?: string, color?: string,
- *   mute?: boolean, notes?: object[], asset?: string, offset?: number, gain?: number, [k: string]: any }} Clip
+ *   mute?: boolean, notes?: object[], asset?: string, offset?: number, gain?: number, tail?: number, [k: string]: any }} Clip
  */
 /** @returns {Clip} */
 export function normClip(c) {
@@ -235,7 +255,13 @@ export function normClip(c) {
   if (isColor(c.color)) base.color = c.color;
   if (c.mute === true) base.mute = true;   // a muted clip stays in the song and plays nowhere (older songs: none)
   if (isTakeId(c.take)) base.take = c.take; // the take group a recorded clip belongs to (older songs: none)
-  if (kind === 'audio') return { ...base, asset: textName(c.asset, undefined), offset: finite(c.offset), gain: finite(c.gain) };
+  if (kind === 'audio') {
+    /** @type {Clip} */
+    const a = { ...base, asset: textName(c.asset, undefined), offset: finite(c.offset), gain: finite(c.gain) };
+    // (its ring past its part: clipTail above; older songs: none)
+    if (finite(c.tail) > 0 && finite(c.tail) < a.length) a.tail = finite(c.tail);
+    return a;
+  }
   // tab (core/fretboard.js): the tuning a guitar part is written for (an id: a newer studio's tuning is kept, and
   // read as standard here) and a capo's fret (older songs: none, and no capo)
   if (isTuningId(c.tuning)) base.tuning = c.tuning;
@@ -622,7 +648,9 @@ export function summarize(p, { detail = 'full', track = null, devices = null, he
     for (const c of t.clips) {
       const tab = c.tuning || c.capo ? ` (tab: ${c.tuning || 'standard'} tuning${c.capo ? `, capo ${c.capo}` : ''}; tab_for reads it)` : '';
       const head = `  clip ${c.id}${c.name ? ' "' + c.name + '"' : ''} ${c.kind} beats ${c.start}–${c.start + c.length}${takeNote(t, c)}${c.mute ? ' (muted)' : ''}${tab} by ${c.by}`;
-      if (c.kind === 'audio') { lines.push(`${head} asset ${c.asset} offset ${c.offset}s`); continue; }
+      // (a take's tail: where its part ends and the ring past it starts, so "cut that ring back" names a beat: clip.trim)
+      const ring = clipTail(c) ? ` (its part ends at beat ${Math.round(clipBodyEnd(c) * 1e4) / 1e4}; the rest is its ring, tail ${c.tail})` : '';
+      if (c.kind === 'audio') { lines.push(`${head}${ring} asset ${c.asset} offset ${c.offset}s`); continue; }
       if (detail === 'summary') {
         const ps = c.notes.map((n) => n.p);
         lines.push(`${head}: ${c.notes.length} notes${ps.length ? `, ${noteName(Math.min(...ps))}–${noteName(Math.max(...ps))}` : ''}`);

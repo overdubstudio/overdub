@@ -46,9 +46,10 @@ overdub/
                          build, as a file); tools/vendor-clawd.js writes them, never edited here      [guitar]
   app/src/main.js        boot: devices, store, engine, shell, then MODULES; window.overdub             [core]
   app/src/analytics.js   anonymous counts on the live site only                                        [core]
-  app/src/core/          project.js (schema, ids, defaults), ops.js (every op), store.js (dispatch, history,
-                         events), music.js (theory, notes text format, drum grids), arrangement.js (section and
-                         time edits, take folders), automation.js (lanes: values, travel, text form, shapes),
+  app/src/core/          project.js (schema, ids, defaults, a take's tail: clipTail, clipBodyEnd), ops.js (every
+                         op), store.js (dispatch, history, events), music.js (theory, notes text format, drum
+                         grids), arrangement.js (section and time edits, take folders, overlapping takes,
+                         clip.trim and snapStep), automation.js (lanes: values, travel, text form, shapes),
                          transforms.js (note transforms and infill), arrange.js (Build a band),
                          grooves.js + grooves/ (the groove library: a style file per family, feel and humanising,
                          tap-to-find, the song creator), share.js (share links, forks), dawproject.js (DAWproject
@@ -198,6 +199,9 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
        | { id: 'c_x', kind: 'audio', start, length, asset: 'a_x', offset: 0 /* s into asset */, gain: 0, name?, mute?, by }
          // mute: true keeps the clip and plays it nowhere (live, renders, the Node render); absent = playing
          // take?: 'tk_x' the take group a recording stacked (clips on one track sharing it; the unmuted one plays)
+         // tail?: beats (0 < tail < length) at the clip's end that ring past its part ("Overlapping takes", below):
+         //   it plays, and claims no beats: a take folder, a new take, a drop and the arrangement's cuts go by the body,
+         //   [start, start + length - tail)
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   // a place on the neck: both or neither
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
@@ -384,7 +388,7 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `insert.set` | `track`, `insert`, `patch: { on?, params?, key? }` (params merge; key: `{ track }` or null, below) |
 | `clip.add` | `track`, `clip: Partial<Clip>` (notes may be the text format, or `grid`), `ref?` |
 | `clip.remove` | `track`, `clip` |
-| `clip.set` | `track`, `clip`, `patch: { start?, length?, name?, color?, offset?, gain?, mute?, tuning?, capo? }` (`mute: true` silences the clip and keeps it; `false` stores no flag; `tuning` and `capo`, a notes clip's, for its tab: `null` or capo 0 removes them) |
+| `clip.set` | `track`, `clip`, `patch: { start?, length?, name?, color?, offset?, gain?, mute?, take?, tuning?, capo?, tail? }` (`mute: true` silences the clip and keeps it; `false` stores no flag; `tuning` and `capo`, a notes clip's, for its tab: `null` or capo 0 removes them; `tail`, an audio clip's ring past its part in beats, shorter than the clip: `null` removes it) |
 | `clip.move` | `track`, `clip`, `toTrack?`, `start?` |
 | `notes.add` | `track`, `clip`, `notes: [Note] \| "text"` (or `grid`) |
 | `notes.remove` | `track`, `clip`, `ids: [noteId]` |
@@ -404,6 +408,7 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `tempo.map` | `map: { anchors: [{ beat, sec }], clip? } \| null`, `tempo?` (sets or clears the tempo map; set, `tempo` becomes its nominal; cleared, the grid plays at `tempo` if given, else the nominal it had. The inverse restores both exactly) |
 | `clip.repeat` | `track`, `clip`, `times` (2..64, in all), `mode?: 'copies' \| 'loop'`, `ref?` |
 | `clip.split` | `track`, `clip`, `at` (a song beat inside it), `ref?` (the right half) |
+| `clip.trim` | `track`, `clip`, `start?`, `end?` (song beats: its new in- and out-points; one left out stays), `snap?` (`'bar'`, `'beat'` or a step in beats: the edges given land on the nearest line of that grid). An arrangement op (`planClipTrim`): a folder's playing take trimmed into its body gives back what it no longer covers; a take's tail shortens (or grows) with its end, the body as it was |
 | `master.set` | `patch: { gain?, clip? }` (gain dB, −96..24; clip `'soft'` or `'clean'`, below) |
 | `auto.write` | `track`, `insert?`, `param`, `points: [Point] \| "text"`, `from?`, `to?`: replaces the lane's points in [from, to] (default: the span of the points; none with a range clears it), making the lane if there is none; signs it `by` the writer; values checked against the param's range |
 | `auto.clear` | `track`, `insert?`, `param`, `from?`, `to?`: removes the points in the range; with neither, the lane |
@@ -413,11 +418,12 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `device.define` | `device: DeviceSource` (registers it; a new version if the id exists) |
 | `device.remove` | `id` |
 
-**Arrangement ops** (`core/arrangement.js`). `planSectionDuplicate`, `planTimeInsert`, `planTimeRemove`,
-`planClipRepeat` and `planClipSplit` are pure functions over the project that return the ordinary ops for the change
-(`clip.set`/`clip.add`/`clip.remove`, `notes.replace` in its exact restore form, `section.*`, `project.set` for the
-loop), plus a one-line summary. `ops.js` registers `section.duplicate`, `time.insert`, `time.remove`, `clip.repeat` and
-`clip.split` as ops that plan from the song as it is and apply those, so their inverse is the primitives' own. Notes
+**Arrangement ops** (`core/arrangement.js`). `planSectionDuplicate`, `planSectionMove`, `planTimeInsert`,
+`planTimeRemove`, `planClipRepeat`, `planClipSplit` and `planClipTrim` are pure functions over the project that return
+the ordinary ops for the change (`clip.set`/`clip.add`/`clip.remove`, `notes.replace` in its exact restore form,
+`section.*`, `project.set` for the loop), plus a one-line summary. `ops.js` registers `section.duplicate`,
+`section.move`, `time.insert`, `time.remove`, `clip.repeat`, `clip.split` and `clip.trim` as ops that plan from the song
+as it is and apply those, so their inverse is the primitives' own. Notes
 keep their sounding part across a cut (a pitched note is cut in two, the halves add up; a drum hit stays whole on its
 side), their ids within a clip and their authors; a copy's clip is signed by whoever asked, a split's right half by
 the clip's maker. A duplicated section brings every clip that plays in it, cut to its bars (a full-length beat that
@@ -1665,6 +1671,35 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
     clip; so every folder is still one range with one take playing in each stretch. A take folder moves whole (a drag
     of any of its clips takes every take along); on a comped folder a drag across the body selects bars (a piece of a
     comp isn't a clip of its own) and its label line moves the folder.
+  - **Overlapping takes** (`docs/research/GUITAR-ROOM.md` §2.6, §4.3; the guitar room's model). A take recorded for a
+    part keeps what it rang past the part's end: its audio clip runs on, and `clip.tail` says how many beats of it
+    are that ring (`core/project.js` `clipTail(clip)` → beats, `clipBodyEnd(clip)` → the song beat its part ends).
+    The clip's **body**, `[start, start + length - tail)`, is the take; the tail plays and claims nothing. A take
+    folder is its takes' bodies (`takeFolders`' `start`/`end`, the comp's cuts), so the next part's take over
+    `[body end, …)` on the same track never cuts, folds or mutes the tail ringing under it: both sound, summed, in the
+    live engine, the browser's render and the Node render alike (each plays a clip's whole window: `engine/schedule.js`
+    `audioIn`; nothing in the engine knows tails). Picking another take in a folder mutes the others, tails and all,
+    so only the playing take rings. Every planner reckons by the body: a take whose body ends before a `time.insert`,
+    a `time.remove` or a moved section's edge stays whole, its tail ringing on over what follows; a cut through the
+    body leaves the tail on the piece ending where the body did (`clip.split`, `time.remove`, comping, a drop); a
+    duplicated section brings the tails of takes whose bodies end in it; `clip.repeat` repeats a take on its body.
+    `planDropTrim` and the live room's seams (`core/liveroom/plans.js`) leave a tail alone. Without a tail nothing
+    changes: a clip is reckoned by its end, and take folders mute what played under them as above.
+    - **Recording one:** `recorder.record({ ..., tailFrom })` (or `stop({ tailFrom })`; the deck's `take({ tailFrom })`):
+      the take is for a part ending at `tailFrom`. It doesn't stop there; when it stops, each audio pass that runs past
+      it gets `audio.tail` (`withTails(passes, from)`, pure), `planTake` makes the folder `[start, tailFrom)` and the
+      clip runs on with its tail (`planTakeFolder`'s pass `tail`), and the commit's `takes[]` (and the deck's landed
+      `take.ringing`) say how many beats rang.
+    - **Trimming it:** the op `clip.trim { track, clip, end, snap? }` moves the out-point (`snap: 'bar' | 'beat' |
+      beats`; `snapStep(p, snap)` gives the step a handle can preview with). An end inside the tail shortens it, past
+      it grows it, at the body's end takes it off; into the body it cuts the body as a trim always did. Undo is exact
+      (its inverse is `clip.set`'s, with the old `length` and `tail`). `clip.set` takes `tail` too, and refuses one as
+      long as the clip. A plain new length (the Inspector's Length) goes through `core/project.js`
+      `clipLengthPatch(clip, length)`, the `clip.set` patch that keeps the body: the tail shortens or grows, and a
+      length into the body takes it off. get_project's summary names where a take's part ends and its ring starts.
+    - **Room for a crossfade:** a later field can shape `[body end, end)` (a fade out over the tail, or a fade in on
+      the next take's head); the body, the folder and every planner above stay as they are. An older studio drops
+      `tail` and plays the clip whole, as it is.
   - **The lean at the stop** (`relean`, `input/timing.js` `placeTake`): every note the forgiving grid placed (pads,
     beatbox, a hum against the click) is placed again with the whole take's lean out, and a drum's nervous first hits
     (in its first two beats, before any lands on a beat, 0.25 to 0.5 beat late, on a drum otherwise on the beat) go

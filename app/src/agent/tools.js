@@ -1202,13 +1202,14 @@ const OP_EXAMPLES = {
   'time.remove': '{ "type": "time.remove", "at": 16, "length": 8 }',
   'clip.repeat': '{ "type": "clip.repeat", "track": "Bass", "clip": "c_ab12cd", "times": 4 }',
   'clip.split': '{ "type": "clip.split", "track": "Bass", "clip": "c_ab12cd", "at": 20 }',
+  'clip.trim': '{ "type": "clip.trim", "track": "Guitar", "clip": "c_ab12cd", "end": 33, "snap": "bar" } (start and end are song beats; snap puts the edges given on the grid)',
   'auto.write': '{ "type": "auto.write", "track": "Keys", "insert": "fx_ab12cd", "param": "cutoff", "points": "31:600 32:4500 47:4500 48:600" } (beat:value; the mixer is param "gain" (dB) or "pan" with no insert; insert "instrument" for the instrument\'s params)',
   'auto.clear': '{ "type": "auto.clear", "track": "Keys", "insert": "fx_ab12cd", "param": "cutoff", "from": 32, "to": 48 } (no from/to removes the lane)',
   'auto.set': '{ "type": "auto.set", "track": "Keys", "insert": "fx_ab12cd", "param": "cutoff", "patch": { "off": false } } (off: true holds the lane, false gives it back)',
 };
 function hintFor(message, op) {
   const m = String(message);
-  if (/unknown op type/.test(m)) return 'op types: project.set track.add track.remove track.move track.set instrument.set insert.add insert.remove insert.move insert.set clip.add clip.remove clip.set clip.move notes.add notes.remove notes.set notes.replace section.add section.set section.remove section.duplicate section.move time.insert time.remove clip.repeat clip.split auto.write auto.clear auto.set tempo.map master.set sheet.set sheet.section.add sheet.section.set sheet.section.remove sheet.line.add sheet.line.set sheet.line.remove room.set room.part.set (devices: the define_device tool; the arrangement moves are also the arrange_song tool; room.* is the live room\'s own)';
+  if (/unknown op type/.test(m)) return 'op types: project.set track.add track.remove track.move track.set instrument.set insert.add insert.remove insert.move insert.set clip.add clip.remove clip.set clip.move notes.add notes.remove notes.set notes.replace section.add section.set section.remove section.duplicate section.move time.insert time.remove clip.repeat clip.split clip.trim auto.write auto.clear auto.set tempo.map master.set sheet.set sheet.section.add sheet.section.set sheet.section.remove sheet.line.add sheet.line.set sheet.line.remove room.set room.part.set (devices: the define_device tool; the arrangement moves are also the arrange_song tool; room.* is the live room\'s own)';
   if (/no device/.test(m)) return 'list_devices (or define_device) first; built-ins are core.*, pedal.*, amp.*';
   if (/bad point|points must be/.test(m)) return `points: "beat:value" space separated, e.g. "0:-60 16:-6" (beats; the param's own units), ~curve to bend: "32:400~0.5 48:8000"`;
   if (op && /^auto\./.test(op.type) && /lane|param|insert|no such/.test(m)) return `${OP_EXAMPLES[op.type]}; get_project lists each track's lanes and inserts, list_devices each device's param keys`;

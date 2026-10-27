@@ -230,7 +230,7 @@ export default function installLiveRoom(app) {
     const fresh = !entered;
     // (the holds again, over every key declared by now: the screen's own, added as it mounts, go before them)
     if (fresh) { unhold(); hold(); roomKeys(true); }
-    const want = asked || (!fresh && current && L.screen) || homeOf(store.get());
+    const want = asked || (!fresh && current && L.screen) || backTo(store.get()) || homeOf(store.get());
     asked = null;
     if (fresh || want !== L.screen || !current) go(want);
     entered = true;
@@ -240,6 +240,10 @@ export default function installLiveRoom(app) {
   }
   // A song's own screen: the metal club is the guitar room (./guitar/), the kitchen its table, the other places the
   // stage; no room yet, the door.
+  // Back through the glass (G, the Live room key): the room's screen you left, on the same song (a load forgets it)
+  let wasScreen = null;
+  const ROOMS = new Set(['stage', 'guitar', 'kitchen']);
+  const backTo = (p) => (wasScreen && ROOMS.has(wasScreen) && roomOf(p) && screens.has(wasScreen) ? wasScreen : null);
   function homeOf(p) {
     const room = roomOf(p);
     if (!room) return 'door';
@@ -251,6 +255,7 @@ export default function installLiveRoom(app) {
   ui.on?.('ready', () => queueMicrotask(() => { up = true; enter(); }));
   function close() {
     if (!L.open) return false;
+    wasScreen = L.screen;
     unmountScreen();
     L.open = false;
     L.menu = null;
@@ -314,7 +319,7 @@ export default function installLiveRoom(app) {
   }
   store.on('change', (e) => {
     // (another song loaded behind the glass: what the room remembered of the last one isn't this one's to read back)
-    if (e?.kind === 'load') left = null;
+    if (e?.kind === 'load') { left = null; wasScreen = null; }
     if (e?.kind === 'load' || key || roomOf(store.get())) showKey();
   });
   function frame(now) {

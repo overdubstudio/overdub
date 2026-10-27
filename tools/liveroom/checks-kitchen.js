@@ -432,9 +432,11 @@ async function flow(T, ctx) {
     const at = (x, ms = 90000) => page.waitForFunction((x) => window.__k.pos() >= x, x, { timeout: ms, polling: 20 });
     try {
       await E(INSTALL);
-      // press 1: the door's kitchen table
+      // press 1: the door's kitchen table (held off the door while the guitar room is built, door.js OFFERED: picked by
+      // its id, as its card would)
       await page.waitForSelector('.lrd-card', { timeout: 15000 });
-      await press('Digit4');
+      presses++;
+      await E(() => window.overdub.liveRoom.press('place:kitchen'));
       await page.waitForSelector('.kt', { timeout: 10000 });
       // press 2: Allow (this browser has allowed it already: the kitchen opens the input by itself)
       presses++;
@@ -575,7 +577,7 @@ async function sameFlow(T) {
   try {
     await E(INSTALL);
     await page.waitForSelector('.lrd-card', { timeout: 15000 });
-    await page.keyboard.press('Digit4');
+    await E(() => window.overdub.liveRoom.press('place:kitchen'));
     await page.waitForSelector('.kt', { timeout: 10000 });
     await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
     const chs = await E(() => window.overdub.input.audio.state.channels);
@@ -631,7 +633,7 @@ async function twoFlow(T) {
   try {
     await E(INSTALL);
     await page.waitForSelector('.lrd-card', { timeout: 15000 });
-    await page.keyboard.press('Digit4');
+    await E(() => window.overdub.liveRoom.press('place:kitchen'));
     await page.waitForSelector('.kt', { timeout: 10000 });
     await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
     await E(() => { window.__k.deck.latency = 0; });
@@ -728,7 +730,7 @@ async function countedFlow(T) {
     await E(INSTALL);
     await E((x) => { window.__k.countAt = x; }, tape.T.tape - (4 * 60) / 96);
     await page.waitForSelector('.lrd-card', { timeout: 15000 });
-    await page.keyboard.press('Digit4');
+    await E(() => window.overdub.liveRoom.press('place:kitchen'));
     await page.waitForSelector('.kt', { timeout: 10000 });
     await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
     await E(() => { window.__k.deck.latency = 0; });

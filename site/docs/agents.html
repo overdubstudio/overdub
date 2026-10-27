@@ -356,7 +356,7 @@ they ask. &quot;Tidy the timing&quot; means the stage's Tight level: say how man
 { type: 'insert.set', track, insert, patch: { on?, params?, preset?, key? } }   <span class="c">// key: { track } (a sidechain, below) or null</span>
 { type: 'master.set', patch: { gain?, clip? } }   <span class="c">// clip: 'clean' (a hard ceiling at 0 dBFS, after a limiter) or 'soft' (the default)</span>
 { type: 'clip.add', track, ref?, clip: { start, length, name?, notes?: &quot;text&quot;, grid? } }
-{ type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo? } }   <span class="c">// mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; clip.remove / clip.move { toTrack?, start? }</span>
+{ type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo?, tail? } }   <span class="c">// mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; tail: an audio take's ring past its part, in beats at its end (null: none); clip.remove / clip.move { toTrack?, start? }</span>
 { type: 'notes.add' | 'notes.replace', track, clip, notes: &quot;text&quot; }     <span class="c">// notes.remove { ids } / notes.set { notes: [{ id, p?, t?, d?, v?, s?, f? }] }</span>
 { type: 'section.add', section: { name, start, length, key? } }          <span class="c">// section.set / section.remove; key: its own key (&quot;F# minor&quot;)</span>
 { type: 'section.move', section, before }   <span class="c">// the section and everything in it to before another (id or name; null: the end), the bars between closing up</span>
@@ -364,6 +364,7 @@ they ask. &quot;Tidy the timing&quot; means the stage's Tight level: say how man
 <span class="c">// a name is plain text up to 100 characters (the .set ops refuse a longer one); a colour is var(--c-1)..var(--c-8) or hex</span>
 { type: 'section.duplicate', section, to?, push? }   { type: 'time.insert' | 'time.remove', at, length }   <span class="c">// beats; across the whole song</span>
 { type: 'clip.repeat', track, clip, times, mode?: 'copies' | 'loop' }   { type: 'clip.split', track, clip, at }   <span class="c">// (the arrange_song tool does these by bar)</span>
+{ type: 'clip.trim', track, clip, start?, end?, snap?: 'bar' | 'beat' | beats }   <span class="c">// a clip's in- and out-points; a take's tail shortens with its end</span>
 { type: 'auto.write', track, insert?, param, points: &quot;beat:value …&quot;, from?, to? }   <span class="c">// a lane: replaces [from, to] (default: the points' span)</span>
 { type: 'auto.clear', track, insert?, param, from?, to? }   { type: 'auto.set', track, insert?, param, patch: { off } }   <span class="c">// no range: the whole lane; off holds it</span></code></pre></div>
 <p>A lane is points in song beats on what it moves: no <code>insert</code> for the mixer (<code>param: 'gain'</code> in dB, or <code>'pan'</code>),

@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 138 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 141 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -107,9 +107,10 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          build, as a file); tools/vendor-clawd.js writes them, never edited here      [guitar]
   app/src/main.js        boot: devices, store, engine, shell, then MODULES; window.overdub             [core]
   app/src/analytics.js   anonymous counts on the live site only                                        [core]
-  app/src/core/          project.js (schema, ids, defaults), ops.js (every op), store.js (dispatch, history,
-                         events), music.js (theory, notes text format, drum grids), arrangement.js (section and
-                         time edits, take folders), automation.js (lanes: values, travel, text form, shapes),
+  app/src/core/          project.js (schema, ids, defaults, a take's tail: clipTail, clipBodyEnd), ops.js (every
+                         op), store.js (dispatch, history, events), music.js (theory, notes text format, drum
+                         grids), arrangement.js (section and time edits, take folders, overlapping takes,
+                         clip.trim and snapStep), automation.js (lanes: values, travel, text form, shapes),
                          transforms.js (note transforms and infill), arrange.js (Build a band),
                          grooves.js + grooves/ (the groove library: a style file per family, feel and humanising,
                          tap-to-find, the song creator), share.js (share links, forks), dawproject.js (DAWproject
@@ -248,6 +249,9 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
        | { id: 'c_x', kind: 'audio', start, length, asset: 'a_x', offset: 0 /* s into asset */, gain: 0, name?, mute?, by }
          <span class="c">// mute: true keeps the clip and plays it nowhere (live, renders, the Node render); absent = playing</span>
          <span class="c">// take?: 'tk_x' the take group a recording stacked (clips on one track sharing it; the unmuted one plays)</span>
+         <span class="c">// tail?: beats (0 &lt; tail &lt; length) at the clip's end that ring past its part (&quot;Overlapping takes&quot;, below):</span>
+         <span class="c">//   it plays, and claims no beats: a take folder, a new take, a drop and the arrangement's cuts go by the body,</span>
+         <span class="c">//   [start, start + length - tail)</span>
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   <span class="c">// a place on the neck: both or neither</span>
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
@@ -409,7 +413,7 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>insert.set</code></td><td><code>track</code>, <code>insert</code>, <code>patch: { on?, params?, key? }</code> (params merge; key: <code>{ track }</code> or null, below)</td></tr>
 <tr><td><code>clip.add</code></td><td><code>track</code>, <code>clip: Partial&lt;Clip&gt;</code> (notes may be the text format, or <code>grid</code>), <code>ref?</code></td></tr>
 <tr><td><code>clip.remove</code></td><td><code>track</code>, <code>clip</code></td></tr>
-<tr><td><code>clip.set</code></td><td><code>track</code>, <code>clip</code>, <code>patch: { start?, length?, name?, color?, offset?, gain?, mute?, tuning?, capo? }</code> (<code>mute: true</code> silences the clip and keeps it; <code>false</code> stores no flag; <code>tuning</code> and <code>capo</code>, a notes clip's, for its tab: <code>null</code> or capo 0 removes them)</td></tr>
+<tr><td><code>clip.set</code></td><td><code>track</code>, <code>clip</code>, <code>patch: { start?, length?, name?, color?, offset?, gain?, mute?, take?, tuning?, capo?, tail? }</code> (<code>mute: true</code> silences the clip and keeps it; <code>false</code> stores no flag; <code>tuning</code> and <code>capo</code>, a notes clip's, for its tab: <code>null</code> or capo 0 removes them; <code>tail</code>, an audio clip's ring past its part in beats, shorter than the clip: <code>null</code> removes it)</td></tr>
 <tr><td><code>clip.move</code></td><td><code>track</code>, <code>clip</code>, <code>toTrack?</code>, <code>start?</code></td></tr>
 <tr><td><code>notes.add</code></td><td><code>track</code>, <code>clip</code>, <code>notes: [Note] | &quot;text&quot;</code> (or <code>grid</code>)</td></tr>
 <tr><td><code>notes.remove</code></td><td><code>track</code>, <code>clip</code>, <code>ids: [noteId]</code></td></tr>
@@ -429,6 +433,7 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>tempo.map</code></td><td><code>map: { anchors: [{ beat, sec }], clip? } | null</code>, <code>tempo?</code> (sets or clears the tempo map; set, <code>tempo</code> becomes its nominal; cleared, the grid plays at <code>tempo</code> if given, else the nominal it had. The inverse restores both exactly)</td></tr>
 <tr><td><code>clip.repeat</code></td><td><code>track</code>, <code>clip</code>, <code>times</code> (2..64, in all), <code>mode?: 'copies' | 'loop'</code>, <code>ref?</code></td></tr>
 <tr><td><code>clip.split</code></td><td><code>track</code>, <code>clip</code>, <code>at</code> (a song beat inside it), <code>ref?</code> (the right half)</td></tr>
+<tr><td><code>clip.trim</code></td><td><code>track</code>, <code>clip</code>, <code>start?</code>, <code>end?</code> (song beats: its new in- and out-points; one left out stays), <code>snap?</code> (<code>'bar'</code>, <code>'beat'</code> or a step in beats: the edges given land on the nearest line of that grid). An arrangement op (<code>planClipTrim</code>): a folder's playing take trimmed into its body gives back what it no longer covers; a take's tail shortens (or grows) with its end, the body as it was</td></tr>
 <tr><td><code>master.set</code></td><td><code>patch: { gain?, clip? }</code> (gain dB, −96..24; clip <code>'soft'</code> or <code>'clean'</code>, below)</td></tr>
 <tr><td><code>auto.write</code></td><td><code>track</code>, <code>insert?</code>, <code>param</code>, <code>points: [Point] | &quot;text&quot;</code>, <code>from?</code>, <code>to?</code>: replaces the lane's points in [from, to] (default: the span of the points; none with a range clears it), making the lane if there is none; signs it <code>by</code> the writer; values checked against the param's range</td></tr>
 <tr><td><code>auto.clear</code></td><td><code>track</code>, <code>insert?</code>, <code>param</code>, <code>from?</code>, <code>to?</code>: removes the points in the range; with neither, the lane</td></tr>
@@ -438,11 +443,12 @@ the house returns null), never a stripe, a tint or a fill (<code>design/LINER-NO
 <tr><td><code>device.define</code></td><td><code>device: DeviceSource</code> (registers it; a new version if the id exists)</td></tr>
 <tr><td><code>device.remove</code></td><td><code>id</code></td></tr>
 </tbody></table></div>
-<p><strong>Arrangement ops</strong> (<code>core/arrangement.js</code>). <code>planSectionDuplicate</code>, <code>planTimeInsert</code>, <code>planTimeRemove</code>,
-<code>planClipRepeat</code> and <code>planClipSplit</code> are pure functions over the project that return the ordinary ops for the change
-(<code>clip.set</code>/<code>clip.add</code>/<code>clip.remove</code>, <code>notes.replace</code> in its exact restore form, <code>section.*</code>, <code>project.set</code> for the
-loop), plus a one-line summary. <code>ops.js</code> registers <code>section.duplicate</code>, <code>time.insert</code>, <code>time.remove</code>, <code>clip.repeat</code> and
-<code>clip.split</code> as ops that plan from the song as it is and apply those, so their inverse is the primitives' own. Notes
+<p><strong>Arrangement ops</strong> (<code>core/arrangement.js</code>). <code>planSectionDuplicate</code>, <code>planSectionMove</code>, <code>planTimeInsert</code>,
+<code>planTimeRemove</code>, <code>planClipRepeat</code>, <code>planClipSplit</code> and <code>planClipTrim</code> are pure functions over the project that return
+the ordinary ops for the change (<code>clip.set</code>/<code>clip.add</code>/<code>clip.remove</code>, <code>notes.replace</code> in its exact restore form,
+<code>section.*</code>, <code>project.set</code> for the loop), plus a one-line summary. <code>ops.js</code> registers <code>section.duplicate</code>,
+<code>section.move</code>, <code>time.insert</code>, <code>time.remove</code>, <code>clip.repeat</code>, <code>clip.split</code> and <code>clip.trim</code> as ops that plan from the song
+as it is and apply those, so their inverse is the primitives' own. Notes
 keep their sounding part across a cut (a pitched note is cut in two, the halves add up; a drum hit stays whole on its
 side), their ids within a clip and their authors; a copy's clip is signed by whoever asked, a split's right half by
 the clip's maker. A duplicated section brings every clip that plays in it, cut to its bars (a full-length beat that
@@ -1540,6 +1546,34 @@ the part before keeps the folder, the part after is a folder of its own, a part 
 clip; so every folder is still one range with one take playing in each stretch. A take folder moves whole (a drag
 of any of its clips takes every take along); on a comped folder a drag across the body selects bars (a piece of a
 comp isn't a clip of its own) and its label line moves the folder.</li>
+<li><strong>Overlapping takes</strong> (<code>docs/research/GUITAR-ROOM.md</code> §2.6, §4.3; the guitar room's model). A take recorded for a
+part keeps what it rang past the part's end: its audio clip runs on, and <code>clip.tail</code> says how many beats of it
+are that ring (<code>core/project.js</code> <code>clipTail(clip)</code> → beats, <code>clipBodyEnd(clip)</code> → the song beat its part ends).
+The clip's <strong>body</strong>, <code>[start, start + length - tail)</code>, is the take; the tail plays and claims nothing. A take
+folder is its takes' bodies (<code>takeFolders</code>' <code>start</code>/<code>end</code>, the comp's cuts), so the next part's take over
+<code>[body end, …)</code> on the same track never cuts, folds or mutes the tail ringing under it: both sound, summed, in the
+live engine, the browser's render and the Node render alike (each plays a clip's whole window: <code>engine/schedule.js</code>
+<code>audioIn</code>; nothing in the engine knows tails). Picking another take in a folder mutes the others, tails and all,
+so only the playing take rings. Every planner reckons by the body: a take whose body ends before a <code>time.insert</code>,
+a <code>time.remove</code> or a moved section's edge stays whole, its tail ringing on over what follows; a cut through the
+body leaves the tail on the piece ending where the body did (<code>clip.split</code>, <code>time.remove</code>, comping, a drop); a
+duplicated section brings the tails of takes whose bodies end in it; <code>clip.repeat</code> repeats a take on its body.
+<code>planDropTrim</code> and the live room's seams (<code>core/liveroom/plans.js</code>) leave a tail alone. Without a tail nothing
+changes: a clip is reckoned by its end, and take folders mute what played under them as above.
+<ul>
+<li><strong>Recording one:</strong> <code>recorder.record({ ..., tailFrom })</code> (or <code>stop({ tailFrom })</code>; the deck's <code>take({ tailFrom })</code>):
+the take is for a part ending at <code>tailFrom</code>. It doesn't stop there; when it stops, each audio pass that runs past
+it gets <code>audio.tail</code> (<code>withTails(passes, from)</code>, pure), <code>planTake</code> makes the folder <code>[start, tailFrom)</code> and the
+clip runs on with its tail (<code>planTakeFolder</code>'s pass <code>tail</code>), and the commit's <code>takes[]</code> (and the deck's landed
+<code>take.ringing</code>) say how many beats rang.</li>
+<li><strong>Trimming it:</strong> the op <code>clip.trim { track, clip, end, snap? }</code> moves the out-point (<code>snap: 'bar' | 'beat' | beats</code>; <code>snapStep(p, snap)</code> gives the step a handle can preview with). An end inside the tail shortens it, past
+it grows it, at the body's end takes it off; into the body it cuts the body as a trim always did. Undo is exact
+(its inverse is <code>clip.set</code>'s, with the old <code>length</code> and <code>tail</code>). <code>clip.set</code> takes <code>tail</code> too, and refuses one as
+long as the clip.</li>
+<li><strong>Room for a crossfade:</strong> a later field can shape <code>[body end, end)</code> (a fade out over the tail, or a fade in on
+the next take's head); the body, the folder and every planner above stay as they are. An older studio drops
+<code>tail</code> and plays the clip whole, as it is.</li>
+</ul></li>
 <li><strong>The lean at the stop</strong> (<code>relean</code>, <code>input/timing.js</code> <code>placeTake</code>): every note the forgiving grid placed (pads,
 beatbox, a hum against the click) is placed again with the whole take's lean out, and a drum's nervous first hits
 (in its first two beats, before any lands on a beat, 0.25 to 0.5 beat late, on a drum otherwise on the beat) go

@@ -5,7 +5,14 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../../app/src/core/store.js';
-import { createProject, normClip, clipTail, clipBodyEnd, clipLengthPatch } from '../../app/src/core/project.js';
+import {
+  createProject,
+  normClip,
+  clipTail,
+  clipBodyEnd,
+  clipLengthPatch,
+  summarize,
+} from '../../app/src/core/project.js';
 import {
   planTakeFolder,
   takeFolders,
@@ -92,6 +99,18 @@ describe('the model', () => {
       'a length that leaves the tail as long as the clip is refused, and says why',
     );
     assert.equal(song(s), before);
+  });
+  test("the song's summary (get_project) says where a take's part ends and its ring starts; a clip without one, nothing", () => {
+    const { s, g } = twoParts();
+    const lines = summarize(s.get()).split('\n');
+    const v = byAsset(s, g, 'a_verse1');
+    assert.ok(
+      lines.some(
+        (l) => l.includes(`clip ${v.id}`) && l.includes('its part ends at beat 8; the rest is its ring, tail 2'),
+      ),
+    );
+    const { s: s2 } = twoParts({ tails: false });
+    assert.ok(!summarize(s2.get()).includes('its ring'));
   });
   test("clipLengthPatch (the Inspector's Length): a take's length moves its out-point, the body stays; undo is exact", () => {
     const { s, g } = twoParts();

@@ -648,7 +648,9 @@ export function summarize(p, { detail = 'full', track = null, devices = null, he
     for (const c of t.clips) {
       const tab = c.tuning || c.capo ? ` (tab: ${c.tuning || 'standard'} tuning${c.capo ? `, capo ${c.capo}` : ''}; tab_for reads it)` : '';
       const head = `  clip ${c.id}${c.name ? ' "' + c.name + '"' : ''} ${c.kind} beats ${c.start}–${c.start + c.length}${takeNote(t, c)}${c.mute ? ' (muted)' : ''}${tab} by ${c.by}`;
-      if (c.kind === 'audio') { lines.push(`${head} asset ${c.asset} offset ${c.offset}s`); continue; }
+      // (a take's tail: where its part ends and the ring past it starts, so "cut that ring back" names a beat: clip.trim)
+      const ring = clipTail(c) ? ` (its part ends at beat ${Math.round(clipBodyEnd(c) * 1e4) / 1e4}; the rest is its ring, tail ${c.tail})` : '';
+      if (c.kind === 'audio') { lines.push(`${head}${ring} asset ${c.asset} offset ${c.offset}s`); continue; }
       if (detail === 'summary') {
         const ps = c.notes.map((n) => n.p);
         lines.push(`${head}: ${c.notes.length} notes${ps.length ? `, ${noteName(Math.min(...ps))}–${noteName(Math.max(...ps))}` : ''}`);

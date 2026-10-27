@@ -385,12 +385,12 @@ describe('the riff library with no IndexedDB (memory, for the visit)', () => {
     const store = createStore();
     const t = store.dispatch({ type: 'track.add', ref: 'g', track: { name: 'Guitar L', kind: 'audio' } });
     const into = await riffs.intoSong(first, { project: store.get(), track: t.created.g, assets });
-    const before = JSON.stringify(store.get());
+    const before = JSON.stringify({ ...store.get(), meta: null }); // (meta.modified ticks)
     const d = store.dispatch(into.ops, { by: 'you', label: 'Riff into the verse' });
     assert.ok(d.ok, d.error);
     assert.equal(store.get().tracks[0].clips[0].asset, assetIdOf(first));
     store.undo();
-    assert.equal(JSON.stringify(store.get()), before);
+    assert.equal(JSON.stringify({ ...store.get(), meta: null }), before);
   });
   test('remove gives the whole riff back, and restore puts it back as it was', async () => {
     const whole = await riffs.remove(first);

@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 138 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 142 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -126,6 +126,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
                          sheet-text.js (the paper's words and chords), label.js (the tape box), lines/ (everything
                          the house says in the talkback, by id)                                       [room]
+                         riffs.js (what a riff is: its row, detail and audio, the filters, into a song), stacks.js
+                         (a guitar chain as data: read off a track, put back on one as ops)  [guitar room]
   app/src/engine/        engine.js (context, transport, scheduler, tracks, mixer), strip.js (channel strips),
                          schedule.js (what plays when), click.js (the click's sound), render.js (offline, in the browser), node/render.js (the
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
@@ -182,6 +184,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          shelf.js + shelf-db.js (overdub-shelf), send.js, talkback.js, deck.js (count-in, takes,
                          the tuner on the audio clock), view.js, prefs.js (overdub:room), style.js, pixels/ (the
                          scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
+                         riffs-db.js (the riff library, overdub-riffs), rack-db.js (the stack rack, overdub-rack),
+                         idb.js (their opener)                                                         [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -1901,6 +1905,43 @@ count, a take and the band's read, and the agent's song-changing tools refuse wh
 last used, the place, headphones or speakers per output, the once-only lines said per song); the room's songs are
 kept in IndexedDB <code>overdub-shelf</code> (<code>ui/liveroom/shelf-db.js</code>), beside <code>overdub:project</code>. Both names are forever. Straight after the shell,
 <code>installWorkspace(ui, app)</code> gives it <code>ui.workspace</code>, before any module mounts a panel.</p>
+<p><strong>The riff library and the stack rack</strong> (<code>docs/research/GUITAR-ROOM.md</code> §2.4, §2.9, §4.3) are the guitar room's
+storage, across songs, with no UI of their own: the room's tray, the part line and the tone room are built on them.
+Both are modules of Promises that never throw (<code>import * as riffs from './ui/liveroom/riffs-db.js'</code>), and both keep the
+visit's in memory when IndexedDB is refused or the disk is full, with <code>where()</code> (<code>'disk' | 'memory'</code>) and <code>note()</code> (a
+line for the talkback, or null) saying so. The databases' names are forever: <code>overdub-riffs</code> and <code>overdub-rack</code>.</p>
+<ul>
+<li><strong>A riff</strong> (<code>core/liveroom/riffs.js</code>, pure) is kept three ways so a listing never loads audio: a <strong>row</strong> (about 1 KB:
+<code>id</code> <code>rf_xxxxxx</code>, <code>name</code> (&quot;Riff N&quot; until named), <code>at</code>, <code>starred</code> 0 | 1, <code>song</code> (the song's id) and <code>songTitle</code> (only
+once the song is named), <code>tempo</code>, <code>beats</code>, <code>bars</code>, <code>meter</code>, <code>offset</code> (s into the audio of its first beat), <code>tail</code> (s
+rung past its last beat), <code>tuning</code>, <code>key</code> <code>{ root, scale, sure }</code> (a read, <code>sure: false</code> until confirmed), <code>stack</code>
+<code>{ name, amp }</code>, <code>duration</code>, <code>sr</code>, <code>channels</code>, <code>bytes</code>, <code>peaks</code> (Int8Array, 256 columns of min and max), <code>peak</code>,
+<code>notes</code>), a <strong>detail</strong> (<code>{ chain, stackId }</code>: the stack it went through) and its <strong>audio</strong> (<code>{ sr, channels: [Float32Array] }</code>, an asset store record: the dry input, mono, at the device's rate, as a recording is kept).</li>
+<li><strong>The library</strong> (<code>ui/liveroom/riffs-db.js</code>): <code>add(input)</code> (<code>{ audio, tempo, beats? | bars?, meter?, offset?, name?, tuning?, key?, stack?, song?, starred?, notes? }</code>) → <code>{ ok, id, row, where, note? }</code>; <code>list(filter)</code> → <code>{ rows, next }</code>
+with <code>filter = { q, song, tuning, tempo: [lo, hi], from, to, starred, order: 'new' | 'old', limit (50, up to 500), after: next }</code> (q: each word in the name or the song's title; this session's riffs first is <code>from: sessionStart</code>);
+<code>get(id)</code> (the row and its chain), <code>audio(id)</code>, <code>buffer(id)</code> (an AudioBuffer, for a preview), <code>update(id, { name?, starred?, notes?, key? (confirms it), tuning? })</code>, <code>rename</code>, <code>star</code>, <code>remove(id)</code> → the whole riff, <code>restore(it)</code>,
+<code>count()</code>, <code>facets()</code> → <code>{ total, starred, songs: [{ id, title, count }], tunings: [{ id, count }] }</code>, <code>tagSong(songId, title)</code> (a song just named: its riffs take the title), <code>usage()</code> → <code>{ count, bytes }</code>, and <code>intoSong(id, { project, track?, start? })</code> → <code>{ ok, ops, asset, clip, beats, bars, fits, ratio, tail, chain, stackName }</code>: the audio is put in
+<code>engine.assets</code> once as <code>a_&lt;riff id&gt;</code> (shared by every song it goes into, and still there if the riff is deleted),
+and the ops (<code>asset.add</code> when the song doesn't describe it, <code>clip.add</code> on <code>track</code> at <code>start</code>, ref <code>riff</code>) are
+dispatched by the caller with its <code>by</code>. <code>fits</code> is false when the song's tempo isn't the riff's: nothing is stretched,
+and the clip keeps the audio's time. Stores: <code>riffs</code> (the rows; indexes <code>new</code> [rat, id], <code>song</code> [song, rat, id],
+<code>star</code> [starred, rat, id], <code>tuning</code> [tuning, rat, id] with rat = −at, and <code>songs</code>, <code>tunings</code>, <code>bytes</code>), <code>details</code>,
+<code>audio</code>. A page reads its index in batches, newest first, and checks each row against the rest of the filter; 2,000
+riffs list in a few milliseconds (<code>tools/liveroom/checks-library.js</code>).</li>
+<li><strong>A stack</strong> (<code>core/liveroom/stacks.js</code>, pure) is <code>{ name, chain: [{ device, params, on }], amp }</code>: the guitar's gear
+in signal order (pedals, the amp with its cab and mics as its own params, a <code>core.cab</code>, pedals after). On a track it's
+the run of inserts from the first piece of gear (<code>isGear</code>: <code>pedal.*</code>, <code>amp.*</code>, <code>cab.*</code>, <code>core.stack</code>, <code>core.cab</code>, or
+a device of cat <code>amp</code>) to the last; inserts outside the run (the room's Slide Rule EQ) aren't the stack's.
+<code>stackOf(track)</code> reads it (what Save to rack keeps), <code>loadOps(track, stack)</code> → <code>{ ops, label, by: 'you', replaced }</code>
+swaps the run for the stack in place (the top of the chain when there's none) in one undo step, <code>chainKey</code> /
+<code>sameChain</code> / <code>matchStack(chain, stacks)</code> say whether the song's copy is still a saved stack, and
+<code>houseStacks(place)</code> gives the place's own (Half Stack at its settings), never stored.</li>
+<li><strong>The rack</strong> (<code>ui/liveroom/rack-db.js</code>): <code>save(stack, { id?, name?, song? })</code> (a new stack; with <code>id</code>, that stack of
+yours takes the chain and keeps its name: the only way a saved stack's sound changes), <code>list()</code> (the last changed
+first), <code>get(id)</code> (a house id too), <code>load(id, track)</code> → the ops for the song (the rack is read, never written: the
+song keeps its own copy, the track's inserts, and edits on the stage are <code>insert.set</code>s on it), <code>rename</code>, <code>remove(id)</code>
+→ the stack, <code>restore(it)</code>, <code>house(place)</code>. Store <code>stacks</code> (keyPath <code>id</code>, index <code>modified</code>).</li>
+</ul>
 <p>The app object (<code>window.overdub</code>): <code>{ store, engine, ui, devices, music, summarize, version, opened, trust, agent, tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter, analytics, plugin, jam, songs, site, siteConfig, door, liveRoom }</code> plus the panels that publish an API (<code>arranger</code>, <code>pianoroll</code>, <code>drumgrid</code>, <code>rack</code>, <code>mixer</code>,
 <code>browser</code>, <code>transport</code>). <code>app.site</code> is which site this is (<code>ui/preview.js</code> reads <code>app/site-config.json</code>; deploy/README.md). <code>app.siteConfig</code> is
 <code>loadSiteConfig</code>'s answer as boot read it (main.js waits for it, at most 4 s, <code>CONFIG_WAIT_MS</code>, before the first

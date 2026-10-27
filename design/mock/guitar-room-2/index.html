@@ -14,21 +14,24 @@
   <header class="top">
     <span class="brand disp">Overdub</span>
     <nav class="where" id="where" aria-label="Where you are"></nav>
+    <button class="backout" id="backout" type="button" hidden></button>
+    <span class="turns" id="turns" hidden></span>
     <span class="gap"></span>
-    <span class="presence" id="presence"><i></i><span><span class="by-agent">Claude</span> is on the talkback</span></span>
+    <span class="presence" id="presence"><i></i><span><span class="by-agent">Claude</span> on the talkback</span></span>
     <button class="tbtn" type="button" id="gsbtn">Getting started</button>
     <div class="screens" id="screens"><button class="tbtn" type="button" id="screensbtn" aria-expanded="false">Screens</button><menu id="screenmenu" hidden></menu></div>
   </header>
   <main class="view" id="view">
     <div class="world" id="stage" aria-label="The stage"></div>
     <div class="world" id="shop" aria-label="The shop" hidden></div>
+    <div class="dock" id="dock" aria-label="Your stack, in the try-out corner" hidden></div>
     <div class="spot" id="spot" hidden></div>
     <aside class="panel" id="panel" hidden></aside>
     <section class="book" id="book" hidden aria-label="The drummer’s book"></section>
     <section class="tapesheet" id="tapesheet" hidden aria-label="The last minute of tape"></section>
     <div class="callout" id="callout" hidden role="dialog" aria-live="polite"></div>
     <div class="idcard" id="idcard" aria-hidden="true"></div>
-    <button class="backout" id="backout" type="button" hidden></button>
+    <div class="kntip" id="kntip" aria-hidden="true"></div>
     <div class="fade" id="fade"></div>
   </main>
   <footer class="strip" id="strip"></footer>

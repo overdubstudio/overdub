@@ -40,22 +40,28 @@ export function ampsBySection() {
 }
 
 /* ------------------------------------------------------------------------------------------------ the pedal case */
-// Claw'd-o-Matic's categories (pedals.js PEDAL_CATS), shelved so each shelf of the case is full: what you'd find
-// together in a shop (the dynamics by the drives, delays by the reverbs). `pedalCat` is the pedal's own category.
-export const PEDAL_SHELVES = [
-  [['dynamics', 'Dynamics'], ['drive', 'Drive']],
-  [['fuzz', 'Fuzz']],
-  [['mod', 'Modulation']],
-  [['time', 'Delay'], ['ambient', 'Ambient']],
-  [['pitch', 'Pitch']],
-  [['filter', 'Filter & wah'], ['synth', 'Synth'], ['utility', 'Utility']],
-  [['glitch', 'Glitch']],
+// Claw'd-o-Matic's categories (pedals.js PEDAL_CATS), in its library's order: the case's drawer plates, top to bottom.
+// `pedalCat` is the pedal's own category. Each has a line on the drawer saying what's in it.
+export const PEDAL_CATS = [
+  ['dynamics', 'Dynamics', 'Gates, compressors and volume: how hard a note hits, and how it stops.'],
+  ['filter', 'Filter & wah', 'Wahs, EQs and envelope filters: which part of the guitar you hear.'],
+  ['pitch', 'Pitch', 'Octaves, harmonies, drop tunings and whammy.'],
+  ['drive', 'Drive', 'Boosts and overdrives: more push into the amp.'],
+  ['fuzz', 'Fuzz', 'Square-wave fuzz, from velvet to broken.'],
+  ['synth', 'Synth', 'Your guitar into a synth voice.'],
+  ['mod', 'Modulation', 'Chorus, flanger, phaser, vibrato, tremolo: movement.'],
+  ['time', 'Delay', 'Echoes, in time with the band or loose.'],
+  ['ambient', 'Ambient', 'Reverbs and shimmer: the room the guitar is in.'],
+  ['glitch', 'Glitch', 'Stutters, bit-crush and things that break on purpose.'],
+  ['utility', 'Utility', 'The odd useful box.'],
 ];
-export const CAT_WORD = Object.fromEntries(PEDAL_SHELVES.flat());
-export function pedalsByShelf() {
+export const CAT_WORD = Object.fromEntries(PEDAL_CATS.map(([c, w]) => [c, w]));
+export function pedalsByCat() {
   const all = listDevices({ kind: 'effect' }).filter((d) => d.id.startsWith('pedal.'));
-  return PEDAL_SHELVES.map((shelf) => shelf.map(([cat, word]) => ({ cat, word, pedals: all.filter((d) => d.pedalCat === cat) })));
+  return PEDAL_CATS.map(([cat, word, line]) => ({ cat, word, line, pedals: all.filter((d) => d.pedalCat === cat) }));
 }
+// a pedal's type in sentence case ("NOISE GATE" -> "Noise gate"), for its tag
+export const typeWord = (d) => { const t = String(d.kindLabel || '').toLowerCase(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
 // where a pedal goes when it's carried to your board (Claw'd-o-Matic's PEDAL_RANK): lower goes earlier; pedals ranked
 // mod and up go after the amp, in its effects loop
 export const RANK = { dynamics: 0, utility: 0.5, filter: 1, pitch: 2, synth: 2.5, drive: 3, fuzz: 4, glitch: 4.5, mod: 5, time: 6, ambient: 7 };
@@ -82,6 +88,8 @@ export function cabBox(id) {
 }
 // a mic's place on the cone, in words (as Claw'd-o-Matic's cab view says it)
 export const whereOnCone = (r) => (r < 0.12 ? 'centre' : r < 0.4 ? 'cap edge' : r < 0.82 ? 'cone' : r <= 1.04 ? 'cone edge' : 'off the cone');
+// the same, as a phrase after the mic's name: "Dynamic on the cap edge", "Ribbon off the cone"
+export const onCone = (r) => (r < 0.12 ? 'dead centre' : r < 0.4 ? 'on the cap edge' : r < 0.82 ? 'on the cone' : r <= 1.04 ? 'at the cone’s edge' : 'off the cone');
 export const inches = (d) => (d < 1 ? d.toFixed(1) : d < 10 ? String(Math.round(d * 2) / 2) : String(Math.round(d))) + '″';
 
 /* ------------------------------------------------------------------------------------------------ the club's stack */
@@ -101,7 +109,7 @@ export const HOUSE = {
   ],
 };
 // The room's tuner: not a Claw'd-o-Matic pedal, so it's drawn here (app.js tunerFace). First on the board, it mutes.
-export const TUNER = { id: 'tuner', name: 'Tuna Fork', kindLabel: 'TUNER · MUTE', blurb: 'Reads your low string first; mutes while it’s on', nod: 'the strobe and needle tuners at the front of every board' };
+export const TUNER = { id: 'tuner', name: 'Tuna Fork', kindLabel: 'TUNER · MUTE', blurb: 'Reads one open string at a time, low to high; mutes you while it’s on', nod: 'the strobe and needle tuners at the front of every board' };
 
 export const TUNINGS = [
   { id: 'e', name: 'E standard', notes: ['E', 'A', 'D', 'G', 'B', 'E'] },

@@ -41,12 +41,15 @@ const X0 = -MARGIN.x / PX, Y0 = -MARGIN.y / PX;
 export const STAGE = {
   w: 1440, h: 804,
   floorY: 130,        // the stage floor starts (world 520)
-  riser: { x: 150, y: 115, w: 126, h: 24 },   // its top at y, its carpeted front below (world 600..1104, 460..556)
-  kitCx: 213, kitBase: 116,
-  banner: { x: 158, y: 18, w: 110, h: 36 },
+  riser: { x: 140, y: 115, w: 138, h: 24 },   // its top at y, its carpeted front below (world 560..1112, 460..556)
+  banner: { x: 166, y: 12, w: 86, h: 15 },    // a slim banner on the truss, over the kit
   tape: { x: 279, y: 62, w: 32, h: 77 },      // the machine on its road case (world 1116..1244, 248..556)
   door: { x: 316, y: 60, w: 36, h: 79 },      // world 1264..1408, 240..556
 };
+// The kit has its own canvas with bigger pixels (6 world units each, not 4): it's the thing on the riser people look at.
+// Its canvas is 100 x 56 of those pixels; the kit's centre and its feet (on the riser's top) in that canvas:
+export const KIT = { px: 6, w: 100, h: 56, cx: 50, base: 50, x: 540, y: 160 };   // world: 540..1140, 160..496; feet at 460
+
 
 export function drawStage(g, view = {}) {
   clear(g);
@@ -76,21 +79,21 @@ export function drawStage(g, view = {}) {
     rect(g, x - 2, 14, 5, 1, x > 0 && x < W ? LAMP : LAMP_OFF);
     if (x > 0 && x < W) glow(g, x, 15, 3, LAMP_HI, 0.5);
   }
-  // the banner over the kit: the club's name, VOID
+  // the banner on the truss over the kit: the club's name, slim
   const B = STAGE.banner;
-  rect(g, B.x - 2, B.y - 2, B.w + 4, 2, '#3a3a44');
+  rect(g, B.x + 6, 8, 1, B.y - 8, '#3a3a44'); rect(g, B.x + B.w - 7, 8, 1, B.y - 8, '#3a3a44');
   rect(g, B.x, B.y, B.w, B.h, '#1d1a22');
-  for (let i = 0; i < B.w; i += 9) rect(g, B.x + i, B.y + B.h, 5, 2, '#1d1a22');
+  for (let i = 0; i < B.w; i += 7) rect(g, B.x + i, B.y + B.h, 4, 1, '#1d1a22');
   dither(g, B.x, B.y, B.w, B.h, '#221e28', 4);
-  const word = 'VOID', k = 5, tw = textWidth(word, k);
-  text(g, word, B.x + Math.floor((B.w - tw) / 2) + 1, B.y + 7 + 1, '#0b090e', k);
-  text(g, word, B.x + Math.floor((B.w - tw) / 2), B.y + 7, BONE, k);
+  const word = 'VOID', k = 2, tw = textWidth(word, k);
+  text(g, word, B.x + Math.floor((B.w - tw) / 2) + 1, B.y + 3, '#0b090e', k);
+  text(g, word, B.x + Math.floor((B.w - tw) / 2), B.y + 2, BONE, k);
   // the side walls' flyers (seen on a wide screen): whimsy on the walls
-  flyer(g, -86, 40, 26, 34, '#c9b98a', ['DOOM', 'NIGHT', 'THU'], '#16130f');
-  flyer(g, -52, 52, 22, 28, '#4a6a8a', ['OPEN', 'MIC'], '#e8e0cc');
-  flyer(g, -110, 70, 18, 24, '#8a7aa8', ['NO', 'SOLO', 'OVER', '5MIN'], '#16130f');
-  flyer(g, 372, 36, 26, 30, '#c9b98a', ['VOID', 'TUES'], '#16130f');
-  flyer(g, 404, 56, 24, 34, '#6a8a5a', ['LOAD', 'IN', 'BACK'], '#e8e0cc');
+  // (placed to be wholly off screen at 1280 and 1440 wide, and wholly on it at 2000)
+  flyer(g, -34, 30, 26, 34, '#c9b98a', ['DOOM', 'NIGHT', 'THU'], '#16130f');
+  flyer(g, -31, 74, 22, 28, '#4a6a8a', ['OPEN', 'MIC'], '#e8e0cc');
+  flyer(g, 366, 34, 26, 30, '#c9b98a', ['VOID', 'TUES'], '#16130f');
+  flyer(g, 369, 74, 22, 34, '#6a8a5a', ['LOAD', 'IN', 'BACK'], '#e8e0cc');
   // the stage floor: boards running across, worn lighter where people stand, gaffer marks
   const F = STAGE.floorY;
   rect(g, X0, F, W - 2 * X0, Hh - F - Y0, '#2a2019');
@@ -108,12 +111,12 @@ export function drawStage(g, view = {}) {
   // the tape machine on its road case, the door and its sign
   roadCase(g, STAGE.tape.x - 1, 104, STAGE.tape.w + 2, 35);
   door(g, STAGE.door, view);
-  const sw = signWidth('NO STAIRWAY') + 6, sx = STAGE.door.x + Math.floor((STAGE.door.w - sw) / 2);
+  const sw = signWidth('NO STAIRWAY') + 6, sx = Math.min(STAGE.door.x + Math.floor((STAGE.door.w - sw) / 2), W - 4 - sw);
   rect(g, sx, 43, sw, 10, '#e8e0cc'); rect(g, sx, 52, sw, 1, '#9a917e');
   rect(g, sx + 4, 40, 1, 3, '#77736c'); rect(g, sx + sw - 5, 40, 1, 3, '#77736c');
   sign(g, 'NO STAIRWAY', sx + 3, 45, '#16130f');
   // the stack's place: a shadow on the floor under the cab, and the board's
-  alpha(g, 0.45, () => { rect(g, 14, 138, 126, 3, '#000000'); rect(g, 8, 196, 344, 4, '#000000'); });
+  alpha(g, 0.45, () => { rect(g, 14, 134, 126, 3, '#000000'); rect(g, 4, 198, 352, 3, '#000000'); });
 }
 
 function flyer(g, x, y, w, h, c, lines, ink) {
@@ -150,19 +153,28 @@ function door(g, D, view) {
 // The moving parts, every frame: the kit (with its sticks for the count), the tape machine's reels and counter
 export function drawStageLive(g, s) {
   clear(g);
-  const L = { ...LOOK.metal };
-  kit(g, STAGE.kitCx, STAGE.kitBase, L, s, { double: true, name: s.count != null ? '' : 'VOID' });
-  // the sticks: two, crossed over the snare while they count; resting on the floor tom otherwise
-  const cx = STAGE.kitCx - 24, cy = STAGE.kitBase - 40;
+  tapeMachine(g, STAGE.tape, s);
+}
+// the kit on its own canvas (KIT): sticks crossed over the snare while they count, resting on the floor tom otherwise
+export function drawKit(g, s) {
+  g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+  const L = { ...LOOK.metal }, cx0 = KIT.cx, base = KIT.base;
+  kit(g, cx0, base, L, s, { double: true, name: s.count != null ? '' : 'VOID' });
+  const cx = cx0 - 24, cy = base - 40;
   if (s.count != null) {
     const tap = s.tap || 0, o = Math.round(tap * 2);
     line(g, cx - 10, cy - 8 + o, cx + 6, cy + 4, '#e8dcc0'); line(g, cx + 10, cy - 8 + o, cx - 6, cy + 4, '#e8dcc0');
     if (tap > 0.5) glow(g, cx, cy + 1, 4, '#fff2c0', tap * 0.8);
   } else {
-    line(g, STAGE.kitCx + 18, STAGE.kitBase - 22, STAGE.kitCx + 30, STAGE.kitBase - 26, '#c9b98a');
-    line(g, STAGE.kitCx + 19, STAGE.kitBase - 21, STAGE.kitCx + 31, STAGE.kitBase - 24, '#c9b98a');
+    line(g, cx0 + 18, base - 22, cx0 + 30, base - 26, '#c9b98a');
+    line(g, cx0 + 19, base - 21, cx0 + 31, base - 24, '#c9b98a');
   }
-  tapeMachine(g, STAGE.tape, s);
+}
+// a canvas of `w` x `h` world units at `k` world units per pixel, no margins
+export function sizePlain(cv, w, h, k = PX) {
+  cv.width = Math.ceil(w / k); cv.height = Math.ceil(h / k);
+  cv.style.width = cv.width * k + 'px'; cv.style.height = cv.height * k + 'px';
+  return cv.getContext('2d');
 }
 function tapeMachine(g, T, s) {
   const x = T.x, y = T.y;
@@ -191,35 +203,32 @@ function tapeMachine(g, T, s) {
 }
 
 /* ================================================================================================ the shop */
-// world layout (units): the amp wall 0..840, the try-out corner 840..1440, the pedal case 1440..2440
-export const SHOP = { w: 2440, h: 804, wall: { x: 0, w: 840 }, corner: { x: 840, w: 600 }, case: { x: 1440, w: 1000 }, floorY: 640 };
+// The shop's world (units): the door back to the stage 20..140, the amp wall 160..1024, the pedal case 1050..1950. Your
+// stack isn't in it: it stands in the try-out corner, which stays in view while the camera pans (app.js, the dock).
+export const SHOP = { w: 1960, h: 600, door: { x: 24, y: 252, w: 112, h: 336 }, wall: { x: 160, w: 864 }, case: { x: 1050, y: 30, w: 900, h: 548 }, floorY: 588 };
 
-// signs: [{ label, x, y, w }] in world units (the amp wall's sections, measured by app.js from where it laid them)
-export function drawShop(g, { signs = [], shelves = [], caseBox = null, door: D = null } = {}) {
+// signs: [{ label, x, y, w }] and shelves: [{ x, y, w }] in world units (the amp wall's sections, measured by app.js from
+// where it laid them); plates: the case's drawer plates [{ x, y, w, h }]; shelvesIn: the case's shelf lines [{ y }]
+export function drawShop(g, { signs = [], shelves = [], shelvesIn = [] } = {}) {
   clear(g);
   const p = (v) => v / PX;
   const W = p(SHOP.w), Hh = p(SHOP.h), F = p(SHOP.floorY), R = rnd(11);
-  // the walls: warm slats behind the amps, painted brick in the corner, cool plaster behind the case
+  // the walls: warm slats behind the amps and the door, cool plaster behind the case
+  const caseX = p(SHOP.case.x) - 6;
   rect(g, X0, Y0, W - 2 * X0, Hh - 2 * Y0, '#2a1f17');
-  for (let x = X0; x < p(SHOP.corner.x); x += 5) { rect(g, x, Y0, 4, F - Y0, R() < 0.5 ? '#33261b' : '#2f2318'); rect(g, x + 4, Y0, 1, F - Y0, '#1f1710'); }
-  rect(g, p(SHOP.corner.x), Y0, p(SHOP.corner.w), F - Y0, '#1b2224');
-  for (let y = Y0 + 2; y < F; y += 6) {
-    const off = ((y - Y0) / 6) % 2 ? 6 : 0;
-    for (let x = p(SHOP.corner.x) - 12 + off; x < p(SHOP.case.x); x += 12) rect(g, Math.max(p(SHOP.corner.x), x), y, Math.min(11, p(SHOP.case.x) - Math.max(p(SHOP.corner.x), x)), 5, R() < 0.5 ? '#1f272a' : '#1d2427');
-  }
-  rect(g, p(SHOP.case.x), Y0, W - p(SHOP.case.x) - X0, F - Y0, '#22242a');
-  dither(g, p(SHOP.case.x), Y0, W - p(SHOP.case.x) - X0, F - Y0, '#26282f', 4);
-  // pillars between the three
-  for (const x of [p(SHOP.corner.x) - 2, p(SHOP.case.x) - 2]) { rect(g, x, Y0, 5, F - Y0, '#151012'); rect(g, x + 1, Y0, 1, F - Y0, '#2a2226'); }
+  for (let x = X0; x < caseX; x += 5) { rect(g, x, Y0, 4, F - Y0, R() < 0.5 ? '#33261b' : '#2f2318'); rect(g, x + 4, Y0, 1, F - Y0, '#1f1710'); }
+  rect(g, caseX, Y0, W - caseX - X0, F - Y0, '#22242a');
+  dither(g, caseX, Y0, W - caseX - X0, F - Y0, '#26282f', 4);
+  rect(g, caseX - 2, Y0, 5, F - Y0, '#151012'); rect(g, caseX - 1, Y0, 1, F - Y0, '#2a2226');
   // track lights along the ceiling, amber, and their light
-  rect(g, X0, 2, W - 2 * X0, 2, '#3a3a44');
+  rect(g, X0, 0, W - 2 * X0, 2, '#3a3a44');
   for (let x = X0 + 20; x < W - X0; x += 38) {
-    alpha(g, 0.05, () => { for (let y = 8; y < F; y++) { const half = 2 + (y - 8) * 0.22; rect(g, x - half, y, half * 2, 1, LAMP); } });
-    rect(g, x - 2, 4, 5, 4, '#24242c'); rect(g, x - 1, 8, 3, 1, LAMP);
+    alpha(g, 0.05, () => { for (let y = 6; y < F; y++) { const half = 2 + (y - 6) * 0.22; rect(g, x - half, y, half * 2, 1, LAMP); } });
+    rect(g, x - 2, 2, 5, 3, '#24242c'); rect(g, x - 1, 5, 3, 1, LAMP);
   }
   // the amp wall's section signs (painted boards) and its shelves
   for (const s of signs) {
-    const x = p(s.x), y = p(s.y), w = p(s.w), k = 2, sp = signWidth(s.label, k) <= w - 4 ? k : 1, tw = signWidth(s.label, k, sp);
+    const x = p(s.x), y = p(s.y), w = p(s.w), k = 2, sp = signWidth(s.label, k) <= w - 2 ? k : 1, tw = signWidth(s.label, k, sp);
     rect(g, x, y, w, 13, '#e3d3a8'); rect(g, x, y + 12, w, 1, '#a8946a'); rect(g, x, y, w, 1, '#f4ead6');
     sign(g, s.label, x + Math.floor((w - tw) / 2), y + 2 + 1, '#a8946a', k, sp);
     sign(g, s.label, x + Math.floor((w - tw) / 2), y + 2, '#16130f', k, sp);
@@ -229,40 +238,47 @@ export function drawShop(g, { signs = [], shelves = [], caseBox = null, door: D 
     rect(g, x, y, w, 2, '#6a4a2c'); rect(g, x, y, w, 1, '#8c6a44'); rect(g, x, y + 2, w, 1, '#1a120c');
     rect(g, x + 2, y + 3, 1, 3, '#4a3420'); rect(g, x + w - 3, y + 3, 1, 3, '#4a3420');
   }
-  // the try-out corner: a rug, its sign, and the door back to the stage
-  const cx = p(SHOP.corner.x), cw = p(SHOP.corner.w);
-  const rugY = F + 2;
-  rect(g, cx + 6, rugY, cw - 12, Hh - rugY - 2, '#3a2430');
-  for (let i = 0; i < 4; i++) rect(g, cx + 8 + i * 2, rugY + 2 + i * 2, cw - 16 - i * 4, 1, i % 2 ? '#5a3a48' : '#2a1820');
-  const word = 'TRY IT HERE', tw = signWidth(word, 2);
-  rect(g, cx + Math.floor((cw - tw) / 2) - 4, 16, tw + 8, 14, '#151012');
-  sign(g, word, cx + Math.floor((cw - tw) / 2), 19, '#c69cf0', 2);
-  alpha(g, 0.25, () => rect(g, cx + Math.floor((cw - tw) / 2) - 6, 14, tw + 12, 18, '#c69cf0'));
-  if (D) {
-    const d = { x: p(D.x), y: p(D.y), w: p(D.w), h: p(D.h) };
-    rect(g, d.x - 3, d.y - 3, d.w + 6, d.h + 3, '#2c2630'); rect(g, d.x, d.y, d.w, d.h, '#3e3330');
-    rect(g, d.x + 3, d.y + 5, d.w - 6, 20, '#362c29'); rect(g, d.x + 3, d.y + 30, d.w - 6, 24, '#362c29');
-    rect(g, d.x + 6, d.y + 8, d.w - 12, 10, '#0e0b10'); alpha(g, 0.5, () => rect(g, d.x + 7, d.y + 9, d.w - 14, 8, '#2a2050'));
-    const sw2 = signWidth('STAGE') + 4; rect(g, d.x + Math.floor((d.w - sw2) / 2), d.y + 21, sw2, 7, '#c9b98a'); sign(g, 'STAGE', d.x + Math.floor((d.w - sw2) / 2) + 2, d.y + 22, '#16130f');
-    rect(g, d.x + d.w - 6, d.y + 34, 2, 4, '#8a8a96');
-    alpha(g, 0.5, () => rect(g, d.x + 1, d.y + d.h - 1, d.w - 2, 1, '#8a6ad0'));
-  }
-  // the case: a wooden base, glass with a glint, and a sign
-  if (caseBox) {
-    const x = p(caseBox.x), y = p(caseBox.y), w = p(caseBox.w), h = p(caseBox.h);
-    rect(g, x - 3, y - 3, w + 6, h + 6, '#3a2a1e'); rect(g, x - 3, y - 3, w + 6, 1, '#5a4430');
-    rect(g, x, y, w, h, '#14161a');
-    alpha(g, 0.07, () => { for (let i = 0; i < w + h; i += 46) for (let k = 0; k < 6; k++) line(g, x + i + k, y, x + i + k - h, y + h, '#e8f4ff'); });
-    rect(g, x - 3, y + h + 3, w + 6, F - (y + h + 3) + 8, '#2c2016'); rect(g, x - 3, y + h + 3, w + 6, 1, '#5a4430');
-    for (let i = 0; i < 4; i++) rect(g, x + 4 + i * Math.floor(w / 4), y + h + 7, Math.floor(w / 4) - 8, 1, '#1a120c');
-    const s = 'PEDALS', k = 3, tw2 = signWidth(s, k);
-    rect(g, x + Math.floor((w - tw2) / 2) - 5, y - 26, tw2 + 10, 20, '#e3d3a8'); rect(g, x + Math.floor((w - tw2) / 2) - 5, y - 7, tw2 + 10, 1, '#a8946a');
-    sign(g, s, x + Math.floor((w - tw2) / 2), y - 22, '#16130f', k);
-  }
-  // the floor: a music shop's checkerboard
-  for (let y = F; y < Hh - Y0; y += 6) for (let x = X0 + ((y - F) / 6 % 2) * 6; x < W - X0; x += 12) { rect(g, x, y, 6, 6, '#2e2b31'); rect(g, x + 6, y, 6, 6, '#3a363d'); }
+  // the door back to the stage, with its sign
+  const D = SHOP.door, d = { x: p(D.x), y: p(D.y), w: p(D.w), h: p(D.h) };
+  rect(g, d.x - 3, d.y - 3, d.w + 6, d.h + 3, '#2c2630'); rect(g, d.x, d.y, d.w, d.h, '#3e3330');
+  rect(g, d.x + 3, d.y + 5, d.w - 6, 22, '#362c29'); rect(g, d.x + 3, d.y + 34, d.w - 6, 40, '#362c29');
+  rect(g, d.x + 6, d.y + 8, d.w - 12, 12, '#0e0b10'); alpha(g, 0.5, () => rect(g, d.x + 7, d.y + 9, d.w - 14, 10, '#2a2050'));
+  alpha(g, 0.6, () => { rect(g, d.x + 9, d.y + 10, 2, 2, LAMP); rect(g, d.x + 15, d.y + 10, 2, 2, LAMP); });
+  const sw2 = signWidth('STAGE') + 4; rect(g, d.x + Math.floor((d.w - sw2) / 2), d.y + 24, sw2, 7, '#c9b98a'); sign(g, 'STAGE', d.x + Math.floor((d.w - sw2) / 2) + 2, d.y + 25, '#16130f');
+  rect(g, d.x + 3, d.y + 40, d.w - 6, 2, '#8a8a96'); rect(g, d.x + 3, d.y + 40, d.w - 6, 1, '#c4c4d0');
+  alpha(g, 0.5, () => rect(g, d.x + 1, d.y + d.h - 1, d.w - 2, 1, LAMP));
+  // the case: a wooden frame, glass with a glint, its drawer column and its shelves, a sign on top
+  const C = SHOP.case, x = p(C.x), y = p(C.y), w = p(C.w), h = p(C.h);
+  rect(g, x - 4, y - 4, w + 8, h + 8, '#3a2a1e'); rect(g, x - 4, y - 4, w + 8, 1, '#5a4430'); rect(g, x - 4, y + h + 3, w + 8, 1, '#1a120c');
+  rect(g, x, y, w, h, '#14161a');
+  rect(g, x + 44, y, 2, h, '#3a2a1e');
+  for (const s of shelvesIn) { const sy = p(s.y); rect(g, x + 48, sy, w - 50, 2, '#cfe6ee'); alpha(g, 0.5, () => rect(g, x + 48, sy + 2, w - 50, 1, '#000000')); alpha(g, 0.08, () => rect(g, x + 48, sy - 30, w - 50, 30, '#e8f4ff')); }
+  alpha(g, 0.06, () => { for (let i = 0; i < w + h; i += 60) for (let k = 0; k < 5; k++) line(g, x + i + k, y, x + i + k - h, y + h, '#e8f4ff'); });
+  // the floor (mostly under your board)
+  rect(g, X0, F, W - 2 * X0, Hh - F - Y0, '#2a2019');
+  for (let yy = F; yy < Hh - Y0; yy += 5) rect(g, X0, yy, W - 2 * X0, 1, '#1e1712');
   rect(g, X0, F, W - 2 * X0, 1, '#120e10');
-  rect(g, cx + 6, rugY, cw - 12, Hh - rugY - 2, '#3a2430');
-  for (let i = 0; i < 4; i++) rect(g, cx + 8 + i * 2, rugY + 2 + i * 2, cw - 16 - i * 4, 1, i % 2 ? '#5a3a48' : '#2a1820');
-  alpha(g, 0.5, () => rect(g, cx + 20, F - 3, cw - 40, 3, '#000000'));
+}
+
+// The try-out corner, behind your stack wherever the camera is: painted brick, its sign, the rug, and the boards your
+// pedalboard stands on along the front. `geo` in dock units (app.js dockGeo): { dw, dh, cornerX, boardY }
+export function drawDock(g, { dw, dh, cornerX, boardY }) {
+  g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+  const p = (v) => Math.round(v / PX), cx = p(cornerX), W = p(dw), F = p(boardY) - 4, Hh = p(dh) + 1, R = rnd(5);
+  rect(g, cx, 0, W - cx, F, '#1b2224');
+  for (let y = 0; y < F; y += 6) {
+    const off = (y / 6) % 2 ? 6 : 0;
+    for (let x = cx - 12 + off; x < W; x += 12) { const x0 = Math.max(cx, x); rect(g, x0, y, Math.min(11, W - x0, x + 11 - x0), 5, R() < 0.5 ? '#1f272a' : '#1d2427'); }
+  }
+  rect(g, cx - 2, 0, 5, F, '#151012'); rect(g, cx - 1, 0, 1, F, '#2a2226');
+  const word = 'TRY IT HERE', tw = signWidth(word), sx = cx + Math.floor((W - cx - tw) / 2);
+  rect(g, sx - 4, 8, tw + 8, 11, '#151012');
+  alpha(g, 0.2, () => rect(g, sx - 5, 7, tw + 10, 13, '#c69cf0'));
+  sign(g, word, sx, 11, '#c69cf0');
+  alpha(g, 0.07, () => { for (let y = 22; y < F; y++) { const half = 8 + (y - 22) * 0.5; rect(g, cx + (W - cx) / 2 - half, y, half * 2, 1, LAMP); } });
+  // the boards along the front, and the rug under your stack
+  rect(g, 0, F, W, Hh - F, '#2a2019');
+  for (let y = F; y < Hh; y += 5) { rect(g, 0, y, W, 1, '#1e1712'); for (let x = (y * 7) % 31; x < W; x += 31 + ((y * 3) % 17)) rect(g, x, y + 1, 1, 4, '#1e1712'); }
+  rect(g, 0, F, W, 1, '#120e10');
+  rect(g, cx + 6, F - 4, W - cx - 12, 6, '#3a2430'); rect(g, cx + 8, F - 3, W - cx - 16, 1, '#5a3a48');
 }

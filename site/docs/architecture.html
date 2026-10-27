@@ -2119,6 +2119,18 @@ camera stays) and <code>tryout-head</code>, <code>tryout-cab</code> from the dra
 <code>room.part.set</code>. The club's setup (<code>core/liveroom/guitar/setup.js</code> <code>planGuitarRoom</code>) is one step: both guitars on
 the club's stack (<code>CLUB_STACK</code>: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
 <code>GUITAR_DB</code> (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.</li>
+<li><strong>The drummer</strong> (<code>drummer.js</code> with <code>drummer-jam.js</code>, <code>-kit.js</code>, <code>-book.js</code>; <code>core/liveroom/guitar/beats.js</code> and
+<code>beats-grid.js</code>): the riser's plate and cards, the kit, and the book in the kit's zoom. A card picked is
+<code>room.set { beat: 'pin:&lt;id&gt;' }</code> by you (a run of picks one step); with the part line up and a part selected, that
+part's drums in the same step (<code>beatOps</code>: <code>room.part.set { beat }</code> and one clip the house signs, the house's own clips
+there replaced, one someone changed left alone). The riser's cards change whole through <code>pinOps</code> (pin, unpin, rename,
+reorder, a card's bar edited as <code>hits [{ t, row, v }]</code>). The drummer plays where the song has no drums: a jam (Space:
+the room's beat from the song's end) and the bars under a take (<code>countIn</code>) are <code>jamOps</code> bars through <code>store.preview</code>,
+a bar at a time two ahead, named <code>Jam</code> by the house, released behind the playhead and when the transport stops; never
+in History, and no plan touches a <code>Jam</code> clip. <code>countIn({ bars, at, from, beat })</code> is the deck's count (<code>voice: 'sticks'</code>, or none with the count-in off) and resolves once it's on the audio clock (<code>downbeat</code> in the result), so
+the take armed after it records from the 1. The guide plays as written (it sits with the club's verse beat, measured);
+the library's grooves at the house's touch. The drummer's lines are <code>core/liveroom/lines/drummer.js</code>, said through
+<code>R.say</code>.</li>
 <li><strong>Checks</strong>: <code>tools/liveroom/checks-guitar.js</code> holds the seams; each stream has its own <code>checks-&lt;stream&gt;.js</code> (the tape
 stream's is <code>checks-tape.js</code>, beside the rolling tape's), run with <code>ONLY=&lt;name&gt; node tools/liveroom-test.js</code>.</li>
 </ul>

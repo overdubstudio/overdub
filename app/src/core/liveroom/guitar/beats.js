@@ -22,18 +22,27 @@
 //   beatOf(p, section?) -> beat      the beat a part plays (its own, else room.beat, else GUIDE_ID)
 //   grooveOfBeat(p, beat) -> groove | null   the groove behind a beat name: the library's, the guide, or a pin's edited
 //                                    bar (a groove object with its hits), for drawing and for realize
-// The DRUMMER stream's (stubs here: each returns no ops until it's built, so a caller can be written against it):
-//   beatOps(p, { section, beat?, seed? }) -> { ops, label, reason: 'room:beat' }
-//       the part's drums: room.part.set { beat } and the drum track's clips under the section made from the beat (the
-//       house's clips there replaced; a clip someone else changed is theirs and stays). Signed by the house inside a
-//       step by you (the drum clips' by: 'overdub'; the dispatch is yours). The takes stream joins it to a new part's
-//       take step; the riser's swap dispatches it for the selected part.
-//   jamOps(p, { beat?, from, bars }) -> { ops }
-//       the drums for jamming past the song's end, from beat `from` for `bars` bars: dispatched with store.preview
-//       (never kept, never in History) and released when the jam stops
-//   pinOps(p, { pins }) -> { ops, label, reason: 'room:pins' }   the riser's cards set whole (reorder, swap, rename, edit)
+// The DRUMMER stream's (the drummer stream built them; signatures as the foundation froze them):
+//   beatOps(p, { section, beat?, seed? }) -> { ops, label, reason: 'room:beat', kept, beat, name, error? }
+//       the part's drums: room.part.set { beat } and the drum track's clip under the section made from the beat (the
+//       house's clips there replaced, cut at the part's edges; a clip someone else made or changed is theirs: it stays,
+//       nothing is written over it, kept: true). Signed by the house inside a step by you (the drum clip's by:
+//       'overdub'; the dispatch is yours). The takes stream joins it to a new part's take step; the riser's swap
+//       dispatches it for the selected part. The notes: the groove realized at the song's tempo (rules 'band'), seeded
+//       `<section>:<beat>`, at the house's touch, nothing added (no crash on the 1, no fills: nothing unasked)
+//   jamOps(p, { beat?, from, bars, start? }) -> { ops }
+//       the drums for jamming where the song has none (past its end, or a part's bars before its drums are in), from
+//       beat `from` for `bars` bars: one clip named 'Jam' by the house, dispatched with store.preview (never kept,
+//       never in History) and released when the jam stops; start (an addition): the jam's first beat, so a groove
+//       longer than a bar keeps its place in its loop from chunk to chunk; seeded `jam:<beat>:<bar>`. No plan here
+//       touches a 'Jam' clip
+//   pinOps(p, { pins }) -> { ops, label, reason: 'room:pins' }   the riser's cards set whole (reorder, swap, rename,
+//       edit), one room.set; the riser's beat on a card that went goes to that card's groove in the same op
+// Fixed by the drummer stream (a body, not a signature): grooveOfBeat on an edited card gives its hits whole ({ p, t,
+// d, v, mark, div, row }), so realize plays them; the song keeps them as { t, row, v }.
 
-import { parseGrooves, getGroove } from '../../grooves.js';
+import { parseGrooves, getGroove, pieceOf, realize, MARKS } from '../../grooves.js';
+import { beatsPerBar } from '../../music.js';
 import { roomOf, partOf } from '../model.js';
 
 export const GUIDE_ID = 'house/guide';
@@ -76,18 +85,150 @@ export function grooveOfBeat(p, beat) {
     if (!pin) return null;
     const base = grooveOfBeat(p, pin.groove);
     if (!Array.isArray(pin.hits) || !base) return base;
-    return { ...base, id: beat, name: pin.name || base.name, hits: pin.hits.map((h) => ({ ...h })) };
+    // (an edited card: its bar as the song keeps it, { t, row, v }, made whole again so realize can play it: the piece
+    // from the row's name, a sixteenth long, the mark its velocity reads as; the groove is that bar, or bars)
+    const bpb = beatsPerBar(base.meter || [4, 4]);
+    const hits = pin.hits.map(hitOf).filter(Boolean).sort((a, b) => a.t - b.t || a.p - b.p);
+    const length = bpb * Math.max(1, Math.ceil((Math.max(0, ...hits.map((x) => x.t)) + 1e-6) / bpb));
+    return { ...base, id: beat, name: pin.name || base.name, length, bars: length / bpb, hits, rows: rowsOfHits(hits) };
   }
   try { return getGroove(beat) || null; } catch { return null; }
 }
+const MARK_OF = (v) => (v >= 0.95 ? 'X' : v >= 0.7 ? 'x' : v >= 0.55 ? 'O' : v >= 0.4 ? 'o' : 'g');
+function hitOf(x) {
+  if (!x || !Number.isFinite(x.t) || typeof x.row !== 'string') return null;
+  const p = Number.isFinite(x.p) ? x.p : pieceOf(x.row);
+  if (!Number.isFinite(p)) return null;
+  const v = Number.isFinite(x.v) ? Math.max(0.05, Math.min(1, x.v)) : 0.8, mark = typeof x.mark === 'string' && Object.hasOwn(MARKS, x.mark) ? x.mark : MARK_OF(v);
+  return { p, t: x.t, d: Number.isFinite(x.d) ? x.d : 0.25, v, mark, div: Number.isFinite(x.div) ? x.div : 4, row: x.row };
+}
+function rowsOfHits(hits) {
+  const seen = [];
+  for (const x of hits) if (!seen.includes(x.row)) seen.push(x.row);
+  return seen.map((name) => ({ name, cells: '' }));
+}
 
-/* ------------------------------------------------------------------------------------------------ the drummer's (stubs) */
-export function beatOps(_p, { section: _section, beat: _beat, seed: _seed } = /** @type {any} */ ({})) {
-  return { ops: [], label: '', reason: 'room:beat' };
+/* ------------------------------------------------------------------------------------------------ the drummer's */
+const HOUSE = 'overdub';
+const EPS = 1e-6;
+const r4 = (x) => Math.round(x * 10000) / 10000;
+const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
+// The jam's clips are named so (store.preview's, by the house): nothing keeps one, and a plan here never touches one
+// (a page closed mid-jam may leave one in a saved song: it plays like any clip, and the room's plans step around it)
+const JAM = 'Jam';
+const isJam = (c) => c?.name === JAM && c.by === HOUSE;
+// still the house's: made by it and every note in it its own (core/liveroom/band.js isHouse's rule)
+const isHouse = (c) => c.by === HOUSE && (c.kind !== 'notes' || (c.notes || []).every((n) => (n.by ?? c.by) === HOUSE));
+const overlaps = (c, a, b) => Math.min(c.start + c.length, b) - Math.max(c.start, a) > 0.05;
+// The house's touch: every hit over a ghost's scaled to it, as the band plays (core/liveroom/band.js TOUCH.base: the
+// drums' fader was measured there; tools/liveroom/checks-drummer.js measures the guide and the riser's beats again)
+const TOUCH = 0.72;
+const touch = (v) => (v <= 0.4 + EPS ? v : r4(Math.max(0.41, Math.min(v >= 0.999 ? 1 : 0.95, v * TOUCH))));
+const drumsOf = (p) => { const id = roomOf(p)?.tracks?.drums; return typeof id === 'string' ? (p.tracks || []).find((t) => t.id === id) || null : null; };
+const nameOf = (p, beat, g) => {
+  if (beat.startsWith('pin:')) { const pin = (roomOf(p)?.pins || []).find((x) => x && x.id === beat.slice(4)); if (pin?.name) return pin.name; }
+  return beat === GUIDE_ID ? 'Guide' : g?.name || 'Beat';
+};
+// the notes a beat plays over `length` beats, `offset` beats into its loop, at the song's tempo, seeded
+function notesOf(p, g, { length, offset = 0, seed }) {
+  let out = [];
+  // (a library groove plays by the live room's house rules; the guide and an edited card aren't in the library, which
+  // those rules look a groove up in: they play as written, held under full as the rules hold the rest)
+  const lib = (() => { try { return getGroove(g.id) === g; } catch { return false; } })();
+  try { out = realize(g, { tempo: +p.tempo || 120, seed, length, offset: g.length > EPS ? offset % g.length : 0, ...(lib ? { rules: 'band' } : {}) }); } catch { out = []; }
+  if (!lib) out = out.map((n) => ({ ...n, v: n.v > 0.4 + EPS ? Math.min(0.95, n.v) : n.v }));
+  // (the guide plays as written, at no touch: measured, it then sits with the club's verse beat, where at the touch it
+  // read 2 LU under it; a guide you can't hear over a guitar isn't one. tools/liveroom/checks-drummer.js holds it there)
+  const k = g.id === GUIDE_ID ? (v) => v : touch;
+  return out.map((n) => ({ p: n.p, t: n.t, d: n.d, v: k(n.v), by: HOUSE }));
 }
-export function jamOps(_p, { beat: _beat, from: _from, bars: _bars } = /** @type {any} */ ({})) {
-  return { ops: [] };
+
+export function beatOps(p, { section, beat = null, seed = null } = /** @type {any} */ ({})) {
+  const s = (p?.sections || []).find((x) => x.id === section) || null;
+  const out = (ops, label, extra = {}) => ({ ops, label, reason: 'room:beat', ...extra });
+  if (!s) return out([], '', { error: 'There’s no part there.' });
+  const b = typeof beat === 'string' ? beat : beatOf(p, section);
+  if (!BEAT_RE.test(b)) return out([], '', { error: `“${b}” isn’t a beat.` });
+  const g = grooveOfBeat(p, b);
+  if (!g) return out([], '', { error: 'That beat isn’t on the riser or in the book.' });
+  const name = nameOf(p, b, g);
+  const ops = [];
+  if (partOf(p, s)?.beat !== b) ops.push({ type: 'room.part.set', section: s.id, patch: { beat: b } });
+  const t = drumsOf(p);
+  let kept = false;
+  if (t) {
+    const a = s.start, e = s.start + s.length;
+    const here = t.clips.filter((c) => !isJam(c) && overlaps(c, a, e));
+    // a clip someone else made or changed is theirs: the part keeps it, and the beat is only named
+    if (here.some((c) => !isHouse(c))) kept = true;
+    else {
+      let n = 0;
+      for (const c of here) {
+        const c0 = c.start, c1 = c.start + c.length;
+        if (c0 >= a - EPS && c1 <= e + EPS) { ops.push({ type: 'clip.remove', track: t.id, clip: c.id }); continue; }
+        // (a clip across the part's edges: cut there, and only the piece inside goes)
+        let inside = c.id;
+        if (c0 < a - EPS) { const ref = `beat_${c.id}_${n++}`; ops.push({ type: 'clip.split', track: t.id, clip: c.id, at: a, ref }); inside = `$${ref}`; }
+        if (c1 > e + EPS) ops.push({ type: 'clip.split', track: t.id, clip: inside, at: e, ref: `beat_${c.id}_${n++}` });
+        ops.push({ type: 'clip.remove', track: t.id, clip: inside });
+      }
+      const notes = notesOf(p, g, { length: s.length, seed: seed ?? `${s.id}:${b}` });
+      if (notes.length) ops.push({ type: 'clip.add', track: t.id, clip: { kind: 'notes', start: s.start, length: s.length, name, by: HOUSE, notes } });
+    }
+  }
+  return out(ops, ops.length ? `${name} under the ${String(s.name || 'part').toLowerCase()}` : '', { kept, beat: b, name });
 }
-export function pinOps(_p, { pins: _pins } = /** @type {any} */ ({})) {
-  return { ops: [], label: '', reason: 'room:pins' };
+
+// (start: the jam's first beat, where the groove's loop begins; from - start whole bars on. A seam addition: left out,
+// the loop begins at `from`)
+export function jamOps(p, { beat = null, from, bars, start = null } = /** @type {any} */ ({})) {
+  const t = drumsOf(p);
+  const b = typeof beat === 'string' && BEAT_RE.test(beat) ? beat : beatOf(p);
+  const g = grooveOfBeat(p, b) || GUIDE;
+  const bpb = beatsPerBar(p?.meter || [4, 4]);
+  const n = Math.max(1, Math.min(64, Math.round(+bars || 1)));
+  const f = Math.max(0, +from || 0), s0 = Number.isFinite(+start) && start != null ? +start : f;
+  if (!t) return { ops: [] };
+  const into = Math.max(0, f - s0), bar = Math.round(into / bpb);
+  const notes = notesOf(p, g, { length: n * bpb, offset: into, seed: `jam:${b}:${bar}` });
+  return { ops: notes.length ? [{ type: 'clip.add', track: t.id, clip: { kind: 'notes', start: r4(f), length: n * bpb, name: JAM, by: HOUSE, notes } }] : [] };
+}
+
+const pinKey = (x) => JSON.stringify([x.id, x.groove, x.name ?? null, x.hits ?? null]);
+export function pinOps(p, { pins } = /** @type {any} */ ({})) {
+  const was = Array.isArray(roomOf(p)?.pins) ? roomOf(p).pins : [];
+  const next = (Array.isArray(pins) ? pins : []).filter(isObj).map((x) => {
+    const o = { id: x.id, groove: x.groove };
+    if (typeof x.name === 'string' && x.name.trim()) o.name = x.name.trim();
+    if (Array.isArray(x.hits)) o.hits = x.hits.map((hh) => ({ t: r4(+hh.t), row: hh.row, v: r4(+hh.v) }));
+    return o;
+  });
+  const out = (ops, label) => ({ ops, label, reason: 'room:pins' });
+  if (next.map(pinKey).join('|') === was.map(pinKey).join('|')) return out([], '');
+  const label = pinLabel(p, was, next);
+  const patch = { pins: next };
+  // (the riser's beat on a card that's gone: the beat that card was made from)
+  const beat = roomOf(p)?.beat;
+  if (typeof beat === 'string' && beat.startsWith('pin:') && !next.some((x) => x.id === beat.slice(4))) {
+    const gone = was.find((x) => x.id === beat.slice(4));
+    patch.beat = gone?.groove || GUIDE_ID;
+  }
+  return out([{ type: 'room.set', patch }], label);
+}
+function pinLabel(p, was, next) {
+  const nm = (x) => x.name || grooveOfBeat(p, x.groove)?.name || 'a beat';
+  const ids = (xs) => xs.map((x) => x.id);
+  const added = next.filter((x) => !was.some((w) => w.id === x.id)), gone = was.filter((x) => !next.some((w) => w.id === x.id));
+  if (added.length === 1 && !gone.length) return `Pinned ${nm(added[0])} to the riser`;
+  if (gone.length === 1 && !added.length) return `Unpinned ${nm(gone[0])}`;
+  if (added.length || gone.length) return 'The riser’s cards';
+  if (ids(was).join() !== ids(next).join()) return 'The riser’s cards, in a new order';
+  const ch = next.filter((x) => { const w = was.find((y) => y.id === x.id); return pinKey(w) !== pinKey(x); });
+  if (ch.length === 1) {
+    const w = was.find((y) => y.id === ch[0].id), x = ch[0];
+    if (JSON.stringify(w.hits ?? null) !== JSON.stringify(x.hits ?? null)) return `Edited ${nm(x)}`;
+    if ((w.name ?? null) !== (x.name ?? null)) return `Renamed ${nm(w)} to ${nm(x)}`;
+    return `${nm(x)}: another groove`;
+  }
+  return 'The riser’s cards';
 }

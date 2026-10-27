@@ -40,7 +40,8 @@ export const FROZEN = {
   'core/liveroom/tight.js': ['measurePair', 'BASEMENT_MS', 'LIMIT_MS', 'MATCH_MS', 'REFINE_MS', 'TIGHT_MS', 'UNMATCHED'],
   'core/liveroom/double.js': ['planDouble', 'planUseAsRight', 'PAN_RAMP', 'panLaneOps', 'planPans', 'roleTrack', 'sidesOf'],
   'core/liveroom/session.js': ['readRoom', 'offered', 'stopBeat', 'press'],
-  'core/liveroom/plans.js': ['planPlace', 'takeOps', 'planLayout', 'planTwice', 'planMove', 'planShorter', 'planRemove', 'planEnd'],
+  // (planRig and rigNow: the guitar room's rig fix, docs/research/GUITAR-ROOM.md §2.9)
+  'core/liveroom/plans.js': ['planPlace', 'takeOps', 'planLayout', 'planTwice', 'planMove', 'planShorter', 'planRemove', 'planEnd', 'planRig', 'rigNow'],
   'core/liveroom/sheet.js': ['parseSheet', 'formatSheet', 'lineParts', 'soundingKey', 'transposeChord'],
   'core/liveroom/align.js': ['alignChords'],
   'core/liveroom/kitchen.js': ['kitchenSetup', 'planRead', 'planTime', 'planPlayer', 'planMaster', 'planKitchenFinish', 'offeredKitchen'],

@@ -2260,6 +2260,19 @@ which draws nothing itself:
   `room.part.set`. The club's setup (`core/liveroom/guitar/setup.js` `planGuitarRoom`) is one step: both guitars on
   the club's stack (`CLUB_STACK`: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
   `GUITAR_DB` (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.
+- **The drummer** (`drummer.js` with `drummer-jam.js`, `-kit.js`, `-book.js`; `core/liveroom/guitar/beats.js` and
+  `beats-grid.js`): the riser's plate and cards, the kit, and the book in the kit's zoom. A card picked is
+  `room.set { beat: 'pin:<id>' }` by you (a run of picks one step); with the part line up and a part selected, that
+  part's drums in the same step (`beatOps`: `room.part.set { beat }` and one clip the house signs, the house's own clips
+  there replaced, one someone changed left alone). The riser's cards change whole through `pinOps` (pin, unpin, rename,
+  reorder, a card's bar edited as `hits [{ t, row, v }]`). The drummer plays where the song has no drums: a jam (Space:
+  the room's beat from the song's end) and the bars under a take (`countIn`) are `jamOps` bars through `store.preview`,
+  a bar at a time two ahead, named `Jam` by the house, released behind the playhead and when the transport stops; never
+  in History, and no plan touches a `Jam` clip. `countIn({ bars, at, from, beat })` is the deck's count (`voice:
+  'sticks'`, or none with the count-in off) and resolves once it's on the audio clock (`downbeat` in the result), so
+  the take armed after it records from the 1. The guide plays as written (it sits with the club's verse beat, measured);
+  the library's grooves at the house's touch. The drummer's lines are `core/liveroom/lines/drummer.js`, said through
+  `R.say`.
 - **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
   stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 

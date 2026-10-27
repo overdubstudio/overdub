@@ -6,7 +6,7 @@
 // The song keeps its own copy (the track's inserts): tweaks on the stage change that copy, never the rack. Save to rack
 // is the only thing that writes here, and loading a stack only returns ops for the song.
 //
-//   import * as rack from './rack-db.js';      every call is a Promise, and none throws
+//   import * as rack from './rack-db.js';      every call but note() and house() is a Promise, and none throws
 //
 //   save(stack, { id?, name?, song? }) -> { ok: true, id, stack, where: 'disk' | 'memory', note? } | { ok: false, error }
 //       stack: { name?, chain } or a bare chain (stackOf(track) gives it from the song's copy). A new stack, named

@@ -5,7 +5,7 @@
 // index (newest first, by song, starred or tuning), never a riff's audio; the audio is read for one riff at a time
 // (a preview, or into a song).
 //
-//   import * as riffs from './riffs-db.js';      every call is a Promise, and none throws
+//   import * as riffs from './riffs-db.js';      every call but note() is a Promise, and none throws
 //
 //   add(input) -> { ok: true, id, row, where: 'disk' | 'memory', note? } | { ok: false, error }
 //       keep a riff: input as cleanRiff takes it ({ audio, tempo, beats?, bars?, meter?, offset?, name?, tuning?,

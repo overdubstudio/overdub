@@ -435,6 +435,13 @@ export function createShell(root, app) {
   const typesText = (t) => !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && TEXT_INPUT.test(t.type)) || !!t.closest?.('[data-typing]'));
   const OWNS_SPACE = '[aria-modal=true]:not(.ew-region), [role=menu], [role=listbox]';
   const spaceStays = (t) => typesText(t) || (!app.transport?.locked?.() && !!t?.closest?.(OWNS_SPACE));
+  // The take keys follow the same rule: R records (again: punches out), ⇧R puts what you just played in the song, Esc
+  // stops a hum or leaves Tap or musical typing. A select or slider the mouse last clicked doesn't keep them (a closed
+  // select's type-ahead would quietly change, say, the input device on R); a text field does. An open modal dialog
+  // (and, for Esc, a menu or popover, which Esc closes) keeps them while it's up, but not while a take counts in or
+  // records. They aren't stopped at the window, as Space is: a control's own Esc listener still hears one the studio
+  // didn't use.
+  const takeKey = (code, mods) => (code === 'KeyR' && (!mods || mods === 'shift')) || (code === 'Escape' && !mods);
   // (decided on each fresh keydown; a held Space's repeats and its keyup go the same way)
   let spaceTaken = false;
   window.addEventListener('keyup', (e) => { if (e.code === 'Space' && spaceTaken) { spaceTaken = false; e.preventDefault(); e.stopPropagation(); } }, true);
@@ -462,7 +469,8 @@ export function createShell(root, app) {
       if (e.repeat) return;   // (a held Space is one press: it doesn't stop a take and start the song again)
     }
     const keepsSpace = space && !spaceTaken;
-    const inField = !(space && spaceTaken) && typing(e.target);
+    const take = takeKey(e.code, mods) && !typesText(e.target);
+    const inField = !(space && spaceTaken) && !take && typing(e.target);
     const onControl = !mods && activates(e.target, e.code);
     // Enter checks a focused checkbox or radio button, as Space would (the browser does nothing with it there)
     if (!mods && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target?.tagName === 'INPUT' && /^(checkbox|radio)$/.test(e.target.type)) {
@@ -472,9 +480,9 @@ export function createShell(root, app) {
     }
     // arrows in a menu, list or tab strip move between its items; behind a modal dialog nothing else listens
     // and Esc in a popover or menu closes that (it has its own listener), not the selection behind it
-    const owned = (NAV.test(e.code) && !!e.target?.closest?.('[role=menu], [role=listbox], [role=tablist], [role=radiogroup]'))
+    const owned = !(take && app.transport?.locked?.()) && ((NAV.test(e.code) && !!e.target?.closest?.('[role=menu], [role=listbox], [role=tablist], [role=radiogroup]'))
       || (e.code === 'Escape' && !!e.target?.closest?.('.ek-pop, .ew-pop, [role=menu]'))
-      || (!space && !!e.target?.closest?.('[aria-modal=true]:not(.ew-region)'));
+      || (!space && !!e.target?.closest?.('[aria-modal=true]:not(.ew-region)')));
     // keys with a when() are modes (musical typing, a focused editor) and win over the always-on ones
     for (const k of [...keys.filter((x) => x.when), ...keys.filter((x) => !x.when)]) {
       if (k.key !== e.code) continue;

@@ -1,7 +1,7 @@
 // Keyboard, touch and assistive-tech checks for the studio [ui]: Enter presses the focused button (not the transport)
 // and checks a checkbox; Space is the transport's whatever the mouse last clicked (a button, select, range, checkbox,
 // link, summary) and through a take, a text field still types it, and an open modal or menu owns it only while no take
-// runs; tabs and menus take arrow keys, popovers take focus and give it back, the "?" sheet keeps Tab inside,
+// runs; so are R and Esc (a clicked select doesn't type-ahead on R); tabs and menus take arrow keys, popovers take focus and give it back, the "?" sheet keeps Tab inside,
 // clips and notes can be reached from the keyboard, a touch hold opens the clip and track menus (iOS sends no
 // contextmenu), the inspector deletes and duplicates without a gesture, reduced motion holds still, toasts with an
 // action wait, single-letter keys can be switched off, labels name their track, and the "Take one" coach keeps focus,
@@ -667,6 +667,31 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
     const c = { ...(await look(sel)), playing: await E(() => !!overdub.engine.playing), keys: await E(() => window.__keys.join(' ')) };
     T.ok(a.focused && b.playing && !c.playing && b.state === a.state && c.state === a.state && c.focused && c.keys === 'keydown:taken keyup:taken keydown:taken keyup:taken',
       `after a mouse click on ${name} (it keeps focus), Space plays and Space stops, and the control isn't pressed, opened or toggled (${JSON.stringify({ focused: a.focused, playing: [b.playing, c.playing], same: b.state === a.state && c.state === a.state, keys: c.keys })}${b.state === a.state ? '' : ` ${a.state} → ${b.state}`})`);
+  }
+  await stopAll();
+
+  /* -------- the take keys too: R from a clicked select, range or button counts a take in and the select keeps its
+     value (no type-ahead), R again calls it off, and Esc from one leaves musical typing */
+  for (const [name, sel] of [['a select (Instrument)', 'select.in-in'], ['a range input (Level)', 'input.in-range[aria-label="Level"]'], ['a button (Fit)', '.ar-tool[title="Fit the whole song in view"]']]) {
+    await stopAll();
+    await clickOn(sel);
+    await sleep(150);
+    const a = await look(sel);
+    await page.keyboard.press('KeyR');
+    const counting = await waitState('count', 2000);
+    const b = await look(sel);
+    await page.keyboard.press('KeyR');
+    const off = await waitState('idle', 2000);
+    await stopAll();
+    // (the probe's menu would hold musical typing's Esc, which waits while any menu is up)
+    await E(() => { document.querySelector('#space-probe > div').removeAttribute('role'); overdub.input.qwerty.toggle(true); });
+    const on = await E(() => !!overdub.input.qwerty.on);
+    await page.keyboard.press('Escape');
+    await sleep(100);
+    const c = { ...(await look(sel)), qwerty: await E(() => !!overdub.input.qwerty.on) };
+    await E(() => { overdub.input.qwerty.toggle(false); document.querySelector('#space-probe > div').setAttribute('role', 'menu'); });
+    T.ok(a.focused && counting === 'count' && b.focused && b.state === a.state && off === 'idle' && on && !c.qwerty && c.focused && c.state === a.state,
+      `after a mouse click on ${name}, R counts a take in and R again calls it off, Esc leaves musical typing, and the control keeps its value (${JSON.stringify({ focused: a.focused, counting, off, qwerty: [on, c.qwerty], same: b.state === a.state && c.state === a.state })}${b.state === a.state ? '' : ` ${a.state} → ${b.state}`})`);
   }
   await stopAll();
 

@@ -1045,7 +1045,10 @@ anything a module marks `data-typing`). A button, select, checkbox, slider or li
 so the shell takes Space on keydown and keyup both, prevents the control's default and stops it at the window: no
 control under it sees Space, and none should handle it. Enter presses a focused button (and checks a focused
 checkbox), so the keyboard loses nothing. An open modal dialog or menu owns Space while it is up, except while a take
-counts in or records: then only a text field keeps it. A held Space is one press.
+counts in or records: then only a text field keeps it. A held Space is one press. The take keys follow the same rule:
+R, ⇧R and Esc reach the studio from a clicked select or slider too (a closed select's type-ahead would otherwise
+change its value on R), and an open modal dialog (for Esc, a menu or popover) keeps them only while no take runs. They
+aren't stopped at the window, so a control's own Esc listener still hears one the studio didn't use.
 
 **Phones** (under 900 px): the side panes become full-height sheets (one at a time) and the detail pane a bottom
 sheet whose divider is a drag handle (never taller than the room it has: turning the phone clamps it, so the first

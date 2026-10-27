@@ -98,6 +98,8 @@ export function mountLevel(el, { source, device = '', onPickChannel, advice = tr
     chs.hidden = lv.length < 2;
     if (lv.length < 2) return;
     const cur = String(source.state?.channel ?? '');
+    // (another interface with fewer inputs: its missing channels' buttons go, so none picks an input that isn't there)
+    for (const [ch, b] of chEls) if (!lv.some((x) => x.ch === ch)) { b.remove(); chEls.delete(ch); }
     for (const x of lv) {
       let b = chEls.get(x.ch);
       if (!b) {

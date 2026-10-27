@@ -53,7 +53,7 @@ export const KIT = { px: 6, w: 100, h: 56, cx: 50, base: 50, x: 540, y: 160 };  
 
 export function drawStage(g, view = {}) {
   clear(g);
-  const W = 360, Hh = 201, L = LOOK.metal;
+  const W = 360, Hh = 201;
   const R = rnd(7);
   // the back wall: painted black brick, a little violet in the black
   rect(g, X0, Y0, W - 2 * X0, Hh - 2 * Y0, '#120f16');

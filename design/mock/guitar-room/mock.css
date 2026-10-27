@@ -120,8 +120,9 @@ kbd, .k { font: 400 12px/1 var(--font-mono); color: inherit; border: var(--rule-
 .primary-row .b-big { flex: 1; }
 
 /* ---------------------------------------------------------------- the bottom: the tape, the tray, the part line */
-.gr-bottom { grid-area: bottom; display: grid; grid-template-columns: minmax(340px, 38%) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: 'tape tape' 'tray parts'; column-gap: var(--gut); min-height: 0; padding-top: 6px; }
-.tape { grid-area: tape; all: unset; grid-area: tape; cursor: pointer; display: flex; align-items: center; gap: 12px; height: 30px; color: var(--text-3); font-size: 12px; }
+/* biome-ignore lint/correctness/noInvalidGridAreas: a name repeated to span two columns, which the rule miscounts */
+.gr-bottom { grid-area: bottom; display: grid; grid-template-columns: minmax(340px, 38%) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "tape tape" "tray parts"; column-gap: var(--gut); min-height: 0; padding-top: 6px; }
+.tape { all: unset; grid-area: tape; cursor: pointer; display: flex; align-items: center; gap: 12px; height: 30px; color: var(--text-3); font-size: 12px; }
 .tape canvas { flex: 1; height: 18px; min-width: 0; opacity: .55; }
 .tape:hover canvas { opacity: .9; }
 .tape:hover { color: var(--text-2); }
@@ -317,7 +318,8 @@ select.sel { font: 400 14px/1 var(--font-ui); background: var(--bg-2); color: va
 
 /* ---------------------------------------------------------------- the shop */
 .shop { position: fixed; z-index: 34; left: 0; right: 0; top: 52px; bottom: 0; background: var(--bg); padding: 0 var(--gut) 12px; display: grid;
-  grid-template-columns: var(--shop-w) minmax(0, 1fr); grid-template-rows: var(--shop-h) minmax(0, 1fr); grid-template-areas: 'scene look' 'chain chain'; column-gap: var(--gut); row-gap: 14px; }
+  grid-template-columns: var(--shop-w) minmax(0, 1fr); grid-template-rows: var(--shop-h) minmax(0, 1fr); column-gap: var(--gut); row-gap: 14px;
+  grid-template-areas: "scene look" "chain chain"; }
 .shop-scene { grid-area: scene; position: relative; width: var(--shop-w); height: var(--shop-h); }
 .shop-tb { display: flex; align-items: baseline; gap: 10px; margin-top: auto; padding-top: 10px; border-top: var(--rule); font-size: 15px; }
 .shop-tb .lamp { align-self: center; }

@@ -133,7 +133,7 @@ function face(key, def, values, on, opts = {}) {
 }
 // the room's tuner pedal (not a Claw'd-o-Matic pedal, so it's drawn here)
 function tunerFace(key) {
-  let f = FACES.get(key);
+  const f = FACES.get(key);
   if (f) return f.face;
   const el = h('div.tuner',
     h('div.tn-win', h('div.tn-leds', Array.from({ length: 15 }, (_, i) => h('i' + (i === 7 ? '.mid' : '')))), h('div.tn-note', '–'), h('span.tn-str', ''), h('span.tn-cents', '')),

@@ -80,7 +80,7 @@ import { installTools } from '../agent/tools.js';
 import { JAM_SCHEMA, JAM_TRACK_SCHEMA, TONE_SCHEMA, FRETBOARD_SCHEMA, capText } from '../agent/extra-schemas.js';
 import { installTabs } from './tabs.js';
 import { Strip, trackSpec } from '../engine/strip.js';
-import { planStacks } from '../core/stacks.js';
+import { planStacks, sameChain } from '../core/stacks.js';
 import { roomOf } from '../core/liveroom/model.js';
 
 let faces = null;
@@ -376,6 +376,9 @@ export default function (app) {
   // in order, are the track's)
   function toneOf(t) {
     if (!t || !G) return null;
+    // (the rig the chain is exactly, settings and all, first: several rigs share one line of devices)
+    const exact = G.RIGS.find((r) => r.chain.length === t.inserts.length && sameChain(t.inserts, r));
+    if (exact) return exact;
     const devs = t.inserts.map((x) => x.device).join('>');
     const mine = J.tones[t.id] && G.rigById(J.tones[t.id]);
     if (mine && mine.chain.map((s) => s.device).join('>') === devs) return mine;
@@ -890,6 +893,7 @@ export default function (app) {
       ok: true, tone: { id: r.id, name: r.name, bank: r.bank.name, for: r.blurb }, track: { id: res.track.id, name: res.track.name },
       ...(res.tracks.length > 1 ? { tracks: res.tracks.map((t) => ({ id: t.id, name: t.name })) } : {}), ...(res.recording ? { left_out: `${res.recording.join(' and ')}: recording` } : {}),
       chain: res.track.inserts.map((x) => `${app.devices.getDevice(x.device)?.name || x.device}${x.on ? '' : ' (off)'}`), replaced: res.replaced,
+      ...(res.txn ? {} : { unchanged: `${res.tracks.map((t) => t.name).join(' and ')} already had ${r.name}: nothing changed` }),
     };
   }
   // Pointing is drawing on the neck; play sounds it on the room's voice, which isn't a track: nothing in the song changes,

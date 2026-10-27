@@ -10,7 +10,8 @@
 //
 //   createTalk(R, { tray }) -> talk
 //     talk.open() -> { ok, error? }   the field (or, with nobody to talk to, the line saying so)
-//     talk.close() -> bool            talk.isOpen() -> bool
+//     talk.close({ focus = true }) -> bool   (focus: back to the room; false when a click took it elsewhere)
+//     talk.isOpen() -> bool
 //     talk.send(text) -> Promise<{ ok, error? }>   ask Claude (as Enter in the field does)
 //     talk.who() -> { here, inApp, provider, outside: [name] }   who's on the other side of the glass
 //     talk.context() -> string        what Claude is told about the room with an ask
@@ -44,15 +45,26 @@ export function createTalk(R, { tray = null } = {}) {
   slot.classList.add('gr-tk');
   const lamp = h('i.gr-tk-lamp', { 'aria-hidden': 'true' });
   const field = h('input.gr-tk-field', { type: 'text', placeholder: 'Ask Claude through the glass', 'aria-label': 'Talk to Claude', maxlength: 2000, autocomplete: 'off', enterkeyhint: 'send', 'data-typing': '' });
-  const form = h('form.gr-tk-form', { hidden: true, onsubmit: (e) => { e.preventDefault(); const q = field.value; close(); send(q); } }, lamp, field, h('button.btn', { type: 'submit' }, 'Send', kbd('Enter')));
+  const form = h('form.gr-tk-form', { hidden: true, onsubmit: (e) => { e.preventDefault(); const q = field.value; field.value = ''; close(); send(q); } }, lamp, field, h('button.btn', { type: 'submit' }, 'Send', kbd('Enter')));
   const btn = h('button.btn.gr-tk-btn', { type: 'button', onclick: () => R.press('talk') }, h('i.gr-tk-who', { 'aria-hidden': 'true' }), h('span', 'Talk to Claude'), kbd('/'));
   const askedQ = h('span.gr-tk-q'), askedS = h('span.gr-tk-s');
   const asked = h('div.gr-tk-asked', { hidden: true, 'aria-live': 'polite' }, h('span.by.by-human', 'you'), ': ', askedQ, askedS);
   slot.append(form, btn, asked);
   field.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); field.value = ''; close(); }
   });
   const sheet = R.sheet('talk');
+  // (a click on the room while the field is open: the field goes, its words kept for the next /, and the room has its
+  // keys back; an open field nobody's typing in would hold every key but Esc: ./keys.js's talk context)
+  form.addEventListener('focusout', (e) => {
+    const to = e.relatedTarget;
+    if (to && (form.contains(to) || sheet.contains(to))) return;
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (!R.gr.talk.open || form.contains(a) || sheet.contains(a)) return;
+      close({ focus: false });
+    }, 0);
+  });
   sheet.classList.add('gr-tks');
   let was = null, turn = null, last = null, askedAt = 0;
   const offs = [];
@@ -77,7 +89,7 @@ export function createTalk(R, { tray = null } = {}) {
     const kept = tray ? tray.rows().slice(0, 5).map((r) => `${r.name} (${Math.round(r.bars * 4) / 4} bars at ${Math.round(r.tempo)})`) : [];
     return [
       'The human is in the live room\'s guitar room (the metal club) with a guitar in their hands, reading your reply in the talkback strip: answer in a sentence or two.',
-      `They're at: ${R.parts.room && R.gr.world === 'shop' ? 'the shop' : `the stage${R.gr.cam && R.gr.cam !== 'stage' ? `, close on the ${R.gr.cam}` : ''}`}.`,
+      `They're at: ${R.gr.world === 'shop' ? 'the shop' : `the stage${R.gr.cam && R.gr.cam !== 'stage' ? `, close on the ${R.gr.cam}` : ''}`}.`,
       `Tempo ${p.tempo}, ${TUNINGS[room?.tuning]?.name || 'standard tuning'}; the drummer's beat: ${room?.beat || 'the guide beat'}.`,
       rig ? `Their rig, the same on ${rig.tracks.join(' and ')}: ${rig.slots.map((s) => `${name(s.device)}${s.on ? '' : ' (off)'}`).join(' → ')}${room?.stack?.name ? ` (the stack "${room.stack.name}")` : ''}.` : 'No rig on the guitars yet.',
       parts.length ? `The part line: ${parts.join('; ')}.${sel ? ` Selected: ${sel.name}.` : ''}` : 'The part line is empty.',
@@ -103,7 +115,7 @@ export function createTalk(R, { tray = null } = {}) {
       return { ok: false, error: text };
     }
     if (w.provider === 'cloud') {
-      const text = 'Claude on Overdub credits shows its price before each ask, and that’s in the control room: ⌘G.';
+      const text = T_.cloud();
       R.say(text);
       return { ok: false, error: text };
     }
@@ -114,11 +126,10 @@ export function createTalk(R, { tray = null } = {}) {
     renderSheet();
     slot.classList.add('gr-tk-on');
     form.hidden = false;
-    field.value = '';
     setTimeout(() => field.focus({ preventScroll: true }), 0);
     return { ok: true };
   }
-  function close() {
+  function close({ focus = true } = {}) {
     if (!R.gr.talk.open) return false;
     R.gr.talk.open = false;
     form.hidden = true;
@@ -130,7 +141,7 @@ export function createTalk(R, { tray = null } = {}) {
       R.overlay(back);
     }
     was = null;
-    R.el.root.closest('.lr')?.focus({ preventScroll: true });
+    if (focus) R.el.root.closest('.lr')?.focus({ preventScroll: true });
     return true;
   }
 

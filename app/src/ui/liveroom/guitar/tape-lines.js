@@ -35,6 +35,7 @@ export const TAPE_LINES = {
   // Claude on the talkback
   nobody: () => 'Nobody’s on the other side of the glass. Claude comes in from the control room: ⌘G.',
   outside: ({ names }) => `${list(names.length ? names : ['An agent'])} ${names.length > 1 ? 'are' : 'is'} on the line from outside: type to ${names.length > 1 ? 'them' : 'it'} there, and what comes back shows here.`,
+  cloud: () => 'Claude on Overdub credits shows its price before each ask, and that’s in the control room: ⌘G.',
   busy: () => 'Claude’s still on the last one. Give it a moment.',
   noAnswer: ({ why }) => `Claude didn’t answer: ${String(why || 'nothing came back').replace(/[\s.]+$/, '')}.`,
 };

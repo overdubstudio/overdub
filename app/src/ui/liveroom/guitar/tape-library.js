@@ -88,8 +88,11 @@ export function createLibrary(R, { hear, tray }) {
     try { page = await riffs.list(query(more ? next : null)); } catch (e) { console.error('library: list', e); page = { rows: [], next: null }; }
     loading = false;
     if (my !== seq || !open) return;
+    // (a page more is added under the rows already drawn: a library of thousands, scrolled, isn't drawn again each page)
+    const had = more ? rows.length : 0;
     rows = more ? [...rows, ...page.rows] : page.rows;
     next = page.next;
+    if (more && had) { appendRows(had); return; }
     if (!sel || !rows.some((r) => r.id === sel)) sel = rows[0]?.id || null;
     renderList();
     renderDetail();
@@ -140,16 +143,27 @@ export function createLibrary(R, { hear, tray }) {
     requestAnimationFrame(() => drawPeaks(cv, r.peaks, { color: r.id === sel ? tok('--bg') || '#141210' : tok('--text-3') || '#9a8f7c' }));
     return el2;
   }
-  function renderList() {
-    const kids = [h('div.gr-lb-th', ['', 'Name', 'Song', '', 'Length', 'BPM', 'Tuning', 'Key', 'Stack'].map((t) => h('span', t)))];
-    let g = null;
-    for (const r of rows) {
+  // the rows from i on, with a group's heading where the group changes
+  function rowsFrom(i) {
+    const kids = [];
+    let g = i > 0 ? group(rows[i - 1].at) : null;
+    for (const r of rows.slice(i)) {
       const gg = group(r.at);
       if (gg !== g) { g = gg; kids.push(h('div.gr-lb-grp', { role: 'presentation' }, gg)); }
       kids.push(row(r));
     }
+    return kids;
+  }
+  const moreEl = () => h('div.gr-lb-more', { 'aria-hidden': 'true' }, 'More below…');
+  function appendRows(i) {
+    list.querySelector('.gr-lb-more')?.remove();
+    list.append(...rowsFrom(i), ...(next ? [moreEl()] : []));
+    renderCount();
+  }
+  function renderList() {
+    const kids = [h('div.gr-lb-th', ['', 'Name', 'Song', '', 'Length', 'BPM', 'Tuning', 'Key', 'Stack'].map((t) => h('span', t))), ...rowsFrom(0)];
     if (!rows.length) kids.push(h('p.gr-lb-empty', loading ? 'Reading the library…' : (facets?.total ? 'No riff matches. Clear a filter, or search for something shorter.' : 'No riffs yet. Play something you like on the stage, then G keeps it off the tape.')));
-    if (next) kids.push(h('div.gr-lb-more', { 'aria-hidden': 'true' }, 'More below…'));
+    if (next) kids.push(moreEl());
     list.replaceChildren(...kids);
     list.setAttribute('aria-activedescendant', sel ? `gr-lb-${sel}` : '');
     list.querySelector('.gr-lb-row[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -216,7 +230,7 @@ export function createLibrary(R, { hear, tray }) {
     if (hear.key === r.id) hear.stop();
     else {
       const buf = await riffs.buffer(r.id);
-      if (buf) { const from = r.offset || 0; if (await hear.play(r.id, { buffer: buf, from, to: from + (r.beats * 60) / r.tempo })) R.say(T_.hear({ name: r.name })); }
+      if (buf && open) { const from = r.offset || 0; if (await hear.play(r.id, { buffer: buf, from, to: from + (r.beats * 60) / r.tempo })) R.say(T_.hear({ name: r.name })); }
     }
     renderDetail();
   }
@@ -254,7 +268,12 @@ export function createLibrary(R, { hear, tray }) {
   list.addEventListener('keydown', (e) => {
     if (renaming) return;
     const i = rows.findIndex((r) => r.id === sel);
-    const go = (j) => { e.preventDefault(); if (rows.length) select(rows[Math.max(0, Math.min(rows.length - 1, j))].id); };
+    const go = (j) => {
+      e.preventDefault();
+      if (rows.length) select(rows[Math.max(0, Math.min(rows.length - 1, j))].id);
+      // (the keys page on too: near the end of what's listed, the next page comes)
+      if (next && !loading && j >= rows.length - 10) load(true);
+    };
     if (e.key === 'ArrowDown') go(i + 1);
     else if (e.key === 'ArrowUp') go(i - 1);
     else if (e.key === 'PageDown') go(i + 10);

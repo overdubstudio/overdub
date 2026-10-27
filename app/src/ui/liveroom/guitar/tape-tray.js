@@ -57,7 +57,9 @@ export function createTray(R, { hear }) {
   const tapeBtn = h('button.gr-ty-tape', { type: 'button', 'aria-label': 'The tape: the last minute (G)', onclick: () => R.press('tape') }, tapeLine, h('span.gr-ty-tl', 'the tape, the last minute', kbd('G'), 'that was the one'));
   const count = h('span.gr-ty-count');
   const allBtn = h('button.btn.btn-txt', { type: 'button', onclick: () => R.press('library') }, 'All riffs');
-  const lane = h('div.gr-ty-lane', { role: 'list', 'aria-label': 'Riffs this session' });
+  // (a card is a button to the keys: Enter is its own, put it on the part line, never the room's play-from; Space stays
+  // the transport's. A listbox would keep Space, the shell's rule: ui/shell.js)
+  const lane = h('div.gr-ty-lane', { role: 'group', 'aria-label': 'Riffs this session' });
   el.replaceChildren(tapeBtn, h('div.gr-ty-h', h('span.gr-ty-name', 'Riffs'), count, h('span.gr-gap'), allBtn, kbd('⇧L')), lane);
 
   async function refresh() {
@@ -79,7 +81,7 @@ export function createTray(R, { hear }) {
   }
   function card(r) {
     const cv = h('canvas.gr-ty-wave', { 'aria-hidden': 'true' });
-    const c = h('div.gr-ty-card', { role: 'listitem', tabindex: 0, dataset: { riff: r.id }, 'aria-label': `${r.name}: ${riffMeta(r)}. Click hears it; drag it to the part line, or Enter puts it after the selected part.` },
+    const c = h('div.gr-ty-card', { role: 'button', tabindex: 0, dataset: { riff: r.id }, 'aria-label': `${r.name}: ${riffMeta(r)}. Click hears it; drag it to the part line, or Enter puts it after the selected part.` },
       h('span.gr-ty-cn', r.name), h('span.gr-ty-cm', riffMeta(r)), h('span.gr-ty-cs', riffSub(r)), cv, h('i.gr-ty-loop'));
     requestAnimationFrame(() => drawPeaks(cv, r.peaks, { color: tok('--text-3') || '#9a8f7c' }));
     c.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === 'NumpadEnter') && e.target === c) { e.preventDefault(); e.stopPropagation(); place(r); } });
@@ -155,6 +157,7 @@ export function createTray(R, { hear }) {
   async function toggleHear(r) {
     if (hear.key === r.id) { hear.stop(); mark(); return; }
     const buf = await riffs.buffer(r.id);
+    if (!R.gr.drawer || !alive) return;   // (the drawer went down while it was read)
     if (!buf) { R.say(`${r.name}’s audio isn’t in this browser.`); return; }
     const from = r.offset || 0, to = from + (r.beats * 60) / r.tempo;
     if (await hear.play(r.id, { buffer: buf, from, to })) R.say(T_.hear({ name: r.name }));

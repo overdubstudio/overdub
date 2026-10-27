@@ -203,7 +203,8 @@ export function createTapeSheet(R, { hear, onKept = null } = {}) {
     if (!tp || !sel) return false;
     const to = Math.min(sel.to, head());
     const r = await tp.read(sel.from, to);
-    if (!r || !r.d.length) return false;
+    // (closed while the tape was read: nothing starts behind it)
+    if (!r || !r.d.length || !T.open) return false;
     const ok = await hear.play('tape', { sr: sr(), data: fromPcm16(r.d) });
     if (ok && !again) { const w = selWords(sel); R.say(T_.hearSel({ what: w?.grid ? w.text.split(' · ')[0].replace(/^b/, 'B') : `The last ${secs(w?.s || 0)}` })); }
     render();

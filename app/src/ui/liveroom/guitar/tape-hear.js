@@ -15,9 +15,10 @@
 const FADE = 0.008;
 
 export function createHear({ app, track }) {
-  let cur = null;
+  let cur = null, ask = 0;   // (ask: the latest play or stop; a play still waiting on the context when another comes is dropped)
   const ctxOf = () => app.engine?.ctx || null;
   function stop() {
+    ask++;
     const c = cur;
     cur = null;
     if (!c) return;
@@ -32,12 +33,14 @@ export function createHear({ app, track }) {
   }
   async function play(key, { buffer = null, sr = 0, data = null, from = 0, to = null, loop = true } = {}) {
     stop();
+    const my = ask;
     try { if (!ctxOf() && app.engine?.start) await app.engine.start(); } catch { /* no sound here */ }
     const ctx = ctxOf();
     const tid = typeof track === 'function' ? track() : track;
     const dest = ctx && tid && app.engine?.inputNode ? app.engine.inputNode(tid) : null;
     if (!ctx || !dest || dest.context !== ctx) return false;
     try { if (ctx.state === 'suspended') await ctx.resume(); } catch { /* fine */ }
+    if (my !== ask) return false;
     let buf = buffer;
     if (!buf && data && sr) { buf = ctx.createBuffer(1, Math.max(1, data.length), sr); buf.copyToChannel(data, 0); }
     if (!buf) return false;

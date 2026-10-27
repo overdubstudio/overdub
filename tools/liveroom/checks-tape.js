@@ -18,14 +18,17 @@
 //      bar 1): the tape rolls as the room mounts; G puts the camera on the machine and the last minute up, the default
 //      selection on its bar lines; a focused end moves a bar line at a time; B turns snapping off and on (the pref
 //      kept); Enter keeps it: one riff more in riffs-db (its tempo, its bars, the club's stack and the song's tag),
-//      nothing in History, the riffs up in the tray with the line said
+//      nothing in History, the riffs up in the tray with the line said; a click on its card hears it through the rig
+//      at the level it was played (measured into Guitar L's chain)
 //   8. a riff onto the part line, as Enter on its card and as a drag onto the part line: the takes stream's place gets
-//      the riff and where it goes (a stand-in here: // needs takes) and its part is one step by you that ⌘Z takes back
+//      the riff and where it goes (a stand-in here: // needs takes) and its part is one step by you that ⌘Z takes back;
+//      Enter on a card is the card's alone (the room's play-from isn't pressed with it)
 //   9. the library (⇧L): the riff listed newest first with its song, a search that matches nothing and one that does,
 //      ↓ and Enter putting it on the part line; Esc steps back out of it, and out of the tape's sheet with the camera
 //  10. Claude on the talkback: with nobody connected / says so and opens nothing; with the demo agent / opens the field
 //      (a letter types, it doesn't record), Enter asks with the room's state as context, the reply comes into the
-//      talkback signed in cool ink; an edit by 'claude' while the room is up is one step ⌘Z takes back
+//      talkback signed in cool ink; a click away closes the field (its words kept) and gives the room its keys back;
+//      an edit by 'claude' while the room is up is one step ⌘Z takes back
 //  11. leaving the room stops the tape it started; no console or page errors
 import { openRoom, alignCount, history, press } from './harness.js';
 import { session } from './fake.js';
@@ -278,6 +281,21 @@ async function guitarRoom(T, ctx) {
     T.ok(k.n === k.n0 + 1 && k.r && k.r.tempo === 120 && k.r.bars === want && k.r.song === k.r.here && k.r.chain > 0 && k.r.offset > 0, `Enter keeps it: one riff more in the library (${k.r?.name}, ${k.r?.bars} of ${want} bars at ${k.r?.tempo}, from this song, through ${k.r?.stack || 'its'} ${k.r?.chain}-piece chain, its first beat ${Math.round((k.r?.offset || 0) * 1000)} ms in)`);
     T.ok(k.h === k.h0 && k.overlay === null && k.cam === 'stage' && k.drawer && k.cards[0] === k.r?.name && new RegExp(`is in the tray: ${want} bars? at 120`).test(k.line), `and the song is as it was (History ${k.h - k.h0}), the camera back on the stage, ${k.r?.name} first in the tray ("${k.line}")`);
     await shot('tray');
+    // a click on its card hears it, round and round, through the rig: into Guitar L's chain at the level it was played
+    // (the fake peaks at −12 dBFS; the monitor is off, so all the chain's input hears is the riff)
+    const lv = await E(() => {
+      const o = window.overdub, G = (o.store.get().room?.tracks || {}).guitarL, node = o.engine.inputNode(G);
+      const an = node.context.createAnalyser(); an.fftSize = 2048; node.connect(an);
+      window.__gt.an = { an, node, peak: 0, t: setInterval(() => { const b = new Float32Array(an.fftSize); an.getFloatTimeDomainData(b); for (const x of b) window.__gt.an.peak = Math.max(window.__gt.an.peak, Math.abs(x)); }, 20) };
+      return !!G;
+    });
+    await page.locator('.gr-ty-card').first().click();
+    await wait(2500);
+    const lvl = await E(() => { const a = window.__gt.an; clearInterval(a.t); try { a.node.disconnect(a.an); } catch { /* gone */ } const R = document.querySelector('.gr').__gr; return { db: 20 * Math.log10(a.peak || 1e-9), key: R.parts.tape.tray && document.querySelector('.gr-ty-card.gr-ty-on') ? 'on' : 'off' }; });
+    await page.locator('.gr-ty-card').first().click();
+    await wait(200);
+    const quiet = await E(() => !document.querySelector('.gr-ty-card.gr-ty-on'));
+    T.ok(lv && lvl.key === 'on' && Math.abs(lvl.db + 12) <= 1 && quiet, `a click on ${k.r?.name} hears it through the rig at the level it was played (${fmt(lvl.db, 2)} dBFS into Guitar L's chain; the fake's −12), and a second click stops it`);
 
     // onto the part line: the takes stream's place, stood in for (// needs takes: a part from the riff, one step by you)
     await E(() => {
@@ -297,12 +315,12 @@ async function guitarRoom(T, ctx) {
       };
     });
     const h1 = await E(() => window.overdub.store.history.length);
-    await E(() => document.querySelector('.gr-ty-card').focus());
+    await E(() => { const R = document.querySelector('.gr').__gr; window.__gt.pressed = []; window.__gt.offPress = R.on('press', ({ id }) => window.__gt.pressed.push(id)); document.querySelector('.gr-ty-card').focus(); });
     await press(page, 'Enter');
     await wait(400);
-    const pl = await E(() => { const o = window.overdub, last = o.store.history.at(-1); return { places: window.__gt.places, h: o.store.history.length, by: last?.by, ops: (last?.ops || []).map((x) => x.type), sections: (o.store.get().sections || []).length }; });
-    T.ok(pl.places.length === 1 && pl.places[0].id === k.r?.id && Number.isInteger(pl.places[0].where?.at) && pl.h === h1 + 1 && pl.by === 'you' && pl.ops.includes('clip.add') && pl.ops.includes('section.add'),
-      `Enter on its card: the part line's place gets ${k.r?.name} at ${pl.places[0]?.where?.at} (after the selected part), and its part is one step by you (${pl.ops.join(', ')})`);
+    const pl = await E(() => { const o = window.overdub, last = o.store.history.at(-1); window.__gt.offPress(); return { places: window.__gt.places, pressed: window.__gt.pressed, h: o.store.history.length, by: last?.by, ops: (last?.ops || []).map((x) => x.type), sections: (o.store.get().sections || []).length }; });
+    T.ok(pl.places.length === 1 && pl.places[0].id === k.r?.id && Number.isInteger(pl.places[0].where?.at) && pl.h === h1 + 1 && pl.by === 'you' && pl.ops.includes('clip.add') && pl.ops.includes('section.add') && !pl.pressed.length,
+      `Enter on its card: the part line's place gets ${k.r?.name} at ${pl.places[0]?.where?.at} (after the selected part), and its part is one step by you (${pl.ops.join(', ')}); the room's keys pressed nothing else (${pl.pressed.join(', ') || 'no play-from'})`);
     await press(page, 'Meta+KeyZ');
     const un = await E(() => ({ h: window.overdub.store.history.length, sections: (window.overdub.store.get().sections || []).length }));
     T.ok(un.h === h1 && un.sections === pl.sections - 1, `⌘Z takes the part back out in one step (History ${un.h - h1}, sections ${pl.sections} then ${un.sections})`);
@@ -378,6 +396,22 @@ async function guitarRoom(T, ctx) {
     const t2 = await E(() => { const by = document.querySelector('.lr-tb-by .by'); return { overlay: window.overdub.ui.state.liveRoom.gr.overlay, line: document.querySelector('.lr-tb-line')?.textContent || '', by: by?.textContent || '', ink: by ? getComputedStyle(by).color : '', agent: getComputedStyle(document.documentElement).getPropertyValue('--agent').trim() }; });
     T.ok(ctxSent.q === 'hi' && /guitar room/.test(ctxSent.context) && /Tempo 120/.test(ctxSent.context) && /part line/.test(ctxSent.context), `Enter asks Claude "${ctxSent.q}" with the room as context (${ctxSent.context.split('\n').length} lines: the place, the tempo, the rig, the part line)`);
     T.ok(t2.overlay === null && t2.by === 'Claude' && t2.line.length > 0, `its reply comes into the talkback signed Claude (${t2.ink}; --agent ${t2.agent}): "${t2.line.slice(0, 80)}${t2.line.length > 80 ? '…' : ''}"`);
+    // a click away from the open field: it goes, its words kept, and the room's keys are back
+    await press(page, 'Slash');
+    await wait(200);
+    await page.keyboard.type('abc');
+    await page.mouse.click(700, 24);
+    await wait(150);
+    const away = await E(() => ({ overlay: window.overdub.ui.state.liveRoom.gr.overlay, open: window.overdub.ui.state.liveRoom.gr.talk.open }));
+    await press(page, 'KeyH');
+    const cam = await E(() => window.overdub.ui.state.liveRoom.gr.cam);
+    await press(page, 'Escape');
+    await press(page, 'Slash');
+    await wait(200);
+    const kept = await E(() => document.querySelector('.gr-tk-field')?.value);
+    await press(page, 'Escape');
+    const shut = await E(() => ({ overlay: window.overdub.ui.state.liveRoom.gr.overlay, value: document.querySelector('.gr-tk-field')?.value }));
+    T.ok(away.overlay === null && !away.open && cam === 'head' && kept === 'abc' && shut.overlay === null && shut.value === '', `a click away from the field closes it (overlay ${away.overlay}) and H reaches the room again (${cam}); / brings the words back ("${kept}"), Esc lets them go`);
     const ed = await E(async () => {
       const o = window.overdub, h = o.store.history.length, was = o.store.get().tempo;
       const r = await o.tools.run('apply_ops', { ops: [{ type: 'project.set', patch: { tempo: 140 } }], label: 'Tempo to 140', reason: 'they asked' }, { by: 'claude' });

@@ -100,7 +100,7 @@
     },
     {
       // AudioWorkletGlobalScope
-      "includes": ["app/src/kernel/worklet.js", "app/src/devices/worklets/*.js", "app/src/input/cap-worklet.js", "tools/test-worklets.js"],
+      "includes": ["app/src/kernel/worklet.js", "app/src/devices/worklets/*.js", "app/src/input/cap-worklet.js", "app/src/input/tape-worklet.js", "tools/test-worklets.js"],
       "javascript": { "globals": ["AudioWorkletProcessor", "registerProcessor", "sampleRate", "currentFrame", "currentTime"] }
     },
     {

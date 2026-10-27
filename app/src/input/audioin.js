@@ -41,6 +41,9 @@
 //   audio.tune({ lo, hi }?) -> { hz, midi, p, cents, stable, conf } | null   lo/hi: the instrument's range in Hz (default
 //                  38-1400); cents only once the note has settled (stable), else null
 //   audio.listen(fn({ f, d: [Float32Array] })) -> off    raw blocks with their audio-clock frame (hum, beatbox, latency)
+//   audio.tap(node) -> off   the picked input (a split's first channel) also into `node`, an AudioNode on audio.ctx,
+//                  through every reopen and channel change until off (the rolling tape, input/tape.js); recording,
+//                  monitoring and the capture don't change
 //   audio.monitor(on?)   live through the armed audio track's inserts; with no audio track it stays on and waits
 //   audio.monitorTrack() -> the track it plays through now | null (off, closed, or waiting: state.monitorWaiting)
 //   audio.record({ track?, countIn? }) ; audio.stopRecord() ; audio.toggleRecord()   (through the recorder)
@@ -165,6 +168,7 @@ export function createAudioIn(app, input) {
   let monFor = null, openId = null, guard = null, stopGuard = null;
   const recorder = () => input.recorder;
   const listeners = new Set();
+  const taps = new Set();     // nodes the picked input also feeds (audio.tap)
   const tuners = new Map();   // the tuner for each range asked for: `${lo}|${hi}` -> { at, last, tuner }
   const persist = () => { try { localStorage.setItem(SAVE, JSON.stringify({ deviceId: picker.deviceId, channel: picker.channel, countIn: state.countIn })); } catch { /* ok */ } };
   // Sketch's picker: what was last opened from it (a track's own input doesn't change it)
@@ -267,6 +271,7 @@ export function createAudioIn(app, input) {
         if (state.inputKind === 'interface' && device && device !== 'default') decide(true, { auto: true, id: openId });
         else decide(false, { off: state.inputKind === 'mic' ? 'mic' : '', id: openId });
       }
+      for (const n of taps) { if (n.context === c) { try { pick.connect(n); } catch { /* gone */ } } }
       if (listeners.size || capture || picks) await attachCap();
       syncMonitor();
       changed();
@@ -367,6 +372,12 @@ export function createAudioIn(app, input) {
       return tu.last;
     },
 
+    tap(node) {
+      if (!node) return () => {};
+      taps.add(node);
+      if (rig && node.context === ctx) { try { rig.pick.connect(node); } catch { /* not this context's */ } }
+      return () => { if (!taps.delete(node)) return; if (rig) { try { rig.pick.disconnect(node); } catch { /* not wired */ } } };
+    },
     listen(fn) {
       listeners.add(fn);
       if (state.open && !cap) attachCap();

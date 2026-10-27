@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 138 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 140 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -156,6 +156,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          rounds.js (Start a song: the loop, folding rounds, the 1, the readings, the timing words),
                          recorder.js (R: takes into the song), autorec.js (knob moves into lanes), latency.js
                          (calibration), capture.js (never lose an idea), importers.js (MIDI and audio files in),
+                         tape.js + tape-core.js + tape-worklet.js (the rolling tape: the last minute of the input
+                         on the band's grid, its default selection and grab),
                          index.js (app.input)                                                           [input]
   app/src/ui/            shell.js + dom.js (fixed frame), workspace.js + workspace-view.js (Find anything), 
                          transport.js, arranger.js, lanes.js (automation lanes),
@@ -1453,7 +1455,7 @@ after a knob moves off it, else &quot;Custom&quot;; picking one is one <code>ins
 shared classes built on them (<code>.btn</code>, <code>.tog</code>, <code>.ledger</code>, <code>.sheet-head</code>, <code>.by</code>, …) are in <code>app/style/app.css</code> and
 <code>design/LINER-NOTES-KIT.md</code>.</p>
 <h2 id="capture-and-bringing-material-in"><a class="h-link" href="#capture-and-bringing-material-in">Capture and bringing material in</a></h2>
-<p><code>app.input</code> (<code>input/index.js</code>) = <code>{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec }</code>.</p>
+<p><code>app.input</code> (<code>input/index.js</code>) = <code>{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec, tape }</code>.</p>
 <ul>
 <li><p><strong>Recording into the song</strong> (<code>input/recorder.js</code>, <code>app.input.recorder</code>; the spec is
 <code>docs/research/RECORDING-UX.md</code> 3.2-3.17). One Record for every source: R (the transport's key and button) calls
@@ -1597,6 +1599,24 @@ turned off and kept in this browser (<code>localStorage overdub:qwerty</code>): 
 key, C major). The line over the keys says what they do, &quot;Snapping to 1/16, in C minor&quot;, each part a click that turns
 its helper off (&quot;Your timing&quot;, &quot;every note&quot;) and on: <code>qwerty.snapLine({ touch })</code>, its words <code>snapWords(...)</code> (pure).
 A MIDI keyboard's notes are never moved.</p></li>
+<li><p><strong>The rolling tape</strong> (<code>input/tape.js</code>, <code>app.input.tape</code>; <code>docs/research/GUITAR-ROOM.md</code> §1.4, §2.3, §4.3). While
+the guitar room is open (<code>tape.start()</code>; <code>tape.stop()</code> lets it go) the picked input is always on tape: mono 16-bit
+at the device's rate in a ring in the audio thread (<code>input/tape-worklet.js</code>, <code>'ew-tape'</code>, fed by <code>audio.tap(node)</code>
+through every reopen and channel change), 60 s by default, 15 to 300 (<code>tape.setSeconds</code>, <code>localStorage overdub:tape</code>): 5.3 MB a minute at 44.1 kHz, 5.8 at 48. The ring is indexed by the audio-clock frame, so it neither
+copies nor allocates as it rolls (a 256-frame peak bin goes to the page a few times a second for the waveform;
+<code>test/unit/tape.test.js</code> measures a minute: about 1 µs and nothing allocated a quantum, the posts aside). The
+band's grid rides alongside as linear pieces read off the engine's clock at every peak post and transport event
+(<code>input/tape-core.js</code> <code>createGrid</code>: a tempo change splits a piece where the two lines meet, a loop wrap where the
+song beat reached the loop's end, a new run from its start), and frames meet beats by the recorder's rule: input
+frame f was played to the band's scheduled time f / sr − (the measured round trip + the engine's delay
+compensation), so a grab lines up with a deck take to the sample (<code>tools/liveroom/checks-tape.js</code>). The UI reads
+<code>span()</code>, <code>peaks(from, to, n, out)</code>, <code>lines(from, to)</code> (the drummer's bars, numbered), <code>beatAt</code>, <code>frameAt</code> and <code>snap</code>
+in its frame; <code>select()</code> is the default selection (<code>defaultSelection</code>: the last phrase from the attacks,
+<code>input/onsets.js</code> with <code>pitch: false</code>, snapped to its bar lines, a lone downbeat hit left out as the ending, over
+four bars the shortest pass that repeats the one before it, else the last four; free time when no band played);
+<code>grab(range)</code> copies frames into an asset in <code>engine.assets</code> (the recording format: <code>{ id, kind: 'audio', name, sr, channels: 1, duration }</code>) with its place (<code>start</code>, <code>from</code>, <code>to</code>, <code>beats</code>, <code>length</code>, <code>bars</code>, <code>bpm</code>) and touches
+nothing else; a riff goes in the song only when it's kept, as <code>tape.ops(grab, { track, at })</code> (<code>riffOps</code>:
+<code>asset.add</code> and the clip, one dispatch by whoever keeps it). The full API is <code>input/tape.js</code>'s header.</p></li>
 <li><p><strong>Latency</strong> (<code>input/latency.js</code>): tap along to eight clicks, or a loopback, once per input device; takes, hums and
 beatbox are shifted by the measured round trip.</p></li>
 <li><p><strong>Audio inputs</strong> (<code>input/audioin.js</code>): an interface opens with all its channels (<code>channelCount</code> up to what the

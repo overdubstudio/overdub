@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 159 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 160 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -205,6 +205,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          mics, Tuna Fork, the cables, a face's menu as a button), room-style.js. stage.js's view adds
                          kit(state | null) (the drummer drives the kit's hits) and redraw(); R.gr.room holds where
                          the mics sit on the grille
+                         drummer.js [drummer], start.js [start], takes.js [takes] (takes-*.js, parts-*.js: the
+                         recording view, the review, the part line and its plans), tape.js [tape]
   app/src/core/liveroom/guitar/ the guitar room's pure part: setup.js (the club's setup and stack, GUITAR_DB), rig.js
                          (the rig on both guitars and its plans), beats.js (the riser's beats and cards) [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
@@ -2143,6 +2145,21 @@ its footswitch stomps it, the camera goes to it (<code>R.panel('tuner')</code>: 
 in, the tunings), and while it's on the monitor is muted (<code>audio.monitor(false)</code>), put back as it was when it goes
 off, when a take starts, or when the screen goes. A tuning picked on it that the song knows is the song's: one step
 by you (<code>room.set { tuning }</code> and the guitars' low cut). Bus: <code>start:gs</code>, <code>start:tuner</code>, <code>start:plug</code>.</li>
+<li><strong>Takes and the part line</strong> (<code>takes.js</code>; <code>parts-plans.js</code> is its pure part). A part is a section, in start order;
+the room adds none unasked. R records the selected part (fixed length; what rings past it is the take's tail, the
+deck's <code>tailFrom</code>) or a new part at the end (whole bars to the bar line before the stop, the ring its tail). The
+count is the deck's, the engine's sticks its voice while the count-in is on; the drummer is told
+(<code>R.parts.drummer.countIn({ bars, bpm, at, from, sounded })</code>, <code>sounded: true</code> when the engine sounds it) and a
+drummer that sounds the count itself sets <code>countsAloud: true</code>, the engine's voice then <code>'none'</code>. A take and its part
+are one step by you: the part's section, its drums (<code>beatOps</code>) and, for the other side, the pans are dispatched with
+<code>join</code> on the recorder's transaction, and so is every trim and pick in review, so Toss (<code>store.undo({ id, redo: false })</code>) leaves History as it was. Each part-line move (a new part, before, moved, deleted, a riff placed) is one
+step by you. Beside the frozen API: <code>place()</code> returns a Promise; <code>summary()</code> → <code>{ parts, bars, secs }</code> and the bus's
+<code>takes:parts</code> (the same, when it changes) for the strip; <code>takes:landed</code> when a take is in; <code>dropAt(x, y, { final, kind })</code> → the index a riff dragged there lands at (the tape's drag). The drawer's two columns (the tray's 340 px,
+the part line's the rest) are set in <code>takes-style.js</code>. Keys on what the stream draws: the part line is a listbox, and
+the shell leaves a focused listbox its Space, so the lane hands Space to the room (<code>R.press('space')</code>) and leaves
+Enter to the key table (play from the card); a review handle is a slider, which the shell leaves its Enter, so the
+handle's Enter is Keep. Whether a key arrives marked (<code>defaultPrevented</code>) says nothing: the live room's holds mark
+keys they do nothing with.</li>
 <li><strong>Checks</strong>: <code>tools/liveroom/checks-guitar.js</code> holds the seams; each stream has its own <code>checks-&lt;stream&gt;.js</code> (the tape
 stream's is <code>checks-tape.js</code>, beside the rolling tape's), run with <code>ONLY=&lt;name&gt; node tools/liveroom-test.js</code>.</li>
 </ul>

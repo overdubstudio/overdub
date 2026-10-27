@@ -123,19 +123,24 @@ export function tunerFace({ onStomp }) {
   let was = '';
   return {
     el,
+    // t: { on, input, note, octave, cents (as shown, rounded), string (its number), inTune, held } (R.gr.tuner.reading,
+    // the start stream's, beside on)
     update(t = {}) {
       const on = !!t.on, c = Number.isFinite(t.cents) ? t.cents : null;
-      const key = [on, t.note, c, t.string, t.inTune].join('|');
+      const key = [on, t.input, t.note, t.octave, c, t.string, t.inTune, t.held].join('|');
       if (key === was) return;
       was = key;
       el.classList.toggle('gr-on', on);
+      el.classList.toggle('gr-held', on && !!t.held);
       sw.setAttribute('aria-pressed', String(on));
-      const at = c == null ? null : clamp(Math.round(c / 6.5), -7, 7);
-      leds.forEach((l, i) => l.classList.toggle('gr-on', on && at != null && (i === 7 + at || (at === 0 && Math.abs(i - 7) <= 1))));
-      note.textContent = on && t.note ? String(t.note) : '–';
-      note.classList.toggle('gr-in', on && !!t.inTune);
-      str.textContent = on && t.string ? `STRING ${t.string}` : '';
-      cents.textContent = on && c != null ? `${c > 0 ? '+' : c < 0 ? '−' : ''}${Math.abs(Math.round(c))}¢` : '';
+      const at = c == null || !t.note ? null : clamp(Math.round(c / 6.5), -7, 7);
+      leds.forEach((l, i) => l.classList.toggle('gr-on', on && at != null && (i === 7 + at || (!!t.inTune && Math.abs(i - 7) <= 1))));
+      note.classList.toggle('gr-in', on && !!t.note && !!t.inTune);
+      if (!on) { note.textContent = '–'; str.textContent = ''; cents.textContent = ''; return; }
+      if (!t.note) { note.textContent = t.input === false ? '··' : '–'; str.textContent = t.input === false ? 'NO INPUT' : ''; cents.textContent = ''; return; }
+      note.replaceChildren(String(t.note), ...(t.octave != null ? [h('sub', String(t.octave))] : []));
+      str.textContent = t.string ? `STRING ${t.string}` : '';
+      cents.textContent = c == null ? '' : c === 0 ? '0¢' : `${c > 0 ? '+' : '−'}${Math.abs(Math.round(c))}¢`;
     },
   };
 }

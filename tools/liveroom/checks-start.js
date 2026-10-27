@@ -125,12 +125,12 @@ export async function run(T, ctx) {
     const mon0 = await E(() => window.overdub.input.audio.state.monitoring);
     await press(page, 'KeyU');
     await page.waitForFunction(() => window.overdub.ui.state.liveRoom.gr.cam === 'tuner', null, { timeout: 3000 }).catch(() => {});
-    await page.waitForFunction(() => /^C/.test(document.querySelector('.gr-tf-note')?.textContent || '') && /STRING 6/.test(document.querySelector('.gr-tf-str')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
+    await page.waitForFunction(() => /^C/.test(document.querySelector('.gr-r-tn-note')?.textContent || '') && /STRING 6/.test(document.querySelector('.gr-r-tn-str')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
     await wait(1500);
     const tune = await E(() => {
       const o = window.overdub, gr = o.ui.state.liveRoom.gr, p = document.querySelector('.gr-panel[data-target=tuner]');
-      return { on: gr.tuner.on, mon: o.input.audio.state.monitoring, was: gr.tuner.monitorWas, cam: gr.cam, panel: !!p && !p.hidden, note: document.querySelector('.gr-tf-note')?.textContent || '', str: document.querySelector('.gr-tf-str')?.textContent || '',
-        cents: document.querySelector('.gr-tf-cents')?.textContent || '', verdict: p?.querySelector('.gr-tp-verdict')?.textContent || '', side: document.querySelector('.gr-callout')?.dataset.side, gauge: p?.querySelector('.gg-tu-note')?.textContent || '' };
+      return { on: gr.tuner.on, mon: o.input.audio.state.monitoring, was: gr.tuner.monitorWas, cam: gr.cam, panel: !!p && !p.hidden, note: document.querySelector('.gr-r-tn-note')?.textContent || '', str: document.querySelector('.gr-r-tn-str')?.textContent || '',
+        cents: document.querySelector('.gr-r-tn-cents')?.textContent || '', verdict: p?.querySelector('.gr-tp-verdict')?.textContent || '', side: document.querySelector('.gr-callout')?.dataset.side, gauge: p?.querySelector('.gg-tu-note')?.textContent || '' };
     });
     const cents = Number(String(tune.cents).replace('−', '-').replace('¢', ''));
     T.ok(tune.on && mon0 && !tune.mon && tune.was === true && tune.cam === 'tuner' && tune.panel && tune.side === 'left',
@@ -285,7 +285,7 @@ export async function run(T, ctx) {
       const muted = !a.state.monitoring;
       o.liveRoom.close();
       await new Promise((r) => setTimeout(r, 50));
-      return { muted, mon: a.state.monitoring, pedal: !!document.querySelector('.gr-tf'), btn: !!document.querySelector('.gr-gs-btn') };
+      return { muted, mon: a.state.monitoring, pedal: !!document.querySelector('.gr-r-tuner'), btn: !!document.querySelector('.gr-gs-btn') };
     });
     T.ok(gone.muted && gone.mon && !gone.pedal && !gone.btn, `the room closed with the tuner on: monitoring back (${gone.mon}), the pedal and the button gone`);
     T.ok(!errors.length, `no console or page errors${errors.length ? ': ' + errors.slice(0, 4).join(' | ') : ''}`);

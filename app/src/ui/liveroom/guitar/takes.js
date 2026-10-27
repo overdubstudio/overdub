@@ -42,15 +42,17 @@
 //
 // The count-in: the deck's (the engine's count on the audio clock, the song's bars before the part pre-rolling under
 // it: "the parts around it play"), with the engine's sticks as its voice when the musician's count-in is on (prefs
-// countIn, ⇧K; off: no voice, the bar before as the lead-in, none at the top). The drummer is told: R.parts.drummer
-// .countIn({ bars, bpm, at, from, sounded }) at the count's first beat (at, on the audio clock), sounded: true when the
-// engine is already sounding it, so the drummer shows the count (the sticks on the riser) without a second voice. A
-// drummer that sounds the count itself says so with R.parts.drummer.countsAloud === true, and the engine's voice is
-// then 'none'. The drummer's jam is stopped first (R.parts.drummer.stop()).
+// countIn, ⇧K; off: no voice, the bar before as the lead-in, none at the top). ONE count, the deck's: the drummer is
+// told, just before it, with R.parts.drummer.countIn({ bars, bpm, from, beat, sounded, counted: true }) (counted: the
+// count is already the takes stream's, so the drummer only plays under the take; sounded: true when the engine is
+// sounding the sticks, so the drummer shows the count on the riser without a second voice). A drummer that sounds the
+// count itself says so with R.parts.drummer.countsAloud === true, and the engine's voice is then 'none'. The drummer's
+// jam is stopped first (R.parts.drummer.stop()), and stopped again when the pass is over.
 //
-// The drums under a take: a part's own (the drummer's beatOps clips) play from the song; past the song's end (a new
-// part), the room's beat is heard for the take through store.preview (the drummer's jamOps: never kept, never in
-// History), released when the take lands.
+// The drums under a take: a part's own (the drummer's beatOps clips) play from the song; where the song has none (a new
+// part past the end), the drummer fills the bars from the part's 1 (its jam, kind 'take': jamOps through store.preview,
+// never kept, never in History) until the transport stops. With no drummer mounted, the stream previews the room's
+// beat itself, released when the take lands.
 
 import { css } from '../../dom.js';
 import { CSS } from './takes-style.js';
@@ -184,16 +186,24 @@ export function mount(R) {
     if (a && !a.state?.open) { try { await a.ensureOpen?.(); } catch { /* said below */ } }
     if (P !== pass) return;
     if (!a?.state?.open) { done(pass); monitorHome(); tell('gtake.input'); return; }
-    // the drums under a part that has none yet (a new part past the end): the room's beat, heard and never kept
-    try {
-      const p = store.get(), to = pass.tailFrom ?? pass.from + 64 * pass.bpb;
-      if (!drumsUnder(p, pass.from, to)) {
-        const j = jamOps(p, { beat: beatOf(p, pass.section), from: pass.from, bars: Math.ceil((to - pass.from) / pass.bpb) + 16 });
-        if (j?.ops?.length) pass.preview = store.preview(j.ops, { by: 'overdub' });
-      }
-    } catch (e) { console.error('takes: the drums under the take', e); }
     const drummer = R.parts.drummer;
     const loud = pass.countOn && !(drummer && drummer.countsAloud === true);
+    // the drums under the take where the song has none (a new part past the end): the drummer's, told before the count
+    // so its first bars are in the song before the transport starts (one count: the deck's, below); with no drummer,
+    // the room's beat previewed here, heard and never kept
+    try {
+      const p = store.get(), beat = beatOf(p, pass.section);
+      if (drummer?.countIn) {
+        pass.drummer = true;
+        Promise.resolve(drummer.countIn({ bars: pass.preBars, bpm: pass.bpm, from: pass.from, beat, sounded: loud, counted: true })).catch((e) => console.error('takes: the drummer under the take', e));
+      } else {
+        const to = pass.tailFrom ?? pass.from + 64 * pass.bpb;
+        if (!drumsUnder(p, pass.from, to)) {
+          const j = jamOps(p, { beat, from: pass.from, bars: Math.ceil((to - pass.from) / pass.bpb) + 16 });
+          if (j?.ops?.length) pass.preview = store.preview(j.ops, { by: 'overdub' });
+        }
+      }
+    } catch (e) { console.error('takes: the drums under the take', e); }
     let cnt, tk;
     try {
       cnt = R.deck.countIn({ from: pass.from, bars: pass.preBars, voice: loud ? 'sticks' : 'none', preroll: true });
@@ -201,10 +211,7 @@ export function mount(R) {
     } catch (e) { failed(pass, e); return; }
     Promise.resolve(cnt).then((c) => {
       if (P !== pass) return;
-      if (c && c.ok === false) { failed(pass, c); return; }
-      if (pass.countOn && Number.isFinite(c?.startT)) {
-        try { drummer?.countIn?.({ bars: pass.preBars, bpm: pass.bpm, at: c.startT, from: pass.from, sounded: loud }); } catch (e) { console.error('takes: the drummer’s count', e); }
-      }
+      if (c && c.ok === false) failed(pass, c);
     }, (e) => failed(pass, e));
     Promise.resolve(tk).then((r) => { if (P === pass && r && r.ok === false) failed(pass, r); }, (e) => failed(pass, e));
   }
@@ -212,6 +219,7 @@ export function mount(R) {
   function done(pass) {
     if (P === pass) P = null;
     if (pass.preview) { try { pass.preview.release(); } catch { /* gone */ } pass.preview = null; }
+    if (pass.drummer) { pass.drummer = false; try { R.parts.drummer?.stop?.(); } catch (e) { console.error('takes: the drummer', e); } }
     rec.hide();
     if (L.run === 'count' || L.run === 'take') L.run = 'idle';
   }

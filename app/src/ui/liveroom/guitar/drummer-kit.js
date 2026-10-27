@@ -40,6 +40,7 @@ export function hitsAt(track, beat, spb) {
 export function createKit(el) {
   const cv = document.createElement('canvas');
   cv.className = 'grd-kit';
+  cv.dataset.kit = 'drummer';   // (the room's own kit hides: ./stage.js, one kit on the riser)
   cv.width = KIT.w; cv.height = KIT.h;
   Object.assign(cv.style, { left: KIT.x + 'px', top: KIT.y + 'px', width: KIT.w * KIT.px + 'px', height: KIT.h * KIT.px + 'px' });
   cv.setAttribute('aria-hidden', 'true');

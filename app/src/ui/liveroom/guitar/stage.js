@@ -12,15 +12,16 @@
 //   - the mics in front of the grille (the amp's MIC, POSITION, MIC 2 ...: dragged across a cone when the camera's at
 //     the cab, R.rig.turn POSITION; the cab builder's panel is the shop stream's);
 //   - Tuna Fork, the room's tuner, first on the board (its footswitch presses 'tuner': the start stream's; it shows
-//     R.gr.tuner: on, and the reading when the start stream puts one there, R.gr.tuner.reading { note, cents, string,
-//     inTune });
+//     R.gr.tuner: on, and the reading the start stream puts there, R.gr.tuner.reading { note, octave, cents (as
+//     shown), string (its number), inTune, held, input }: the one Tuna Fork on the stage; the start stream draws none);
 //   - the input meter on the head (input/level.js, on app.input.audio.samples(): the −12 to −6 dBFS window lit), the
 //     cable and its plug into the first jack (in while the input's open);
 //   - the hotspots (R.el.stage.hot): the kit (the drummer's book), the tape machine ('tape'), the door ('shop'); and
 //     the board's hang tags (up when the camera's at the board);
 //   - the head's panel (R.panel('head')); a knob's name and value large while your hand is on it;
-//   - the header's own keys (R.el.tools: the way back, Getting started) and the strip's (R.el.strip.tools: Talk to
-//     Claude, the riffs and the part line).
+//   - the header's own (R.el.tools: the way back, and who's on the talkback when Claude is connected: the tape
+//     stream's claude()) and the strip's (R.el.strip.tools: the riffs and the part line). Getting started's button is
+//     the start stream's, Talk to Claude the tape stream's (in the strip's talkback).
 // It re-registers the camera's stage targets head, cab, board and tuner with the drawn gear's boxes (the kit's and the
 // tape's stay their streams'). No <select> and no range input anywhere: a face's menu becomes a button (./room-rig.js
 // noSelects), and the keys are ./keys.js's alone (this declares none).
@@ -547,18 +548,30 @@ export function mount(R) {
 
   /* ------------------------------------------------------------------------------------------- the header's keys and the strip's */
   const backBtn = h('button.gr-r-back', { type: 'button', hidden: true, onclick: () => R.press('back') }, h('span', 'Step back'), kbd('Esc'));
-  const gsBtn = h('button.gr-r-gs', { type: 'button', onclick: () => R.press('gs') }, 'Getting started');
-  R.el.tools.append(backBtn, gsBtn);
+  // (Getting started's button is the start stream's, beside these; Talk to Claude is the tape stream's, in the strip's
+  // talkback: one of each)
+  const whoName = h('b.by.by-agent', 'Claude');
+  const who = h('span.gr-r-who', { hidden: true, title: 'Claude is connected: / talks to it through the glass' }, h('i', { 'aria-hidden': 'true' }), whoName, ' on the talkback');
+  R.el.tools.append(backBtn, who);
+  let whoAt = -1e9;
+  function renderWho(now) {
+    if (now - whoAt < 1000) return;
+    whoAt = now;
+    let w = null;
+    try { w = R.parts.tape?.claude?.() || null; } catch { w = null; }
+    const here = !!w?.here, name = w?.inApp || !w?.outside?.length ? 'Claude' : String(w.outside[0]);
+    if (who.hidden === here) who.hidden = !here;
+    if (whoName.textContent !== name) whoName.textContent = name;
+  }
   function renderBack() {
     const shop = R.gr.world === 'shop', away = R.gr.cam !== R.gr.world;
     backBtn.hidden = !shop && !away;
     backBtn.firstChild.textContent = shop && !away ? 'Back to the stage' : 'Step back';
   }
   renderBack();
-  const talkBtn = h('button.gr-r-chip', { type: 'button', onclick: () => R.press('talk') }, 'Talk to Claude', kbd('/'));
   const riffN = h('span', '0'), partN = h('span', 'empty'), caret = h('span.gr-r-dim', '▴');
   const drawerBtn = h('button.gr-r-chip', { type: 'button', 'aria-label': 'The riffs and the part line (L)', onclick: () => R.press('riffs') }, h('b', 'Riffs'), riffN, h('span.gr-r-dim', '·'), h('b', 'Part line'), partN, caret);
-  R.el.strip.tools.append(talkBtn, drawerBtn);
+  R.el.strip.tools.append(drawerBtn);
   let riffCount = 0;
   async function countRiffs() {
     try { const list = await R.parts.tape?.riffs?.(); if (alive && Array.isArray(list)) { riffCount = list.length; renderStrip(); } } catch { /* the tape's business */ }
@@ -688,7 +701,7 @@ export function mount(R) {
   }
   function frameTuner() {
     const t = R.gr.tuner || {}, rd = t.reading || {};
-    tuner.update({ on: !!t.on, note: rd.note ?? rd.name ?? null, cents: Number.isFinite(rd.cents) ? rd.cents : null, string: rd.string?.number ?? rd.string ?? null, inTune: !!rd.inTune });
+    tuner.update({ on: !!t.on, input: rd.input, note: rd.note ?? rd.name ?? null, octave: rd.octave ?? null, cents: Number.isFinite(rd.cents) ? rd.cents : null, string: rd.string?.number ?? rd.string ?? null, inTune: !!rd.inTune, held: !!rd.held });
     const q = built?.slots?.[0];
     if (q?.tuner) setCap(q, !!t.on);
   }
@@ -734,6 +747,7 @@ export function mount(R) {
       frameTape(now, R.gr.tuner?.on ? 0 : lv);
       frameKit();
       frameTuner();
+      renderWho(now);
       if (tipKnob) keepTip();
     },
     unmount() {
@@ -744,7 +758,7 @@ export function mount(R) {
       G.hot.replaceChildren();
       tip.remove();
       panel.replaceChildren();
-      backBtn.remove(); gsBtn.remove(); talkBtn.remove(); drawerBtn.remove();
+      backBtn.remove(); who.remove(); drawerBtn.remove();
     },
     rect: (name) => { const b = boxes.get(name) || REGIONS[name]; return b ? { x: b.x, y: b.y, w: b.w, h: b.h } : null; },
     el: (name) => els.get(name) || null,

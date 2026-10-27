@@ -7,7 +7,7 @@
 //   1. Plug in   the input opened (the one you used last, else your interface), the channel that moves on the first
 //                strum picked (audioin pickChannel; or press one), the meter against the −12 to −6 dBFS window and what
 //                to do with the interface's gain (input/level.js); the jack on the board lights
-//   2. Tune      the Tuna Fork pedal, first on the board (./start-tuner.js): stomp it (its footswitch, or U) and the
+//   2. Tune      the Tuna Fork pedal, first on the board (the room's; its panel ./start-tuner.js): stomp it (its footswitch, or U) and the
 //                camera goes to it, you're muted (audio.monitor(false), put back as it was when it goes off), each
 //                string of the tuning lights as it comes in, and a low string that isn't in the tuning asks which
 //                tuning it is (a song tuning is one step by you: room.set { tuning } and the guitars' low cut)
@@ -19,9 +19,9 @@
 // button opens it again any time. While it's up, the room's keys are the 'gs' context's (./keys.js): Enter is the
 // slate's primary button, U the tuner, 1-8 stomp, Space the drummer, Esc pauses.
 //
-// The tuner pedal is the room's own (not a device in the song), so this stream draws it, at the place the room keeps
-// for it on the board (R.parts.room.rect('tuner')), in R.el.stage.spot under the spotlight's dimming; its zoom's side
-// panel is R.panel('tuner'). The tuner never leaves you muted: off, unmounted, a take starting, or Getting started
+// The tuner pedal is the room's own (not a device in the song): the room draws it, first on the board (./stage.js),
+// and this stream reads the input for it, putting the reading at R.gr.tuner.reading ({ note, octave, cents, string,
+// inTune, held, input }) for the pedal to show; its zoom's side panel is R.panel('tuner'). The tuner never leaves you muted: off, unmounted, a take starting, or Getting started
 // closing, the monitor goes back to what it was.
 //
 // Frozen:
@@ -36,8 +36,10 @@
 // Added (this stream's API, for the others and the checks):
 //     isOpen() -> bool                        Getting started is up
 //     step() -> step id | null                the step it's on
-//     pedal() -> Element                      the Tuna Fork pedal (the room's el('tuner') may hand it on)
+//     pedal() -> Element                      the Tuna Fork pedal (the room's el('tuner'))
 //     close({ done }) -> void                 put it away (done: as finished)
+// While Timing's eight clicks sound, R.gr.sticks = { count (1-8), tap (0..1) }: the drummer clicks their sticks on the
+// riser with them (./drummer.js draws the count on the kick head); null otherwise.
 // Bus events: 'start:gs' { step } (step null: closed), 'start:tuner' { on }, 'start:plug' { in: true } (the cable
 // went in: the room may draw the plug home).
 
@@ -45,13 +47,13 @@ import { h, css } from '../../dom.js';
 import { mountLevel } from '../../gauges/level.js';
 import { mountTiming } from '../../gauges/timing.js';
 import { pickChannel, inputKind } from '../../../input/audioin.js';
-import { TUNER_TUNINGS, tuningName, tuningOf } from '../../../input/tuner.js';
+import { READING_NONE, TUNER_TUNINGS, tuningName, tuningOf } from '../../../input/tuner.js';
 import { TUNINGS } from '../../../core/fretboard.js';
 import { roomOf } from '../../../core/liveroom/model.js';
 import { lowCut } from '../../../core/liveroom/places.js';
 import { REGIONS } from './layout.js';
 import { STEPS, stepAfter, TOUR, shotOf, W, tuningLabel, soundSays, plugSays, strumsWord } from './start-plan.js';
-import { createTunaFork, createTunerPanel } from './start-tuner.js';
+import { createTunerPanel } from './start-tuner.js';
 import { CSS } from './start-style.js';
 
 const SLATE_W = 380;
@@ -99,13 +101,26 @@ export function mount(R) {
   }
 
   /* ------------------------------------------------------------------------------------------- the tuner pedal */
-  const pedal = createTunaFork({ onStomp: () => R.press('tuner') });
+  // (one Tuna Fork on the stage: the room's, first on its board. This stream reads the input and puts the reading at
+  // R.gr.tuner.reading, which the room's pedal shows: the note, its octave, the string, the cents as shown)
+  let readKey = '';
+  const pedal = {
+    el: null,
+    update(rd, { on, input }) {
+      const r = on ? rd || READING_NONE : READING_NONE;
+      const reading = on && r.p ? { note: r.note, octave: r.octave, cents: r.shown ?? null, string: r.string?.number ?? null, inTune: !!r.inTune, held: !!r.held, input } : { note: null, input };
+      const k = JSON.stringify(reading);
+      if (k === readKey) return;
+      readKey = k;
+      gr.tuner.reading = reading;
+    },
+  };
   const ring = h('div.gr-gs-ring', { hidden: true, 'aria-hidden': 'true' });
   const dim = h('div.gr-gs-dim', { hidden: true, 'aria-hidden': 'true' });
   const pools = h('div', { 'aria-hidden': 'true', style: 'position:absolute;inset:0;pointer-events:none' });
-  R.el.stage.spot.append(pedal.el, ring, dim, pools);
+  R.el.stage.spot.append(ring, dim, pools);
   let placeAt = -1e9;
-  const placePedal = (now = 0) => { if (now - placeAt < 400) return; placeAt = now; pedal.place(rect('tuner')); const j = rect('jack'); if (j) Object.assign(ring.style, { left: `${j.x + j.w - 22}px`, top: `${j.y + j.h / 2 - 14}px`, width: '28px', height: '28px' }); };
+  const placePedal = (now = 0) => { if (now - placeAt < 400) return; placeAt = now; const j = rect('jack'); if (j) Object.assign(ring.style, { left: `${j.x + j.w - 22}px`, top: `${j.y + j.h / 2 - 14}px`, width: '28px', height: '28px' }); };
   placePedal();
 
   let panel = null;
@@ -122,7 +137,8 @@ export function mount(R) {
     });
     return panel;
   }
-  // the camera's tuner target: the pedal as it's drawn, the slate's room kept on the left while Getting started is up
+  // the camera's tuner target while Getting started is up: the pedal as it's drawn, the slate's room kept on the left
+  // (registered on open, and the room's own put back on close)
   let offTarget = null;
   const tunerTarget = () => {
     offTarget?.();
@@ -409,7 +425,8 @@ export function mount(R) {
     R.el.strip?.el?.classList.remove('gr-gs-lit');
     if (gr.overlay === 'gs') R.overlay(null);
     offGs?.(); offGs = null;
-    tunerTarget();
+    // (the tuner's camera target is the room's again: this stream's only keeps the slate's side clear while it's up)
+    offTarget?.(); offTarget = null;
     if (!quiet && gr.world === 'stage') R.camera.home();
     paintButton();
     R.emit('start:gs', { step: null });
@@ -473,6 +490,7 @@ export function mount(R) {
 
   /* ------------------------------------------------------------------------------------------- the view */
   let lastNext = '', tunAt = 0;
+  const sticksAt = { step: -1, t: 0 };
   return {
     press(id) {
       if (id === 'gs') { if (G.step) { gsCam(); return { ok: true }; } const g = gprefs.get().gs; return open(g.step || 'plug'); }
@@ -502,6 +520,7 @@ export function mount(R) {
       if (panel && now - tunAt > 500) { tunAt = now; if (panel.tuningId !== tuningId()) panel.setTuning(tuningId()); }
       const rd = panel ? panel.frame(now, gr.tuner.on && input) : null;
       pedal.update(rd, { on: gr.tuner.on, input });
+      if (G.step !== 'time' && gr.sticks) gr.sticks = null;
       if (!G.step) return;
       if (G.step === 'plug') {
         pickFrame(now);
@@ -511,6 +530,12 @@ export function mount(R) {
         if (ok !== lastNext) { lastNext = ok; const b = callout.querySelector('.gr-co-next'); if (b) b.classList.toggle('go', !!ok || !level); }
       } else if (G.step === 'time') {
         timing?.frame(now);
+        // (the drummer clicks their sticks on the riser with the clicks: the count on the kick head, R.gr.sticks)
+        const cs = timing?.cal.state;
+        if (cs?.phase === 'listening' && cs.step >= 0) {
+          if (sticksAt.step !== cs.step) { sticksAt.step = cs.step; sticksAt.t = now; }
+          gr.sticks = { count: cs.step + 1, tap: Math.max(0, 1 - (now - sticksAt.t) / 180) };
+        } else if (gr.sticks) { gr.sticks = null; sticksAt.step = -1; }
         const st = timing?.cal.state, ok = st && (st.kept || st.measured) && st.phase !== 'listening' ? '1' : '';
         if (ok !== lastNext) { lastNext = ok; const b = callout.querySelector('.gr-co-next'); if (b) b.classList.toggle('go', !!ok); }
       }
@@ -529,14 +554,16 @@ export function mount(R) {
       R.el.strip?.el?.classList.remove('gr-gs-lit');
       callout.replaceChildren(); callout.hidden = true;
       gsBtn.remove();
-      pedal.el.remove(); ring.remove(); dim.remove(); pools.remove();
+      delete gr.tuner.reading;
+      gr.sticks = null;
+      ring.remove(); dim.remove(); pools.remove();
     },
     open: (step) => { open(step); },
     done: () => !!gprefs.get().gs.done,
     tuner: (on) => tuner(on),
     isOpen: () => !!G.step,
     step: () => G.step,
-    pedal: () => pedal.el,
+    pedal: () => R.parts.room?.el?.('tuner') || null,
     close: (o = {}) => close(o),
   };
 }

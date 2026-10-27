@@ -21,7 +21,7 @@
 //      nothing in History, the riffs up in the tray with the line said; a click on its card hears it through the rig
 //      at the level it was played (measured into Guitar L's chain)
 //   8. a riff onto the part line, as Enter on its card and as a drag onto the part line: the takes stream's place gets
-//      the riff and where it goes (a stand-in here: // needs takes) and its part is one step by you that ⌘Z takes back;
+//      the riff and where it goes (the takes stream's real place) and its part is one step by you that ⌘Z takes back;
 //      Enter on a card is the card's alone (the room's play-from isn't pressed with it)
 //   9. the library (⇧L): the riff listed newest first with its song, a search that matches nothing and one that does,
 //      ↓ and Enter putting it on the part line; Esc steps back out of it, and out of the tape's sheet with the camera
@@ -297,22 +297,12 @@ async function guitarRoom(T, ctx) {
     const quiet = await E(() => !document.querySelector('.gr-ty-card.gr-ty-on'));
     T.ok(lv && lvl.key === 'on' && Math.abs(lvl.db + 12) <= 1 && quiet, `a click on ${k.r?.name} hears it through the rig at the level it was played (${fmt(lvl.db, 2)} dBFS into Guitar L's chain; the fake's −12), and a second click stops it`);
 
-    // onto the part line: the takes stream's place, stood in for (// needs takes: a part from the riff, one step by you)
+    // onto the part line: the takes stream's own place (a part from the riff, one step by you), each call noted
     await E(() => {
-      const o = window.overdub, R = document.querySelector('.gr').__gr;
+      const R = document.querySelector('.gr').__gr;
       window.__gt.places = [];
-      const parts = R.el.drawer.parts;
-      parts.replaceChildren(Object.assign(document.createElement('div'), { className: 'gt-standin', textContent: 'The part line (a stand-in)' }));
-      parts.style.minHeight = '120px';
-      R.parts.takes.place = async (riff, where) => {
-        window.__gt.places.push({ id: riff.id, where });
-        const db = await import('/app/src/ui/liveroom/riffs-db.js'), p = o.store.get();
-        const G = (p.room?.tracks || {}).guitarL, start = (p.sections || []).reduce((e, s) => Math.max(e, s.start + s.length), 0);
-        const r = await db.intoSong(riff.id, { project: p, track: G, start });
-        if (!r.ok) return r;
-        o.store.dispatch([...r.ops, { type: 'section.add', section: { name: riff.name, start, length: r.beats } }], { by: 'you', label: `${riff.name} on the part line` });
-        return { ok: true };
-      };
+      const place = R.parts.takes.place;
+      R.parts.takes.place = (riff, where) => { window.__gt.places.push({ id: riff.id, where }); return place(riff, where); };
     });
     const h1 = await E(() => window.overdub.store.history.length);
     await E(() => { const R = document.querySelector('.gr').__gr; window.__gt.pressed = []; window.__gt.offPress = R.on('press', ({ id }) => window.__gt.pressed.push(id)); document.querySelector('.gr-ty-card').focus(); });

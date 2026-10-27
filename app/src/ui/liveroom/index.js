@@ -347,6 +347,14 @@ export default function installLiveRoom(app) {
   const holding = () => L.open && !document.querySelector('body > [aria-modal=true]:not(.ew-region)');
   // (a field in the room, the kitchen's paper: its keys are its own, a global key held or not; Space and Enter type)
   const typing = () => { const a = document.activeElement; return !!a && L.open && !!el?.contains(a) && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)); };
+  // (Enter on a focused button, link, tab, option or slider is that control's, the shell's rule: the browser presses it.
+  // A held global Enter would take it first and press nothing, so a keyboard player couldn't press a button in the room)
+  const ACTIVATES = 'button, a[href], summary, [role=button], [role=tab], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=option], [role=radio], [role=checkbox], [role=switch], [role=link], [role=spinbutton], [role=slider]';
+  const enterOnControl = (key) => {
+    if (key !== 'Enter' && key !== 'NumpadEnter') return false;
+    const a = document.activeElement;
+    return !!a && a !== document.body && !!a.closest?.(ACTIVATES);
+  };
   const held = new Map();
   function hold() {
     const want = new Map();
@@ -355,7 +363,7 @@ export default function installLiveRoom(app) {
       if (k.group === 'Live room' || KEEP.has(s) || held.has(s)) continue;
       want.set(s, { key: k.key, mod: k.mod || null, global: !!k.global || !!want.get(s)?.global, job: want.get(s)?.job || jobOf(k) });
     }
-    for (const [s, { job, ...k }] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: () => holding() && !typing(), run: () => { if (job) sayJob(job); }, label: 'Held while the live room is open', group: 'Live room' }));
+    for (const [s, { job, ...k }] of want) held.set(s, ui.keys.add({ ...k, first: true, hidden: true, when: () => holding() && !typing() && !enterOnControl(k.key), run: () => { if (job) sayJob(job); }, label: 'Held while the live room is open', group: 'Live room' }));
   }
   // a studio key that does what the room leaves to the control room: the room points through the glass, once per job
   // and song, never mid-take (§3.15)

@@ -12,14 +12,14 @@
 //     tray.place(row, { at }) -> Promise<{ ok, error? }>   a riff onto the part line at `at` (0 before the first part,
 //                                  the parts' count after the last; default: after the selected part)
 //     tray.frame(now), tray.dispose()
-//   A drag over the part line emits R.emit('tape:drag', { riff, x, y, over, at, phase: 'move' | 'drop' | 'cancel' })
-//   so the part line can light the gap it would land in; `at` counts the part line's cards ([data-section]) left of
-//   the pointer.
+//   A drag over the part line asks the part line where it lands (R.parts.takes.dropAt, which lights that gap) and emits
+//   R.emit('tape:drag', { riff, x, y, over, at, phase: 'move' | 'drop' | 'cancel' }); a drop is takes.place there.
 
 import { h, tok } from '../../dom.js';
 import * as riffs from '../riffs-db.js';
 import { TUNINGS } from '../../../core/fretboard.js';
 import { TAPE_LINES as T_, bars as nBars } from './tape-lines.js';
+import { partLine } from './parts-plans.js';
 
 // this page's visit: "this session" in the tray and the library
 export const SESSION = Date.now();
@@ -95,18 +95,22 @@ export function createTray(R, { hear }) {
     const p = parts();
     return p ? [...p.querySelectorAll('[data-section]')].filter((x) => x.offsetParent && !x.closest('.gr-ty')) : [];
   }
-  function atFor(x, y) {
+  // where a riff dragged to (x, y) lands on the part line: the part line's own answer (the takes stream's dropAt, which
+  // lights that gap while it isn't final), else counted from the cards drawn there
+  function atFor(x, y, final = false) {
+    const takes = R.parts.takes;
+    if (!R.gr.drawer) { if (takes?.dropAt) takes.dropAt(-1e6, -1e6, { final: true, kind: 'riff' }); return null; }
+    if (typeof takes?.dropAt === 'function') return takes.dropAt(x, y, { final, kind: 'riff' });
     const p = parts();
-    if (!p || p.hidden || !R.gr.drawer) return null;
+    if (!p || p.hidden) return null;
     const b = p.getBoundingClientRect();
     if (!(b.width > 0) || y < b.top - 30 || y > b.bottom + 30 || x < b.left - 20 || x > b.right + 20) return null;
     return cardsOnLine().filter((c) => { const r = c.getBoundingClientRect(); return x > r.left + r.width / 2; }).length;
   }
-  // after the selected part (or at the end)
+  // after the selected part (or at the end): the part line's index, its parts in the song's order (./parts-plans.js)
   function defaultAt() {
-    let v = null;
-    try { v = R.lr.view(); } catch { v = null; }
-    const list = v?.parts || [];
+    let list = [];
+    try { list = partLine(R.store.get()).parts; } catch { list = []; }
     const sel = R.parts.takes?.part?.() || R.L.card || null;
     const i = list.findIndex((c) => c.id === sel);
     return { at: i >= 0 ? i + 1 : list.length, after: i >= 0 ? list[i].id : list.length ? list[list.length - 1].id : null };
@@ -147,7 +151,7 @@ export function createTray(R, { hear }) {
         window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
         if (!started) { if (ev.type === 'pointerup') toggleHear(r); return; }
         ghost?.remove(); c.classList.remove('gr-ty-dragging');
-        const at = ev.type === 'pointerup' ? atFor(ev.clientX, ev.clientY) : null;
+        const at = ev.type === 'pointerup' ? atFor(ev.clientX, ev.clientY, true) : atFor(-1e6, -1e6, true);
         R.emit('tape:drag', { riff: r, x: ev.clientX, y: ev.clientY, over: at != null, at, phase: at != null ? 'drop' : 'cancel' });
         if (at != null) place(r, { at });
       };

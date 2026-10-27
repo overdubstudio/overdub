@@ -117,7 +117,7 @@ export const PLACES = {
     kick: 'SUMP PUMP', ending: 'Crash hold', drift: 25,
   },
   metal: {
-    id: 'metal', name: 'The metal club', what: 'Metal', blurb: 'Tight and heavy. The kick locks to your chugs.',
+    id: 'metal', name: 'The metal club', what: 'Metal', blurb: 'Tight and heavy. Your stack, a drummer, and the tape rolling.',
     tempo: [90, 200], prefer: 132, grid: 4, scale: 'minor', rigs: ['modern', 'djent', 'thrash'],
     count: { bars: 1, beats: 4, voice: 'sticks', fast: { at: 160, bars: 2 } },
     drums: { style: 'modernmetal', verse: 'modernmetal/djent-unison-quarters-on-the-hat', chorus: 'modernmetal/open-chorus-crash-riding', fill: 'modernmetal/kick-and-snare-flurry', follow: true, kit: { device: 'core.metalkit', params: preset('core.metalkit', 'Modern', { sub: -13 }) }, bus: 'Modern' },

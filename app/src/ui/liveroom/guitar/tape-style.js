@@ -36,8 +36,7 @@ export const CSS = `
 .gr-tp-snap[aria-pressed="true"] .gr-tp-lamp { background: var(--lr-lamp, #ffc85a); }
 .gr-tp-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
-/* the drawer: the riffs beside the part line */
-.gr-drawer { grid-template-columns: minmax(320px, 34%) minmax(0, 1fr); grid-template-rows: auto; column-gap: 24px; padding: 10px 16px 14px; background: #0e0c10f4; border-top: 1px solid #262229; }
+/* the drawer: the riffs beside the part line (its columns are the takes stream's, ./takes-style.js: one place) */
 .gr-ty { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .gr-ty-tape { all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; height: 26px; color: var(--text-3); font-size: 12px; }
 .gr-ty-tape:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }

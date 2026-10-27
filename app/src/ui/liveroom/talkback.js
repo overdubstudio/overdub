@@ -60,7 +60,8 @@ export function createTalkback({ app = null } = {}) {
     close();
     const a = agent();
     if (!q || !a) return;
-    try { await a.send(q, { context: { room: true } }); } catch (e) { console.error('liveroom: the agent', e); }
+    // (the context is words, as agent.send takes it: an object would reach Claude as "[object Object]")
+    try { await a.send(q, { context: 'The human is in the live room, a guitar or a mic in hand, reading your reply in the talkback: answer in a sentence or two.' }); } catch (e) { console.error('liveroom: the agent', e); }
   }
   field.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); el.closest('.lr')?.focus({ preventScroll: true }); } });
   return {

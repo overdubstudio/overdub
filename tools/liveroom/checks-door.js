@@ -183,7 +183,7 @@ async function frontDoor(T, ctx) {
     // (the guitar room: the door offers the metal club and the control room; the other places are held, door.js OFFERED)
     T.ok(cards.map((c) => c.place).join() === 'metal', `the metal club alone, the other places held: ${cards.map((c) => c.place).join(', ')}`);
     T.ok(cards.every((c) => c.lit > c.w * c.h * 0.5), `each card draws its room’s crop (${cards.map((c) => `${c.place} ${c.lit}/${c.w * c.h}`).join(', ')})`);
-    T.ok(cards[0].slate === 'ELECTRIC · 132 · TWO STACKS AND A BIG KIT' && cards[0].kick === 'VOID' && /kick locks to your chugs/.test(cards[0].line), `the card’s slate, kick head and line (“${cards[0].slate}”, ${cards.map((c) => c.kick).join(', ')})`);
+    T.ok(cards[0].slate === 'ELECTRIC · 132 · ONE STACK AND A BIG KIT' && cards[0].kick === 'VOID' && /the tape rolling/.test(cards[0].line), `the card’s slate, kick head and line (“${cards[0].slate}”, ${cards.map((c) => c.kick).join(', ')})`);
     const quiet = await s.E(() => [...document.querySelectorAll('.lrd-quiet button, .lrd-quiet p')].filter((x) => !x.hidden).map((x) => x.textContent));
     T.ok(quiet.join(' | ') === 'No guitar? Hum, tap or play keys in the control room. | Your takes stay in this browser.', `the quiet links under the card (the control room's; the house's song held): ${quiet.join(' | ')}`);
     await s.shot('liveroom-door');

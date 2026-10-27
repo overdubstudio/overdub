@@ -843,15 +843,6 @@ export function mount(R) {
     else if (at === 'cab') stageCab.render();
   }
 
-  // (Enter on a focused button: the room holds the studio's global Enter, which takes the browser's click with it; the
-  // shop's buttons press themselves when that happened)
-  const enterClicks = (e) => {
-    if ((e.key !== 'Enter' && e.code !== 'NumpadEnter') || !e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-    const b = e.target instanceof Element ? e.target.closest('button, [role=option], [role=tab], [role=radio]') : null;
-    if (b && !/** @type {HTMLButtonElement} */ (b).disabled) /** @type {HTMLElement} */ (b).click();
-  };
-  for (const host of [E.world, headPanel, R.panel('tryout-cab'), R.panel('cab')]) { host.addEventListener('keydown', enterClicks); offs.push(() => host.removeEventListener('keydown', enterClicks)); }
-
   /* --------------------------------------------------------------------------------------- the camera */
   const all = () => ({ x: 0, y: 0, w: SHOP.w, h: SHOP.h });
   for (const id of AREAS) offs.push(R.camera.target(id, { world: 'shop', rect: all, pad: 0 }));

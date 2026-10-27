@@ -141,7 +141,7 @@ export async function run(T, ctx) {
       o.liveRoom.open({ screen: 'guitar' });
       await until(() => document.querySelector('.gr')?.__gr?.parts?.takes, 10000);
       const R = document.querySelector('.gr').__gr;
-      // the drummer's count, as the takes stream tells it (// needs drummer: its stub resolves at once and draws nothing)
+      // the drummer, as the takes stream tells it before the deck's count (counted: true; the drummer plays under the take)
       const dr = R.parts.drummer;
       if (dr) { const ci = dr.countIn?.bind(dr); dr.countIn = (a) => { window.__tk.drummer.push({ ...a }); return ci ? ci(a) : Promise.resolve(); }; }
       R.drawer(true);
@@ -160,7 +160,7 @@ export async function run(T, ctx) {
     const a = await READ();
     const h1 = await history(page);
     const c0 = await E(() => ({ counts: window.__tk.counts.slice(), takes: window.__tk.takes.slice(), stops: window.__tk.stops.slice(), drummer: window.__tk.drummer.slice() }));
-    T.ok(c0.counts[0]?.voice === 'sticks' && c0.counts[0]?.from === 0 && c0.counts[0]?.bars === 1 && c0.drummer[0]?.sounded === true && c0.drummer[0]?.bars === 1,
+    T.ok(c0.counts[0]?.voice === 'sticks' && c0.counts[0]?.from === 0 && c0.counts[0]?.bars === 1 && c0.drummer[0]?.sounded === true && c0.drummer[0]?.counted === true && c0.drummer[0]?.bars === 1,
       `R counts a new part in: the deck's count from beat ${c0.counts[0]?.from}, ${c0.counts[0]?.bars} bar of ${c0.counts[0]?.voice}; the drummer told (sounded: ${c0.drummer[0]?.sounded})`);
     T.ok(c0.takes[0]?.track === installed.guitars[0] && c0.takes[0]?.tailFrom == null && c0.stops[0]?.at === 'now' && c0.stops[0]?.keep === 'song',
       `the take on Guitar L, no tailFrom for a part that isn't there yet; Space stops it now and keeps it (${JSON.stringify(c0.stops[0])})`);
@@ -365,7 +365,7 @@ export async function run(T, ctx) {
     const es = await READ();
     T.ok(JSON.stringify(await history(page)) === JSON.stringify(he) && es.overlay !== 'review' && !es.over, `Esc in a take tosses it: nothing in History, the view down ("${es.said.at(-1)}")`);
 
-    // a riff off the tape as a part (// needs tape: its drag calls place(); stood in for with an intoSong-shaped riff)
+    // a riff off the tape as a part: place() with an intoSong-shaped riff (the tape's own drag and Enter: checks-tape)
     const hr = (await history(page)).length;
     const pr = await E(async () => {
       const R = document.querySelector('.gr').__gr, o = window.overdub, p = o.store.get();

@@ -314,7 +314,7 @@ async function checks(T, s, ctx) {
   await page.waitForTimeout(300);
   await E(() => document.querySelector('.gr-r-add').click());
   await page.waitForFunction(() => window.overdub.ui.state.liveRoom.gr.world === 'shop', null, { timeout: 5000 }).catch(() => {});
-  const add = await E(() => ({ world: window.overdub.ui.state.liveRoom.gr.world, cam: window.overdub.ui.state.liveRoom.gr.cam }));   // needs shop: the case
+  const add = await E(() => ({ world: window.overdub.ui.state.liveRoom.gr.world, cam: window.overdub.ui.state.liveRoom.gr.cam }));
   await press(page, 'KeyS');
   await page.waitForFunction(() => window.overdub.ui.state.liveRoom.gr.world === 'stage', null, { timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(400);
@@ -337,18 +337,29 @@ async function checks(T, s, ctx) {
   await page.waitForTimeout(800);
   const meter = await E(() => ({ lit: document.querySelectorAll('.gr-r-leds i.gr-on').length, db: document.querySelector('.gr-r-db').textContent, open: !!window.overdub.input?.audio?.state?.open }));
   T.ok(!meter.open || (meter.lit > 0 && /dBFS/.test(meter.db)), `the meter on the head lights with the fake guitar (${meter.lit} lamps, ${meter.db}; input open: ${meter.open})`);
+  // (one kit on the riser: the drummer stream draws its own, canvas[data-kit], and the room's hides; with it taken
+  // away the room's kit API still moves the room's)
   const kitMoved = await E(async () => {
     const R = document.querySelector('.gr').__gr, cv = document.querySelector('canvas.gr-r-kit'), g = cv.getContext('2d');
+    const theirs = document.querySelector('.gr-riser canvas[data-kit]');
+    const one = !!theirs && cv.hidden;
+    const two = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const kept = theirs?.dataset.kit;
+    if (theirs) delete theirs.dataset.kit;
+    await two();
     const snap = () => Array.from(g.getImageData(0, 0, cv.width, cv.height).data).join();
     const a = snap();
     R.parts.room.kit({ kick: 1, snare: 1, crash: 1 });
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await two();
     const b = snap();
     R.parts.room.kit(null);
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    return a !== b && snap() === a;
+    await two();
+    const back = snap() === a;
+    if (theirs) theirs.dataset.kit = kept;
+    await two();
+    return one && a !== b && back && cv.hidden;
   });
-  T.ok(kitMoved, 'the kit moves with a hit (kit({ kick, snare, crash })) and comes back to rest (kit(null))');
+  T.ok(kitMoved, 'one kit on the riser (the drummer\'s; the room\'s hides), and the room\'s kit API moves it with a hit (kit({ kick, snare, crash })) and back to rest (kit(null))');
   const slot = await E(async () => {
     const o = window.overdub, R = document.querySelector('.gr').__gr;
     const r = o.liveRoom.press('slot:1');
@@ -360,8 +371,9 @@ async function checks(T, s, ctx) {
   slot.after = await E(() => ({ marks: document.querySelectorAll('.gr-r-slot.gr-r-focus').length, slot: window.overdub.ui.state.liveRoom.gr.slot }));
   T.ok(slot.after.marks === 0 && slot.after.slot == null, `back on the stage the pedal in focus is let go (${slot.after.marks} marked, gr.slot ${slot.after.slot})`);
   T.ok(slot.ok && slot.cam === 'board' && slot.focus && slot.mark, `slot:1 goes to the board and puts the hand on pedal 2 (${slot.cam}, focused ${slot.focus})`);
-  const strip = await E(() => ({ talk: !!document.querySelector('.gr-strip-tools .gr-r-chip'), drawer: document.querySelectorAll('.gr-strip-tools .gr-r-chip')[1]?.textContent || '', gs: !!document.querySelector('.lr-tools .gr-r-gs') }));
-  T.ok(strip.talk && /Riffs/.test(strip.drawer) && /Part line/.test(strip.drawer) && strip.gs, `the strip's buttons (Talk to Claude; ${strip.drawer.replace(/\s+/g, ' ').trim()}) and the header's Getting started`);
+  // (one of each: Talk to Claude is the tape stream's, in the strip's talkback; Getting started the start stream's)
+  const strip = await E(() => ({ talk: document.querySelectorAll('.gr-strip button').length && [...document.querySelectorAll('.gr-strip button')].filter((b) => /Talk to Claude/.test(b.textContent)).length, drawer: document.querySelector('.gr-strip-tools .gr-r-chip')?.textContent || '', gs: [...document.querySelectorAll('.lr-tools button')].filter((b) => /^Getting started/.test(b.textContent)).length }));
+  T.ok(strip.talk === 1 && /Riffs/.test(strip.drawer) && /Part line/.test(strip.drawer) && strip.gs === 1, `the strip's buttons (one Talk to Claude: ${strip.talk}; ${strip.drawer.replace(/\s+/g, ' ').trim()}) and one Getting started in the header (${strip.gs})`);
   T.ok(!errors.length, `no console or page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   void ctx;
 }

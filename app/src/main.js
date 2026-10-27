@@ -302,10 +302,20 @@ async function boot() {
 
   // autosave (the song only; audio lives in IndexedDB), and a room song on the shelf beside it
   let saveT = 0;
+  // (the guitar room's drummer plays where the song has no drums through store.preview: clips named 'Jam' by the
+  // house, heard and never kept. A save mid-jam leaves them out, so a page closed while the drummer plays doesn't keep
+  // its bars: ui/liveroom/guitar/drummer-jam.js)
+  const jamClip = (c) => c?.name === 'Jam' && c?.by === 'overdub';
+  const kept = () => {
+    const p = store.get();
+    if (!p?.tracks?.some((t) => t.clips?.some(jamClip))) return p;
+    return { ...p, tracks: p.tracks.map((t) => (t.clips?.some(jamClip) ? { ...t, clips: t.clips.filter((c) => !jamClip(c)) } : t)) };
+  };
   const save = () => {
     saveT = 0;
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(store.get())); } catch { app.ui.toast('Could not save the song in this browser (storage is full or blocked)', { kind: 'bad' }); }
-    try { shelf?.keep(store.get()); } catch (e) { console.error('overdub: the shelf', e); }
+    const song = kept();
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(song)); } catch { app.ui.toast('Could not save the song in this browser (storage is full or blocked)', { kind: 'bad' }); }
+    try { shelf?.keep(song); } catch (e) { console.error('overdub: the shelf', e); }
   };
   store.on('change', () => { clearTimeout(saveT); saveT = 0; if (app.share?.listening) return; saveT = setTimeout(save, 500); });
   // a page going away saves what's waiting (a sound on trial let go as the tab hides is the song's last change)

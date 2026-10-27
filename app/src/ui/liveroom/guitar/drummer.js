@@ -31,7 +31,9 @@
 //         transport stops or stop(). With the count-in off (R.gprefs countIn, ⇧K) the transport starts at `from` at
 //         once. It resolves once the count is on the audio clock (the downbeat's time in the result), well before the
 //         downbeat itself, so the take armed straight after (R.deck.take) records from the 1. bpm is the song's tempo
-//         (the song's is what plays; it isn't set here).
+//         (the song's is what plays; it isn't set here). counted: true (the takes stream's call) means the count is
+//         already the deck's, started by whoever called: the drummer only plays under the take (no second count) and
+//         resolves at once with { ok, from }. sounded: the engine is sounding the sticks (the riser shows the count).
 //   }
 // Bus: 'drummer:jam' { on, beat, kind }.
 
@@ -383,7 +385,7 @@ export function mount(R) {
   target();
 
   /* ------------------------------------------------------------------------------------------- the count-in */
-  async function countIn({ bars = null, bpm: _bpm = null, at: when = null, from = null, beat = null } = {}) {
+  async function countIn({ bars = null, bpm: _bpm = null, at: when = null, from = null, beat = null, counted = false, sounded: _sounded = null } = {}) {
     if (jam.state.on) stop();
     const p = song();
     const f = Number.isFinite(+from) && from != null ? Math.max(0, +from) : jamFrom(p);
@@ -395,6 +397,8 @@ export function mount(R) {
     // (the drummer's first bars are in before the transport starts, so the 1 is heard)
     jam.start({ from: f, beat: b, kind: 'take', play: false });
     sync();
+    // (the takes stream's call: the count is the deck's already, one count, never two)
+    if (counted) { R.emit('drummer:jam', { on: true, beat: b, kind: 'take' }); return { ok: true, from: f }; }
     let r;
     try { r = await R.deck.countIn({ from: f, bars: n, voice: 'sticks', at: when }); } catch (e) { r = { ok: false, error: String(e?.message || e) }; }
     if (!r?.ok) { jam.stop(); sync(); return r || fail('The count didn’t start.'); }
@@ -403,8 +407,8 @@ export function mount(R) {
   }
 
   /* ------------------------------------------------------------------------------------------- the jam's leftovers */
-  // The jam's bars are previews, but the autosave (main.js) writes the song on every change, previews too: a page
-  // closed or reloaded mid-jam keeps the bars that were in then. Nothing else names a clip 'Jam' by the house, and a
+  // The jam's bars are previews. The autosave (main.js) leaves them out, but a song saved before it did, or one sent or
+  // shelved mid-jam, can still hold the bars that were in then. Nothing else names a clip 'Jam' by the house, and a
   // leftover one would play under the next jam's own bars, so they're taken out when the room comes up and when a song
   // loads, the same way they went in (a preview, never released: nothing in History, the song as it was before the jam)
   function sweep() {
@@ -436,6 +440,8 @@ export function mount(R) {
       const i = Math.floor(beat - k.from + 1e-6);
       if (i >= 0 && i < k.beats) { count = (i % B) + 1; tapA = Math.max(0, 1 - ((beat - Math.floor(beat)) * spb) / 0.18); }
     }
+    // (Getting started's Timing: the drummer clicks the sticks with its eight clicks, R.gr.sticks, the start stream's)
+    if (count == null && R.gr.sticks?.count) { count = R.gr.sticks.count; tapA = R.gr.sticks.tap || 0; }
     const ks = R.deck?.state || {};
     kitV.draw({ ...hitsAt(drumsTrack(), beat, spb), count, tap: tapA, loading: ks.kit === 'loading' ? clamp((ks.kitPct ?? 0) / 100, 0, 0.99) : null, reduced: reduced() });
     // the plate

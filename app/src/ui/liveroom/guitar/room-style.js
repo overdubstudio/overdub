@@ -135,6 +135,8 @@ export const CSS = `
 .gr-r-tn-note { position: absolute; left: 0; right: 0; top: 22px; text-align: center; font: 700 30px/1 var(--font-mono); color: #1d2a20; }
 .gr-r-tuner.gr-on .gr-r-tn-note { color: #d8f4e0; text-shadow: 0 0 8px #8fdca066; }
 .gr-r-tuner.gr-on .gr-r-tn-note.gr-in { color: #8fdca0; }
+.gr-r-tn-note sub { font-size: 11px; vertical-align: baseline; margin-left: 1px; }
+.gr-r-tuner.gr-held .gr-r-tn-note { opacity: .55; }
 .gr-r-tn-cents, .gr-r-tn-str { position: absolute; bottom: 3px; font: 600 8px/1 var(--font-mono); color: #4a6a54; }
 .gr-r-tn-cents { right: 5px; } .gr-r-tn-str { left: 5px; }
 .gr-r-tuner.gr-on .gr-r-tn-cents, .gr-r-tuner.gr-on .gr-r-tn-str { color: #8fdca0; }
@@ -165,8 +167,10 @@ export const CSS = `
 /* the room's own buttons: the way back in the header, and the strip's */
 .gr-r-back { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line-2); border-radius: var(--r-press); background: none; color: var(--text); font: 600 13px/1 var(--font-ui); cursor: pointer; white-space: nowrap; }
 .gr-r-back:hover, .gr-r-back:focus-visible { border-color: var(--text-3); }
-.gr-r-gs { background: none; border: 0; padding: 4px 2px; color: var(--text-2); font: 600 13px/1 var(--font-ui); cursor: pointer; white-space: nowrap; }
-.gr-r-gs:hover, .gr-r-gs:focus-visible { color: var(--text); }
+.gr-r-who { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font: 400 13px/1 var(--font-ui); white-space: nowrap; }
+.gr-r-who[hidden] { display: none; }
+.gr-r-who i { width: 8px; height: 8px; background: var(--agent); }
+.gr-r-who b { font-weight: 600; }
 .gr-r-chip { display: inline-flex; align-items: center; gap: 8px; font: 400 13px/1 var(--font-ui); color: var(--text-2); padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-press); background: none; cursor: pointer; white-space: nowrap; }
 .gr-r-chip:hover, .gr-r-chip:focus-visible { color: var(--text); border-color: var(--line-2); }
 .gr-r-chip b { color: var(--text); font-weight: 600; }

@@ -34,6 +34,7 @@ export const CSS = `
 .gr-co-b.go { background: var(--accent); border-color: #a8b84a; }
 .gr-co-b:disabled { opacity: .45; cursor: default; }
 .gr-co-b:focus-visible, .gr-co-chip:focus-visible { outline: 2px solid var(--ink-agent); outline-offset: 2px; }
+.gr-co-tkey[hidden], .gr-co kbd[hidden] { display: none; }
 .gr-co kbd { font: 400 11px/1 var(--font-mono); color: inherit; border: 1px solid currentColor; border-radius: var(--r-press); padding: 2px 4px; opacity: .72; white-space: nowrap; }
 .gr-co-esc { margin: 10px 0 0 !important; font-size: 11.5px; color: var(--ink-3) !important; }
 .gr-co-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }

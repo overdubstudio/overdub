@@ -257,6 +257,7 @@ export function mount(R) {
   // (the session's own: what the slate shows; the step itself is gr.gs.step, and gprefs gs remembers it)
   const G = { step: null, tour: 0, close: false, tuned: false, err: '', openedAt: 0, picked: null, byHand: false, holds: [], together: 0, devices: [], side: 'right' };
   let level = null, timing = null, slateKey = '', goNow = null;
+  let lastNext = null;   // (the slate's Next as the frame last lit it; null after a repaint: light it again)
   const callout = R.el.callout;
   callout.classList.add('gr-co');
   callout.setAttribute('role', 'dialog');
@@ -288,6 +289,7 @@ export function mount(R) {
     const key = JSON.stringify([step, G.tour, open, a?.state.label, a?.state.channel, a?.state.channels, G.picked, G.err, gr.tuner.on, G.tuned, G.devices.length, opening ? 1 : 0, tuningId(), G.side]);
     if (key === slateKey && callout.childNodes.length) return;
     slateKey = key;
+    lastNext = null;
     const keep = new Set();
     const steps = h('ol.gr-co-steps', { 'aria-label': 'Getting started' }, STEPS.map((s, i) => h('li' + (i < idx ? '.done' : i === idx ? '.now' : ''), { 'aria-current': i === idx ? 'step' : null }, h('i'), s.label)));
     let body = [];
@@ -331,7 +333,9 @@ export function mount(R) {
         keep.add('timing');
         const gauge = h('div.gr-co-gauge');
         goNow = () => { const st = timing?.cal.state; if (st && (st.phase === 'done' || st.kept || st.measured) && st.phase !== 'listening') next(); else if (st && st.phase !== 'listening') timing.start(); };
-        body = [h('h2', 'Timing'), h('p', W.timeAsk), gauge, h('div.gr-co-acts', btn('Next: your sound', () => next(), { go: true, kbd: 'Enter', cls: 'gr-co-next' }), skipBtn())];
+        // (Enter strums along until the strums are measured, then it's Next: the hint goes with it)
+        body = [h('h2', 'Timing'), h('p', W.timeAsk), gauge, h('p.gr-co-tkey', h('kbd', 'Enter'), ' starts the clicks.'),
+          h('div.gr-co-acts', btn('Next: your sound', () => next(), { go: true, kbd: 'Enter', cls: 'gr-co-next' }), skipBtn())];
         if (!timing) timing = mountTiming(gauge, { latency: a.latency, label: () => where() });
         else gauge.append(timing.el);
       }
@@ -489,7 +493,7 @@ export function mount(R) {
   if (!g0.done && !g0.step && visitor()) later(() => { if (!gone && !G.step && !gr.overlay && !R.busy() && gr.world === 'stage') open('plug'); }, 450);
 
   /* ------------------------------------------------------------------------------------------- the view */
-  let lastNext = '', tunAt = 0;
+  let tunAt = 0;
   const sticksAt = { step: -1, t: 0 };
   return {
     press(id) {
@@ -537,7 +541,15 @@ export function mount(R) {
           gr.sticks = { count: cs.step + 1, tap: Math.max(0, 1 - (now - sticksAt.t) / 180) };
         } else if (gr.sticks) { gr.sticks = null; sticksAt.step = -1; }
         const st = timing?.cal.state, ok = st && (st.kept || st.measured) && st.phase !== 'listening' ? '1' : '';
-        if (ok !== lastNext) { lastNext = ok; const b = callout.querySelector('.gr-co-next'); if (b) b.classList.toggle('go', !!ok); }
+        if (ok !== lastNext) {
+          lastNext = ok;
+          const b = callout.querySelector('.gr-co-next'), k = b?.querySelector('kbd'), t = callout.querySelector('.gr-co-tkey');
+          if (b) b.classList.toggle('go', !!ok);
+          if (k) k.hidden = !ok;
+          if (t) t.hidden = !!ok || st?.phase === 'listening';
+        }
+        const tk = callout.querySelector('.gr-co-tkey');
+        if (tk && !ok && tk.hidden !== (st?.phase === 'listening')) tk.hidden = st?.phase === 'listening';
       }
     },
     unmount() {

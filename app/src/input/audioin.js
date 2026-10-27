@@ -43,6 +43,11 @@
 //   audio.listen(fn({ f, d: [Float32Array] })) -> off    raw blocks with their audio-clock frame (hum, beatbox, latency)
 //   audio.monitor(on?)   live through the armed audio track's inserts; with no audio track it stays on and waits
 //   audio.monitorTrack() -> the track it plays through now | null (off, closed, or waiting: state.monitorWaiting)
+//   audio.monitorVia(trackId | null)   the audio track monitoring plays through whatever is armed or selected (the live
+//                  room's guitar: ui/liveroom/stage.js sets it while the stage is up and clears it when it goes), or
+//                  null for the usual rule (the armed audio track, else the selected one, else the first). A track
+//                  that's gone or isn't an audio track falls back to the usual rule. What a take records onto is
+//                  unchanged (recordTrack, the recorder's own target).
 //   audio.record({ track?, countIn? }) ; audio.stopRecord() ; audio.toggleRecord()   (through the recorder)
 //   audio.recordTrack()  the track a take would go to       audio.latency  (latency.js)
 //   events (app.input.on): 'audio' (state changed), 'take' (an audio take landed: { track, clip, asset, seconds }),
@@ -158,7 +163,7 @@ export function createAudioIn(app, input) {
   try { saved = JSON.parse(localStorage.getItem(SAVE) || '{}') || {}; } catch { saved = {}; }
   const state = { open: false, deviceId: saved.deviceId || '', label: '', channel: saved.channel || '1', channels: 0, settings: {}, inputKind: '', monitoring: false, monitorAuto: false, monitorOff: '', monitorLine: '', monitorTrack: null, monitorWaiting: false, recording: false, countIn: saved.countIn !== false, error: '', sr: 0, opening: false, firstFrame: null, split: null };
   let ctx = null, ownCtx = null, rig = null, cap = null, capReady = null, mon = null, monDest = null, recording = false;
-  let warned = false, syncT = 0;   // (the monitor: said once that it waits for a track; a sync queued)
+  let warned = false, syncT = 0, via = null;   // (the monitor: said once that it waits for a track; a sync queued)
   // the input monitoring was decided for (null: none yet; PENDING: turned on or off by hand before one was open), the
   // one open now, and the feedback guard while the monitor is wired
   const PENDING = {};
@@ -385,6 +390,13 @@ export function createAudioIn(app, input) {
       return state.monitoring;
     },
     get _monitorGain() { return mon ? mon.gain.value : null; },   // (checks: the ramp in)
+    // the track it plays through whatever is armed or selected, or null for the usual rule (the header says more)
+    monitorVia(id = null) {
+      const v = id ? String(id) : null;
+      if (v === via) return;
+      via = v;
+      if (state.monitoring && rig) syncMonitor();
+    },
 
     /* ---- recording: the recorder (input/recorder.js) records the mic onto the armed audio track */
     recordTrack: () => recordTrack(false),
@@ -422,6 +434,11 @@ export function createAudioIn(app, input) {
   audio.outLatency = outLat;
   // The audio track a take goes to: the armed one, else the selected audio track, else the first; arm it if asked to.
   // With no audio track at all, make one (never a dead end).
+  // the track the monitor plays through: monitorVia's while it names an audio track, else the record track
+  function monitorTarget() {
+    const t = via ? store.track(via) : null;
+    return t && t.kind === 'audio' ? t : recordTrack(false);
+  }
   function recordTrack(make) {
     const p = store.get(), sel = app.ui?.state?.selection?.track;
     const audios = p.tracks.filter((t) => t.kind === 'audio');
@@ -476,7 +493,7 @@ export function createAudioIn(app, input) {
   function syncMonitor({ fast = false } = {}) {
     clearTimeout(syncT); syncT = 0;
     if (rig && rig.picks) { syncSplit(fast); return; }
-    const want = state.monitoring && rig && ctx ? recordTrack(false) : null;
+    const want = state.monitoring && rig && ctx ? monitorTarget() : null;
     const dest = want && engine.inputNode ? engine.inputNode(want.id) : null;
     const ok = !!dest && dest.context === ctx;
     if (!(ok && mon && monDest && monDest.node === dest && monDest.track === want.id)) {
@@ -526,7 +543,7 @@ export function createAudioIn(app, input) {
     state.monitorTrack = track; state.monitorWaiting = waiting;
     input.emit('monitor', { track, waiting });
     changed();
-    if (waiting && !warned && !recordTrack(false)) {
+    if (waiting && !warned && !monitorTarget()) {
       warned = true;
       app.ui?.toast?.('Monitoring waits for an audio track. Add one and you hear the input through its pedals and amp.');
     }
@@ -609,7 +626,7 @@ export function createAudioIn(app, input) {
   store.on('change', () => {
     if (!state.monitoring || !rig) return;
     if (rig.picks) { later(); return; }
-    const t = recordTrack(false), id = t ? t.id : null;
+    const t = monitorTarget(), id = t ? t.id : null;
     if (id !== (monDest ? monDest.track : null) || (t && monDest && engine.inputNode && monDest.node !== engine.inputNode(t.id))) later();
   });
   try { engine.on('graph', (e) => { if (state.monitoring && rig && (!e || e.kind === 'track')) later(); }); } catch { /* ok */ }

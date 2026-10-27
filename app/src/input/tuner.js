@@ -52,6 +52,8 @@
 //     calms as the note holds (tau 60 to 200 ms) and quickens while the pitch moves one way (a one-euro filter: the
 //     attack's glide settling, a peg turned);
 //   - cents only once the note has held three readings within 10 cents of each other.
+// A look costs about 0.6 ms at 48 kHz in standard tuning (1 ms with no tuning, down to 30 Hz), 2 to 3.5 ms at 96 kHz:
+// 25 looks a second is 1.5 to 9% of the main thread (measured in Node on an M-series Mac).
 
 import { yin, ftom, rms, dbOf, median } from './pitch.js';
 import { TUNINGS } from '../core/fretboard.js';

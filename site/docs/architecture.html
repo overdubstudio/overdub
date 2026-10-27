@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 138 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 141 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -156,7 +156,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          rounds.js (Start a song: the loop, folding rounds, the 1, the readings, the timing words),
                          recorder.js (R: takes into the song), autorec.js (knob moves into lanes), latency.js
                          (calibration), capture.js (never lose an idea), importers.js (MIDI and audio files in),
-                         index.js (app.input)                                                           [input]
+                         tuner.js (the steady tuner: strings, tunings), level.js (the gain window and its advice),
+                         calibrate.js (the strum along around latency.js), index.js (app.input)         [input]
   app/src/ui/            shell.js + dom.js (fixed frame), workspace.js + workspace-view.js (Find anything), 
                          transport.js, arranger.js, lanes.js (automation lanes),
                          arrange-kit.js, pianoroll.js, drumgrid.js, grooves.js (the Grooves tab)        [ui-arrange]
@@ -167,6 +168,8 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          editors/ (generic.js, and the editors the studio's own devices name: eq8.js, shaper.js,
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
+                         gauges/ (Getting started's instruments, mounted by any screen: tuner.js, level.js,
+                         timing.js)                                                                     [input]
                          export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
                          Overdub account, app.songs), account.js (the account key beside Song and its sheet: sign
                          in, the plan and Get Plus, the songs' rows, app.account), provenance.js, share.js,
@@ -1598,7 +1601,33 @@ key, C major). The line over the keys says what they do, &quot;Snapping to 1/16,
 its helper off (&quot;Your timing&quot;, &quot;every note&quot;) and on: <code>qwerty.snapLine({ touch })</code>, its words <code>snapWords(...)</code> (pure).
 A MIDI keyboard's notes are never moved.</p></li>
 <li><p><strong>Latency</strong> (<code>input/latency.js</code>): tap along to eight clicks, or a loopback, once per input device; takes, hums and
-beatbox are shifted by the measured round trip.</p></li>
+beatbox are shifted by the measured round trip. A strum along is judged by <code>judgeTaps(hits)</code> (one wild strum left
+out; grade good, fair, poor or none; a confidence 0 to 1), and the confidence is kept beside the round trip
+(<code>measured.confidence</code>, <code>localStorage overdub:latency</code>, per deviceId).</p></li>
+<li><p><strong>Getting started's gauges</strong> (the guitar room, <code>docs/research/GUITAR-ROOM.md</code> §2.1): three instruments any screen
+mounts, each a pure module under <code>input/</code> and a drawn one under <code>ui/gauges/</code>. The drawn ones own no keys and no
+loop: the host calls <code>frame(now)</code> from its own (the shell's, or the room's), and they read <code>app.input.audio</code>, or
+anything else with <code>samples() -&gt; { buf, sr } | null</code> (a check's fake). <code>audio.samples()</code> is the picked input's
+latest analyser window (4096 samples at 48 kHz, 8192 over 50 kHz).</p>
+<ul>
+<li><strong>The tuner</strong> (<code>input/tuner.js</code>): <code>createSteadyTuner({ tuning })</code> -&gt; <code>{ push(buf, sr, t) -&gt; reading, reading, setTuning(id | { strings } | null), reset() }</code>; a reading is <code>{ live, held, hz, midi, p, note, octave, cents, shown, inTune, settled, string: { s, number, name, open, cents, near } | null, db, floor, since, conf }</code>. YIN
+(<code>pitch.js</code>, with the held note as its <code>hint</code>) in the tuning's range (a fourth under its low string; 30 Hz up with
+no tuning), a noise floor and a gate 10 dB over it, a new note on an attack, a median and a one-euro smoother,
+whole cents shown with hysteresis, in tune within ±2 (out past ±4). <code>TUNER_TUNINGS</code> is the fretboard's tunings
+plus <code>drop-a</code>, <code>7-standard</code> and <code>7-drop-a</code>; <code>tuningsFromLow(midi)</code> asks which a low string is, <code>guessTuning(heard)</code>
+settles it from the strings heard, <code>stringOf(midi, tuning)</code> names the string. Measured in <code>tools/input-test.js</code> on
+Karplus-Strong strings (<code>tools/strings.js</code>) from E1 to E4 at 48 and 96 kHz: named within 100 ms of the pluck,
+within 3 cents within 180 ms, a tenth of a cent clean and half a cent with hum at -48 dBFS at the median.
+<code>ui/gauges/tuner.js</code>: <code>mountTuner(el, { source, tuning, style: 'needle' | 'strobe', size: 'big' | 'small', onReading })</code> -&gt; <code>{ frame(now), reading, setTuning, setStyle, tuner, el, unmount() }</code>.</li>
+<li><strong>The level</strong> (<code>input/level.js</code>): <code>createLevel({ lo: -12, hi: -6, device })</code> -&gt; <code>{ push(samples | { peak } | peak, nowMs) -&gt; state, state, reset(), clearClip() }</code>; the state is <code>{ db (the bar), peak, hold, clip, clips, strum (the hardest in 3 s), verdict: 'none' | 'quiet' | 'low' | 'ok' | 'hot' | 'clip', advice: { id, text, turn: 'up' | 'down' | null, by (dB) }, inWindow, good (ms in the window) }</code>; <code>levelAdvice(verdict, db, { device })</code> is
+the words alone (the knob on the interface; on a Focusrite, the ring round it). <code>ui/gauges/level.js</code>:
+<code>mountLevel(el, { source, device, onPickChannel, advice })</code> -&gt; <code>{ frame(now), state, setDevice, reset(), meter, el, unmount() }</code>.</li>
+<li><strong>Calibration</strong> (<code>input/calibrate.js</code>): <code>createCalibration({ latency, label, autoKeep })</code> -&gt; <code>{ state: { phase: 'idle' | 'listening' | 'done' | 'stopped' | 'error', step, hits, result, kept, measured, estimate, error }, start(), stop(), keep(), again(), forget(), line(), on(fn) }</code>; a good one is kept by itself, a fair or poor one
+waits for keep(); <code>calibrationLine(state)</code> is the words. <code>ui/gauges/timing.js</code>: <code>mountTiming(el, { latency, label })</code> -&gt; <code>{ frame(now), start(), stop(), cal, el, unmount() }</code>. The clicks are sound: a check swaps
+<code>latency.measure</code> for a fake that calls <code>onStep</code> as the real one does.</li>
+<li><code>design/bench/getting-started/</code> (served locally, never deployed) mounts all three on the input module alone, to
+try them on a real guitar.</li>
+</ul></li>
 <li><p><strong>Audio inputs</strong> (<code>input/audioin.js</code>): an interface opens with all its channels (<code>channelCount</code> up to what the
 device reports) and the chosen input is split off (<code>state.channels</code>, <code>state.channel</code> '1'…'32', 'both', 'stereo'); a
 channel the device doesn't have is silence, never input 1. A <code>devicechange</code> emits <code>app.input</code> <code>'devices'</code> and ui

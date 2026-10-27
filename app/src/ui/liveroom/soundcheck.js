@@ -338,7 +338,7 @@ export function mountLamps(el, ctx) {
     measuring = false;
     if (gone) return;
     if (res && res.ok) {
-      a.latency.set(res.ms, { how: 'tap', spread: res.spread });
+      a.latency.set(res.ms, { how: 'tap', spread: res.spread, confidence: res.confidence });
       const id = res.ms > 25 ? 'line.long' : 'line.ok';
       set('lineup', 'ok', id, { ms: res.ms }, { ms: Math.round(res.ms) });
       say(id, { ms: res.ms });

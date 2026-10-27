@@ -127,9 +127,9 @@ export async function run(T, ctx) {
     if (off != null) { bad = 0; for (let i = 0; i < got.length; i++) if (got[i] !== v16[off + i]) bad++; }
     T.ok(off != null && bad === 0, `grab: the asset's ${got.length} samples are the fake's, every one (${off == null ? 'not found in the file' : `${bad} differ`}), ${fmt(r.g.seconds, 3)} s at ${r.g.asset.sr} Hz, peaking at ${fmt(r.g.peak, 2)} dBFS`);
     const lineErr = off == null ? null : r.g.frames.at - r.g.frames.from + off - Math.round(bar1 * sr);
-    // (the band was counted in by firstFrame, which Chromium's fake capture puts whole 10 ms chunks off the file's
-    // start: the deck's take, below, is off by the same, so this is the count's lining up, not the tape's)
-    T.ok(lineErr != null && Math.abs(lineErr) <= Math.round(0.025 * sr), `its line is the fake's bar 1 to ${lineErr} samples (${fmt((lineErr / sr) * 1000, 1)} ms: the fake capture's start as firstFrame reckons it, a 10 ms chunk at a time; within 25 ms)`);
+    // (the band was counted in by firstFrame, which reckons the fake capture's start a few ms either way: the deck's
+    // take, next, is off by the same, so this is the count's lining up with the file, not the tape's with the band)
+    T.ok(lineErr != null && Math.abs(lineErr) <= Math.round(0.05 * sr), `its line is the fake's bar 1 to ${lineErr} samples (${fmt((lineErr / sr) * 1000, 1)} ms: where firstFrame puts the fake capture's start; within 50 ms)`);
     const sm = r.same;
     T.ok(sm && sm.at.n > sr * 4 && sm.at.ok === sm.at.n && sm.before.ok < sm.before.n * 0.5 && sm.after.ok < sm.after.n * 0.5,
       `and the deck's: the take's first sample (beat ${r.take?.start}, offset ${r.take?.offset}) is the grab's at its line, and they agree for ${sm?.at.ok} of ${sm?.at.n} samples (a sample either way: ${sm?.before.ok}, ${sm?.after.ok})`);

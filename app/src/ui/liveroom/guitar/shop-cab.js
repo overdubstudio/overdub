@@ -68,6 +68,8 @@ function position(el, m, sp, cab) {
   place(el, x, y);
   el.querySelector('.mic-stand').style.height = Math.max(0, cab.h - y + 6) / (el._sc || 1) + 'px';
   el.querySelector('.mic-tag').textContent = el._tag;
+  // (a mic on the right half of the cab hangs its tag to the left, so the words stay inside the cab's box)
+  el.classList.toggle('tag-l', x > cab.w * 0.55);
   for (const [k, cn] of [...cab.el.querySelectorAll('.cone')].entries()) cn.classList.toggle('hot', k === sp.cone && el.classList.contains('dragging'));
 }
 export function placeMics(cab, view, { R, slot, drag = false, onSay = null }) {

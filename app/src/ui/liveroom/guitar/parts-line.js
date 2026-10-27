@@ -11,13 +11,14 @@
 //       there lands on the line (0: before the first part), lighting that gap while it's not final; the riff tray's
 //       drag asks it too (the tape stream's), then calls R.parts.takes.place(riff, { at })
 //
-// The lane is a role=listbox (the room's key table leaves a focused list its arrows, Home and End: ← → pick a card,
-// ↑ ↓ the take that plays, Home and End the first and the last; Enter stays the room's, play from the card); each card
+// The lane is a role=listbox (the room's key table leaves a focused list its arrows and End: ← → pick a card, ↑ ↓ the
+// take that plays, End the new-part slot; Enter stays the room's, play from the card, and so does Home, from the top,
+// as the line's hint says); each card
 // a role=option. Space never presses one (it's the transport's everywhere, the shell's rule). No <select>, no range.
 
 import { h } from '../../dom.js';
 import { byline } from '../../dom.js';
-import { takesIn } from './parts-plans.js';
+import { playingTake, takeGroups, takesIn } from './parts-plans.js';
 
 const plural = (n, w) => `${Math.round(n * 10) / 10} ${w}${Math.abs(n - 1) < 1e-6 ? '' : 's'}`;
 const kbd = (t) => h('kbd.grt-k', t);
@@ -46,8 +47,8 @@ export function createPartLine(R, on) {
   }
   function card(c, i) {
     const p = model.song;
-    const L = takesIn(p, { section: c.id, side: 'L' }), Rt = takesIn(p, { section: c.id, side: 'R' });
-    const pick = Math.max(0, L.findIndex((x) => !x.mute));
+    const LG = takeGroups(p, { section: c.id, side: 'L' }), L = LG.map((g) => g.clip), Rt = takesIn(p, { section: c.id, side: 'R' });
+    const pick = Math.max(0, playingTake(LG));
     const tk = L.length ? `take ${pick + 1} of ${L.length}` : 'no take yet';
     const sel = model.sel === c.id;
     const sub = [];
@@ -210,7 +211,6 @@ export function createPartLine(R, on) {
     const go = (j) => { e.preventDefault(); e.stopPropagation(); if (j === 'new') on.pick('new'); else if (ps[j]) on.pick(ps[j].id); };
     if (e.key === 'ArrowLeft') go(i < 0 ? ps.length - 1 : Math.max(0, i - 1));
     else if (e.key === 'ArrowRight') go(i < 0 ? 'new' : i + 1 >= ps.length ? 'new' : i + 1);
-    else if (e.key === 'Home') go(0);
     else if (e.key === 'End') go('new');
     else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); on.key(e.key === 'ArrowUp' ? 'take:up' : 'take:down'); }
   });

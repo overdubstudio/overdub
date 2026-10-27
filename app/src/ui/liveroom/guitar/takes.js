@@ -84,6 +84,7 @@ export function mount(R) {
   let hearing = null;    // playback the room started: { until } (a beat it stops at), or null to play on
   let dirty = true;
   let lastSummary = '';
+  let lineShape = '';     // the parts' ids, starts and lengths, as the last frame saw them
   let playAt = 0;        // when the room last started playback (the engine starts a beat later)
   let top = null;        // a play from the top: { song, reached } (heard to the end, Send comes up in the header)
 
@@ -183,7 +184,7 @@ export function mount(R) {
     const bars = countOn ? (bpm >= 160 ? 2 : 1) : from > EPS ? 1 : 0;
     const i = sec ? ln.parts.indexOf(sec) : ln.parts.length;
     const P0 = {
-      gen: ++gen, side, section: sec?.id || null, name: sec ? sec.name : ln.next, n: (sec ? sec.takes[side].length : 0) + 1,
+      gen: ++gen, side, section: sec?.id || null, name: sec ? sec.name : ln.next, n: (sec ? PP.takesIn(store.get(), { section: sec.id, side }).length : 0) + 1,
       from, tailFrom: sec ? sec.start + sec.length : null, bars: sec ? sec.bars : null, count: countOn ? bars * bpb : 0, preBars: bars,
       bpb, bpm, prev: ln.parts[i - 1]?.name || null, countOn, track, preview: null, landed: false, stopping: false, tossing: false, started: false, idleAt: null,
     };
@@ -568,7 +569,8 @@ export function mount(R) {
       }
       case 'play': {
         if (rec0()) return { ok: false, error: 'A take is running.' };
-        if (L.run === 'play') return stopPlay();
+        // (from the selected part every time, playing or not, as Home is from the top: Space is what stops)
+        if (L.run === 'play') stopPlay();
         const sec = selected();
         if (!lineNow().parts.length) { tell('gpart.empty'); return { ok: false, error: 'The part line’s empty.' }; }
         const r = playFrom(sec ? sec.start : 0);
@@ -675,6 +677,10 @@ export function mount(R) {
       dirty = false;
       const p = store.get(), ln = PP.partLine(p);
       if (L.card && L.card !== 'new' && !ln.parts.some((x) => x.id === L.card)) L.card = ln.parts.at(-1)?.id || null;
+      // (a hear-back is of bars where they were: a part added, moved or taken out under it stops it, rather than
+      // playing on into whatever's there now; a play from a part or the top plays on through edits)
+      const shape = ln.parts.map((x) => `${x.id}:${x.start}:${x.length}`).join('|');
+      if (shape !== lineShape) { if (hearing && L.run === 'play' && !gr.take?.hear) stopPlay(); lineShape = shape; }
       if (gr.take && (!ln.parts.some((x) => x.id === gr.take.section) || !clipNow(gr.take.track, gr.take.clip))) { closeReview(); monitorHome(); }
       const beats = {};
       for (const c of ln.parts) beats[c.id] = beatName(p, c.id);

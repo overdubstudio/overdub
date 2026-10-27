@@ -480,7 +480,7 @@ export function mount(R) {
   }
   function defaultName() {
     const a = ampLink();
-    const base = a ? `${R.getDevice(a.device)?.name || 'My'} wall` : 'Pedals';
+    const base = a ? `${R.getDevice(a.device)?.name || 'My'} stack` : 'Pedals';
     const taken = new Set(rackList.map((s) => s.name));
     let n = base, k = 2;
     while (taken.has(n)) n = `${base} ${k++}`;

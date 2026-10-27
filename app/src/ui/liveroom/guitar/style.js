@@ -16,6 +16,9 @@ export const CSS = `
 .gr-view { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: #0d0c0b; contain: strict; }
 .gr-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .gr-layer { position: absolute; inset: 0; }
+/* (the stage's layers paint back to front in their order, whatever z-index a stream gives inside one: the amp's loop
+   cables run down past the cab behind the drummer's plate and cards, never across their buttons) */
+.gr-world[data-world="stage"] > .gr-layer { isolation: isolate; }
 .gr-layer.gr-pixels canvas { image-rendering: pixelated; width: 100%; height: 100%; display: block; }
 .gr-hot, .gr-spot { pointer-events: none; }
 .gr-hot > *, .gr-spot > * { pointer-events: auto; }
@@ -26,6 +29,8 @@ export const CSS = `
 .gr-sheet { pointer-events: auto; background: var(--bg); color: var(--text); border-top: var(--rule-2); max-height: 62vh; overflow: auto; padding: 12px 16px; }
 .gr-drawer { position: absolute; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: var(--rule-2); display: grid; grid-template-rows: auto auto; }
 .gr-tray:empty, .gr-parts:empty { display: none; }
+/* (the riff library is the whole view: the drawer waits under it, and is back as it was when the library goes) */
+.gr[data-overlay="library"] .gr-drawer { display: none; }
 .gr-over { position: absolute; inset: 0; background: var(--bg); color: var(--text); z-index: 3; }
 .gr-callout { position: absolute; z-index: 2; max-width: 360px; background: var(--bg); color: var(--text); border: var(--rule-2); padding: 12px 14px; }
 .gr-fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity 280ms ease; z-index: 4; }

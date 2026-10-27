@@ -145,6 +145,7 @@ export const CSS = `
 .gr .grs-mic.t-kick .mic-body { left: -20px; top: -20px; width: 40px; height: 40px; background: radial-gradient(circle at 40% 35%, #5a6a8a, #1a2232 70%); }
 .gr .grs-mic .mic-tag { position: absolute; left: 24px; top: -11px; white-space: nowrap; font: 600 13px/1 var(--font-ui); color: var(--text); background: #0e0c10e0; padding: 4px 6px; border: 1px solid var(--line-2); opacity: 0; transition: opacity .2s; pointer-events: none; }
 .gr .grs-cab.open .grs-mic .mic-tag, .gr .grs-cab.mini .grs-mic .mic-tag { opacity: 1; }
+.gr .grs-mic.tag-l .mic-tag { left: auto; right: 24px; }
 .gr .grs-mic.m2 .mic-body { box-shadow: 0 0 0 2px #0a0a0c, 0 0 0 4px #ffc85a88, 0 4px 8px #000a; }
 .gr .grs-mic.dragging .mic-body { cursor: grabbing; }
 .gr .grs-mic .mic-body:focus-visible { outline: 2px solid var(--lamp); outline-offset: 3px; }

@@ -59,7 +59,8 @@ export function createLibrary(R, { hear, tray }) {
   let qT = 0;
   q.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => filter({ q: q.value }), 140); });
   q.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (q.value) { q.value = ''; filter({ q: '' }); } else list.focus({ preventScroll: true }); }
+    // (Esc clears what's typed; on an empty field it's the room's Esc: the library steps back, never a third press)
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (q.value) { q.value = ''; filter({ q: '' }); } else { q.blur(); R.press('back'); } }
     else if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); list.focus({ preventScroll: true }); }
   });
   const filters = h('div.gr-lb-filters');

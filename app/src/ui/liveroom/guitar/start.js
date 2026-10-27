@@ -332,8 +332,9 @@ export function mount(R) {
       } else {
         keep.add('timing');
         const gauge = h('div.gr-co-gauge');
-        goNow = () => { const st = timing?.cal.state; if (st && (st.phase === 'done' || st.kept || st.measured) && st.phase !== 'listening') next(); else if (st && st.phase !== 'listening') timing.start(); };
-        // (Enter strums along until the strums are measured, then it's Next: the hint goes with it)
+        goNow = () => { const st = timing?.cal.state; if (st && (st.kept || st.measured) && st.phase !== 'listening') next(); else if (st && st.phase !== 'listening') timing.start(); };
+        // (Enter strums along until a round trip is kept, then it's Next: the hint goes with it, the same rule as the
+        // frame's below. A run too loose to measure leaves Enter on the clicks, as the hint says: Next is the button)
         body = [h('h2', 'Timing'), h('p', W.timeAsk), gauge, h('p.gr-co-tkey', h('kbd', 'Enter'), ' starts the clicks.'),
           h('div.gr-co-acts', btn('Next: your sound', () => next(), { go: true, kbd: 'Enter', cls: 'gr-co-next' }), skipBtn())];
         if (!timing) timing = mountTiming(gauge, { latency: a.latency, label: () => where() });

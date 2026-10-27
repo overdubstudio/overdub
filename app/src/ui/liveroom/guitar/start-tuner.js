@@ -134,7 +134,8 @@ export function createTunerPanel(el, { source, tuning, style, onStomp, onTuning,
       // the line, at most four times a second
       if (now - lastV > 250) {
         lastV = now;
-        const v = tunerSays(r, { n: done.size, of: T.strings.length, tuning: tuningName(T) });
+        // (nothing heard yet: the panel's first line already says what to do, so the verdict waits for a string)
+        const v = !r.p && done.size < T.strings.length ? '' : tunerSays(r, { n: done.size, of: T.strings.length, tuning: tuningName(T) });
         if (v !== vKey) { vKey = v; verdict.textContent = v; }
       }
       const k = `${input()}`;

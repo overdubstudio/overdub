@@ -197,6 +197,55 @@ describe('a take', () => {
     store.undo();
     assert.equal(song(store), before);
   });
+  test('a take a short one cut in two is still one take: the next is take 3, and ↑ ↓ keep the bars past the short one', () => {
+    const store = club();
+    step(store, PP.planNewPart(store.get(), { bars: 2 }));
+    const sec = PP.partLine(store.get()).parts[0];
+    const t1 = take(store, { start: 0, length: 8 });
+    // a short second take, as the take folder leaves it: the first take muted under it, its bars past it still playing
+    const t2 = take(store, { start: 0, length: 4 });
+    const a1 = store
+      .get()
+      .tracks.find((x) => x.id === t1.track)
+      .clips.find((x) => x.id === t1.clip).asset;
+    const r = store.dispatch(
+      [
+        { type: 'clip.set', track: t1.track, clip: t1.clip, patch: { length: 4, mute: true } },
+        {
+          type: 'clip.add',
+          track: t1.track,
+          ref: 'b',
+          clip: { kind: 'audio', start: 4, length: 4, asset: a1, offset: 2, gain: 0 },
+        },
+      ],
+      { by: 'you', label: 'the fold' },
+    );
+    assert.ok(r.ok, r.error);
+    const piece = r.created.b;
+    const groups = PP.takeGroups(store.get(), { section: sec.id });
+    assert.equal(groups.length, 2);
+    assert.equal(PP.takesIn(store.get(), { section: sec.id }).length, 2);
+    assert.equal(PP.playingTake(groups), 1, 'the short take is the one that plays');
+    const t3 = take(store, { start: 0, length: 8 });
+    assert.equal(PP.planTakeIn(store.get(), { ...t3, section: sec.id }).take, 3);
+    store.undo();
+    const clipsOf = () => store.get().tracks.find((x) => x.id === t1.track).clips;
+    const muted = (id) => !!clipsOf().find((x) => x.id === id).mute;
+    // ↑: take 1 plays whole, the short one goes quiet
+    const before = song(store);
+    const up = PP.planPick(store.get(), { section: sec.id, dir: -1 });
+    assert.equal(up.take, 1);
+    step(store, up);
+    assert.deepEqual([muted(t1.clip), muted(piece), muted(t2.clip)], [false, false, true]);
+    // ↓: the short one plays in its bars, take 1 past them
+    const down = PP.planPick(store.get(), { section: sec.id, dir: 1 });
+    assert.equal(down.take, 2);
+    step(store, down);
+    assert.deepEqual([muted(t1.clip), muted(piece), muted(t2.clip)], [true, false, false]);
+    store.undo();
+    store.undo();
+    assert.equal(song(store), before);
+  });
   test('the other side is labelled as such', () => {
     const store = club();
     step(store, PP.planNewPart(store.get(), { bars: 2 }));

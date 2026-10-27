@@ -16,7 +16,7 @@
 //   syncPicks(el)                                       those buttons' words, after the face was updated
 //   drawCables(svg, geo, { plugged, plugT, lit })      the guitar into the first jack (a real plug on its end),
 //       pedal to pedal, up the cab's side to the head's input, and the amp's loop out and back
-//   MIC_WORD, inches(d), whereOnCone(r)
+//   MIC_WORD, inches(d), whereOnCone(r), onCone(r) (the place in a sentence)
 
 import { h } from '../../dom.js';
 import { clawd } from '../../../devices/guitar/clawd.js';
@@ -26,6 +26,8 @@ const { PLUG_CABS, PLUG_AMP_BOX, PLUG_MICS } = clawd;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export const inches = (d) => (d < 1 ? (+d).toFixed(1) : d < 10 ? String(Math.round(d * 2) / 2) : String(Math.round(d))) + '″';
 export const whereOnCone = (r) => (r < 0.12 ? 'centre' : r < 0.4 ? 'cap edge' : r < 0.82 ? 'cone' : r <= 1.04 ? 'cone edge' : 'off the cone');
+// (the same place in a sentence: "Dynamic on the cap edge", "Dynamic off the cone")
+export const onCone = (r) => (r < 0.12 ? 'dead centre' : r < 0.4 ? 'on the cap edge' : r < 0.82 ? 'on the cone' : r <= 1.04 ? 'at the cone’s edge' : 'off the cone');
 export const MIC_WORD = Object.fromEntries(MIC_IDS.map((k) => [k, PLUG_MICS[k]?.name || k]));
 
 function boxOf(c) {

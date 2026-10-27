@@ -13,7 +13,7 @@
 //   A drag snaps to the beat; ⇧ while dragging lets it go free. The part-end handle snaps to bars.
 
 import { h } from '../../dom.js';
-import { partLine, takesIn } from './parts-plans.js';
+import { partLine, playingTake, takeGroups, takesIn } from './parts-plans.js';
 
 const fmt = (x) => { const v = Math.round(x * 10) / 10; return Number.isInteger(v) ? String(v) : v.toFixed(1); };
 const plural = (n, w) => `${fmt(n)} ${w}${Math.abs(n - 1) < 0.05 ? '' : 's'}`;
@@ -80,8 +80,8 @@ export function createReview(R, on) {
       : recEnd < pe - 1e-3 ? `You stopped in bar ${Math.max(1, stopped)} of ${fmt(part.bars)}; the rest of the part keeps what it had.`
       : `${plural(part.bars, 'bar')}${ring > 0.05 * bpb ? `, and ${plural(ring / bpb, 'bar')} rang past ${next ? `into ${next.name}` : 'the end'}` : ''}. It’s all on the take.`;
     note.textContent = T.isNew ? 'The out handle sits where you stopped; the amber one is where the part ends. Drag either.' : 'The out handle sits where you stopped. Drag it back to cut the ring.';
-    const kept = takesIn(p, { section: part.id, side: T.side });
-    list.replaceChildren(...(kept.length > 1 ? ['takes: ', ...kept.flatMap((x, k) => [h(x.mute ? 'span' : 'b', `take ${k + 1}`), k < kept.length - 1 ? ' ' : ''])] : ['the first take of this part on this side']));
+    const kept = takeGroups(p, { section: part.id, side: T.side }), on1 = playingTake(kept);
+    list.replaceChildren(...(kept.length > 1 ? ['takes: ', ...kept.flatMap((x, k) => [h(k === on1 ? 'b' : 'span', `take ${k + 1}`), k < kept.length - 1 ? ' ' : ''])] : ['the first take of this part on this side']));
     tl.classList.toggle('grt-two', T.side === 'R');
     hPe.hidden = !T.isNew;
     draw();

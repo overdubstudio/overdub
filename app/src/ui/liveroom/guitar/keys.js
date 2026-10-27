@@ -12,11 +12,14 @@
 //     text-type input, a textarea, contenteditable, [data-typing]: the talkback's field, a riff's name being typed)
 //     and to an open modal dialog (the ? sheet);
 //   - Space is the shell's rule (fix/space-key, docs/ARCHITECTURE.md "Space is always the transport's"): taken on
-//     keydown and keyup from any control but a text field, so it never presses the button you last clicked;
+//     keydown and keyup from any control but a text field, so it never presses the button you last clicked; a focused
+//     list (the shop's wall and case, the rack, the riff library, the part line), which the shell lets keep Space for
+//     a studio dropdown's sake, gives it to the room too: the row is global and the room stops its keyup;
 //   - Enter is left to a focused button (the browser presses it: a part card's Enter is "play from" either way), and
 //     taken by the room only when no button has focus;
 //   - the arrows, Page Up/Down, Home and End are a focused knob's (role=slider) and a focused list's (the part line is a
-//     role=listbox; the shell leaves a list its arrows), and the room's everywhere else;
+//     role=listbox; the shell leaves a list its arrows), and the room's everywhere else; but Home on the part line is
+//     the room's, play from the top, as the line's own hint says;
 //   - the room draws no <select> and no <input type=range>: a knob is the faces' ARIA slider, a choice is buttons
 //     (tools/liveroom/checks-guitar.js fails on either).
 //
@@ -74,7 +77,9 @@ const G = { global: true };   // a letter: reaches the room from a focused selec
 
 export const KEYS = Object.freeze([
   // the take: the three big words while it records
-  L('Space', null, ['rec', 'review', 'gs', 'tape', 'library', 'shop', 'stage'], 'space', 'The drummer; stop the take or the song; in a take’s review, hear it'),
+  // (global: a focused list keeps Space under the shell's rule (OWNS_SPACE, a studio dropdown's), and the shop's wall and
+  // case, the rack and the riff library are lists of buttons: the room takes Space from them too, keyup and all, below)
+  L('Space', null, ['rec', 'review', 'gs', 'tape', 'library', 'shop', 'stage'], 'space', 'The drummer; stop the take or the song; in a take’s review, hear it', G),
   L('KeyR', null, ['rec'], 'again', 'Start the take again (counted back in)', G),
   L('Escape', null, ['rec'], 'toss', 'Toss the take'),
   L('KeyR', null, ['review'], 'again', 'Again: toss this take and record the part again', G),
@@ -91,7 +96,9 @@ export const KEYS = Object.freeze([
   L('KeyD', null, ['stage', 'review'], 'side', 'The other side of the selected part, on the same rig', G),
   L('Enter', null, ['stage'], 'play', 'Play from the selected part'),
   L('NumpadEnter', null, ['stage'], 'play', 'Play from the selected part'),
-  L('Home', null, ['stage'], 'home', 'Play from the top'),
+  // (global: the shell leaves a focused list its Home, and the part line is one; when() below gives every other list
+  // its Home back)
+  L('Home', null, ['stage'], 'home', 'Play from the top', G),
   L('Backspace', null, ['stage'], 'part:remove', 'Delete the selected part (⌘Z puts it back)', G),
   L('Delete', null, ['stage'], 'part:remove', 'Delete the selected part', G),
   L('KeyN', null, ['stage'], 'part:new', 'A new part after the selected one', G),
@@ -157,14 +164,25 @@ export function installKeys({ ui, gr, run, live, press }) {
       // the talkback's field (and any text field) keeps everything but Esc and Enter, which it handles itself
       if (typesText(a)) return false;
       if (c.talk && k.code !== 'Escape') return false;
-      if (/^(Arrow|Page|Home|End)/.test(k.code) && !k.mod && (sliderFocused() || listFocused())) return false;
+      // (Home on the part line is the room's, from the top, as its hint says; the other lists keep it for their first row)
+      const homeOnLine = k.code === 'Home' && !!a?.closest?.('.grt-lane');
+      if (/^(Arrow|Page|Home|End)/.test(k.code) && !k.mod && (sliderFocused() || (listFocused() && !homeOnLine))) return false;
       if ((k.code === 'Enter' || k.code === 'NumpadEnter') && buttonFocused()) return false;
       // a rec row is the only kind live during a take; elsewhere the first matching context wins
       if (c.rec) return k.in.includes('rec') || k.in.includes('any');
       return k.in.some((x) => x !== 'rec' && c[x]);
     };
     const action = k.press;
-    offs.push(ui.keys.add({ key: k.code, mod: k.mod, first: true, group: 'Live room', global: !!k.global, label: k.label, when, run: (e) => press(typeof action === 'function' ? action(contextOf(gr(), run())) : action, e) }));
+    const space = k.code === 'Space';
+    offs.push(ui.keys.add({ key: k.code, mod: k.mod, first: true, group: 'Live room', global: !!k.global, label: k.label, when, run: (e) => {
+      // (Space is one press, wherever focus is: nothing under the window hears it, and the focused button doesn't click
+      // on its keyup; a held Space's repeats do nothing more)
+      if (space) { e.stopPropagation(); spaceTook = true; if (e.repeat) return; }
+      press(typeof action === 'function' ? action(contextOf(gr(), run())) : action, e);
+    } }));
   }
+  let spaceTook = false;
+  const onUp = (/** @type {KeyboardEvent} */ e) => { if (e.code === 'Space' && spaceTook) { spaceTook = false; e.preventDefault(); e.stopPropagation(); } };
+  if (typeof window !== 'undefined') { window.addEventListener('keyup', onUp, true); offs.push(() => window.removeEventListener('keyup', onUp, true)); }
   return () => { for (const off of offs.splice(0)) off(); };
 }

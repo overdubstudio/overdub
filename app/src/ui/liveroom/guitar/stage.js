@@ -55,7 +55,7 @@ import { sameChain } from '../../../core/stacks.js';
 import { CLUB_STACK } from '../../../core/liveroom/guitar/setup.js';
 import { REGIONS, PX, MARGIN, STAGE } from './layout.js';
 import { PIX, KIT, TAPE, shifted, drawStage, drawTape, drawKit } from './room-pixels.js';
-import { cabOf, micsOf, buildCab, buildMic, placeMic, tunerFace, noSelects, syncPicks, drawCables, whereOnCone, inches } from './room-rig.js';
+import { cabOf, micsOf, buildCab, buildMic, placeMic, tunerFace, noSelects, syncPicks, drawCables, onCone, inches } from './room-rig.js';
 import { CSS } from './room-style.js';
 
 // world units: the stack stands at the left; the board runs the stage's width along the front
@@ -396,7 +396,7 @@ export function mount(R) {
         built?.cab?.el.querySelectorAll('.gr-r-cone').forEach((c) => c.classList.remove('gr-on'));
         if (last == null) return;
         const m = micsOf(R.rig.values(slot))[i];
-        if (m) say(`${i ? 'Mic 2: ' : ''}${m.name} on the ${whereOnCone(m.pos)}, ${inches(m.dist)} back. ${m.pos < 0.4 ? 'Brighter' : m.pos > 0.82 ? 'Darker' : 'Rounder'}; this song’s copy.`);
+        if (m) say(`${i ? 'Mic 2: ' : ''}${m.name} ${onCone(m.pos)}, ${inches(m.dist)} back. ${m.pos < 0.4 ? 'Brighter' : m.pos > 0.82 ? 'Darker' : 'Rounder'}; this song’s copy.`);
       };
       body.addEventListener('pointermove', move); body.addEventListener('pointerup', up); body.addEventListener('pointercancel', up);
     });
@@ -613,7 +613,13 @@ export function mount(R) {
   /* ------------------------------------------------------------------------------------------- following the song and the room */
   offs.push(R.on('rig', (rig) => { if (shapeOf(rig) !== built?.key) build(); else update(rig); }));
   // (the piece of gear in focus is for the head's and the board's zooms: back on the stage, or in the shop, it's let go)
-  offs.push(R.on('cam', (d) => { if (d?.to !== 'head' && d?.to !== 'board') R.gr.slot = null; renderBack(); markSlot(); }));
+  offs.push(R.on('cam', (d) => {
+    if (d?.to !== 'head' && d?.to !== 'board') R.gr.slot = null;
+    // (a knob the hand left focused doesn't follow the camera: its big name and value would hang over the next view)
+    const a = document.activeElement;
+    if (a && a !== document.body && R.el.stage.gear.contains(a) && !(d?.to === 'head' && built?.head?.el?.contains(a)) && !(d?.to === 'board' && a.closest?.('.gr-r-slot'))) a.blur?.();
+    renderBack(); markSlot(); keepTip();
+  }));
   offs.push(R.on('drawer', () => { renderStrip(); countRiffs(); }));
   for (const e of ['tape:grab', 'tape:riff', 'tape:riffs']) offs.push(R.on(e, () => countRiffs()));
   if (R.store.on) { const off = R.store.on('change', () => { renderStrip(); renderPanel(); }); if (typeof off === 'function') offs.push(off); }

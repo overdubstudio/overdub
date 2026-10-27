@@ -2260,6 +2260,14 @@ which draws nothing itself:
   `room.part.set`. The club's setup (`core/liveroom/guitar/setup.js` `planGuitarRoom`) is one step: both guitars on
   the club's stack (`CLUB_STACK`: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
   `GUITAR_DB` (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.
+- **The tape, the riffs and the talkback** (`tape.js` and its `tape-*.js`, `talk-room.js`): the guitar room starts
+  `app.input.tape` as it mounts and stops it as it goes, if it started it. G puts the last minute up (`app.input.tape`
+  select and grab, snapped to the drummer's bar lines unless `snap` is off); Enter keeps the selection as a riff in
+  `riffs-db.js` (nothing in History) and puts the drawer up with the riff in the tray; a riff goes onto the part line
+  only through the takes stream's `place(riff, { at, after })`, one step by you. Beside the frozen view the stream
+  adds `place`, `claude()` (who's on the talkback) and its pieces, and says `'tape:grab'` ({ riff }) and
+  `'tape:drag'` ({ riff, x, y, over, at, phase }) on the bus. / opens a field for Claude in the strip; the agent acts
+  through ops signed `claude`, and its reply goes to the talkback (`R.say`, by `claude`).
 - **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
   stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 

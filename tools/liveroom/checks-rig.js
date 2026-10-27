@@ -16,11 +16,12 @@
 //     plays through the old audio track, which has no chain), the same rig measures the same each time it comes round,
 //     its shape and its level (a doubled or half-built chain wouldn't), and each sounds different from the others;
 //   the clicks: a steady 100 Hz tone in place of the guitar, six more presses, a Jam room tone in and ] back (the
-//     devices changing: built beside the playing chain, swapped in under the strip's dip), the sharpest sample (the largest third
-//     difference) in the 600 ms after each against the steady tone either side of it; the detector is held to hearing
-//     a 0.02 step put in by hand.
-// And the engine's retry: a device whose first build throws plays its stand-in (the dry signal), then is built again on
-// its own once it's due (engine/strip.js RETRY), with no change to the song.
+//     devices changing: built beside the playing chain, then crossfaded in), the sharpest sample (the largest third
+//     difference) from each press until the strip has swapped (engine.settled, and 100 ms on: a new chain can take
+//     longer than 600 ms to build) against the steady tone before the press and after the swap; the detector is held to
+//     hearing a 0.02 step put in by hand.
+// And the engine's retry: a device whose first build isn't ready in time plays its stand-in (the dry signal), then is
+// built again on its own once it's due (engine/strip.js BUILD), with no change to the song.
 
 import { openRoom, press, history } from './harness.js';
 import { riffDI, SR } from './fake.js';
@@ -128,7 +129,10 @@ export async function run(T, ctx) {
       return E(async ({ t0, secs, swap }) => {
         const o = window.overdub, R = window.__rig, c = o.engine.ctx;
         await o.engine.settled();
-        await R.sleep(secs * 1000 + 300);
+        // (when the strip finished swapping: a chain that's new to the strip can take longer than a window to build, so
+        // the swap's window runs from the press to here, and what's after it is measured after it)
+        const ts = c.currentTime;
+        await R.sleep(Math.max(secs, swap ? 0.8 : 0) * 1000 + 300);
         const t1 = c.currentTime;
         const p = o.store.get(), L = p.tracks.find((t) => t.name === 'Guitar L'), G = p.tracks.find((t) => t.name === 'Guitar R');
         const live = L.inserts.map((x) => { const i = o.engine.instance(L.id, x.id); return i ? (i.fallback ? 'stand-in' : 'live') : 'none'; });
@@ -136,7 +140,7 @@ export async function run(T, ctx) {
           rig: p.room?.rig, label: document.querySelector('.lr-rig-name')?.textContent || '', open: o.liveRoom.isOpen(),
           L: L.inserts.map((x) => ({ device: x.device, params: x.params, on: x.on !== false })), R: G.inserts.map((x) => ({ device: x.device, params: x.params, on: x.on !== false })),
           live, mon: o.input.audio.monitorTrack?.()?.name || null, tuning: p.room?.tuning,
-          steady: R.grab(t1 - secs, t1), ...(swap ? { before: R.grab(t0 - 0.6, t0), swap: R.grab(t0, t0 + 0.6), after: R.grab(t0 + 0.6, t0 + 1.2) } : {}),
+          steady: R.grab(t1 - secs, t1), ...(swap ? { before: R.grab(t0 - 0.6, t0), swap: R.grab(t0, Math.max(t0 + 0.6, ts + 0.1)), after: R.grab(ts + 0.15, ts + 0.75), took: ts - t0 } : {}),
         };
       }, { t0, secs, swap });
     };
@@ -200,8 +204,8 @@ export async function run(T, ctx) {
     tone.push({ what: 'a Jam tone', ...(await step(jamTone, { secs: 0.6, swap: true })) });
     tone.push({ what: '] back', ...(await step('BracketRight', { secs: 0.6, swap: true })) });
     const F = (a) => Float32Array.from(a);
-    const clicks = tone.map((x) => [x.what.startsWith(']') ? `${x.what} ${x.rig}` : x.what, stepOf(F(x.swap), F(x.before), F(x.after))]);
-    T.ok(clicks.every(([, v]) => v < STEP_MAX), `no swap clicks: the sharpest sample in the 600 ms after each press puts in less than a ${STEP_MAX} step would over the steady tone either side (${clicks.map(([w, v]) => `${w}: ${v ? f1(dbfs(v)) : 'none'}`).join(', ')} dBFS; the tone's sharpest ${f1(dbfs(kink(F(tone[0].before))))} dBFS)`);
+    const clicks = tone.map((x) => [x.what.startsWith(']') ? `${x.what} ${x.rig}` : x.what, stepOf(F(x.swap), F(x.before), F(x.after)), x.took]);
+    T.ok(clicks.every(([, v]) => v < STEP_MAX), `no swap clicks: the sharpest sample from each press until the strip has swapped (and 100 ms on) puts in less than a ${STEP_MAX} step would over the steady tone before it and after it (${clicks.map(([w, v, took]) => `${w}: ${v ? f1(dbfs(v)) : 'none'} (${Math.round(took * 1000)} ms)`).join(', ')} dBFS; the tone's sharpest ${f1(dbfs(kink(F(tone[0].before))))} dBFS)`);
     {
       // (the detector hears one: a 0.02 step put into the steady tone by hand)
       const x = F(tone.at(-1).after), y = Float32Array.from(x);

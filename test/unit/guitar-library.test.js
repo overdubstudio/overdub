@@ -348,6 +348,14 @@ describe('the riff library with no IndexedDB (memory, for the visit)', () => {
     assert.equal((await riffs.list()).rows[0].channels, 1);
     assert.equal((await riffs.add({ tempo: 120 })).ok, false);
   });
+  test('a riff given an id that’s already kept is refused, by name', async () => {
+    const a = await riffs.add({ audio: audio(0.1), tempo: 120, id: 'rf_clash1' });
+    assert.ok(a.ok, a.error);
+    const b = await riffs.add({ audio: audio(0.1), tempo: 120, id: 'rf_clash1' });
+    assert.equal(b.ok, false);
+    assert.match(b.error, /already a riff rf_clash1/);
+    assert.ok(await riffs.remove('rf_clash1'));
+  });
   test('the song gets a name: its riffs take it', async () => {
     assert.equal(await riffs.tagSong('p_lib', 'Grave Pull'), 1);
     assert.equal((await riffs.get(first)).songTitle, 'Grave Pull');

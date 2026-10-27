@@ -220,6 +220,29 @@ export async function run(T, ctx) {
     T.ok(rk.where === 'disk' && rk.note === null && rk.ok && rk.list.join() === 'Wall,Thrash floor' && rk.back, `the rack keeps stacks on disk (IndexedDB overdub-rack): save, rename, list (the last changed first: ${rk.list.join(', ')}), remove and restore`);
     T.ok(rk.ops.join() === 'insert.remove,insert.add@0,insert.add@1' && rk.by === 'you' && rk.thresh === -50, `load gives the song’s ops by you, in place of the old amp (${rk.ops.join(', ')}), and the rack’s stack is as it was saved`);
 
+    // a change the disk wouldn't take, then a delete: the stack is gone, the old one doesn't come back; and a song's
+    // title in the filter menu is its newest riff's (before tagSong reaches the older ones)
+    const edge = await E(async () => {
+      const rack = await import('/app/src/ui/liveroom/rack-db.js');
+      const riffs = await import('/app/src/ui/liveroom/riffs-db.js');
+      const s = await rack.save([{ device: 'core.stack', params: { gain: 4 }, on: true }], { name: 'Spare' });
+      const orig = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function () { throw new DOMException('full', 'QuotaExceededError'); };
+      let ren;
+      try { ren = await rack.rename(s.id, 'Spare 2'); } finally { IDBObjectStore.prototype.put = orig; }
+      const named = (await rack.get(s.id)).name;
+      await rack.remove(s.id);
+      const left = (await rack.list()).map((x) => x.id).includes(s.id);
+      const tiny = { sr: 48000, channels: [new Float32Array(480)] };
+      await riffs.add({ id: 'rf_aaaaa1', audio: tiny, tempo: 120, song: { id: 'p_late', title: 'Untitled' }, at: 2e12 + 5000e3 });
+      await riffs.add({ id: 'rf_zzzzz1', audio: tiny, tempo: 120, song: { id: 'p_late', title: 'Late Song' }, at: 2e12 + 5001e3 });
+      const title = (await riffs.facets()).songs.find((x) => x.id === 'p_late');
+      await riffs.remove('rf_aaaaa1'); await riffs.remove('rf_zzzzz1');
+      return { ren: ren.ok, named, left, title: title && title.title };
+    });
+    T.ok(edge.ren && edge.named === 'Spare 2' && !edge.left, `a rename the disk wouldn't take, then a delete: the stack is gone and its old self doesn't come back (${edge.left ? 'it came back' : 'gone'})`);
+    T.ok(edge.title === 'Late Song', `a song's title in the filter menu is its newest riff's (“${edge.title}”)`);
+
     // a reload: all of it is still there
     await s.page.reload({ waitUntil: 'load' });
     const kept = await E(async () => {

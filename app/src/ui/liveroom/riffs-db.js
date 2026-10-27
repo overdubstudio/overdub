@@ -24,7 +24,7 @@
 //   restore(whole) -> { ok, id }    puts a removed riff back as it was (same id, same time)
 //   count() -> number
 //   facets() -> { total, starred, songs: [{ id, title, count }], tunings: [{ id, count }] }   for the filter menus
-//       (songs by title, the untitled ones last; tunings, the most used first)
+//       (songs by title, the untitled ones last, each titled as its newest riff has it; tunings, the most used first)
 //   tagSong(songId, title) -> number of riffs retagged   a song that's just been named: its riffs take the title
 //       (an untitled title takes it off)
 //   usage() -> { count, bytes }   what the library's audio takes on disk (and in memory), counted from the rows
@@ -131,7 +131,7 @@ export async function add(input) {
   for (let tries = 0; tries < 4; tries++) {
     const c = cleanRiff(input, { count: n, now: stamp() });
     if ('error' in c) return { ok: false, error: c.error };
-    if (mem.rows.has(c.row.id)) continue;
+    if (mem.rows.has(c.row.id)) { if (c.row.id === input.id) return { ok: false, error: `there's already a riff ${input.id}` }; continue; }
     const w = await write(c.row, c.detail, c.audio, { fresh: true });
     if (w.clash) { if (input && input.id) return { ok: false, error: `there's already a riff ${input.id}` }; continue; }
     const out = { ok: true, id: c.row.id, row: c.row, where: w.where };
@@ -280,16 +280,16 @@ export async function restore(whole) {
 }
 
 /* ------------------------------------------------------------------------------------------------ the shelf's sides */
-// distinct keys of an index, each with its count (and the first value under it, when `first`)
-async function distinct(d, index, first = false) {
-  const ix = d.transaction('riffs').objectStore('riffs').index(index);
+// distinct keys of an index, each with its count (and, with `first`, a row read for that key: first(store, key) -> request)
+async function distinct(d, index, first = null) {
+  const store = d.transaction('riffs').objectStore('riffs'), ix = store.index(index);
   const keys = [];
   await new Promise((resolve, reject) => {
     const rq = ix.openKeyCursor(null, 'nextunique');
     rq.onsuccess = () => { const c = rq.result; if (!c) return resolve(undefined); keys.push(c.key); c.continue(); };
     rq.onerror = () => reject(rq.error);
   });
-  return Promise.all(keys.map(async (k) => ({ key: k, count: await req(ix.count(IDBKeyRange.only(k))), value: first ? await req(ix.get(IDBKeyRange.only(k))) : null })));
+  return Promise.all(keys.map(async (k) => ({ key: k, count: await req(ix.count(IDBKeyRange.only(k))), value: first ? await req(first(store, k)) : null })));
 }
 
 export async function facets() {
@@ -301,17 +301,19 @@ export async function facets() {
       const s = d.transaction('riffs').objectStore('riffs');
       total = await req(s.count());
       starred = await req(s.index('star').count(IDBKeyRange.bound([1], [1, []])));
-      for (const x of await distinct(d, 'songs', true)) if (x.key) songs.set(x.key, { id: x.key, title: x.value ? x.value.songTitle : null, count: x.count });
+      // (the title on the song's newest riff: the name it has now, even before tagSong reaches the older ones)
+      const newest = (store, k) => store.index('song').get(IDBKeyRange.bound([k], [k, []]));
+      for (const x of await distinct(d, 'songs', newest)) if (x.key) songs.set(x.key, { id: x.key, title: x.value ? x.value.songTitle : null, count: x.count, at: x.value ? x.value.at : -Infinity });
       for (const x of await distinct(d, 'tunings')) tunings.set(x.key, { id: x.key, count: x.count });
     } catch (e) { console.warn('overdub riffs: could not count', e && e.message); }
   }
   for (const r of mem.rows.values()) {
     total++; if (r.starred) starred++;
-    if (r.song) { const e = songs.get(r.song) || { id: r.song, title: r.songTitle, count: 0 }; e.count++; if (!e.title) e.title = r.songTitle; songs.set(r.song, e); }
+    if (r.song) { const e = songs.get(r.song) || { id: r.song, title: null, count: 0, at: -Infinity }; e.count++; if (r.songTitle && (!e.title || r.at > e.at)) { e.title = r.songTitle; e.at = r.at; } songs.set(r.song, e); }
     const t = tunings.get(r.tuning) || { id: r.tuning, count: 0 }; t.count++; tunings.set(r.tuning, t);
   }
   const byTitle = (a, b) => (a.title ? 0 : 1) - (b.title ? 0 : 1) || String(a.title || '').localeCompare(String(b.title || '')) || b.count - a.count;
-  return { total, starred, songs: [...songs.values()].sort(byTitle), tunings: [...tunings.values()].sort((a, b) => b.count - a.count || a.id.localeCompare(b.id)) };
+  return { total, starred, songs: [...songs.values()].map(({ id, title, count }) => ({ id, title, count })).sort(byTitle), tunings: [...tunings.values()].sort((a, b) => b.count - a.count || a.id.localeCompare(b.id)) };
 }
 
 export async function tagSong(songId, title) {

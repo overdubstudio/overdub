@@ -40,6 +40,10 @@
 //                  mic channel (mic: true) whatever the device is, an interface too
 //   audio.tune({ lo, hi }?) -> { hz, midi, p, cents, stable, conf } | null   lo/hi: the instrument's range in Hz (default
 //                  38-1400); cents only once the note has settled (stable), else null
+//   audio.samples() -> { buf, sr } | null   the picked input's latest window, as it is now (the analyser's: 4096 samples
+//                  at 48 kHz, 8192 over 50 kHz, so a quarter of it holds a low B's period at any rate): Getting
+//                  started's tuner and meter read it in a frame (input/tuner.js, input/level.js, ui/gauges/). The
+//                  buffer is reused: read it before the next call
 //   audio.listen(fn({ f, d: [Float32Array] })) -> off    raw blocks with their audio-clock frame (hum, beatbox, latency)
 //   audio.monitor(on?)   live through the armed audio track's inserts; with no audio track it stays on and waits
 //   audio.monitorTrack() -> the track it plays through now | null (off, closed, or waiting: state.monitorWaiting)
@@ -70,6 +74,8 @@ export function pickChannel(levels, { over = 12, floor = -50 } = {}) {
   return k + 1;
 }
 const dB = (d) => Math.pow(10, d / 20);
+// the analyser's window: a quarter of it holds the lowest period the tuner looks for (30 Hz) at the context's rate
+const winFor = (sr) => (sr > 50000 ? 8192 : 4096);
 
 // What monitoring says when it's off for a reason (state.monitorLine; the feedback one is a toast too)
 export const MIC_LINE = 'Monitoring is off: this is a microphone, and through speakers it would howl. Use headphones, then turn it on.';
@@ -241,7 +247,7 @@ export function createAudioIn(app, input) {
           const g = i === 0 ? pick : c.createGain();
           g.channelCount = 1; g.channelCountMode = 'explicit'; g.channelInterpretation = 'speakers';
           sp.connect(g, x.ch - 1);
-          const a = c.createAnalyser(); a.fftSize = 4096; g.connect(a);
+          const a = c.createAnalyser(); a.fftSize = winFor(c.sampleRate); g.connect(a);
           return { ...x, pick: g, an: a, buf: new Float32Array(a.fftSize), mon: null, dest: null };
         });
       } else if (channel === 'both' || channel === 'stereo' || !(ch >= 1) || (n < 2 && ch <= 1)) src.connect(pick);
@@ -250,7 +256,7 @@ export function createAudioIn(app, input) {
         sp = c.createChannelSplitter(Math.max(2, n, ch)); src.connect(sp); sp.connect(pick, ch - 1);
       }
       const an = picks ? picks[0].an : c.createAnalyser();
-      if (!picks) { an.fftSize = 4096; pick.connect(an); }
+      if (!picks) { an.fftSize = winFor(c.sampleRate); pick.connect(an); }
       rig = { stream, src, pick, an, track, sp, picks, lv: null, buf: new Float32Array(an.fftSize), peak: 0, clipAt: 0 };
       if (track) track.addEventListener('ended', () => { audio.close(); app.ui?.toast?.('The input went away (unplugged or switched off).', { kind: 'bad' }); });
       Object.assign(state, { open: true, deviceId: device || st.deviceId || '', asked: device || '', forTrack, label: (track && track.label) || 'Input', channel: picks ? String(picks[0].ch) : String(channel), channels: n, settings: st, error: '', sr: c.sampleRate, firstFrame: null, split: picks ? Object.fromEntries(picks.map((x) => [String(x.ch), x.track])) : null });
@@ -365,6 +371,12 @@ export function createAudioIn(app, input) {
       rig.an.getFloatTimeDomainData(rig.buf);
       tu.last = tu.tuner.push(rig.buf, ctx.sampleRate, now / 1000);
       return tu.last;
+    },
+
+    samples() {
+      if (!rig || !ctx) return null;
+      rig.an.getFloatTimeDomainData(rig.buf);
+      return { buf: rig.buf, sr: ctx.sampleRate };
     },
 
     listen(fn) {

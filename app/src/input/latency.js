@@ -9,7 +9,14 @@
 // Ported from clawd-o-matic (plug/00-latency.js). The core is pure (tools/input-test.js runs it in Node).
 //
 //   median, onset(x, sr, a, b), hits(x, sr, clicks), xcorr(ref, x, from, maxLag), chirp(sr), click(sr, hi)
+//   judgeTaps(hits, { warm }) -> { ms, spread, used, of, dropped, grade, confidence, ahead, ok }   a strum along's
+//       hits (ms after each click, null where none was heard; the first `warm` are the count): the median of the rest,
+//       one wild strum left out when there are five or more; grade 'good' (within 8 ms of each other), 'fair' (20),
+//       'poor' (40) or 'none' (under four heard, or looser than 40); confidence 0..1 from how many were heard and how
+//       tight they were; ahead: the median was before the click (kept as 0)
 //   createLatency(audio) -> { get(), estimate(), measured, set(ms, info), clear(), measure({ how, onStep, sig }), onChange }
+//       measured: { ms, at, how, spread, label, confidence, device } | null (confidence: judgeTaps', when it was a strum
+//       along; null for older ones and the loopback). input/calibrate.js runs the strum along for Getting started.
 
 export const median = (a) => { const s = a.slice().sort((p, q) => p - q), n = s.length; return n ? (n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2) : NaN; };
 
@@ -79,6 +86,22 @@ export function click(sr, hi) {
   return y;
 }
 
+// A strum along's verdict (input/calibrate.js says it in words)
+export function judgeTaps(hs, { warm = 2 } = {}) {
+  const all = Array.isArray(hs) ? hs : [], of = Math.max(0, all.length - warm);
+  let vals = all.slice(warm).filter((v) => v != null && Number.isFinite(v));
+  let dropped = null;
+  // one wild strum (a late one, a string caught on the way) out, when there are enough left to tell
+  if (vals.length >= 5) {
+    const m = median(vals), dev = vals.map((v) => Math.abs(v - m)), mad = median(dev), far = Math.max(...dev);
+    if (far > Math.max(12, 4 * 1.4826 * mad)) { const k = dev.indexOf(far); dropped = vals[k]; vals = vals.filter((_, i) => i !== k); }
+  }
+  const used = vals.length, ms = used ? median(vals) : NaN, spread = used ? Math.max(...vals) - Math.min(...vals) : NaN;
+  const grade = used < Math.min(4, of) || !(spread <= 40) ? 'none' : spread <= 8 ? 'good' : spread <= 20 ? 'fair' : 'poor';
+  const confidence = grade === 'none' ? 0 : Math.round(Math.max(0, Math.min(1, ((used + (dropped != null ? 1 : 0)) / Math.max(1, of)) * (1 - Math.max(0, spread - 3) / 45))) * 100) / 100;
+  return { ms, spread, used, of, dropped, grade, confidence, ahead: ms < 0, ok: grade !== 'none' };
+}
+
 /* ---------------------------------------------------------------- the page: measure, keep per device */
 const KEY = 'overdub:latency';
 export function createLatency(audio) {
@@ -98,7 +121,7 @@ export function createLatency(audio) {
     get measured() { const m = all[dev()]; return m && Number.isFinite(+m.ms) ? { ...m, device: dev() } : null; },
     set(ms, info = {}) {
       if (!Number.isFinite(+ms)) return false;
-      all[info.device || dev()] = { ms: Math.round(Math.max(0, Math.min(1000, +ms)) * 100) / 100, at: Date.now(), how: info.how || 'manual', spread: info.spread ?? null, label: info.label ?? audio.state.label ?? '' };
+      all[info.device || dev()] = { ms: Math.round(Math.max(0, Math.min(1000, +ms)) * 100) / 100, at: Date.now(), how: info.how || 'manual', spread: info.spread ?? null, label: info.label ?? audio.state.label ?? '', confidence: Number.isFinite(+info.confidence) && info.confidence != null ? +info.confidence : null };
       save(); fire(); return true;
     },
     clear() { delete all[dev()]; save(); fire(); },
@@ -153,10 +176,7 @@ export function createLatency(audio) {
         }
       });
       if (!x) { for (const s of src) { try { s.stop(); } catch { /* done */ } } return null; }
-      const used = hs.slice(warm).filter((v) => v != null);
-      const res = { how, hits: hs, used: used.length, of: n - warm, ms: median(used), spread: used.length ? Math.max(...used) - Math.min(...used) : NaN };
-      res.ok = used.length >= 4 && res.spread <= 40;
-      return res;
+      return { how, hits: hs, ...judgeTaps(hs, { warm }) };
     },
   };
   return api;

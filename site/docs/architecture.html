@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 160 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 161 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -2160,6 +2160,14 @@ the shell leaves a focused listbox its Space, so the lane hands Space to the roo
 Enter to the key table (play from the card); a review handle is a slider, which the shell leaves its Enter, so the
 handle's Enter is Keep. Whether a key arrives marked (<code>defaultPrevented</code>) says nothing: the live room's holds mark
 keys they do nothing with.</li>
+<li><strong>The tape, the riffs and the talkback</strong> (<code>tape.js</code> and its <code>tape-*.js</code>, <code>talk-room.js</code>): the guitar room starts
+<code>app.input.tape</code> as it mounts and stops it as it goes, if it started it. G puts the last minute up (<code>app.input.tape</code>
+select and grab, snapped to the drummer's bar lines unless <code>snap</code> is off); Enter keeps the selection as a riff in
+<code>riffs-db.js</code> (nothing in History) and puts the drawer up with the riff in the tray; a riff goes onto the part line
+only through the takes stream's <code>place(riff, { at, after })</code>, one step by you. Beside the frozen view the stream
+adds <code>place</code>, <code>claude()</code> (who's on the talkback) and its pieces, and says <code>'tape:grab'</code> ({ riff }) and
+<code>'tape:drag'</code> ({ riff, x, y, over, at, phase }) on the bus. / opens a field for Claude in the strip; the agent acts
+through ops signed <code>claude</code>, and its reply goes to the talkback (<code>R.say</code>, by <code>claude</code>).</li>
 <li><strong>Checks</strong>: <code>tools/liveroom/checks-guitar.js</code> holds the seams; each stream has its own <code>checks-&lt;stream&gt;.js</code> (the tape
 stream's is <code>checks-tape.js</code>, beside the rolling tape's), run with <code>ONLY=&lt;name&gt; node tools/liveroom-test.js</code>.</li>
 </ul>

@@ -2273,7 +2273,11 @@ which draws nothing itself:
   step by you. Beside the frozen API: `place()` returns a Promise; `summary()` → `{ parts, bars, secs }` and the bus's
   `takes:parts` (the same, when it changes) for the strip; `takes:landed` when a take is in; `dropAt(x, y, { final,
   kind })` → the index a riff dragged there lands at (the tape's drag). The drawer's two columns (the tray's 340 px,
-  the part line's the rest) are set in `takes-style.js`.
+  the part line's the rest) are set in `takes-style.js`. Keys on what the stream draws: the part line is a listbox, and
+  the shell leaves a focused listbox its Space, so the lane hands Space to the room (`R.press('space')`) and leaves
+  Enter to the key table (play from the card); a review handle is a slider, which the shell leaves its Enter, so the
+  handle's Enter is Keep. Whether a key arrives marked (`defaultPrevented`) says nothing: the live room's holds mark
+  keys they do nothing with.
 - **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
   stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 

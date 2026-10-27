@@ -172,6 +172,8 @@ export function createReview(R, on) {
     };
     const barOf = (b) => fmt((b - V.s0) / bpb + 1);
     place(hIn, inn, `in bar ${barOf(inn)}`, `bar ${barOf(inn)}`);
+    // (the in and out labels face each other: on a narrow grid, a short take, the in's steps down a line)
+    hIn.classList.toggle('grt-low', X(out) - X(inn) < 200);
     const past = (out - pe) / bpb;
     place(hOut, out, past > 0.02 ? `out +${fmt(past)} past` : past < -0.02 ? `out bar ${barOf(out)}` : 'out at the end', past > 0.02 ? `${fmt(past)} bars past the part’s end` : `bar ${barOf(out)}`);
     if (V.T.isNew) place(hPe, pe, `the part: ${plural((pe - V.s0) / bpb, 'bar')}`, `${fmt((pe - V.s0) / bpb)} bars`);

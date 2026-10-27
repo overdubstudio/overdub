@@ -2116,7 +2116,11 @@ are one step by you: the part's section, its drums (<code>beatOps</code>) and, f
 <code>join</code> on the recorder's transaction, and so is every trim and pick in review, so Toss (<code>store.undo({ id, redo: false })</code>) leaves History as it was. Each part-line move (a new part, before, moved, deleted, a riff placed) is one
 step by you. Beside the frozen API: <code>place()</code> returns a Promise; <code>summary()</code> → <code>{ parts, bars, secs }</code> and the bus's
 <code>takes:parts</code> (the same, when it changes) for the strip; <code>takes:landed</code> when a take is in; <code>dropAt(x, y, { final, kind })</code> → the index a riff dragged there lands at (the tape's drag). The drawer's two columns (the tray's 340 px,
-the part line's the rest) are set in <code>takes-style.js</code>.</li>
+the part line's the rest) are set in <code>takes-style.js</code>. Keys on what the stream draws: the part line is a listbox, and
+the shell leaves a focused listbox its Space, so the lane hands Space to the room (<code>R.press('space')</code>) and leaves
+Enter to the key table (play from the card); a review handle is a slider, which the shell leaves its Enter, so the
+handle's Enter is Keep. Whether a key arrives marked (<code>defaultPrevented</code>) says nothing: the live room's holds mark
+keys they do nothing with.</li>
 <li><strong>Checks</strong>: <code>tools/liveroom/checks-guitar.js</code> holds the seams; each stream has its own <code>checks-&lt;stream&gt;.js</code> (the tape
 stream's is <code>checks-tape.js</code>, beside the rolling tape's), run with <code>ONLY=&lt;name&gt; node tools/liveroom-test.js</code>.</li>
 </ul>

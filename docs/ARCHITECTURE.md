@@ -2204,7 +2204,7 @@ line for the talkback, or null) saying so. The databases' names are forever: `ov
   `houseStacks(place)` gives the place's own (Half Stack at its settings), never stored.
 - **The rack** (`ui/liveroom/rack-db.js`): `save(stack, { id?, name?, song? })` (a new stack; with `id`, that stack of
   yours takes the chain and keeps its name: the only way a saved stack's sound changes), `list()` (the last changed
-  first), `get(id)` (a house id too), `load(id, track)` → the ops for the song (the rack is read, never written: the
+  first), `get(id)` (a house id too, and the guitar room's club stack, `house.metal.club`), `load(id, track)` → the ops for the song (the rack is read, never written: the
   song keeps its own copy, the track's inserts, and edits on the stage are `insert.set`s on it), `rename`, `remove(id)`
   → the stack, `restore(it)`, `house(place)`. Store `stacks` (keyPath `id`, index `modified`).
 
@@ -2234,7 +2234,7 @@ which draws nothing itself:
   (`FROZEN`, `STREAM_API`).
 - **The camera** (`camera.js`) dollies over a world (a CSS transform on the world's element, GLIDE 660 ms, a cut under
   reduced motion) to a registered target: `head`, `cab`, `kit`, `board`, `tuner`, `tape` on the stage, `wall`, `case`,
-  `tryout-head`, `tryout-cab` in the shop, each world's overview by its own name; a target in the other world goes
+  `rack`, `tryout-head`, `tryout-cab` in the shop, each world's overview by its own name; a target in the other world goes
   through the door (a fade, WALK 600 ms). The world is 1440 × 804 units at 4 px a pixel-art pixel (`layout.js`
   `REGIONS`, `SHOP_REGIONS`); the room stream re-registers the targets with the drawn gear's boxes.
 - **One key table** (`keys.js` `KEYS`): each key's action by where you are (`contextOf`: `rec`, `review`, `talk`, `gs`,
@@ -2254,6 +2254,16 @@ which draws nothing itself:
   by you: a knob is `insert.set` (a drag coalesces), a footswitch the insert's `on`, a drag on the board
   `insert.move`s, the + pedal `insert.add` at its place in the order (`PEDAL_RANK`), a swap the whole run for a stack
   (`core/stacks.js` `planStacks`). Swaps, adds, removes and moves wait for a take to finish; a knob and a stomp don't.
+- **The shop** (`shop.js`, with `shop-data.js` the catalogue, `shop-cab.js` the cab and its mics, `shop-pixels.js`,
+  `shop-style.js`, `shop-say.js` its talkback lines): the amp wall in sections by tone, the pedal case in drawers by
+  `pedalCat`, the rack, and your stack in the try-out corner over your board. A look shows a thing's card; a held look
+  is a try (`store.preview`: heard on both guitars, nothing in History, released on any other key, click, take or
+  leaving); a click or Enter carries it (`R.rig.swap` for an amp, at its measured level `AMP_TRIM`, on your cab with
+  your mics; `R.rig.add` for a pedal). A rack load is `R.rig.swap` and `room.set { stack }` dispatched with `join` on
+  the swap's transaction: one step. Its targets are `wall`, `case`, `rack` (the shop at a glance; the area changes, the
+  camera stays) and `tryout-head`, `tryout-cab` from the drawn gear; it fills `R.panel('tryout-head')`,
+  `R.panel('tryout-cab')` and the stage's `R.panel('cab')` (the cab builder: the amp's own cab and mic params through
+  `R.rig.turn`). Beside the frozen API: `load(id)`, `tryOn(device)`, `release()`, `area()`, `changed()`.
 - **The song's fields** (`core/liveroom/model.js`): the room's `beat` (a groove id `style/slug`, the house's
   `house/guide`, or `pin:<id>`), `pins` (the riser's cards, at most 8, `[{ id, groove, name?, hits? }]`) and `stack`
   (`{ id, name }`, the rack stack the chain was loaded from), and a part's `beat`, through `room.set` and

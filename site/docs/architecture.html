@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 156 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 157 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -2052,7 +2052,7 @@ swaps the run for the stack in place (the top of the chain when there's none) in
 <code>houseStacks(place)</code> gives the place's own (Half Stack at its settings), never stored.</li>
 <li><strong>The rack</strong> (<code>ui/liveroom/rack-db.js</code>): <code>save(stack, { id?, name?, song? })</code> (a new stack; with <code>id</code>, that stack of
 yours takes the chain and keeps its name: the only way a saved stack's sound changes), <code>list()</code> (the last changed
-first), <code>get(id)</code> (a house id too), <code>load(id, track)</code> → the ops for the song (the rack is read, never written: the
+first), <code>get(id)</code> (a house id too, and the guitar room's club stack, <code>house.metal.club</code>), <code>load(id, track)</code> → the ops for the song (the rack is read, never written: the
 song keeps its own copy, the track's inserts, and edits on the stage are <code>insert.set</code>s on it), <code>rename</code>, <code>remove(id)</code>
 → the stack, <code>restore(it)</code>, <code>house(place)</code>. Store <code>stacks</code> (keyPath <code>id</code>, index <code>modified</code>).</li>
 </ul>
@@ -2079,7 +2079,7 @@ reaches the same router. The frozen APIs are in each module's header and in <cod
 (<code>FROZEN</code>, <code>STREAM_API</code>).</li>
 <li><strong>The camera</strong> (<code>camera.js</code>) dollies over a world (a CSS transform on the world's element, GLIDE 660 ms, a cut under
 reduced motion) to a registered target: <code>head</code>, <code>cab</code>, <code>kit</code>, <code>board</code>, <code>tuner</code>, <code>tape</code> on the stage, <code>wall</code>, <code>case</code>,
-<code>tryout-head</code>, <code>tryout-cab</code> in the shop, each world's overview by its own name; a target in the other world goes
+<code>rack</code>, <code>tryout-head</code>, <code>tryout-cab</code> in the shop, each world's overview by its own name; a target in the other world goes
 through the door (a fade, WALK 600 ms). The world is 1440 × 804 units at 4 px a pixel-art pixel (<code>layout.js</code>
 <code>REGIONS</code>, <code>SHOP_REGIONS</code>); the room stream re-registers the targets with the drawn gear's boxes.</li>
 <li><strong>One key table</strong> (<code>keys.js</code> <code>KEYS</code>): each key's action by where you are (<code>contextOf</code>: <code>rec</code>, <code>review</code>, <code>talk</code>, <code>gs</code>,
@@ -2099,6 +2099,16 @@ keys), a name that is forever.</li>
 by you: a knob is <code>insert.set</code> (a drag coalesces), a footswitch the insert's <code>on</code>, a drag on the board
 <code>insert.move</code>s, the + pedal <code>insert.add</code> at its place in the order (<code>PEDAL_RANK</code>), a swap the whole run for a stack
 (<code>core/stacks.js</code> <code>planStacks</code>). Swaps, adds, removes and moves wait for a take to finish; a knob and a stomp don't.</li>
+<li><strong>The shop</strong> (<code>shop.js</code>, with <code>shop-data.js</code> the catalogue, <code>shop-cab.js</code> the cab and its mics, <code>shop-pixels.js</code>,
+<code>shop-style.js</code>, <code>shop-say.js</code> its talkback lines): the amp wall in sections by tone, the pedal case in drawers by
+<code>pedalCat</code>, the rack, and your stack in the try-out corner over your board. A look shows a thing's card; a held look
+is a try (<code>store.preview</code>: heard on both guitars, nothing in History, released on any other key, click, take or
+leaving); a click or Enter carries it (<code>R.rig.swap</code> for an amp, at its measured level <code>AMP_TRIM</code>, on your cab with
+your mics; <code>R.rig.add</code> for a pedal). A rack load is <code>R.rig.swap</code> and <code>room.set { stack }</code> dispatched with <code>join</code> on
+the swap's transaction: one step. Its targets are <code>wall</code>, <code>case</code>, <code>rack</code> (the shop at a glance; the area changes, the
+camera stays) and <code>tryout-head</code>, <code>tryout-cab</code> from the drawn gear; it fills <code>R.panel('tryout-head')</code>,
+<code>R.panel('tryout-cab')</code> and the stage's <code>R.panel('cab')</code> (the cab builder: the amp's own cab and mic params through
+<code>R.rig.turn</code>). Beside the frozen API: <code>load(id)</code>, <code>tryOn(device)</code>, <code>release()</code>, <code>area()</code>, <code>changed()</code>.</li>
 <li><strong>The song's fields</strong> (<code>core/liveroom/model.js</code>): the room's <code>beat</code> (a groove id <code>style/slug</code>, the house's
 <code>house/guide</code>, or <code>pin:&lt;id&gt;</code>), <code>pins</code> (the riser's cards, at most 8, <code>[{ id, groove, name?, hits? }]</code>) and <code>stack</code>
 (<code>{ id, name }</code>, the rack stack the chain was loaded from), and a part's <code>beat</code>, through <code>room.set</code> and

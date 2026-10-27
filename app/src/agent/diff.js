@@ -271,6 +271,7 @@ export function opsSummary(ops = [], project = null, { getDevice = null } = {}) 
         add(`${o.mode === 'loop' ? 'looped' : 'repeated'} ${clipName(project, o.clip)} ×${times}`); break;
       }
       case 'clip.split': add(`split ${clipName(project, o.clip)} at ${whereLabel(project || {}, +o.at || 0)}`); break;
+      case 'clip.trim': add(`trimmed ${clipName(project, o.clip)}${o.end != null ? ` to end at ${whereLabel(project || {}, +o.end || 0)}` : ''}${o.start != null ? `${o.end != null ? ',' : ''} from ${whereLabel(project || {}, +o.start || 0)}` : ''}`); break;
       // automation, in words: "wrote Keyhole cutoff, bars 9–12: 600 Hz → 4.5 kHz", "held level"
       case 'auto.write': case 'auto.clear': case 'auto.set': add(laneLine(o, project, { getDevice, where: false })); break;
       default: add(String(o.type || 'a change').replace(/[._]/g, ' '));

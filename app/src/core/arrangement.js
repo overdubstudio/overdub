@@ -27,7 +27,16 @@
 //                                                      `before` (a section; null: after the last one), the bars between
 //                                                      closing up behind it: the song keeps its length, and the clips
 //                                                      and the section keep their ids (so its room.parts entry stays)
+//   planClipTrim(p, { track?, clip, start?, end?, snap? })   move a clip's in- and out-points (the op clip.trim; below,
+//                                                      with the take folders); snap: 'bar' | 'beat' | beats, the grid
+//                                                      the edges given land on (snapStep(p, snap) -> beats)
 //   -> { ops, summary, ... } (the summary is one plain sentence); bad input throws an Error that says what would work
+//
+// A take's tail (core/project.js clipTail: an audio clip's ring past its part) claims no bars: every plan here reckons
+// a clip by its body, [start, start + length - tail). A take whose body ends before a cut, an insert or a moved
+// section's edge stays whole and rings on over what comes next; one cut through its body keeps the tail on the piece
+// that ends where its body did; a duplicated section brings the tails of the takes whose bodies end in it; a repeat
+// of a take repeats on its body. Without a tail, a clip is reckoned by its end, as it always was.
 //
 // Notes keep their sounding part: a note across a cut is shortened to it, and its tail (a pitched note's; a drum hit
 // is all attack) goes with the other side, so the two parts add up to the original. Moved, copied and cut notes keep
@@ -38,7 +47,7 @@
 // before they build anything: a loop or a copy multiplies what it's given, so a few bytes of ops could otherwise ask
 // for millions of notes.
 
-import { newId, LIMITS, songSize, isTakeId } from './project.js';
+import { newId, LIMITS, songSize, isTakeId, clipTail, clipBodyEnd } from './project.js';
 import { beatsPerBar, beatSecs, beatsBefore, hasTempoMap, mapInsert, mapRemove } from './music.js';
 import { lanesOf, specFor, cutLane, spliceLane, insertTime, removeTime, laneKey, mkPoint, rt, valueBefore, valueAt, pointBy } from './automation.js';
 import { partOf } from './liveroom/model.js';
@@ -289,6 +298,13 @@ function halves(p, t, c, at) {
   const left = { length: r4(rel) };
   if (c.kind === 'audio') {
     Object.assign(right, { asset: c.asset, offset: r4((+c.offset || 0) + beatSecs(p, rel, c.start)), gain: +c.gain || 0 });
+    // a take's tail (its ring past its part) stays at its end: with the right half when the cut is in the body; cut in
+    // the tail, the left keeps what of it is left and the right is ring alone, an ordinary clip
+    const tl = clipTail(c);
+    if (tl) {
+      const be = clipBodyEnd(c);
+      if (at < be - EPS) { right.tail = tl; left.tail = null; } else left.tail = at - be > EPS ? r4(at - be) : null;
+    }
   } else {
     const drums = isDrums(t);
     left.notes = sliceNotes(c.notes, 0, rel, { trim: true });
@@ -300,7 +316,7 @@ function halves(p, t, c, at) {
 function splitOps(p, t, c, at, { moveRightBy = 0, id, ref = null, take = null } = {}) {
   const { left, right } = halves(p, t, c, at);
   if (isTakeId(take)) right.take = take;
-  const ops = [{ type: 'clip.set', track: t.id, clip: c.id, patch: { length: left.length } }];
+  const ops = [{ type: 'clip.set', track: t.id, clip: c.id, patch: { length: left.length, ...('tail' in left ? { tail: left.tail } : {}) } }];
   if (c.kind === 'notes' && !sameNotes(left.notes, c.notes)) ops.push(rewrite(t.id, c.id, left.notes));
   right.start = r4(right.start + moveRightBy);
   const add = { type: 'clip.add', track: t.id, clip: { id, ...right } };
@@ -333,7 +349,7 @@ export function planClipSplit(p, op = {}, ctx = null) {
 
 // The lanes on the clip's track with points under the clip: that stretch written again under each repeat.
 function repeatLanes(p, t, c, times, ctx) {
-  const L = c.length, s = c.start;
+  const L = c.length - clipTail(c), s = c.start;
   return lanesPlan(p, ctx, (pts, spec) => {
     if (!hasIn(pts, s, s + L)) return null;
     const W = cutLane(pts, s, s + L, spec);
@@ -349,9 +365,10 @@ export function planClipRepeat(p, op = {}, ctx = null) {
   if (!(Number.isInteger(times) && times >= 2 && times <= 64)) throw new Error('times is how often the clip plays in all, counting itself: a whole number from 2 to 64 (2 = one more time)');
   const mode = op.mode || 'copies';
   if (mode !== 'copies' && mode !== 'loop') throw new Error('mode is "copies" (new clips end to end) or "loop" (a longer clip, its notes looped)');
-  const L = c.length, name = c.name || t.name;
+  // (a take with a tail repeats on its body, its part: each copy's tail rings under the next, as the takes did)
+  const L = c.length - clipTail(c), name = c.name || t.name;
   const ops = [], ids = [];
-  const until = c.start + L * times;
+  const until = c.start + L * times + clipTail(c);
   const what = `${mode === 'loop' ? 'Looping' : 'Repeating'} ${name} ×${times}`;
   const overlaps = t.clips.filter((x) => x !== c && x.start < until - EPS && x.start + x.length > c.start + L + EPS).length;
   if (mode === 'loop') {
@@ -416,8 +433,9 @@ export function planTimeInsert(p, op = {}, ctx = null) {
   const ops = [];
   let moved = 0, split = 0, grown = 0, shifted = 0;
   // a clip that starts at or after `at`, or within a quarter beat before it, moves whole; one that runs less than
-  // a quarter beat past it stays (ringing a hair into the new bars); one across it is split there
-  const how = (c) => (c.start + c.length <= at + EPS ? 'stays' : c.start >= at - MIN_CLIP + EPS ? 'moves' : c.start + c.length - at >= MIN_CLIP - EPS ? 'splits' : 'stays');
+  // a quarter beat past it stays (ringing a hair into the new bars); one across it is split there. A take's tail is
+  // its own ring, not bars: a take whose body ends by `at` stays whole, its tail ringing on into the new bars
+  const how = (c) => (clipBodyEnd(c) <= at + EPS ? 'stays' : c.start >= at - MIN_CLIP + EPS ? 'moves' : clipBodyEnd(c) - at >= MIN_CLIP - EPS ? 'splits' : 'stays');
   for (const t of p.tracks) {
     // a take folder the new bars cut in two is split there, as Split splits it: every take is cut, and what lands
     // after the new bars is a folder of its own (each half keeps its takes)
@@ -474,7 +492,9 @@ export function planTimeRemove(p, op = {}, ctx = null) {
   for (const t of p.tracks) {
     const drums = isDrums(t);
     for (const c of t.clips) {
-      const s = c.start, e = c.start + c.length;
+      // (a take's tail is its ring, not bars: by its body, a take ending by A stays whole and rings on over what
+      // closes up after it; one cut keeps its tail on the piece that ends where its body did)
+      const s = c.start, e = clipBodyEnd(c), tl = clipTail(c);
       if (e <= A + EPS) continue;
       if (s >= B - EPS) { ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch: { start: r4(s - L) } }); moved++; continue; }
       const left = s < A - EPS ? [s, Math.min(e, A)] : null, right = e > B + EPS ? [Math.max(s, B), e] : null;
@@ -483,13 +503,16 @@ export function planTimeRemove(p, op = {}, ctx = null) {
       if (c.kind === 'audio') {
         const pieces = [left, right].filter((x) => x && len(x) >= MIN_CLIP - EPS);
         if (!pieces.length) { ops.push({ type: 'clip.remove', track: t.id, clip: c.id }); removed++; continue; }
-        const at0 = (x) => ({ start: r4(cs(x[0])), length: r4(len(x)), offset: r4((+c.offset || 0) + beatSecs(p, x[0] - s, s)) });
+        // (the piece that ends where the body did keeps the tail)
+        const ends = (x) => tl > 0 && Math.abs(x[1] - e) < EPS;
+        const at0 = (x) => ({ start: r4(cs(x[0])), length: r4(len(x) + (ends(x) ? tl : 0)), offset: r4((+c.offset || 0) + beatSecs(p, x[0] - s, s)) });
         const first = at0(pieces[0]);
         const patch = {};
         for (const k of ['start', 'length', 'offset']) if (Math.abs((k === 'offset' ? +c.offset || 0 : c[k]) - first[k]) > EPS) patch[k] = first[k];
+        if (tl > 0 && !ends(pieces[0])) patch.tail = null;
         if (Object.keys(patch).length) ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch });
         if (pieces[1]) {
-          const x = { id: mint('c'), kind: 'audio', asset: c.asset, gain: +c.gain || 0, by: c.by, ...at0(pieces[1]) };
+          const x = { id: mint('c'), kind: 'audio', asset: c.asset, gain: +c.gain || 0, by: c.by, ...at0(pieces[1]), ...(ends(pieces[1]) ? { tail: tl } : {}) };
           if (c.name) x.name = c.name;
           if (c.color) x.color = c.color;
           // (a muted clip stays muted; a take stays in its folder, which closes up around the cut like a notes take)
@@ -578,7 +601,9 @@ export function planSectionDuplicate(p, op = {}, ctx = null) {
     for (const c of t.clips) {
       // every clip that plays in the section, cut to it: one that starts before it (a whole-song beat or pad) brings
       // the part from the section's start, as a split there would (a pitched note ringing across keeps its tail)
-      const s = c.start, e = c.start + c.length;
+      // (a take by its body: the tail of the part before ringing in isn't the section's; a take whose body ends in
+      // the section brings its tail, ringing past the copy as it rang past the section)
+      const s = c.start, e = clipBodyEnd(c), tl = clipTail(c);
       if (s >= b - EPS || e <= a + EPS) continue;
       const from = s < a - EPS ? a : s, end = Math.min(e, b);
       if (end - from < MIN_CLIP - EPS) continue;
@@ -586,6 +611,7 @@ export function planSectionDuplicate(p, op = {}, ctx = null) {
       x.id = mint('c'); delete x.by;   // the copy is whoever asked's; the notes stay their authors'
       x.start = r4(from - a + to);
       x.length = r4(end - from);
+      if (tl && e <= b + EPS) x.length = r4(end - from + tl); else delete x.tail;
       if (c.kind === 'notes') {
         x.notes = from > s ? sliceNotes(c.notes, from - s, end - s, { trim: e > b + EPS, tails: true, drums: isDrums(t) })
           : e > b + EPS ? sliceNotes(c.notes, 0, end - s, { trim: true }) : clone(c.notes);
@@ -648,7 +674,8 @@ export function planSectionMove(p, op = {}, ctx = null) {
   const where = target ? `before ${target.name}` : 'to the end';
   if (target === sec || (d >= a - EPS && d <= b + EPS)) throw new Error(`${sec.name} is there already: name the section it should go before (before: "<section>"), or before: null for the end`);
   if (hasTempoMap(p) && Math.min(a, d) < p.tempoMap.anchors[p.tempoMap.anchors.length - 1].beat - EPS) throw new Error('This part follows a recording; moving it would break the grid');
-  const how = (c, x) => (c.start + c.length <= x + EPS ? 'stays' : c.start >= x - MIN_CLIP + EPS ? 'moves' : c.start + c.length - x >= MIN_CLIP - EPS ? 'splits' : 'stays');
+  // (by a take's body: its tail rides with it, ringing over whatever follows it after the move)
+  const how = (c, x) => (clipBodyEnd(c) <= x + EPS ? 'stays' : c.start >= x - MIN_CLIP + EPS ? 'moves' : clipBodyEnd(c) - x >= MIN_CLIP - EPS ? 'splits' : 'stays');
   // 1. the edges
   for (const x of [...new Set([a, b, d])].sort((u, v) => v - u)) {
     const mint = idMinter(p), ops = [];
@@ -749,7 +776,9 @@ export function planSectionMove(p, op = {}, ctx = null) {
 //   takeFolders(track)                -> [{ id, clips (folder order), start, end, playing }]
 //   planTakeFolder(p, spec)           the ops that put new passes over [start, end) of a track as one folder:
 //     spec: { track, kind: 'notes' | 'audio', start, end, take (a new take id), drums?, active? (index), passes:
-//       [{ start, end, notes?: [{ p, t (song beat), d, v }], audio?: { asset, offset, gain? } }] }
+//       [{ start, end, notes?: [{ p, t (song beat), d, v }], audio?: { asset, offset, gain? }, tail? }] }
+//       tail (audio): beats the pass's recording rings on past `end` (its clip runs on that far, with `tail` set: core/
+//       project.js clipTail). The folder is [start, end) whatever the tails; a tail is never in it, never muted by it.
 //     -> { ops, group, refs (one per pass, its clip.add ref), names, active: { ref, name, num, notes }, total, under }
 //     What it covers: a clip across an edge is cut there (its outer parts stay as they were); what played inside goes
 //     into the folder, muted (one entry; a range under several clips becomes one clip of what was heard), and a note
@@ -757,11 +786,19 @@ export function planSectionMove(p, op = {}, ctx = null) {
 //     over the same range takes the new passes; one over other bars is cut at the edges, its takes there joining this
 //     one. A notes pass narrower than the range (the first pass of a take begun inside the loop, a pass cut short by
 //     the stop) is filled out with what played there before, so picking any take never leaves part of the range silent.
-//   planClipTrim(p, { track, clip, start, end })   cut a clip's window to [start, end) (notes stay where they sound;
-//     an audio clip's offset moves): the arranger's edge drags and "Trim to the loop". Trimming the playing take of a
-//     folder also gives back what it no longer covers: what played there before plays again, and the other takes
-//     there stay, muted, as a folder of their own; growing it again puts what it covers back in its folder, muted. An
-//     audio clip's start stops where its recording starts. -> { ops, uncovered: [[a, b)], covered: [[a, b)], summary }
+//   planClipTrim(p, { track, clip, start, end, snap? })   cut a clip's window to [start, end) (notes stay where they
+//     sound; an audio clip's offset moves): the arranger's edge drags, "Trim to the loop" and the op clip.trim. Trimming
+//     the playing take of a folder also gives back what it no longer covers: what played there before plays again, and
+//     the other takes there stay, muted, as a folder of their own; growing it again puts what it covers back in its
+//     folder, muted. An audio clip's start stops where its recording starts. A take with a tail: an end moved inside
+//     the tail (or past it) shortens (or grows) the tail and nothing else, the body and the folder as they were; an end
+//     moved into the body cuts the tail off and gives back what the body no longer covers, as above.
+//     -> { ops, uncovered: [[a, b)], covered: [[a, b)], summary }
+//
+//   Overlapping takes (docs/research/GUITAR-ROOM.md §2.6, §4.3): a take folder is its takes' bodies. A take's tail,
+//   past its part's end, rings under the next part's take on the same track: a new take over the next part never cuts,
+//   folds or mutes it (both sound; a later crossfade would shape [body end, end) and nothing else). Picking a take in
+//   a folder mutes the others, tails and all, so only the playing take's ring is heard.
 //   retake(copies)                    copies of takes leave the source's folder (a folder of their own, or none)
 
 
@@ -780,7 +817,10 @@ export function retake(copies) {
 
 export const takeNumber = (c) => { const m = /^Take (\d+)$/.exec((c && c.name) || ''); return m ? +m[1] : 0; };
 const near = (a, b) => Math.abs(a - b) < 1e-3;
-const clipEnd = (c) => c.start + c.length;
+// (a take's body: its tail, the ring past its part, claims no beats in a folder, a new take or a drop; a notes clip and
+// an audio clip without a tail: its end. core/project.js clipTail)
+const clipEnd = (c) => clipBodyEnd(c);
+const fullEnd = (c) => c.start + c.length;
 const overlapOf = (c, a, b) => Math.min(b, clipEnd(c)) - Math.max(a, c.start);
 
 export function takeFolders(t) {
@@ -906,8 +946,11 @@ function rebuildFolder(p, t, f, cuts, plays, drop = new Set()) {
           }
         });
       }
+      // (a take's tail stays at the end of its run: the piece that ends where the run's body does runs on over it)
+      const runTail = clipTail(run.clips[run.clips.length - 1]);
       for (const w of want.filter((x) => x.start >= run.start - EPS && x.end <= run.end + EPS)) {
         const reuse = run.clips.find((c) => near(c.start, w.start) && !used.has(c.id)) || null;
+        const wTail = runTail && near(w.end, run.end) ? runTail : 0;
         // (notes keep their ids, a cut note's id on both its parts, so a later join can tell it from two notes; an id
         // twice in one piece goes, and the clip gives that note a new one)
         const seen = new Set();
@@ -919,12 +962,13 @@ function rebuildFolder(p, t, f, cuts, plays, drop = new Set()) {
         if (reuse) {
           used.add(reuse.id);
           const patch = {};
-          if (!near(w.end - w.start, reuse.length)) patch.length = r4(w.end - w.start);
+          if (!near(w.end - w.start + wTail, reuse.length)) patch.length = r4(w.end - w.start + wTail);
+          if (Math.abs(clipTail(reuse) - wTail) > EPS) patch.tail = wTail || null;
           if (!!reuse.mute !== w.mute) patch.mute = w.mute;
           if (Object.keys(patch).length) ops.push({ type: 'clip.set', track: t.id, clip: reuse.id, patch });
           if (ns && !sameNotes(ns, reuse.notes)) ops.push(rewrite(t.id, reuse.id, ns));
         } else {
-          const x = { id: mint('c'), kind: src.kind, start: r4(w.start), length: r4(w.end - w.start), by: src.by, take: f.id };
+          const x = { id: mint('c'), kind: src.kind, start: r4(w.start), length: r4(w.end - w.start + wTail), by: src.by, take: f.id, ...(wTail ? { tail: wTail } : {}) };
           if (src.name) x.name = src.name;
           if (src.color) x.color = src.color;
           if (w.mute) x.mute = true;
@@ -1042,7 +1086,10 @@ export function planTakesFlatten(p, op = {}, ctx = null) {
     const head = run[0];
     const patch = { take: null, ...(head.mute ? { mute: false } : {}) };
     if (run.length > 1) {
-      patch.length = r4(clipEnd(run[run.length - 1]) - head.start);
+      // (the run ends with its last piece's tail, if it has one: the merged clip rings on as that piece did)
+      const last = run[run.length - 1];
+      patch.length = r4(fullEnd(last) - head.start);
+      if (clipTail(last) || clipTail(head)) patch.tail = clipTail(last) || null;
       // (a comp of several takes is no one take: it goes by its track's name, as a new clip does)
       if (new Set(run.map((c) => c.name || '')).size > 1) patch.name = null;
       for (const c of run.slice(1)) ops.push({ type: 'clip.remove', track: t.id, clip: c.id });
@@ -1130,12 +1177,15 @@ const relNotes = (ns, from, to, lo = -Infinity, hi = Infinity) => ns.filter((n) 
   .map((n) => { const x = { p: n.p, t: r4(n.t - from), d: r4(Math.max(MIN_NOTE, Math.min(n.d, to - n.t))), v: n.v }; if (n.by) x.by = n.by; return x; });
 
 // Reshape one clip into pieces: [{ start, end, patch?: { mute?, take? }, notes? (clip-relative, else its own notes
-// there) }]. The first piece keeps the clip's id; the others are new clips (ids from mint). No pieces: it goes.
+// there) }]. The first piece keeps the clip's id; the others are new clips (ids from mint). No pieces: it goes. Pieces
+// are in the clip's body: the one that ends where the body does keeps the take's tail (it runs on to the clip's end).
 function reshape(p, t, c, pieces, mint) {
   const ops = [], ids = [];
   if (!pieces.length) return { ops: [{ type: 'clip.remove', track: t.id, clip: c.id }], ids };
-  const drums = isDrums(t), cs = c.start, ce = clipEnd(c);
-  pieces.forEach((pc, i) => {
+  const drums = isDrums(t), cs = c.start, ce = clipEnd(c), tl = clipTail(c);
+  pieces.forEach((pc0, i) => {
+    const keepTail = tl > 0 && pc0.end >= ce - EPS && pc0.start < ce - EPS;
+    const pc = keepTail ? { ...pc0, end: fullEnd(c) } : pc0;
     const notes = c.kind !== 'notes' ? null : pc.notes || (pc.start > cs + EPS ? sliceNotes(c.notes, pc.start - cs, pc.end - cs, { trim: pc.end < ce - EPS, tails: true, drums }) : sliceNotes(c.notes, 0, pc.end - cs, { trim: pc.end < ce - EPS }));
     const offset = c.kind === 'audio' ? r4((+c.offset || 0) + beatSecs(p, pc.start - cs, cs)) : null;
     if (i === 0) {
@@ -1143,6 +1193,7 @@ function reshape(p, t, c, pieces, mint) {
       if (!near(pc.start, cs)) patch.start = r4(pc.start);
       if (!near(pc.end - pc.start, c.length)) patch.length = r4(pc.end - pc.start);
       if (offset != null && Math.abs(offset - (+c.offset || 0)) > EPS) patch.offset = offset;
+      if (tl > 0 && !keepTail) patch.tail = null;
       for (const [k, v] of Object.entries(pc.patch || {})) if ((c[k] ?? null) !== v && !(k === 'mute' && !!c.mute === v)) patch[k] = v;
       if (Object.keys(patch).length) ops.push({ type: 'clip.set', track: t.id, clip: c.id, patch });
       if (notes && !sameNotes(notes, c.notes)) ops.push(rewrite(t.id, c.id, notes));
@@ -1154,7 +1205,7 @@ function reshape(p, t, c, pieces, mint) {
     if (c.name) x.name = c.name;
     if (c.color) x.color = c.color;
     tabOf(c, x);
-    if (c.kind === 'audio') Object.assign(x, { asset: c.asset, offset, gain: +c.gain || 0 });
+    if (c.kind === 'audio') Object.assign(x, { asset: c.asset, offset, gain: +c.gain || 0, ...(keepTail ? { tail: tl } : {}) });
     else x.notes = notes;
     if (pc.patch && pc.patch.name) x.name = pc.patch.name;
     const mute = pc.patch && 'mute' in pc.patch ? pc.patch.mute : !!c.mute;
@@ -1250,7 +1301,12 @@ export function planTakeFolder(p, spec) {
     const ref = (spec.refPrefix || 'tf') + (++refN);
     const clip = { kind, name: `Take ${num}`, take: group, ...(last ? {} : { mute: true }) };
     let own = 0;
-    if (kind === 'audio') Object.assign(clip, { start: r4(ps.start), length: r4(Math.max(MIN_CLIP, ps.end - ps.start)), asset: ps.audio.asset, offset: r4(ps.audio.offset), gain: ps.audio.gain || 0 });
+    if (kind === 'audio') {
+      Object.assign(clip, { start: r4(ps.start), length: r4(Math.max(MIN_CLIP, ps.end - ps.start)), asset: ps.audio.asset, offset: r4(ps.audio.offset), gain: ps.audio.gain || 0 });
+      // (its ring past the part: beats after `end` it plays on for, under whatever comes next, never in the folder)
+      const tl = fin(ps.tail) && ps.tail > EPS ? r4(ps.tail) : 0;
+      if (tl) { clip.length = r4(clip.length + tl); clip.tail = tl; }
+    }
     else {
       const mine = relNotes(ps.notes, A, B);
       own = mine.length;
@@ -1266,11 +1322,27 @@ export function planTakeFolder(p, spec) {
   return { ops, group, refs, names, active, total, under: total - 1 };
 }
 
+// The grid a trim snaps to: 'bar' (the meter's bar), 'beat' (a quarter note), or a step in beats (0.25: sixteenths).
+export function snapStep(p, snap) {
+  if (snap === 'bar') return beatsPerBar(p.meter || [4, 4]);
+  if (snap === 'beat') return 1;
+  const n = Number(snap);
+  if (typeof snap === 'number' && Number.isFinite(n) && n >= 1 / 64 && n <= 64) return n;
+  throw new Error('snap is "bar", "beat", or a step in beats from 1/64 to 64 (0.25 for sixteenths)');
+}
+
 // The ops that cut a clip's window to [start, end): notes stay where they sound in the song (the ones before the new
-// start go); an audio clip's offset moves with its start.
+// start go); an audio clip's offset moves with its start. A take's tail is what of the window lies past its body's end:
+// an end moved inside the tail shortens it (the body stays), one moved into the body cuts the tail off with it.
 function windowOps(p, t, c, start, end) {
   const delta = start - c.start;
   const ops = [{ type: 'clip.set', track: t.id, clip: c.id, patch: { start: r4(start), length: r4(end - start) } }];
+  const tl = clipTail(c);
+  if (tl) {
+    const be = clipBodyEnd(c);
+    const nt = start < be - EPS && end > be + EPS ? r4(end - be) : 0;
+    if (Math.abs(nt - tl) > EPS) ops[0].patch.tail = nt || null;
+  }
   if (Math.abs(delta) < 1e-9) return ops;
   if (c.kind === 'notes') {
     const keep = [], gone = [];
@@ -1284,18 +1356,29 @@ function windowOps(p, t, c, start, end) {
 export function planClipTrim(p, op = {}, ctx = null) {
   const { track: t, clip: c } = findClip(p, op.track, op.clip, ctx);
   let start = beatArg(op.start ?? c.start, 'start');
-  const end = beatArg(op.end ?? clipEnd(c), 'end');
+  let end = beatArg(op.end ?? fullEnd(c), 'end');
+  // snap: the edges given land on the grid ('bar', 'beat', or a step in beats), the nearest line, never closer together
+  // than the shortest clip (then the next line out)
+  if (op.snap != null) {
+    const step = snapStep(p, op.snap);
+    if (op.start != null) start = r4(Math.round(start / step) * step);
+    if (op.end != null) {
+      end = r4(Math.round(end / step) * step);
+      while (end - start < MIN_CLIP - EPS) end = r4(end + step);
+    }
+  }
   // an audio clip's window opens no earlier than its file starts: the start stops there, and the recording stays on
   // the beats it was played on (an offset can't go below 0, so a start past it would slide the whole file earlier)
   if (c.kind === 'audio') start = Math.max(start, r4(c.start - beatsBefore(p, c.start, +c.offset || 0)));
   if (!(start >= 0) || end - start < MIN_CLIP - EPS) throw new Error(`a clip must run at least ${MIN_CLIP} beats from a start >= 0${c.kind === 'audio' && start > 0 ? ` (an audio clip starts no earlier than its recording, beat ${r4(start)} here)` : ''}`);
-  const ops = Math.abs(start - c.start) < 1e-9 && Math.abs(end - clipEnd(c)) < 1e-9 ? [] : windowOps(p, t, c, start, end);
+  const ops = Math.abs(start - c.start) < 1e-9 && Math.abs(end - fullEnd(c)) < 1e-9 ? [] : windowOps(p, t, c, start, end);
   const uncovered = [], covered = [];
   if (isTakeId(c.take) && !c.mute) {
     if (start > c.start + EPS) uncovered.push([c.start, Math.min(start, clipEnd(c))]);
     if (end < clipEnd(c) - EPS) uncovered.push([Math.max(end, c.start), clipEnd(c)]);
     if (start < c.start - EPS) covered.push([start, Math.min(c.start, end)]);
-    if (end > clipEnd(c) + EPS) covered.push([Math.max(clipEnd(c), start), end]);
+    // (a take with a tail grows its tail, never its body: it covers nothing more)
+    if (end > clipEnd(c) + EPS && !clipTail(c)) covered.push([Math.max(clipEnd(c), start), end]);
   }
   const mint = idMinter(p);
   let refolded = 0;
@@ -1459,4 +1542,5 @@ export const ARRANGEMENT_OPS = {
   'clip.repeat': planClipRepeat,
   'clip.split': planClipSplit,
   'section.move': planSectionMove,
+  'clip.trim': planClipTrim,
 };

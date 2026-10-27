@@ -362,6 +362,9 @@ const CASES = [
   ['clip.repeat loop', (i) => ({ type: 'clip.repeat', track: i.drums, clip: i.beat, times: 4, mode: 'loop' })],
   ['clip.split', (i) => ({ type: 'clip.split', track: i.keys, clip: i.c1, at: 1.5 })],
   ['clip.split audio', (i) => ({ type: 'clip.split', track: i.vox, clip: i.ac, at: 6 })],
+  ['clip.trim end', (i) => ({ type: 'clip.trim', track: i.keys, clip: i.c1, end: 6 })],
+  ['clip.trim audio on the beat', (i) => ({ type: 'clip.trim', track: i.vox, clip: i.ac, end: 9.3, snap: 'beat' })],
+  ['clip.set audio tail', (i) => ({ type: 'clip.set', track: i.vox, clip: i.ac, patch: { length: 10, tail: 2 } })],
   ['master.set', () => ({ type: 'master.set', patch: { gain: -4, clip: 'clean' } })],
   ['auto.write new lane', (i) => ({ type: 'auto.write', track: i.keys, param: 'pan', points: '0:-1 4:1~0.5 8:0' })],
   [
@@ -500,6 +503,18 @@ describe('ops refuse bad input and say why', () => {
     ['clip too short', (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { length: 0.1 } }), /length/],
     ['negative start', (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { start: -1 } }), /start/],
     ['capo out of range', (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { capo: 13 } }), /capo/],
+    [
+      'tail on a notes clip',
+      (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { tail: 1 } }),
+      /notes clip/,
+    ],
+    ['tail as long as the clip', (i) => ({ type: 'clip.set', track: i.vox, clip: i.ac, patch: { tail: 8 } }), /tail/],
+    ['tail not a number', (i) => ({ type: 'clip.set', track: i.vox, clip: i.ac, patch: { tail: 'long' } }), /tail/],
+    [
+      'trim snap that is no grid',
+      (i) => ({ type: 'clip.trim', track: i.vox, clip: i.ac, end: 9, snap: 'bars' }),
+      /snap/,
+    ],
     [
       'move notes clip onto audio track',
       (i) => ({ type: 'clip.move', track: i.keys, clip: i.c1, toTrack: i.vox }),

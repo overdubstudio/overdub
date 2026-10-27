@@ -18,14 +18,17 @@
 //       engine can). With preroll the song plays under the count (the bars before `from`: the last part, its fill).
 //       A sampled kit still coming in holds the count (state.kit says how far along) for up to 30 s; one that can't
 //       come in lets it go (state.kit 'missing': the stage says the drummer's on another kit).
-//   take({ track, from, punch, tail, lead, join }) -> { ok, take, from }   records onto `track` from `from` (the count's
+//   take({ track, from, punch, tail, lead, join, tailFrom }) -> { ok, take, from }   records onto `track` from `from` (the count's
 //       downbeat: countIn first, or take counts in by itself with the defaults); punch { from, to }: the take ends
 //       itself at `to` and keeps only that range, the band playing `tail` beats on after it (default a bar), then the
 //       transport stops; tail without a punch: what stop({ at: 'bar' }) records past its line (default a bar, the
 //       last chord's ring). lead: seconds kept before `from` at the take's head (default 0.03 past beat 0: the 30 ms
-//       seam, §7.2). join: a step by you the take's commit is one undo step with (the seam re-trims planned before it)
+//       seam, §7.2). join: a step by you the take's commit is one undo step with (the seam re-trims planned before it).
+//       tailFrom: the beat the take's part ends (the guitar room's overlap, docs/research/GUITAR-ROOM.md §2.6): what
+//       it records past there lands as the clip's tail (core/project.js clipTail), ringing under the next part's take
+//       and never muted by it; the landed take's `ringing` says how many beats (input/recorder.js record's tailFrom)
 //   stop({ at: 'bar' | 'now', keep: 'song' | 'capture', beat }) -> the take, landed:
-//       { ok, take: { track, clip, asset, start, length }, takes, from, to, bars, tail, txn, label, peaks: { bars },
+//       { ok, take: { track, clip, asset, start, length, ringing }, takes, from, to, bars, tail, txn, label, peaks: { bars },
 //         quietLead, label } | { ok, empty: true, line } | { ok, kept: 'capture', capture, line } | { ok, cancelled }
 //       'bar': on the bar line by the stop rule (§3.5: pressed in a bar's first beat, the line just gone; later, the
 //       next; never under a bar), the beat being the one heard when the key went down (beat: a beat to use instead);
@@ -158,7 +161,7 @@ export function createDeck(app) {
     try { return await job; } finally { if (pending === job) pending = null; }
   }
 
-  async function take({ track = null, from = null, punch = null, tail = null, lead = null, join = null } = {}) {
+  async function take({ track = null, from = null, punch = null, tail = null, lead = null, join = null, tailFrom = null } = {}) {
     const r = rec(), e = engine();
     if (!r || !e) return { ok: false, error: 'No recorder here.' };
     if (armed || r.state !== 'idle') return { ok: false, error: 'A take is already going.' };
@@ -174,7 +177,7 @@ export function createDeck(app) {
     state.track = t.id; state.from = f; state.punch = armed.punch; state.stopping = null;
     const ld = Number.isFinite(+lead) && lead != null ? Math.max(0, +lead) : f > EPS ? 0.03 : 0;
     let res = null;
-    try { res = await r.record({ audio: t.id, countIn: 0, punch: { from: f, to }, lead: ld, quiet: true, join }); } catch (err) { res = null; armed = null; return { ok: false, error: String(err?.message || err) }; }
+    try { res = await r.record({ audio: t.id, countIn: 0, punch: { from: f, to }, lead: ld, quiet: true, join, tailFrom }); } catch (err) { res = null; armed = null; return { ok: false, error: String(err?.message || err) }; }
     if (!res) { armed = null; setRun('idle'); return { ok: false, error: 'The take didn’t start.' }; }
     armed.id = res.id;
     setRun(r.state === 'rec' ? 'take' : 'count');
@@ -237,7 +240,7 @@ export function createDeck(app) {
     let quietLead = 0;
     while (quietLead < bars.length - 1 && bars[quietLead] < QUIET) quietLead++;
     const out = {
-      ok: true, take: { track: tk.track, clip: tk.clip, asset: tk.asset, start: tk.start, length: tk.length }, takes: res.takes,
+      ok: true, take: { track: tk.track, clip: tk.clip, asset: tk.asset, start: tk.start, length: tk.length, ringing: tk.tail || 0 }, takes: res.takes,
       from, to, bars: Math.round((to - from) / bpb * 1000) / 1000, tail: res.tail || 0, txn: res.txn || null, label: res.label || '', peaks: { bars }, quietLead,
     };
     state.last = out;

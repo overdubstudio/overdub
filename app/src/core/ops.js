@@ -578,7 +578,9 @@ export const OPS = {
     const inv = {};
     const patch = op.patch || {};
     for (const [k, v] of Object.entries(patch)) {
-      if (!['start', 'length', 'name', 'color', 'offset', 'gain', 'mute', 'take', 'tuning', 'capo'].includes(k)) throw new Error(`clip.set can't change "${k}" (start, length, name, color, offset, gain, mute, take, tuning, capo)`);
+      if (!['start', 'length', 'name', 'color', 'offset', 'gain', 'mute', 'take', 'tuning', 'capo', 'tail'].includes(k)) throw new Error(`clip.set can't change "${k}" (start, length, name, color, offset, gain, mute, take, tuning, capo, tail)`);
+      if (k === 'tail' && v !== null && c.kind !== 'audio') throw new Error(`clip ${c.id} is a notes clip: a tail (the ring past its part) is an audio take's; a note rings as long as its d`);
+      if (k === 'tail' && v !== null && !(fin(v) && v > 0)) throw new Error('tail is the beats at the end of an audio clip that ring past its part: a number > 0 (or null for none)');
       if (k === 'mute' && v !== null && typeof v !== 'boolean') throw new Error('mute must be true or false');
       if (k === 'take' && v !== null && !isTakeId(v)) throw new Error('take must be a take group id like "tk_a1b2c3" (or null to leave the group)');
       if ((k === 'tuning' || k === 'capo') && c.kind !== 'notes') throw new Error(`clip ${c.id} is audio: a tuning and a capo are for a notes clip's tab`);
@@ -591,6 +593,9 @@ export const OPS = {
       if (k === 'name') checkName(v);
       if (k === 'color') checkColor(v);
     }
+    // (a tail is less than the clip it ends: the clip keeps some body, the part it was recorded for)
+    const tailNext = 'tail' in patch ? patch.tail : c.tail, lenNext = 'length' in patch ? patch.length : c.length;
+    if (tailNext != null && !(tailNext < lenNext - 1e-9)) throw new Error(`clip ${c.id}: its tail (${tailNext} beats, the ring past its part) must be shorter than the clip (${lenNext} beats); shorten the tail too (tail: a smaller number, or null)`);
     for (const [k, v] of Object.entries(patch)) {
       inv[k] = c[k] === undefined ? null : clone(c[k]);
       // (mute: false is stored as no mute at all, the way every older song has it; so is capo 0)
@@ -851,11 +856,11 @@ OPS['notes.set'] = function (p, op, ctx) {
   }
   return _notesSet(p, op, ctx);
 };
-// Arrangement ops (core/arrangement.js): section.duplicate, time.insert, time.remove, clip.repeat, clip.split. Each
-// plans the ops above from the song as it is, checks everything first (a plan that can't be made throws before
-// anything changes), and applies them; its inverse is theirs, newest first, so an undo is exact. created.clips lists
-// every clip it made, in order (a repeat's copies, a split's right half, a duplicate's copies), and created.clip is
-// the first of them, the one `ref` names.
+// Arrangement ops (core/arrangement.js): section.duplicate, section.move, time.insert, time.remove, clip.repeat,
+// clip.split, clip.trim. Each plans the ops above from the song as it is, checks everything first (a plan that can't be
+// made throws before anything changes), and applies them; its inverse is theirs, newest first, so an undo is exact.
+// created.clips lists every clip it made, in order (a repeat's copies, a split's right half, a duplicate's copies), and
+// created.clip is the first of them, the one `ref` names.
 for (const [type, plan] of Object.entries(ARRANGEMENT_OPS)) {
   OPS[type] = function (p, op, ctx) {
     const inverse = [], created = {}, clips = [];

@@ -338,7 +338,7 @@ Tracks may be named by id or exact name; `'master'` takes inserts. All times are
 { type: 'insert.set', track, insert, patch: { on?, params?, preset?, key? } }   // key: { track } (a sidechain, below) or null
 { type: 'master.set', patch: { gain?, clip? } }   // clip: 'clean' (a hard ceiling at 0 dBFS, after a limiter) or 'soft' (the default)
 { type: 'clip.add', track, ref?, clip: { start, length, name?, notes?: "text", grid? } }
-{ type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo? } }   // mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; clip.remove / clip.move { toTrack?, start? }
+{ type: 'clip.set', track, clip, patch: { start?, length?, name?, mute?, take?, tuning?, capo?, tail? } }   // mute: true keeps it, silent; take: 'tk_…' its take group (null: none); tuning, capo: a notes clip's, for tab; tail: an audio take's ring past its part, in beats at its end (null: none); clip.remove / clip.move { toTrack?, start? }
 { type: 'notes.add' | 'notes.replace', track, clip, notes: "text" }     // notes.remove { ids } / notes.set { notes: [{ id, p?, t?, d?, v?, s?, f? }] }
 { type: 'section.add', section: { name, start, length, key? } }          // section.set / section.remove; key: its own key ("F# minor")
 { type: 'section.move', section, before }   // the section and everything in it to before another (id or name; null: the end), the bars between closing up
@@ -346,6 +346,7 @@ Tracks may be named by id or exact name; `'master'` takes inserts. All times are
 // a name is plain text up to 100 characters (the .set ops refuse a longer one); a colour is var(--c-1)..var(--c-8) or hex
 { type: 'section.duplicate', section, to?, push? }   { type: 'time.insert' | 'time.remove', at, length }   // beats; across the whole song
 { type: 'clip.repeat', track, clip, times, mode?: 'copies' | 'loop' }   { type: 'clip.split', track, clip, at }   // (the arrange_song tool does these by bar)
+{ type: 'clip.trim', track, clip, start?, end?, snap?: 'bar' | 'beat' | beats }   // a clip's in- and out-points; a take's tail shortens with its end
 { type: 'auto.write', track, insert?, param, points: "beat:value …", from?, to? }   // a lane: replaces [from, to] (default: the points' span)
 { type: 'auto.clear', track, insert?, param, from?, to? }   { type: 'auto.set', track, insert?, param, patch: { off } }   // no range: the whole lane; off holds it
 ```

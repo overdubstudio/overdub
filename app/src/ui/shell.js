@@ -422,29 +422,35 @@ export function createShell(root, app) {
     try { localStorage.setItem(MOVED_KEY, JSON.stringify(Object.fromEntries([...MOVED_IDS, id].map((k) => [k, 1])))); } catch { /* private mode */ }
     return true;
   };
-  const typing = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
-  // Space and Enter belong to a focused button, link, tab or menu item (the browser clicks it); Enter also belongs to a
-  // focused spin button or slider. Only global keys (Escape out of a dialog) take them there.
+  // a focused field or control keeps the keys it uses (a select its letters, a slider its arrows): only global keys
+  // reach the studio from one. A module marks anything else that types with data-typing.
+  const typing = (t) => !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || !!t.closest?.('[data-typing]'));
+  // Enter belongs to a focused button, link, tab or menu item (the browser clicks it), spin button or slider.
   const ACTIVATES = 'button, a[href], summary, [role=button], [role=tab], [role=menuitem], [role=menuitemradio], [role=menuitemcheckbox], [role=option], [role=radio], [role=checkbox], [role=switch], [role=link]';
   const NAV = /^(Arrow(Up|Down|Left|Right)|Home|End|PageUp|PageDown)$/;
-  // Space is the transport's key: a control keeps it only when it has keyboard focus (the :focus-visible kind: Tab,
-  // arrows, a script moving focus for the keyboard). A button that took focus from a click or a tap (Fit, Loop, a
-  // tab) doesn't, or Space after any click would press that button again instead of playing. Enter stays the
-  // control's either way. (Tracked here rather than read from :focus-visible, which a key press itself can turn on.)
-  let pointerDown = false, pointerFocus = null;
-  window.addEventListener('pointerdown', () => { pointerDown = true; }, true);
-  for (const t of ['pointerup', 'pointercancel']) window.addEventListener(t, () => { setTimeout(() => { pointerDown = false; }, 0); }, true);
-  window.addEventListener('focusin', (e) => { pointerFocus = pointerDown ? e.target : null; }, true);
-  const byPointer = (t) => !!t && pointerFocus === t;
-  const activates = (t, code) => {
-    if (!t?.closest || (code !== 'Space' && code !== 'Enter' && code !== 'NumpadEnter')) return false;
-    const c = t.closest(ACTIVATES);
-    if (c) return code !== 'Space' || !(byPointer(t) || byPointer(c)) || !!c.closest('[role=menu], [role=listbox], .ek-pop, .ew-pop');
-    return code !== 'Space' && !!t.closest('[role=spinbutton], [role=slider]');
-  };
-  // a Space the transport took on a clicked button: its keyup mustn't press the button as well
+  const activates = (t, code) => (code === 'Enter' || code === 'NumpadEnter') && !!t?.closest?.(`${ACTIVATES}, [role=spinbutton], [role=slider]`);
+  // Space is the transport's (play and stop; stop and keep a take), whatever has focus, unless focus is somewhere that
+  // types text: a text field, a textarea, contenteditable, data-typing. A button, select, checkbox, slider or link the
+  // mouse last clicked keeps focus, and without this the next Space would press, open or toggle it instead: a musician
+  // with both hands on a guitar can't see where focus went. So the transport takes Space there on keydown and keyup
+  // both (a button activates on keyup), and nothing under the window sees it. Enter still presses a focused button
+  // (and checks a focused checkbox, below), so the keyboard loses nothing. The one exception is an open modal dialog
+  // or menu, which owns its keys while it's up (Space checks its checkbox or picks its item), and never while a take is
+  // counting in or recording: then only a text field you're typing in keeps Space.
+  const TEXT_INPUT = /^(text|search|number|email|url|password|tel)$/;
+  const typesText = (t) => !!t && (t.isContentEditable || t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && TEXT_INPUT.test(t.type)) || !!t.closest?.('[data-typing]'));
+  const OWNS_SPACE = '[aria-modal=true]:not(.ew-region), [role=menu], [role=listbox]';
+  const spaceStays = (t) => typesText(t) || (!app.transport?.locked?.() && !!t?.closest?.(OWNS_SPACE));
+  // The take keys follow the same rule: R records (again: punches out), ⇧R puts what you just played in the song, Esc
+  // stops a hum or leaves Tap or musical typing. A select or slider the mouse last clicked doesn't keep them (a closed
+  // select's type-ahead would quietly change, say, the input device on R); a text field does. An open modal dialog
+  // (and, for Esc, a menu or popover, which Esc closes) keeps them while it's up, but not while a take counts in or
+  // records. They aren't stopped at the window, as Space is: a control's own Esc listener still hears one the studio
+  // didn't use.
+  const takeKey = (code, mods) => (code === 'KeyR' && (!mods || mods === 'shift')) || (code === 'Escape' && !mods);
+  // (decided on each fresh keydown; a held Space's repeats and its keyup go the same way)
   let spaceTaken = false;
-  window.addEventListener('keyup', (e) => { if (e.code === 'Space' && spaceTaken) { spaceTaken = false; if (e.target?.closest?.(ACTIVATES)) e.preventDefault(); } }, true);
+  window.addEventListener('keyup', (e) => { if (e.code === 'Space' && spaceTaken) { spaceTaken = false; e.preventDefault(); e.stopPropagation(); } }, true);
   // Single-key shortcuts (a letter, digit or punctuation key with no modifier: R records, H opens the mic) can be
   // turned off in the "?" sheet, for speech input and anyone who types on a focused control (WCAG 2.1.4). Keys gated
   // by a when() stay: they only fire in a mode you turned on or a panel you're in.
@@ -460,23 +466,38 @@ export function createShell(root, app) {
   };
   window.addEventListener('keydown', (e) => {
     const mods = [(e.metaKey || e.ctrlKey) && 'mod', e.shiftKey && 'shift', e.altKey && 'alt'].filter(Boolean).join('+') || null;
-    const inField = typing(e.target);
+    // Space: the transport's (preventDefault and stopPropagation here, before any control sees it), or the field's
+    const space = e.code === 'Space' && (!mods || mods === 'shift');
+    if (space && !e.repeat) spaceTaken = !spaceStays(e.target);
+    if (space && spaceTaken) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.repeat) return;   // (a held Space is one press: it doesn't stop a take and start the song again)
+    }
+    const keepsSpace = space && !spaceTaken;
+    const take = takeKey(e.code, mods) && !typesText(e.target);
+    const inField = !(space && spaceTaken) && !take && typing(e.target);
     const onControl = !mods && activates(e.target, e.code);
+    // Enter checks a focused checkbox or radio button, as Space would (the browser does nothing with it there)
+    if (!mods && (e.code === 'Enter' || e.code === 'NumpadEnter') && e.target?.tagName === 'INPUT' && /^(checkbox|radio)$/.test(e.target.type)) {
+      e.preventDefault();
+      e.target.click();
+      return;
+    }
     // arrows in a menu, list or tab strip move between its items; behind a modal dialog nothing else listens
     // and Esc in a popover or menu closes that (it has its own listener), not the selection behind it
-    const owned = (NAV.test(e.code) && !!e.target?.closest?.('[role=menu], [role=listbox], [role=tablist], [role=radiogroup]'))
+    const owned = !(take && app.transport?.locked?.()) && ((NAV.test(e.code) && !!e.target?.closest?.('[role=menu], [role=listbox], [role=tablist], [role=radiogroup]'))
       || (e.code === 'Escape' && !!e.target?.closest?.('.ek-pop, .ew-pop, [role=menu]'))
-      || !!e.target?.closest?.('[aria-modal=true]:not(.ew-region)');
+      || (!space && !!e.target?.closest?.('[aria-modal=true]:not(.ew-region)')));
     // keys with a when() are modes (musical typing, a focused editor) and win over the always-on ones
     for (const k of [...keys.filter((x) => x.when), ...keys.filter((x) => !x.when)]) {
       if (k.key !== e.code) continue;
       if ((k.mod || null) !== mods) continue;
       if (inField && !k.global) continue;
-      if ((onControl || owned) && !k.global) continue;
+      if ((onControl || owned || keepsSpace) && !k.global) continue;
       if (!singleKeys && !mods && !k.when && !k.global && SINGLE.test(k.key)) continue;
       if (k.when && !k.when()) continue;
       e.preventDefault();
-      if (e.code === 'Space') spaceTaken = true;
       try { k.run(e); } catch (err) { console.error('key', k.label, err); }
       // a key whose control is put away still works, and brings the control back (k.feature: a workspace feature id)
       // A key is always the person's; under a take the screen holds still, so a refused key reveals nothing either.

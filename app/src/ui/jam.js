@@ -1809,7 +1809,7 @@ function createNeck(app, J, { timeline, where, describe, onPlay, fitHeight = nul
   });
   scroller.addEventListener('pointercancel', () => { disarm(); if (held) { onPlay(held.p, false); held = null; } });
   scroller.addEventListener('pointerleave', () => { if (J.hover) { J.hover = null; dirty = true; } });
-  // keys on the focused neck: arrows walk a cursor over the places, Enter or Space plays it
+  // keys on the focused neck: arrows walk a cursor over the places, Enter plays it (Space is the transport's)
   scroller.addEventListener('keydown', (e) => {
     const c = J.hover || { s: 0, f: 5 };
     let s = c.s, f = c.f;
@@ -1817,7 +1817,7 @@ function createNeck(app, J, { timeline, where, describe, onPlay, fitHeight = nul
     else if (e.key === 'ArrowRight') f = Math.min(MAX_FRET, f + (J.lefty ? -1 : 1));
     else if (e.key === 'ArrowUp') s = Math.min(G.n - 1, s + 1);
     else if (e.key === 'ArrowDown') s = Math.max(0, s - 1);
-    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); const p = G.T.strings[s] + f; onPlay(p, true); setTimeout(() => onPlay(p, false), 300); return; }
+    else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); const p = G.T.strings[s] + f; onPlay(p, true); setTimeout(() => onPlay(p, false), 300); return; }
     else return;
     e.preventDefault(); e.stopPropagation();
     J.hover = { s, f, p: G.T.strings[s] + f }; dirty = true; reveal([f, f]);

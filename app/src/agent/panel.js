@@ -338,8 +338,8 @@ function mountPanel(el, app) {
       downAt = 0; heldOff();
     });
     for (const t of ['pointercancel', 'lostpointercapture']) hold.addEventListener(t, () => { if (!tapPreview) heldOff(); });
-    hold.addEventListener('keydown', (ev) => { if ((ev.key === ' ' || ev.key === 'Enter') && !ev.repeat) { ev.preventDefault(); heldOn(); } });
-    hold.addEventListener('keyup', (ev) => { if (ev.key === ' ' || ev.key === 'Enter') heldOff(); });
+    hold.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.repeat) { ev.preventDefault(); heldOn(); } });
+    hold.addEventListener('keyup', (ev) => { if (ev.key === 'Enter') heldOff(); });
     return { hold, tip };
   }
   // What a card to Keep takes away, as a sentence with its bylines: "delete Bass (Sam’s part) and replace the notes in

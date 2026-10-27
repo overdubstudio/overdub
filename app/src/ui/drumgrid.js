@@ -261,7 +261,6 @@ function mountGrid(el, app) {
     }
     if (patch.length) store.dispatch({ type: 'notes.set', track: cur.t.id, clip: cur.c.id, notes: patch }, { by: 'you', label: `swing ${swing.value}%`, coalesce: 'swing:' + cur.c.id });
   });
-  swing.addEventListener('change', () => swing.blur());
   const swingDelay = () => (Number(swing.value) / 100) * STEP * 0.5;
 
   /* ======================================================= bar actions */

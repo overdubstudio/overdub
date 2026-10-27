@@ -723,12 +723,12 @@ export default function (app) {
   /* ---------------------------------------------------------------- drawing */
   let win = null, grid = null, bw = null;
   // the four pads: each fires on pointerdown, never on click; from the keyboard F J K L play it wherever the focus is,
-  // and Enter on a focused pad plays it too (Space stays Done)
+  // and Enter on a focused pad plays it too (Space stays Done: the stage's Space, which the shell gives it over a pad)
   const padsEl = () => h('div.st-pads', PAD_ROWS.map((id) => {
     const r = ROWS.find((x) => x.id === id);
     return h('button.st-pad', { type: 'button', dataset: { row: id }, 'aria-label': `${r.short || r.label} (${r.hint})`,
       onpointerdown: (e) => { e.preventDefault(); tap(id, e.timeStamp || performance.now()); },
-      onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tap(id, e.timeStamp || performance.now()); } else if (e.key === ' ') { e.preventDefault(); e.stopPropagation(); done(); } } },
+      onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tap(id, e.timeStamp || performance.now()); } } },
     h('span.st-pad-l', r.short || r.label), h('kbd', r.hint));
   }));
   function draw() {

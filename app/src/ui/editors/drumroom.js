@@ -17,7 +17,7 @@
 // to 1 at its bottom). On the hats, a drag up opens them (an open stroke) and letting go closes them with the foot. The
 // kick is its shell where the toms leave it showing, and the floor before it from the pedal across to floor tom 1; a
 // piece's name, where it is drawn, plays the piece too. Each piece is also a button laid over the drawing (it takes no
-// pointer: the drawing does): Tab reaches the kit, the arrow keys walk it, Enter or Space plays a piece, Alt+Enter its
+// pointer: the drawing does): Tab reaches the kit, the arrow keys walk it, Enter plays a piece (Space is the transport's), Alt+Enter its
 // other stroke. The keys beside the kit play every way to hit the selected piece (hold Roll to roll).
 //
 // Lights. A piece lights when the song plays it (the track's notes between one frame's playhead and the next, read
@@ -125,7 +125,7 @@ export function mount(el, ctx) {
   const tags = new Map();           // piece -> its name as last drawn, [x0, y0, x1, y1] metres (a click there plays it)
   const named = new Map();          // piece -> its name as last drawn, { x, y, w, h } stage px (for the checks)
   const artKeys = [];               // the keys beside the kit: every way to play the selected piece
-  const keyNotes = new Map();       // piece -> the note Enter or Space holds on its button
+  const keyNotes = new Map();       // piece -> the note Enter holds on its button
   let theta = (P.view | 0) === 1 ? Math.PI : 0, thetaFrom = theta, thetaTo = theta, thetaAt = 0;
   let animating = false;            // the drawing redraws every frame while something moves (a light, a flash, the turn)
   let pal = colors();
@@ -193,7 +193,7 @@ export function mount(el, ctx) {
   for (const piece of PIECES) {
     const b = h('button.dr-pc', { type: 'button', tabindex: -1, dataset: { piece } });
     b.addEventListener('keydown', (e) => pieceKey(e, piece));
-    b.addEventListener('keyup', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); stopKeyNote(piece); } });
+    b.addEventListener('keyup', (e) => { if (e.key === 'Enter') { e.preventDefault(); stopKeyNote(piece); } });
     b.addEventListener('click', (e) => { if (e.detail === 0 && !keyNotes.has(piece)) { playNote(MAIN[piece], 0.8); release(MAIN[piece]); } });   // (assistive tech clicks)
     b.addEventListener('focus', () => { select(piece, { from: 'focus' }); say(); });
     b.addEventListener('blur', () => { stopKeyNote(piece); say(); });
@@ -279,8 +279,8 @@ export function mount(el, ctx) {
     const up = () => { if (held == null) return; release(held); held = null; b.classList.remove('on'); };
     b.addEventListener('pointerdown', (e) => { if (e.button > 0) return; e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch { /* gone */ } down(); });
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up);
-    b.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); down(); } });
-    b.addEventListener('keyup', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); up(); } });
+    b.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.repeat) { e.preventDefault(); down(); } });
+    b.addEventListener('keyup', (e) => { if (e.key === 'Enter') { e.preventDefault(); up(); } });
     b.addEventListener('blur', up);
     b.addEventListener('click', (e) => { if (e.detail === 0 && held == null) { down(); up(); } });
     artKeys.push(b);
@@ -451,7 +451,7 @@ export function mount(el, ctx) {
 
   /* ================================================================ the keyboard on a piece */
   function pieceKey(e, piece) {
-    if (e.key === 'Enter' || e.key === ' ') {
+    if (e.key === 'Enter') {
       e.preventDefault(); e.stopPropagation();
       if (e.repeat || keyNotes.has(piece)) return;
       const p = e.altKey && ALT[piece] ? ALT[piece] : MAIN[piece];

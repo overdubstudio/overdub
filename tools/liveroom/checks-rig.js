@@ -170,6 +170,14 @@ export async function run(T, ctx) {
     T.ok(swaps.length === 10 && swaps.every((x) => x.by === 'you' && x.reason === 'room:rig'), `ten presses are ten steps by you (${swaps.map((x) => x.label.replace('Half Stack, ', '')).join(', ')})`);
     T.ok(steps.every((x) => x.live.every((v) => v === 'live')), `every insert on Guitar L is built and playing after every step${steps.some((x) => x.live.some((v) => v !== 'live')) ? `: ${steps.map((x) => `${x.what} ${x.live.join(',')}`).join('; ')}` : ''}`);
     T.ok(room.every((x) => x.mon === 'Guitar L'), `on the stage the input plays through Guitar L, not the audio track ahead of it (${[...new Set(room.map((x) => x.mon))].join(', ')})`);
+    // (the other side: the next take goes on Guitar R, so the input plays through it, and back)
+    const sides = await E(async () => {
+      const o = window.overdub, L = o.ui.state.liveRoom, R = window.__rig, mon = () => o.input.audio.monitorTrack?.()?.name || null;
+      L.side = 'R'; await R.sleep(400); const right = mon();
+      L.side = 'L'; await R.sleep(400);
+      return { right, left: mon() };
+    });
+    T.ok(sides.right === 'Guitar R' && sides.left === 'Guitar L', `for the other side the input plays through Guitar R, then Guitar L again (${sides.right}, ${sides.left})`);
     const ctl = steps.find((x) => x.what === 'control room');
     T.ok(ctl.mon === 'Audio', `through the glass it plays through what the control room picks, as it always did (${ctl.mon})`);
 

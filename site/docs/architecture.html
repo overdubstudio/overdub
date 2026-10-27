@@ -1612,7 +1612,8 @@ beatbox are shifted by the measured round trip.</p></li>
 device reports) and the chosen input is split off (<code>state.channels</code>, <code>state.channel</code> '1'…'32', 'both', 'stereo'); a
 channel the device doesn't have is silence, never input 1. Monitoring plays through the track a take would record
 (the armed audio track, else the selected one, else the song's first), unless <code>audio.monitorVia(trackId)</code> names
-one: the live room's stage names its Guitar L (Guitar R for the other side) while it's up and lets go (<code>null</code>)
+one: the live room's stage names the guitar its next take goes on (Guitar L, Guitar R for the other side, the Lead
+for the blues bar's solo) while it's up and lets go (<code>null</code>)
 through the glass, so an older audio track ahead of the room's never takes the guitar dry. A <code>devicechange</code> emits <code>app.input</code> <code>'devices'</code> and ui
 <code>'input:devices'</code> (the Inspector and Sketch re-read the list without a reload).</p></li>
 <li><p><strong>Files in</strong> (<code>input/importers.js</code>, <code>app.importers</code>): a Standard MIDI File (types 0 and 1; running status, note-on at

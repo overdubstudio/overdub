@@ -723,7 +723,7 @@ screens.add({
     function rig(dir) {
       const v = view(), rigs = placeOf(v.place).rigs || [];
       if (!rigs.length || !v.place || v.place === 'kitchen') return { ok: false };
-      if (busy()) return { ok: false, error: 'The amp changes once the take is in.' };
+      if (L.run === 'count' || L.run === 'take') return { ok: false, error: 'The amp changes once the take is in.' };
       const i = Math.max(0, rigs.indexOf(v.rig));
       const r2 = rigs[(i + dir + rigs.length) % rigs.length];
       const pl = planRig(song(), { rig: r2 });
@@ -1014,9 +1014,11 @@ screens.add({
       rigRow.hidden = !lv.place || lv.place === 'kitchen';
       if (rigShown == null) { try { rigShown = rigNow(song()).label; } catch (e2) { rigShown = ''; console.error('liveroom: the rig', e2); } }
       if (rigName.textContent !== rigShown) rigName.textContent = rigShown;
-      // what the input plays through: the guitar the next take goes on (Guitar R for the other side), whatever is armed
-      // or selected in the control room (input/audioin.js monitorVia)
-      const via = (L.side === 'R' ? lv.roles?.guitarR : null) || lv.roles?.guitarL || lv.roles?.guitar || null;
+      // what the input plays through: the track the pass running records onto, else the one the next take goes on
+      // (roleFor: Guitar R for the other side, the Lead for the blues bar's solo), whatever is armed or selected in the
+      // control room (input/audioin.js monitorVia); the kitchen keeps the usual rule
+      const passing = (L.run === 'count' || L.run === 'take') && S.pass ? S.pass.track : null;
+      const via = lv.place === 'kitchen' ? null : passing || lv.roles?.[L.side === 'R' ? 'guitarR' : roleFor(lv, card(), 'again')] || lv.roles?.guitarL || lv.roles?.guitar || null;
       if (via !== S.via) { S.via = via; try { app.input?.audio?.monitorVia?.(via); } catch (e2) { console.error('liveroom: the monitor', e2); } }
       tVal.textContent = String(Math.round(lv.tempo || 0));
       steppers.hidden = !!lv.taken || L.run !== 'idle';

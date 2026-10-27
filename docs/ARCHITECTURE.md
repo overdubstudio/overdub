@@ -1729,7 +1729,8 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, â
   device reports) and the chosen input is split off (`state.channels`, `state.channel` '1'â€¦'32', 'both', 'stereo'); a
   channel the device doesn't have is silence, never input 1. Monitoring plays through the track a take would record
   (the armed audio track, else the selected one, else the song's first), unless `audio.monitorVia(trackId)` names
-  one: the live room's stage names its Guitar L (Guitar R for the other side) while it's up and lets go (`null`)
+  one: the live room's stage names the guitar its next take goes on (Guitar L, Guitar R for the other side, the Lead
+  for the blues bar's solo) while it's up and lets go (`null`)
   through the glass, so an older audio track ahead of the room's never takes the guitar dry. A `devicechange` emits `app.input` `'devices'` and ui
   `'input:devices'` (the Inspector and Sketch re-read the list without a reload).
 - **Files in** (`input/importers.js`, `app.importers`): a Standard MIDI File (types 0 and 1; running status, note-on at

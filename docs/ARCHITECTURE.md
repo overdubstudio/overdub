@@ -57,9 +57,13 @@ overdub/
                          fingering in one hand position, tab text in and out), riff.js (the house riff writer),
                          playalong.js (judging what you play against a part)                           [jam]
                          sounds.js (newPartFor: the track a new idea makes; the rest is ux-instruments')   [core]
+                         stacks.js (a guitar's whole chain as one thing: planStack makes a track's chain exactly a
+                         stack in as few ops as it takes, one undo step; the live room, the Jam room and the rack
+                         swap chains through it)                                                      [core]
   app/src/core/liveroom/ the live room's song side, pure: model.js (its ids, caps and names), room-ops.js + sheet-ops.js
                          (the ten ops' room.* and sheet.*), places.js (each place's band, tempo, rigs, feels),
-                         plans.js + session.js (the stage's plans, the room's view of the song, the offered move),
+                         plans.js + session.js (the stage's plans, the room's view of the song, the offered move;
+                         planRig puts a rig's chain on each guitar for its side, rigNow names what's on),
                          band.js (the drummer and bass learning a part), read.js + read-worker.js (reading a take),
                          double.js + tight.js (the other side, and how tight it is), kitchen.js + kitchen-plans.js,
                          tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
@@ -782,7 +786,12 @@ inserts… → fader (stereo) → mute → balance pan → meter → master sum 
 golden hash is the same with or without it). The master's meter listens at its gain, before the safety soft clip, so the top bar sees a mix over 0
 dBFS (red, "Clipping N dB"; pressing it takes the over off the master's gain in one undo step, a master level lane
 moving with it); `masterTap` and every render are after the clip. The engine reconciles this graph with the project
-on every store change (add, remove, reorder, params with a glide, bypass with a crossfade). Notes are read by a lookahead scheduler (`engine/schedule.js`; 25 ms tick,
+on every store change (add, remove, reorder, params with a glide, bypass with a crossfade). Live, a rewire dips the
+strip out and back in (8 ms each way), except a chain swapped for one that shares no built device with it (a guitar's
+whole stack for another's): the new path is wired beside the old one behind its own tail gain and the two crossfade
+linearly over 30 ms, so a swap while you play has no gap. A device whose build fails live (it throws, or isn't ready
+in `BUILD.ready`, 8 s) plays its stand-in and is built again `BUILD.retry` (10 s) later, up to `BUILD.tries` (3) more
+times; offline a stand-in stays what it is (`tools/liveroom/checks-rig.js` checks the retry). Notes are read by a lookahead scheduler (`engine/schedule.js`; 25 ms tick,
 120 ms ahead) each tick, so editing notes never rebuilds anything. `render` builds the same graph in an
 OfflineAudioContext with the same functions, so what an agent measures is what the human hears.
 
@@ -1718,7 +1727,10 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
   beatbox are shifted by the measured round trip.
 - **Audio inputs** (`input/audioin.js`): an interface opens with all its channels (`channelCount` up to what the
   device reports) and the chosen input is split off (`state.channels`, `state.channel` '1'…'32', 'both', 'stereo'); a
-  channel the device doesn't have is silence, never input 1. A `devicechange` emits `app.input` `'devices'` and ui
+  channel the device doesn't have is silence, never input 1. Monitoring plays through the track a take would record
+  (the armed audio track, else the selected one, else the song's first), unless `audio.monitorVia(trackId)` names
+  one: the live room's stage names its Guitar L (Guitar R for the other side) while it's up and lets go (`null`)
+  through the glass, so an older audio track ahead of the room's never takes the guitar dry. A `devicechange` emits `app.input` `'devices'` and ui
   `'input:devices'` (the Inspector and Sketch re-read the list without a reload).
 - **Files in** (`input/importers.js`, `app.importers`): a Standard MIDI File (types 0 and 1; running status, note-on at
   velocity 0, the first tempo of a tempo map, time and key signatures, markers, track names, program changes) dropped

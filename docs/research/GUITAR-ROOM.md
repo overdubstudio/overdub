@@ -133,6 +133,29 @@ chain while you play through it. There's never a blind left-right cycle.
 - Leave the shop and you're back on the stage with that stack on the floor.
 - Overdub's control room uses the same browser, so the studio's blind category-cycling picker goes away.
 
+**Built so far (gr/rig):** the stage's `[` `]` puts the rig's whole chain on both guitars in one undo step
+(`core/stacks.js` planStack, `core/liveroom/plans.js` planRig), the input plays through the room's guitar
+(`audio.monitorVia`), a swap crossfades, and a device that failed to build is built again. The browser itself isn't
+built. The control room's amp picker is still the Jam room's tone row, which cycles a bank left and right.
+
+**What the browser needs to show each thing, and where it is today.** Everything below exists in code already; nothing
+here is a new id.
+- *A stack* (a rig): `devices/guitar/rigs.js` RIGS[] carries `id`, `name`, `bank` (RIG_BANKS: `id`, `name`, `color`,
+  `blurb`, `count`; 11 banks), `blurb`, `nod`, `tags`, `hot`, `amp` and `chain`. The live room's rigs are
+  `core/liveroom/places.js` RIGS by place (`guitarChain(rig, side, tuning)`, `rigLabel`). A saved stack would be the
+  same `{ name, chain }` (core/stacks.js), plus the rack's own name, blurb and time.
+- *A pedal*: the registry's def (`getDevice`) carries `name`, `cat` / `pedalCat`, `kindLabel`, `blurb`, `nod`,
+  `params` (each with `label`, `role`, `desc`, `opts`), `presets` and `look`, the face `devices/guitar/looks.gen.js`
+  draws (procedural, pure CSS: no images to fetch). 101 pedals.
+- *An amp*: the same def fields; `look` is the amp drawn by `ampui.js` (in looks.gen.js); `AMP_PARAMS`,
+  `ampSettings` and `ampParams` are its knobs. `core.stack` (the live room's amp) has its cab, low and high cut, gate,
+  boost and quality as params.
+- *A cab and its mics*: `CAB_IDS` (17) and `MIC_IDS` (5) in `devices/guitar/index.js`; for core.stack, `amp-lib.js`
+  `CAB_LABELS`, `CAB_NAMES` and `CAB_SAYS` (each cab-and-mic in words).
+- *Hover to hear it*: core/stacks.js planStack already makes a swap the fewest ops, and a swap crossfades, so a
+  preview can be a swap that the browser undoes when the focus leaves (or one step that coalesces until a press).
+  It needs no new op.
+
 ### 2.10 Claude in the room
 When Claude is connected (the in-app agent, claude.ai or MCP), **the talkback is Claude**. It says what it did, and
 you can ask through the glass:

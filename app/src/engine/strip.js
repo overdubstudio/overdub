@@ -16,7 +16,11 @@
 // the renderers compensate for it by when they play each track (see engine.js, "Plugin delay compensation").
 //
 // The dips are how rewires stay click-free: both ramp to 0 over 8 ms, the chain is rewired once the audio clock has
-// passed the ramp, then both ramp back. Devices are instantiated through the registry (instantiate / paramValues);
+// passed the ramp, then both ramp back. A live chain swapped for one that shares no built device with it (a guitar's
+// whole chain for another's: core/stacks.js) crossfades instead, with no gap: the new chain is wired beside the old one
+// from preDip to postDip, each behind its own tail gain, and the old one's ramps down while the new one's ramps up,
+// linearly over XFADE (linear ramps, never a value curve: Chrome 155 drops a curve that ends before its node first
+// renders), then the old path is undone. Each path ends in its tail gain: preDip -> inserts... -> tail -> postDip. Devices are instantiated through the registry (instantiate / paramValues);
 // a missing device or one whose build throws becomes a FALLBACK (fallback.js) plus an 'error' report. A held device
 // (a song's, whose code this browser hasn't allowed: devices/trust.js) is silence for an instrument and a pass-through
 // for an effect, with no report; nothing of it is compiled or run, live or in any render.
@@ -27,8 +31,15 @@ import { dbToGain, ramp, setNow, afterAudio, isOffline, within, sig, soon } from
 import { laneValue, FADER, PAN } from './schedule.js';
 import { loadData } from '../kernel/data.js';
 
-const READY_MS = 8000;   // a device that isn't ready by then is treated as broken
 const DIP = 0.008;       // seconds to dip a strip out (and back in) around a rewire
+const XFADE = 0.03;      // seconds a whole chain swapped live crossfades over
+// Building a device: a device that isn't ready in `ready` ms is treated as broken. One that exists but failed to build
+// (it threw, or wasn't ready in time: a busy machine compiling a kernel or loading a worklet) plays its stand-in (an
+// effect passes its input through: a guitar amp that failed is the dry signal) and is built again `retry` ms later,
+// up to `tries` more times, on its own (the strip syncs itself then) or at the next change to the strip, live only. A
+// missing device isn't retried: defining it changes what it's built as (wantKey). Exported for the checks
+// (tools/liveroom/checks-rig.js shortens them).
+export const BUILD = { ready: 8000, retry: 10000, tries: 3 };
 
 // What a device id should be built as right now: 'id@version', 'held:id:hash' or 'missing:id'. (Held first: a song's
 // device that shadows a shelf id and is held plays as held, not as the shelf's.)
@@ -48,22 +59,22 @@ export async function makeInstance(c, kind, deviceId, { uid, params, on = true, 
     return { inst, key, failed: false, held: true };
   }
   const def = getDevice(deviceId);
-  const fallback = (why) => {
+  const fallback = (why, retry = false) => {
     report && report({ kind: 'device', device: deviceId, uid, message: why });
     const inst = kind === 'instrument' ? fallbackSynth(c, { uid, missing: deviceId }) : passThrough(c, { uid, missing: deviceId });
-    return { inst, key, failed: true };
+    return { inst, key, failed: true, retry };
   };
   if (!def) return fallback(`no device "${deviceId}" (playing a stand-in until it is defined)`);
   if (def.kind !== kind) return fallback(`device "${deviceId}" is an ${def.kind}, not an ${kind}`);
   let inst = null;
   try {
     const values = paramValues(def, params || {});
-    // kernel data (a sampled kit): an export waits for the files before READY_MS starts counting, since 23 MB on a slow
+    // kernel data (a sampled kit): an export waits for the files before BUILD.ready starts counting, since 23 MB on a slow
     // line can take longer than that, and a stand-in synth must never play in an export for want of a download. (Live,
     // the instance starts at once and plays nothing until they land: kernel/host.js.)
     if (def.data && isOffline(c)) await Promise.all(Object.values(def.data).map((h) => loadData(h)));
-    inst = await within(instantiate(c, def, { uid, seed: seedOf(uid), clock, params: values, on }), READY_MS, deviceId);
-    await within(inst.ready, READY_MS, deviceId);
+    inst = await within(instantiate(c, def, { uid, seed: seedOf(uid), clock, params: values, on }), BUILD.ready, deviceId);
+    await within(inst.ready, BUILD.ready, deviceId);
     if (!inst.output) throw new Error('instance has no output');
     if (kind === 'effect' && !inst.input) throw new Error('effect instance has no input');
     try { inst.set(values, { bpm, first: true }); } catch (e) { report && report({ kind: 'device', device: deviceId, uid, message: 'set: ' + e.message }); }
@@ -79,7 +90,7 @@ export async function makeInstance(c, kind, deviceId, { uid, params, on = true, 
     return { inst, key, failed: false };
   } catch (e) {
     if (inst) { try { inst.dispose(); } catch { /* gone */ } }
-    return fallback(`device "${deviceId}" failed to build: ${e && e.message || e}`);
+    return fallback(`device "${deviceId}" failed to build: ${e && e.message || e}`, true);
   }
 }
 
@@ -262,11 +273,11 @@ export class Strip {
   needsBuild(spec) {
     const wi = spec.instrument ? spec.instrument.device : null;
     if ((this.instr ? this.instr.device : null) !== wi) return true;
-    if (this.instr && wi && !sameKey(this.instr.key, wantKey(wi))) return true;
+    if (this.instr && wi && (!sameKey(this.instr.key, wantKey(wi)) || due(this.instr))) return true;
     if (this.fx.length !== spec.inserts.length) return true;
     for (let i = 0; i < spec.inserts.length; i++) {
       const f = this.fx[i], s = spec.inserts[i];
-      if (f.id !== s.id || f.device !== s.device || !sameKey(f.key, wantKey(s.device))) return true;
+      if (f.id !== s.id || f.device !== s.device || !sameKey(f.key, wantKey(s.device)) || due(f)) return true;
     }
     return false;
   }
@@ -277,9 +288,10 @@ export class Strip {
     // the instrument
     let newInstr = null;
     const wi = spec.instrument && spec.instrument.device;
-    if (wi && (!this.instr || this.instr.device !== wi || !sameKey(this.instr.key, wantKey(wi)))) {
+    if (wi && (!this.instr || this.instr.device !== wi || !sameKey(this.instr.key, wantKey(wi)) || due(this.instr))) {
+      const tries = this.instr && this.instr.device === wi && due(this.instr) ? this.instr.tries : 0;
       tasks.push(makeInstance(c, 'instrument', wi, { uid: `${this.id}:instrument`, params: spec.instrument.params, clock, bpm, report })
-        .then((r) => { newInstr = { device: wi, ...r }; }));
+        .then((r) => { newInstr = { device: wi, ...r, ...(this.live ? retryOf(r, tries) : {}) }; }));
     }
     // inserts: reuse what is built (wired or pooled) when its device and version still match
     const have = new Map();
@@ -287,10 +299,11 @@ export class Strip {
     for (const [id, f] of this.pool) if (!have.has(id)) have.set(id, f);
     const next = spec.inserts.map((s) => {
       const h = have.get(s.id);
-      if (h && h.device === s.device && sameKey(h.key, wantKey(s.device))) return h;
+      if (h && h.device === s.device && sameKey(h.key, wantKey(s.device)) && !due(h)) return h;
+      const tries = h && h.device === s.device && due(h) ? h.tries : 0;
       const slot = { id: s.id, device: s.device, key: null, inst: null };
       tasks.push(makeInstance(c, 'effect', s.device, { uid: s.id, params: s.params, on: s.on, clock, bpm, report })
-        .then((r) => { slot.key = r.key; slot.inst = r.inst; slot.failed = r.failed; }));
+        .then((r) => { slot.key = r.key; slot.inst = r.inst; slot.failed = r.failed; if (this.live) Object.assign(slot, retryOf(r, tries)); }));
       return slot;
     });
     await Promise.all(tasks);
@@ -326,6 +339,11 @@ export class Strip {
         if (!next.includes(f)) safeDispose(f.inst);
       }
       this.o.onGraph && this.o.onGraph({ kind: 'inserts', track: this.id, inserts: next.map((s) => s.id) });
+    }
+    // a failed build waiting for another try: the strip syncs itself when it's due
+    const waits = [this.instr, ...this.fx].filter((f) => f && f.retryAt).map((f) => f.retryAt);
+    if (waits.length && !this.retryT) {
+      this.retryT = setTimeout(() => { this.retryT = 0; if (!this.disposed && this.spec) this.sync(this.spec); }, Math.max(0, Math.min(...waits) - Date.now()) + 20);
     }
   }
 
@@ -404,19 +422,41 @@ export class Strip {
     });
   }
 
-  // Wire preDip -> chain -> postDip. Live and sounding: dip out, rewire, dip in.
+  // Wire preDip -> chain -> postDip. Live and sounding: a chain that shares no built device with the one playing
+  // crossfades in; else dip out, rewire, dip in.
   rewire(next) {
+    const c = this.c;
+    if (this.live && c.state === 'running' && this.tail && this.fx.length + next.length > 0 && !next.some((f) => this.fx.includes(f))) return this.crossfade(next);
     return this.dipped(() => { this.fx = next; this.wire(); });
   }
 
-  // (only the connections the strip made are undone: a device may hang its own taps off its output)
-  wire() {
-    for (const [a, b] of this.links || []) { try { a.disconnect(b); } catch { /* ok */ } }
-    this.links = [];
+  crossfade(next) {
+    const c = this.c, old = { links: this.links, tail: this.tail };
+    const nu = this.path(next, 0);
+    this.fx = next; this.links = nu.links; this.tail = nu.tail;
+    const t = soon(c), end = t + XFADE;
+    try { const g = old.tail.gain; g.cancelScheduledValues(0); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(0, end); g.setValueAtTime(0, end + 0.001); } catch { /* closed */ }
+    try { const g = nu.tail.gain; g.setValueAtTime(0, t); g.linearRampToValueAtTime(1, end); g.setValueAtTime(1, end + 0.001); } catch { /* closed */ }
+    return new Promise((resolve) => afterAudio(c, end + 0.01, () => { unpath(old.links); resolve(); }));
+  }
+
+  // preDip -> each insert -> a tail gain at `level` -> postDip: { links, tail }. (Only the connections the strip made
+  // are undone later: a device may hang its own taps off its output.)
+  path(fx, level) {
+    const tail = this.c.createGain();
+    tail.gain.value = level;
+    const links = [];
     let at = this.preDip;
-    for (const f of this.fx) { at.connect(f.inst.input); this.links.push([at, f.inst.input]); at = f.inst.output; }
-    at.connect(this.postDip);
-    this.links.push([at, this.postDip]);
+    for (const f of fx) { at.connect(f.inst.input); links.push([at, f.inst.input]); at = f.inst.output; }
+    at.connect(tail); links.push([at, tail]);
+    tail.connect(this.postDip); links.push([tail, this.postDip]);
+    return { links, tail };
+  }
+
+  wire() {
+    unpath(this.links);
+    const p = this.path(this.fx, 1);
+    this.links = p.links; this.tail = p.tail;
   }
 
   // What a key hears from this strip (keyPlan above): its sound after its inserts, before its fader, mute and pan.
@@ -456,10 +496,11 @@ export class Strip {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.retryT) { clearTimeout(this.retryT); this.retryT = 0; }
     const c = this.c;
     const end = () => {
       for (const [a, b] of this.links || []) { try { a.disconnect(b); } catch { /* ok */ } }
-      for (const n of [this.head, this.input, this.inTap, this.preDip, this.postDip, this.calm, this.fader, this.mute, this.split, this.panL, this.panR, this.merge, this.out, this.msplit, ...(this.an || []), ...(this.clip ? this.clip.nodes : []), ...(this.mon ? this.mon.nodes : [])]) {
+      for (const n of [this.head, this.input, this.inTap, this.preDip, this.tail, this.postDip, this.calm, this.fader, this.mute, this.split, this.panL, this.panR, this.merge, this.out, this.msplit, ...(this.an || []), ...(this.clip ? this.clip.nodes : []), ...(this.mon ? this.mon.nodes : [])]) {
         if (n) { try { n.disconnect(); } catch { /* ok */ } }
       }
       if (this.instr) { try { this.instr.gain.disconnect(); } catch { /* ok */ } safeDispose(this.instr.inst); }
@@ -471,9 +512,17 @@ export class Strip {
   }
 }
 
-// 'failed' and 'missing' builds keep their key; a failed build of a version is not retried until the version moves.
+// 'failed' and 'missing' builds keep their key; a failed build is built again when it's due (BUILD), at most BUILD.tries
+// more times, and a missing one when its definition moves the key.
 function sameKey(have, want) { return have === want; }
+// a slot whose failed build is due another try
+function due(f) { return !!(f && f.retryAt && Date.now() >= f.retryAt); }
+// a build's retry state: { retryAt, tries } while it failed and has tries left, else none
+function retryOf(r, tries) {
+  return r.failed && r.retry && tries < BUILD.tries ? { retryAt: Date.now() + BUILD.retry, tries: tries + 1 } : { retryAt: 0, tries };
+}
 
+function unpath(links) { for (const [a, b] of links || []) { try { a.disconnect(b); } catch { /* ok */ } } }
 function safeDispose(inst) { if (inst) { try { inst.dispose(); } catch (e) { console.warn('engine: dispose', e); } } }
 
 // The spec a strip builds from a track (or the master). With `at` (a song beat), each automated param (a lane that

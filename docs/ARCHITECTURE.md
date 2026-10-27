@@ -2260,7 +2260,7 @@ which draws nothing itself:
   is a try (`store.preview`: heard on both guitars, nothing in History, released on any other key, click, take or
   leaving); a click or Enter carries it (`R.rig.swap` for an amp, at its measured level `AMP_TRIM`, on your cab with
   your mics; `R.rig.add` for a pedal). A rack load is `R.rig.swap` and `room.set { stack }` dispatched with `join` on
-  the swap's transaction: one step. Its targets are `wall`, `case`, `rack` (the shop at a glance; the area changes, the
+  the swap's transaction: one step (a stack carried without a rack id sets `stack` to none, in the same step). Its targets are `wall`, `case`, `rack` (the shop at a glance; the area changes, the
   camera stays) and `tryout-head`, `tryout-cab` from the drawn gear; it fills `R.panel('tryout-head')`,
   `R.panel('tryout-cab')` and the stage's `R.panel('cab')` (the cab builder: the amp's own cab and mic params through
   `R.rig.turn`). Beside the frozen API: `load(id)`, `tryOn(device)`, `release()`, `area()`, `changed()`.

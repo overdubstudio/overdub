@@ -48,7 +48,8 @@ export const CSS = `
 .gr .grs-cat[aria-selected="true"] { background: linear-gradient(#efe3c0, #cdb98a); color: var(--brass-ink); box-shadow: inset 0 1px 0 #fff8, 0 0 0 2px #ffc85a66, 0 2px 0 #0008; transform: translateX(6px); }
 .gr .grs-cat[aria-selected="true"] small { color: #6e6352; }
 .gr .grs-case-head { position: absolute; display: flex; align-items: baseline; gap: 14px; color: var(--text-2); font-size: 14px; line-height: 1.3; }
-.gr .grs-case-head span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gr .grs-case-head { align-items: center; }
+.gr .grs-case-head span { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .gr .grs-case-head h3 { margin: 0; font-size: 30px; color: #f1ece4; white-space: nowrap; }
 .gr .grs-ped { position: absolute; border: 0; background: none; padding: 0; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--text); }
 .gr .grs-ped .pbox { display: flex; align-items: flex-end; justify-content: center; width: 100%; }

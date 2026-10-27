@@ -292,6 +292,20 @@ export async function run(T, ctx) {
     await press(page, 'KeyC');
     const toCab = await at();
     T.ok(head.cam === 'tryout-head' && kh1.length === kh0 + 1 && kh1.at(-1).by === 'you' && toCab.cam === 'tryout-cab', `H goes to your head: a focused knob turns with the arrows (one step by you: ${kh1.at(-1)?.label}), and C with it focused goes to the cab (${toCab.cam})`);
+    // a knob on the head dragged: it keeps turning while the hand moves (the head isn't drawn again under it)
+    await press(page, 'Escape');
+    await wait(450);
+    const gain0 = (await rig()).amp.params.gain, kd0 = (await history(page)).length;
+    const kb = await page.locator('.gr .grs-head [role=slider]').first().boundingBox();
+    await page.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) { await page.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2 + i * 6); await wait(20); }
+    await page.mouse.up();
+    await wait(100);
+    const gain1 = (await rig()).amp.params.gain, kd1 = await history(page);
+    const gd = getDevice((await rig()).amp.device).params.find((p) => p.key === 'gain');
+    T.ok(gain0 - gain1 > (gd.max - gd.min) * 0.15 && kd1.length - kd0 <= 1 && kd1.at(-1).by === 'you' && /gain/.test(kd1.at(-1).label), `a head knob dragged keeps turning as the hand moves, one step by you (the arrow's turn before it coalesces in: gain ${f1(gain0)} to ${f1(gain1)} over 48 px)`);
+    await press(page, 'KeyC');
     await wait(450);
     const cb0 = await rig(), hc0 = (await history(page)).length;
     await page.click('.gr-panel[data-target=tryout-cab] .grs-cablist .grs-chip:nth-child(3)');
@@ -314,7 +328,8 @@ export async function run(T, ctx) {
     await page.mouse.up();
     await wait(120);
     const md1 = await rig(), hm1 = await history(page);
-    T.ok(md1.amp.params.micpos !== md0 && md1.same && hm1.length === hm0 + 1 && hm1.at(-1).by === 'you', `a mic dragged across the cone moves on both guitars, one step by you (on the cone ${md0} to ${md1.amp.params.micpos})`);
+    const held = await E(() => ({ dragging: window.overdub.ui.state.liveRoom.gr.shop.dragging, mics: document.querySelectorAll('.gr .grs-cab.open .grs-mic.dragging').length }));
+    T.ok(md1.amp.params.micpos !== md0 && md1.same && hm1.length === hm0 + 1 && hm1.at(-1).by === 'you' && !held.dragging && !held.mics, `a mic dragged across the cone moves on both guitars, one step by you, and is let go with the hand (on the cone ${md0} to ${md1.amp.params.micpos}; still held: ${held.dragging})`);
     // Esc back out: the corner, the case, the stage
     const esc = [];
     for (let i = 0; i < 3; i++) { await press(page, 'Escape'); await wait(i === 2 ? 600 : 80); esc.push((await at()).cam); }

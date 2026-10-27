@@ -2105,7 +2105,7 @@ by you: a knob is <code>insert.set</code> (a drag coalesces), a footswitch the i
 is a try (<code>store.preview</code>: heard on both guitars, nothing in History, released on any other key, click, take or
 leaving); a click or Enter carries it (<code>R.rig.swap</code> for an amp, at its measured level <code>AMP_TRIM</code>, on your cab with
 your mics; <code>R.rig.add</code> for a pedal). A rack load is <code>R.rig.swap</code> and <code>room.set { stack }</code> dispatched with <code>join</code> on
-the swap's transaction: one step. Its targets are <code>wall</code>, <code>case</code>, <code>rack</code> (the shop at a glance; the area changes, the
+the swap's transaction: one step (a stack carried without a rack id sets <code>stack</code> to none, in the same step). Its targets are <code>wall</code>, <code>case</code>, <code>rack</code> (the shop at a glance; the area changes, the
 camera stays) and <code>tryout-head</code>, <code>tryout-cab</code> from the drawn gear; it fills <code>R.panel('tryout-head')</code>,
 <code>R.panel('tryout-cab')</code> and the stage's <code>R.panel('cab')</code> (the cab builder: the amp's own cab and mic params through
 <code>R.rig.turn</code>). Beside the frozen API: <code>load(id)</code>, <code>tryOn(device)</code>, <code>release()</code>, <code>area()</code>, <code>changed()</code>.</li>

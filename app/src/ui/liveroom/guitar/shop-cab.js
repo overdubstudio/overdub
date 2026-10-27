@@ -108,14 +108,15 @@ export function placeMics(cab, view, { R, slot, drag = false, onSay = null }) {
         R.rig.turn(slot, KEYS[i].pos, live.pos, { commit: false });
       };
       const up = () => {
-        body.removeEventListener('pointermove', move); body.removeEventListener('pointerup', up); body.removeEventListener('pointercancel', up);
+        body.removeEventListener('pointermove', move); body.removeEventListener('pointerup', up); body.removeEventListener('pointercancel', up); body.removeEventListener('lostpointercapture', up);
+        if (!el.classList.contains('dragging')) return;
         el.classList.remove('dragging');
         R.gr.shop.dragging = false;
         for (const cn of cab.el.querySelectorAll('.cone')) cn.classList.remove('hot');
         R.rig.turn(slot, KEYS[i].pos, live.pos, { commit: true });
         onSay?.(SAY.micMoved({ mic: i ? 'Mic 2' : MICS[live.type]?.name || 'The mic', where: onCone(live.pos), dist: inches(live.dist), tone: live.pos < 0.4 ? 'brighter' : live.pos > 0.82 ? 'darker' : 'rounder' }));
       };
-      body.addEventListener('pointermove', move); body.addEventListener('pointerup', up); body.addEventListener('pointercancel', up);
+      body.addEventListener('pointermove', move); body.addEventListener('pointerup', up); body.addEventListener('pointercancel', up); body.addEventListener('lostpointercapture', up);
     });
   });
   return out;
@@ -311,7 +312,7 @@ export function cabPanel(R, host, { where = 'stage', saveRow = null } = {}) {
   }
   function keyOf(a, v) {
     if (!a || !v) return 'none';
-    return JSON.stringify([a.link.device, v.kind, v.index, v.mic1?.type, v.mic2?.type || null, v.mic2?.flip || false]);
+    return JSON.stringify([a.slot, a.link.device, v.kind, v.index, v.mic1?.type, v.mic2?.type || null, v.mic2?.flip || false]);
   }
   function refresh() {
     const a = amp();

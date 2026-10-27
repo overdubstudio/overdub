@@ -21,9 +21,12 @@
 //     back() -> bool                          Esc in the shop: a name being typed, then a try (the camera does the rest:
 //                                             the try-out corner back to the wall or the case, then the stage)
 //     frame(now), unmount()
-//     carry(what) -> { ok, error? }           what: { stack } (a whole stack: an amp and its pedals) or { link } (one
-//                                             pedal, { device, params, on }, or an amp: it takes the amp's place, on
-//                                             your cab): into the rig, one undo step
+//     carry(what) -> { ok, error? }           what: { stack } (a whole stack: an amp and its pedals; with a rack id
+//                                             the song's room.stack names it, without one it names none) or { link }
+//                                             (one pedal, { device, params, on }, or an amp: it takes the amp's place,
+//                                             on your cab): into the rig, one undo step
+//   press('save') opens the name field where you are (the stack's plate, the rack's sheet, the cab builder); from
+//   anywhere else it goes to the rack first
 //     save(name) -> Promise<{ ok, id?, error? }>   the rig as it is now into the rack
 //   }
 //   and, beside the frozen API:
@@ -225,12 +228,14 @@ export function mount(R) {
     for (const s of E.world.querySelectorAll(`[data-id="${CSS.escape(device)}"]`)) s.classList.add('trying');
     return true;
   }
-  function release() {
+  // (drop: a song loaded over the try took it with it; there's nothing to put back)
+  function release({ drop = false } = {}) {
     if (!tried) return;
     const t = tried;
     tried = null;
     S.trying = null;
     for (const s of E.world.querySelectorAll('.trying')) s.classList.remove('trying');
+    if (drop) return;
     try { t.release(); } catch (e) { console.error('shop: the try-out', e); }
   }
   // (anything you do while something's being tried: the try goes first, so a stomp, a knob or ⌘Z acts on your own rig,
@@ -481,50 +486,65 @@ export function mount(R) {
     while (taken.has(n)) n = `${base} ${k++}`;
     return n;
   }
+  // (the head and the cab are kept, not rebuilt, while the same amp and cab stand there: a knob or a mic in the hand is
+  // moved by every step it sends, and an element taken out of the page mid-drag loses the pointer, so the drag stops)
+  let cabObj = null, cabKey = '', headEl = null, noHead = null;
   function drawCorner() {
     const r = rigNow();
     const a = r?.amp ? r.chain[r.amp.slot] : null;
     const view = a ? cabOf(a) : null;
-    E.corner.querySelectorAll('.grs-head, .grs-cab, .grs-nohead').forEach((n) => n.remove());
     drawPlate();
     if (!plate.isConnected) E.corner.append(plate);
     const floor = SHOPL.floorY - 6, cx = C.x + C.w / 2;
     const shown = view?.kind === 'clawd' ? view.shown : 'v412';
     const box = cabBox(shown), z = Math.min(400 / box.w, 300 / box.h, 0.9);
     const cw = Math.round(box.w * z), chh = Math.round(box.h * z);
-    const cab = cabView(shown, cw, chh, { open: R.gr.cam === 'tryout-cab', ir: view?.kind === 'stack', label: view?.kind === 'stack' ? view.cabName : view?.cab === 'own' ? `${view.amp}’s own` : null });
-    place(cab.el, cx - cw / 2, floor - chh);
-    cab.el.addEventListener('click', (e) => { if (/** @type {HTMLElement} */ (e.target).closest('.grs-mic') || R.gr.cam === 'tryout-cab') return; R.press('shop:cab'); });
-    cab.el.setAttribute('aria-label', 'Your cab: go closer (C)');
-    E.corner.append(cab.el);
+    const open = R.gr.cam === 'tryout-cab', ir = view?.kind === 'stack', label = view?.kind === 'stack' ? view.cabName : view?.cab === 'own' ? `${view.amp}’s own` : null;
+    const key = JSON.stringify([shown, cw, chh, open, ir, label]);
+    if (key !== cabKey || !cabObj?.el.isConnected) {
+      cabObj?.el.remove();
+      const cab = cabView(shown, cw, chh, { open, ir, label });
+      place(cab.el, cx - cw / 2, floor - chh);
+      cab.el.addEventListener('click', (e) => { if (/** @type {HTMLElement} */ (e.target).closest('.grs-mic') || R.gr.cam === 'tryout-cab') return; R.press('shop:cab'); });
+      cab.el.setAttribute('aria-label', 'Your cab: go closer (C)');
+      E.corner.append(cab.el);
+      cabObj = cab; cabKey = key;
+    }
     boxes.cab = { x: cx - cw / 2, y: floor - chh, w: cw, h: chh };
-    if (view?.kind === 'clawd') placeMics(cab, view, { R, slot: r.amp.slot, drag: R.gr.cam === 'tryout-cab', onSay: say });
+    // (a mic in the hand places itself; the rest stand where the song has them)
+    if (!S.dragging) placeMics(cabObj, view, { R, slot: r?.amp?.slot, drag: open, onSay: say });
     // the head on top of it (the face's compact form is the head alone), its knobs the real amp's
     const headW = clamp(cw + 16, 340, 430), hz = headW / 420;
     if (a) {
+      noHead?.remove(); noHead = null;
       const d = R.getDevice(a.device);
       if (!headFace || headFace.device !== a.device) {
         headFace?.face.destroy();
+        headEl?.remove(); headEl = null;
         const slot = () => rigNow()?.amp?.slot;
         const f = renderFace(headDef(d), paramValues(d, a.params), { size: 'compact', on: a.on !== false,
           onParam: (k, v, { commit }) => { const s = slot(); if (s != null) R.rig.turn(s, k, v, { commit }); },
           onToggle: (on) => { const s = slot(); if (s != null) R.rig.stomp(s, on); } });
-        headFace = { device: a.device, face: f };
+        headFace = { device: a.device, face: f, nh: 0 };
       } else headFace.face.update(paramValues(d, a.params), a.on !== false);
-      const wrap = h('div', { style: { width: '420px', transform: `scale(${hz.toFixed(4)})`, transformOrigin: '0 0' } }, headFace.face.el);
-      const head = h('div.grs-head', { dataset: { amp: a.device } }, wrap);
-      tmp.append(head);
-      const nh = headFace.face.el.offsetHeight || 128, hh = nh * hz;
-      place(head, cx - headW / 2, floor - chh - hh + 2, headW, hh);
-      head.addEventListener('click', (e) => { if (/** @type {HTMLElement} */ (e.target).closest('.kn, button, [role=slider], .ms')) return; if (R.gr.cam !== 'tryout-head') R.press('shop:head'); });
-      E.corner.append(head);
-      boxes.head = { x: cx - headW / 2, y: floor - chh - hh + 2, w: headW, h: hh, el: head };
+      if (!headEl) {
+        const wrap = h('div.grs-headwrap', { style: { width: '420px', transformOrigin: '0 0' } }, headFace.face.el);
+        headEl = h('div.grs-head', { dataset: { amp: a.device } }, wrap);
+        tmp.append(headEl);
+        headFace.nh = headFace.face.el.offsetHeight || 128;
+        headEl.addEventListener('click', (e) => { if (/** @type {HTMLElement} */ (e.target).closest('.kn, button, [role=slider], .ms')) return; if (R.gr.cam !== 'tryout-head') R.press('shop:head'); });
+        E.corner.append(headEl);
+      }
+      /** @type {HTMLElement} */ (headEl.firstChild).style.transform = `scale(${hz.toFixed(4)})`;
+      const hh = headFace.nh * hz;
+      place(headEl, cx - headW / 2, floor - chh - hh + 2, headW, hh);
+      boxes.head = { x: cx - headW / 2, y: floor - chh - hh + 2, w: headW, h: hh, el: headEl };
     } else {
       headFace?.face.destroy(); headFace = null;
-      const nb = h('button.grs-nohead', { type: 'button', onclick: () => R.press('shop:wall') }, 'No amp on your stack. Take one off the wall.');
-      place(nb, cx - 170, floor - chh - 110, 340, 100);
-      E.corner.append(nb);
-      boxes.head = { x: cx - 170, y: floor - chh - 110, w: 340, h: 100, el: nb };
+      headEl?.remove(); headEl = null;
+      if (!noHead) { noHead = h('button.grs-nohead', { type: 'button', onclick: () => R.press('shop:wall') }, 'No amp on your stack. Take one off the wall.'); E.corner.append(noHead); }
+      place(noHead, cx - 170, floor - chh - 110, 340, 100);
+      boxes.head = { x: cx - 170, y: floor - chh - 110, w: 340, h: 100, el: noHead };
     }
   }
 
@@ -610,23 +630,26 @@ export function mount(R) {
         if (!moving) { moving = true; el.setPointerCapture(ev.pointerId); el.classList.add('dragging'); E.corner.append(marker); }
         el.style.transform = `translateX(${dx}px)`;
         const me = boardSlots.find((b) => b.insert === insert);
+        if (!me) return;
         const cx = me.x + me.w / 2 + dx;
         to = dropAt(insert, cx);
         const B = SHOPL.board;
         place(marker, to.x - 2, B.y + 14, null, B.h - 44);
       };
       const up = () => {
-        el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up);
+        el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.removeEventListener('lostpointercapture', up);
         marker.remove();
         if (!moving) return;
+        moving = false;
         el.classList.remove('dragging'); el.style.transform = '';
+        if (!el.isConnected) return;   // (the board was drawn again under the hand: someone else moved it)
         const r = rigNow(), from = r?.slots.find((s) => s.insert === insert)?.slot;
         if (to && from != null && to.index !== from) {
           const res = R.rig.move(from, to.index);
           if (!res.ok) say(res.error);
         }
       };
-      el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+      el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('lostpointercapture', up);
     });
   }
   // where a dragged pedal lands: the slot index in the chain after it's lifted out, and the x of the gap
@@ -727,11 +750,13 @@ export function mount(R) {
     const res = R.rig.swap({ name, chain: stack.chain }, { label });
     if (!res.ok) { say(res.error); return res; }
     const st = room().stack;
-    if (id && /^[A-Za-z0-9._-]{1,64}$/.test(id) && (st?.id !== id || st?.name !== name)) {
-      const d = store.dispatch([{ type: 'room.set', patch: { stack: { id, name } } }], { by: 'you', label, reason: 'room:rig', join: res.txn?.id || null });
+    // (the song names the rack stack its chain came from; a stack that isn't on the rack leaves it naming none)
+    const ref = id && /^[A-Za-z0-9._-]{1,64}$/.test(id) ? { id, name } : null;
+    if (ref ? st?.id !== id || st?.name !== name : !!st) {
+      const d = store.dispatch([{ type: 'room.set', patch: { stack: ref } }], { by: 'you', label, reason: 'room:rig', join: res.txn?.id || null });
       if (!d.ok) console.error('shop: room.stack', d.error);
     }
-    S.base = id ? { id, chain: clone(stack.chain), name } : S.base;
+    S.base = ref ? { id, chain: clone(stack.chain), name } : null;
     say(SAY.stackUp({ name, said: describeStack(stack.chain) }));
     later(() => flash(boxes.head?.el), 30);
     return { ok: true, txn: res.txn };
@@ -861,6 +886,9 @@ export function mount(R) {
     } else {
       if (lastWorld === 'shop') {
         unlook();
+        // (Put it back lasts while you're in the shop: SAY.removed)
+        S.removed = null;
+        naming = null;
         // (back on the stage: the way back never leads into the shop again)
         const t = R.gr.trail;
         if (Array.isArray(t)) for (let i = t.length - 1; i >= 0; i--) if (SHOP_CAMS.includes(t[i])) t.splice(i, 1);
@@ -882,7 +910,12 @@ export function mount(R) {
     if (S.area === 'rack' && inShop()) drawSheet();
   }));
   // (the song's stack changed by an undo or another author: the plate follows)
-  const offStore = store.on('change', (e) => { if (built && e.kind !== 'preview' && e.ops?.some((o) => o.type === 'room.set')) { loadBase(); drawPlate(); } });
+  // (and a step anyone takes while something's being tried ends the try: the song moved under it)
+  const offStore = store.on('change', (e) => {
+    if (e.kind === 'preview') return;
+    if (tried) release({ drop: e.kind === 'load' });
+    if (built && e.ops?.some((o) => o.type === 'room.set')) { loadBase(); drawPlate(); }
+  });
   offs.push(offStore);
   // a take starting: nothing is being tried
   offs.push(R.on('press', (e) => { if (tried && (e.id === 'record' || e.id === 'again' || e.id === 'side')) release(); }));
@@ -915,6 +948,8 @@ export function mount(R) {
       case 'save': {
         if (!rigNow()) return { ok: false, error: 'There’s no guitar in this room.' };
         naming = { kind: 'save' };
+        // (the name field is on the stack's plate, the rack's sheet and the cab builder: from anywhere else, the rack)
+        if (!inShop() && R.gr.cam !== 'cab') return goArea('rack');
         drawPlate(); refreshPanels();
         if (S.area === 'rack' && inShop()) drawSheet();
         return { ok: true };

@@ -5,7 +5,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../../app/src/core/store.js';
-import { createProject, normClip, clipTail, clipBodyEnd } from '../../app/src/core/project.js';
+import { createProject, normClip, clipTail, clipBodyEnd, clipLengthPatch } from '../../app/src/core/project.js';
 import {
   planTakeFolder,
   takeFolders,
@@ -91,6 +91,25 @@ describe('the model', () => {
       !r.ok && /tail/.test(r.error),
       'a length that leaves the tail as long as the clip is refused, and says why',
     );
+    assert.equal(song(s), before);
+  });
+  test("clipLengthPatch (the Inspector's Length): a take's length moves its out-point, the body stays; undo is exact", () => {
+    const { s, g } = twoParts();
+    const v = byAsset(s, g, 'a_verse1'),
+      before = song(s);
+    assert.deepEqual(clipLengthPatch({ kind: 'notes', start: 0, length: 4 }, 2), { length: 2 });
+    // back into the tail: a beat of ring left, the part still ends at beat 8
+    assert.ok(s.dispatch({ type: 'clip.set', track: g, clip: v.id, patch: clipLengthPatch(v, 9) }).ok);
+    let x = byAsset(s, g, 'a_verse1');
+    assert.equal(x.length, 9);
+    assert.equal(clipTail(x), 1);
+    assert.equal(clipBodyEnd(x), 8);
+    // shorter than the old tail: into the body, the tail goes (no refusal)
+    assert.ok(s.dispatch({ type: 'clip.set', track: g, clip: v.id, patch: clipLengthPatch(x, 1) }).ok);
+    x = byAsset(s, g, 'a_verse1');
+    assert.equal(x.length, 1);
+    assert.equal(clipTail(x), 0);
+    assert.ok(s.undo().ok && s.undo().ok);
     assert.equal(song(s), before);
   });
 });

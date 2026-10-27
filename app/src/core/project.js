@@ -223,8 +223,17 @@ export const isTakeId = (v) => typeof v === 'string' && /^tk_[0-9a-z]{4,16}$/.te
 // and all). A notes clip has none (its notes carry their own length). 0 < tail < length; an older reader drops the
 // field and plays the clip as it is.
 //   clipTail(clip) -> beats (0: none)     clipBodyEnd(clip) -> the body's end, a song beat (start + length without a tail)
+//   clipLengthPatch(clip, length) -> the clip.set patch for a new length that keeps the body (below)
 export const clipTail = (c) => (c && c.kind === 'audio' && typeof c.tail === 'number' && c.tail > 0 && c.tail < c.length ? c.tail : 0);
 export const clipBodyEnd = (c) => c.start + c.length - clipTail(c);
+// The clip.set patch that gives a clip a new length (the Inspector's Length): with a tail, the length moves the out-point,
+// so the tail shortens or grows and the body stays; a length into the body takes the tail off. Without one, { length }.
+export function clipLengthPatch(c, length) {
+  const tl = clipTail(c);
+  if (!tl) return { length };
+  const body = c.length - tl;
+  return { length, tail: length > body + 1e-6 ? Math.round((length - body) * 1e4) / 1e4 : null };
+}
 
 // A clip as a song holds it (normClip): notes clips carry notes, audio clips asset, offset and gain.
 /**

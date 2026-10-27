@@ -43,7 +43,7 @@
 // What makes it steady (measured in tools/input-test.js across E1 to E4, at 48 and 96 kHz, with a pick's glide, hum
 // and noise):
 //   - YIN (input/pitch.js, ported from Claw'd-o-Matic) on each window, in the instrument's range;
-//   - a noise floor (the quietest look in the last 8 s), and a gate 10 dB over it: a string that has decayed into the
+//   - a noise floor (the quietest look between notes in the last 8 s, kept while strings ring), and a gate 10 dB over it: a string that has decayed into the
 //     hum is the hum (a single coil's 60 Hz reads as B♭1), so the reading holds instead;
 //   - the held note as YIN's hint: a pick that's a whole multiple of its period (a decaying A2 under hum reads A1) is
 //     the note, while its own dip is nearly as clear;
@@ -162,7 +162,7 @@ export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, t
   /** @type {any} */
   let S;
   const fresh = () => ({
-    last: -1, floor: -100, dbs: /** @type {{ t: number, db: number }[]} */ ([]), prev: [-120], dv: 0, attackAt: -1e9, heardAt: -1e9, since: 0, p: 0, sm: 0, cand: 0, candAt: 0,
+    last: -1, floor: -100, dbs: /** @type {{ t: number, db: number }[]} */ ([]), quiet: /** @type {{ t: number, db: number }[]} */ ([]), lv: /** @type {{ t: number, db: number }[]} */ ([]), qfloor: /** @type {number | null} */ (null), firstAt: -1, attackDb: -120, prev: /** @type {number[]} */ ([]), dv: 0, attackAt: -1e9, heardAt: -1e9, since: 0, p: 0, sm: 0, cand: 0, candAt: 0,
     hist: /** @type {number[]} */ ([]), near: 0, inTune: false, shown: /** @type {number | null} */ (null), conf: 0,
     reading: /** @type {any} */ (READING_NONE),
   });
@@ -177,18 +177,36 @@ export function createSteadyTuner({ tuning = 'standard', lo = null, hi = 1400, t
       const dt = S.last < 0 ? 0.04 : Math.max(0.001, Math.min(0.5, t - S.last));
       S.last = t;
       const db = dbOf(rms(buf));
-      // the noise floor: the quietest look of the last 8 s (the hum and hiss between notes), never digital silence (an
-      // analyser not yet filled)
-      if (db > -140) S.dbs.push({ t, db: Math.max(-100, db) });
-      while (S.dbs.length && S.dbs[0].t < t - 8) S.dbs.shift();
-      S.floor = S.dbs.length ? Math.min(...S.dbs.map((x) => x.db)) : -100;
       // a new attack: 5 dB over the quietest of the last three looks (a pluck over a string still ringing rises over
       // two of them; a swell is slower, and that's fine)
-      const onset = db - Math.min(...S.prev) > 5 && db > -70 && t - S.attackAt > 0.1;
-      S.prev.push(db); if (S.prev.length > 3) S.prev.shift();
-      if (onset) S.attackAt = t;
+      // (digital silence, an analyser not yet filled, isn't a look: from it, the first hum would be an attack)
+      const onset = S.prev.length > 0 && db - Math.min(...S.prev) > 5 && db > -70 && t - S.attackAt > 0.1;
+      if (db > -140) { S.prev.push(db); if (S.prev.length > 3) S.prev.shift(); }
+      if (onset) { S.attackAt = t; S.attackDb = db; }
+      // the noise floor: the quietest quiet look of the last 8 s (the hum and hiss between notes), never digital silence
+      // (an analyser not yet filled). A string ringing down isn't quiet: within 12 s of a pick, a look more than 3 dB
+      // over the floor (or, before there is one, a level still falling) is left out, and the floor stays where the last
+      // quiet moment put it. Else a guitarist plucking again and again as they tune lifts the floor to the strings' own
+      // level, and the gate closes on them (a low E re-plucked every 1.5 s read for under half of each pluck once 8 s had
+      // gone by). Until a quiet look comes, the quietest look of the last 8 s stands in
+      if (db > -140) {
+        if (S.firstAt < 0) S.firstAt = t;
+        S.lv.push({ t, db }); while (S.lv.length > 1 && S.lv[1].t <= t - 0.5) S.lv.shift();
+        const since = t - S.attackAt, falling = S.lv[0].t <= t - 0.4 && db < S.lv[0].db - 1;
+        if (since < 0.3) S.attackDb = Math.max(S.attackDb, db);
+        // (what rose and then stayed level, the hum when a volume knob comes up, is no string: a string falls)
+        const flat = since > 1.5 && db > S.attackDb - 2;
+        const ringing = since < 12 && !flat && (since < 0.6 || (S.qfloor == null ? falling : db > S.qfloor + 3));
+        // (nor is the first tenth of a second: the analyser's window is still part silence, a few dB under the floor)
+        const x = { t, db: Math.max(-100, db) };
+        if (t - S.firstAt >= 0.1) { S.dbs.push(x); if (!ringing) S.quiet.push(x); }
+      }
+      while (S.dbs.length && S.dbs[0].t < t - 8) S.dbs.shift();
+      while (S.quiet.length && S.quiet[0].t < t - 8) S.quiet.shift();
+      if (S.quiet.length) S.qfloor = Math.min(...S.quiet.map((x) => x.db));
+      S.floor = S.qfloor ?? (S.dbs.length ? Math.min(...S.dbs.map((x) => x.db)) : -100);
       // (the floor needs a quarter second of listening first: on a cold start, hum alone would read as a note)
-      const open = S.dbs.length > 0 && db > Math.max(-75, S.floor + gate) && t - S.attackAt >= attack && t - S.dbs[0].t >= 0.24;
+      const open = S.firstAt >= 0 && db > Math.max(-75, S.floor + gate) && t - S.attackAt >= attack && t - S.firstAt >= 0.24;
       let heard = false;
       if (open) {
         const holding = S.p && t - S.heardAt < 0.3 && t - S.attackAt > 0.25;

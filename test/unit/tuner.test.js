@@ -129,4 +129,31 @@ describe('the steady tuner', () => {
       'with no tuning (any note) it does read E1',
     );
   });
+  test('a low string plucked again and again, as a guitarist tunes, keeps reading past 8 s (its ringing is not the floor)', () => {
+    const sr = 48000,
+      len = 16,
+      buf = new Float32Array(sr * len);
+    for (let at = 0.5; at < len - 1; at += 1.5) {
+      const s = string(40, {
+        sr,
+        dur: 1.55,
+        at,
+        len,
+        peak: -14,
+        cents: -13,
+        hum: null,
+        noise: null,
+        seed: Math.round(at * 10),
+      });
+      for (let i = 0; i < buf.length; i++) buf[i] += s.buf[i];
+    }
+    const hum = string(40, { sr, dur: 0, at: 0, len, peak: -120, hum: -60, noise: -70 });
+    for (let i = 0; i < buf.length; i++) buf[i] += hum.buf[i];
+    const R = readAll(buf, sr, 'standard', { until: len - 1 });
+    const late = R.filter((x) => x.t > 9);
+    const live = late.filter((x) => x.r.live && x.r.p === 40).length;
+    assert.ok(live >= late.length * 0.95, `live in ${live} of ${late.length} looks after 9 s`);
+    // (and the floor is still the hum's, not the strings')
+    assert.ok(late[late.length - 1].r.floor < -55, `floor ${late[late.length - 1].r.floor.toFixed(1)} dBFS`);
+  });
 });

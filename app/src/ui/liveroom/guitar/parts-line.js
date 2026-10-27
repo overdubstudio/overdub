@@ -12,8 +12,8 @@
 //       drag asks it too (the tape stream's), then calls R.parts.takes.place(riff, { at })
 //
 // The lane is a role=listbox (the room's key table leaves a focused list its arrows, Home and End: ← → pick a card,
-// ↑ ↓ the take that plays, Home and End the first and the last); each card a role=option. Space never presses one
-// (it's the transport's everywhere, the shell's rule). No <select>, no range.
+// ↑ ↓ the take that plays, Home and End the first and the last; Enter stays the room's, play from the card); each card
+// a role=option. Space never presses one (it's the transport's everywhere, the shell's rule). No <select>, no range.
 
 import { h } from '../../dom.js';
 import { byline } from '../../dom.js';
@@ -198,7 +198,13 @@ export function createPartLine(R, on) {
   }
 
   /* ------------------------------------------------------------------------------------------- the list's own keys */
+  // (Space is the one key a focused listbox keeps from the shell (its rule, OWNS_SPACE: the shell would stop it before
+  // here otherwise), so the lane hands it to the room itself: Space stops the song or starts the drummer with the part
+  // line focused too. Enter isn't the list's: the room's key table has it ('play': from the selected card) and the
+  // shell runs that first, in the capture phase; handled here too it would start the song and stop it again. Whether
+  // a key was marked on its way here says nothing: the live room's holds mark keys they do nothing with)
   lane.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); if (!e.repeat) R.press('space'); return; }
     if (!model || e.metaKey || e.ctrlKey || e.altKey) return;
     const ps = model.line.parts, i = ps.findIndex((c) => c.id === model.sel);
     const go = (j) => { e.preventDefault(); e.stopPropagation(); if (j === 'new') on.pick('new'); else if (ps[j]) on.pick(ps[j].id); };
@@ -207,7 +213,6 @@ export function createPartLine(R, on) {
     else if (e.key === 'Home') go(0);
     else if (e.key === 'End') go('new');
     else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); on.key(e.key === 'ArrowUp' ? 'take:up' : 'take:down'); }
-    else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); if (model.sel && model.sel !== 'new') on.play(model.sel); else on.key('record'); }
   });
 
   return { el, render, frame, dropAt, dragging: () => !!drag?.started, dispose() { end(); headEl?.remove(); } };

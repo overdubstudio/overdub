@@ -36,7 +36,8 @@
 //       tape as a part at index `at`: riff is riffs-db intoSong's result ({ ops, clip, beats, bars, tail }); its bars
 //       (whole bars of its beats) inserted, the section, and the riff's clip on `track` at the part's 1, its ring (tail,
 //       seconds) kept as the clip's tail
-//   whereWords(line, i) -> 'before the chorus' | 'after the verse' | ''   where index i sits among the others
+//   whereWords(line, i) -> 'before Chorus' | 'after Verse' | ''   where index i sits among the others (the parts' names
+//       as the song has them, a name being a name: "Rdn Intro", never "rdn intro")
 
 import { readRoom } from '../../../core/liveroom/session.js';
 import { partOf } from '../../../core/liveroom/model.js';
@@ -45,7 +46,6 @@ import { newId, clipTail } from '../../../core/project.js';
 
 const EPS = 1e-6;
 const r4 = (x) => Math.round(x * 10000) / 10000;
-const low = (s) => String(s || '').toLowerCase();
 export const NEW_BARS = 4;
 const none = (extra = {}) => ({ ops: [], label: '', reason: '', ...extra });
 
@@ -66,7 +66,7 @@ export function partLine(p) {
 export function whereWords(line, i) {
   const ps = line.parts;
   const after = ps[i + 1], before = ps[i - 1];
-  return after ? `before ${low(after.name)}` : before ? `after ${low(before.name)}` : '';
+  return after ? `before ${after.name}` : before ? `after ${before.name}` : '';
 }
 
 export function newPartLength(p, { from, end }) {
@@ -88,7 +88,7 @@ export function planNewPart(p, { at = null, bars = NEW_BARS, name = null, id = n
   if (i < n) ops.push({ type: 'time.insert', at: start, length });
   ops.push({ type: 'section.add', section: { id: sid, name: nm, start, length } });
   ops.push({ type: 'room.part.set', section: sid, patch: { reps: 1 } });
-  return { ops, label: i === 0 && n ? `${nm} before ${low(line.parts[0].name)}` : `A new part: ${nm}`, reason: `room:part:${sid}`, section: sid, start, length };
+  return { ops, label: i === 0 && n ? `${nm} before ${line.parts[0].name}` : `A new part: ${nm}`, reason: `room:part:${sid}`, section: sid, start, length };
 }
 
 export function planTakeIn(p, { track = null, clip = null, from = 0, section = null, name = null, id = null } = {}) {
@@ -150,7 +150,7 @@ export function planRemovePart(p, { section = null } = {}) {
   // (time.remove takes the section out but leaves its room.parts entry: the part goes first, so ⌘Z brings both)
   if (partOf(p, sec.id)) ops.push({ type: 'room.part.set', section: sec.id, remove: true });
   ops.push({ type: 'time.remove', at: sec.start, length: sec.length });
-  return { ops, label: `Removed ${low(sec.name)}`, reason: `room:remove:${sec.id}` };
+  return { ops, label: `Removed ${sec.name}`, reason: `room:remove:${sec.id}` };
 }
 
 export function planMovePart(p, { section = null, to = null } = {}) {
@@ -164,8 +164,8 @@ export function planMovePart(p, { section = null, to = null } = {}) {
   // (where it lands, among the others: the part before or after it once it's there)
   const rest = line.parts.filter((x) => x.id !== sec.id);
   const k = before ? rest.findIndex((x) => x.id === before.id) : rest.length;
-  const where = rest[k] ? `before ${low(rest[k].name)}` : rest[k - 1] ? `after ${low(rest[k - 1].name)}` : '';
-  return { ops: [{ type: 'section.move', section: sec.id, before: before ? before.id : null }], label: `Moved ${low(sec.name)} ${where}`, reason: `room:move:${sec.id}`, where };
+  const where = rest[k] ? `before ${rest[k].name}` : rest[k - 1] ? `after ${rest[k - 1].name}` : '';
+  return { ops: [{ type: 'section.move', section: sec.id, before: before ? before.id : null }], label: `Moved ${sec.name} ${where}`, reason: `room:move:${sec.id}`, where };
 }
 
 // a part's takes on a side: the audio clips on its guitar that start in its bars (their 30 ms lead aside) or cover most

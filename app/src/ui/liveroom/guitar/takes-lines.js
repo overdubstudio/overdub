@@ -10,16 +10,15 @@
 //
 // Vars: part (the part's name as the song has it), take (its number on its side), bars, ring (bars that rang past),
 // next (the part after, or null), stopped (the bar the stop came in, 1 is the part's first), n (how many), side ('L' |
-// 'R'), where ('before the chorus' | 'after the verse' | ''), tape (the rolling tape kept it: true | false).
+// 'R'), where ('before Chorus' | 'after Verse' | ''), tape (the rolling tape kept it: true | false).
 
-const lower = (s) => String(s ?? '').toLowerCase();
 const num = (x) => { const v = Math.round((Number(x) || 0) * 10) / 10; return Number.isInteger(v) ? String(v) : v.toFixed(1); };
 const bars = (x) => `${num(x)} bar${Math.abs((Number(x) || 0) - 1) < 0.05 ? '' : 's'}`;
 const takes = (n) => `${n} take${n === 1 ? '' : 's'}`;
 
 export const LINES = {
   // the count, the take
-  'gtake.count': { text: ({ part, side }) => (side === 'R' ? `Counting in: the other side of ${part}. Your left take is in your left ear.` : `Counting in: ${part}.`) },
+  'gtake.count': { text: ({ part, side }) => (side === 'R' ? `Counting in: the other side of ${part}. Your left take plays under it.` : `Counting in: ${part}.`) },
   'gtake.new': { text: () => 'Counting in: a new part at the end. Stop when you’re done; the part ends on the bar line before.' },
   'gtake.input': { text: () => 'The input isn’t open. Plug in first: Getting started has it.' },
   'gtake.none': { text: () => 'Nothing went in: less than a bar was played.' },
@@ -31,7 +30,21 @@ export const LINES = {
   'gtake.short': { text: ({ take, stopped, bars: b }) => `Take ${take} is in: you stopped in bar ${stopped} of ${b}. Keep it?` },
   'gtake.newin': { text: ({ part, bars: b, ring }) => `${part} is in: ${bars(b)}${ring > 0.05 ? `, and ${bars(ring)} rang past it` : ''}. Keep it?` },
   'gtake.kept': { text: ({ part, n }) => `Kept: ${part} has ${takes(n)}${n > 1 ? ', and ↑ ↓ picks the one that plays' : ''}. D for the other side.` },
-  'gtake.keptR': { text: ({ part }) => `Kept. Both sides of ${lower(part)}, wide.` },
+  'gtake.keptR': { text: ({ part }) => `Kept. Both sides of ${part}, wide.` },
+  // the other side landed: how tightly it sits on your left (core/liveroom/tight.js measurePair's verdict and figures:
+  // ms the median or the worst bar's, bar the one that drifts or wanders from, dir 'early' | 'late'); verdict null when
+  // there was too little to measure. Review is up, so the question is the review's (Keep it?), never a punch-in the
+  // guitar room doesn't have
+  'gtake.pair': {
+    text: ({ verdict, ms, bar, dir }) => {
+      const m = Math.max(1, Math.round(Math.abs(Number(ms) || 0)));
+      if (verdict === 'tight') return `The other side is in: within ${m} ms of your left all the way. Keep it?`;
+      if (verdict === 'fine') return `The other side is in: within ${m} ms of your left. Keep it?`;
+      if (verdict === 'bar') return `The other side is in: bar ${bar} runs ${dir === 'early' ? 'early' : 'late'} against your left, about ${Math.max(5, Math.round(m / 5) * 5)} ms. Keep it, or R for again?`;
+      if (verdict === 'loose') return `The other side is in: it wanders from your left from bar ${bar || 1}. Keep it, or R for again?`;
+      return 'The other side is in. Keep it?';
+    },
+  },
   'gtake.tossed': { text: ({ take, tape }) => `Tossed take ${take}. It’s gone from the song${tape ? '; the tape still has it' : ''}.` },
   'gtake.pick': { text: ({ part, take }) => `${part}: take ${take} plays.` },
   'gtake.one': { text: ({ part }) => `${part} has one take on that side.` },

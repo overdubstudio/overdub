@@ -58,7 +58,7 @@ export function createRecView(R) {
       lamp.classList.toggle('grt-recl', ph === 'take');
       const other = P.side === 'R' ? 'the other side, ' : '';
       top.textContent = ph === 'count'
-        ? P.side === 'R' ? 'Counting in: the other side. Your left take is in your left ear.' : P.count && P.prev ? `Counting in over the end of ${P.prev}` : P.count ? 'Counting in' : P.prev ? `In over the end of ${P.prev}` : 'Straight in'
+        ? P.side === 'R' ? 'Counting in: the other side. Your left take plays under it.' : P.count && P.prev ? `Counting in over the end of ${P.prev}` : P.count ? 'Counting in' : P.prev ? `In over the end of ${P.prev}` : 'Straight in'
         : `Recording ${other}take ${P.n}`;
       part.textContent = P.name + (P.side === 'R' ? ', the other side' : '');
       count.hidden = ph !== 'count';

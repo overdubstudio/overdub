@@ -102,6 +102,9 @@ export const CSS = `
 .grt-h::after { content: ''; position: absolute; left: 5px; top: -1px; width: 12px; height: 18px; background: var(--text); border-radius: var(--r-press); }
 .grt-h span { position: absolute; top: 20px; left: 15px; font: 400 11px/1 var(--font-mono); color: var(--text); white-space: nowrap; background: var(--bg); padding: 2px 4px; pointer-events: none; }
 .grt-h.grt-out span { left: auto; right: 15px; }
+/* (the part's end sits on the out handle whenever a take stops just past a bar line: it's grabbed by its lower half, where
+   its knob is, and the in and out handles by the rest, so neither hides the other) */
+.grt-h.grt-pe { top: 58%; z-index: 3; }
 .grt-h.grt-pe::before { background: var(--grt-lamp); width: 2px; }
 .grt-h.grt-pe::after { top: auto; bottom: -1px; background: var(--grt-lamp); }
 .grt-h.grt-pe span { top: auto; bottom: 20px; color: var(--grt-lamp); }

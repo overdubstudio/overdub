@@ -214,6 +214,10 @@ export function createReview(R, on) {
     });
     hEl.addEventListener('keydown', (e) => {
       if (!V || e.metaKey || e.ctrlKey || e.altKey) return;
+      // (Enter on a focused handle: the shell leaves a focused slider its Enter, so the room's Enter row never runs on
+      // one, and a handle has nothing to activate: it's Keep, as everywhere in the review. After a drag the handle has
+      // focus. A key the studio declares and the live room holds may have marked it on the way, doing nothing)
+      if (e.key === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); e.stopPropagation(); if (!e.repeat) on.keep(); return; }
       const step = which === 'pe' ? V.bpb : e.shiftKey ? V.bpb : 1;
       const dir = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'PageDown' ? -V.bpb / step : e.key === 'PageUp' ? V.bpb / step : 0;
       if (!dir) return;

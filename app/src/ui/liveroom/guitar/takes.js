@@ -183,7 +183,7 @@ export function mount(R) {
     const a = app.input?.audio;
     if (a && !a.state?.open) { try { await a.ensureOpen?.(); } catch { /* said below */ } }
     if (P !== pass) return;
-    if (!a?.state?.open) { done(pass); tell('gtake.input'); return; }
+    if (!a?.state?.open) { done(pass); monitorHome(); tell('gtake.input'); return; }
     // the drums under a part that has none yet (a new part past the end): the room's beat, heard and never kept
     try {
       const p = store.get(), to = pass.tailFrom ?? pass.from + 64 * pass.bpb;
@@ -297,32 +297,41 @@ export function mount(R) {
     else tell('gtake.in', { take: plan.take, bars: sec?.bars || 1, ring, next: nx?.name || null });
     hear();
   }
-  // the other side is in: how tightly it sits on the left, bar by bar (core/liveroom/tight.js measurePair), said in the
-  // pair's own line (lines/double.js side.tight, side.fine, side.drift, side.wander)
+  // the other side is in: how tightly it sits on the left, bar by bar (core/liveroom/tight.js measurePair, the tight-pair
+  // measure), said in the take's own line (gtake.pair: the review's question, Keep it?, not lines/double.js's punch-in
+  // offer, which the guitar room doesn't have); with too little to measure, that it's in
   async function pair(T) {
+    let said = false;
     try {
       const sec = sectionOf(T.section);
       const left = sec ? PP.takesIn(store.get(), { section: sec.id, side: 'L' }).find((x) => !x.mute) : null;
       const right = clipNow(T.track, T.clip);
-      if (!sec || !left || !right) return;
-      const di = async (c) => {
-        const buf = eng()?.assets?.peek?.(c.asset) || (await eng()?.assets?.get?.(c.asset));
-        if (!buf) return null;
-        const data = buf.getChannelData(0), sr = buf.sampleRate, spb = 60 / (store.get().tempo || 120);
-        const at = Math.max(0, Math.round(((+c.offset || 0) + (sec.start - c.start) * spb) * sr));
-        return { di: data.subarray(at), sr };
-      };
-      const [a, b] = [await di(left), await di(right)];
-      if (!a || !b || a.sr !== b.sr || gr.take !== T) return;
-      const m = measurePair(a.di, b.di, { sr: a.sr, tempo: store.get().tempo, start: 0, bars: Math.round(sec.length / lineNow().bpb), grid: 4, place: 'metal' });
-      if (gr.take !== T) return;
-      if (m?.line) {
-        R.line(m.line.id, { ...m.line.vars, part: sec.name });
-        const ms = Math.round(Math.abs(m.median ?? 0));
-        T.pairWords = m.verdict === 'bar' && m.worst ? `Bar ${m.worst.bar} drifts ${m.worst.dir === 'early' ? 'early' : 'late'} against your left, about ${Math.max(5, Math.round(Math.abs(m.worst.ms) / 5) * 5)} ms.` : `Within ${Math.max(1, ms)} ms of your left take, on the median.`;
-        review.render();
+      if (sec && left && right) {
+        const di = async (c) => {
+          const buf = eng()?.assets?.peek?.(c.asset) || (await eng()?.assets?.get?.(c.asset));
+          if (!buf?.getChannelData) return null;
+          const data = buf.getChannelData(0), sr = buf.sampleRate, spb = 60 / (store.get().tempo || 120);
+          const at = Math.max(0, Math.round(((+c.offset || 0) + (sec.start - c.start) * spb) * sr));
+          return { di: data.subarray(at), sr };
+        };
+        const [a, b] = [await di(left), await di(right)];
+        if (gr.take !== T) return;
+        if (a && b && a.sr === b.sr) {
+          const m = measurePair(a.di, b.di, { sr: a.sr, tempo: store.get().tempo, start: 0, bars: Math.round(sec.length / lineNow().bpb), grid: 4, place: 'metal' });
+          if (gr.take !== T) return;
+          if (m?.verdict) {
+            const ms = m.verdict === 'bar' ? m.worst?.ms ?? m.median : m.median;
+            tell('gtake.pair', { verdict: m.verdict, ms, bar: m.verdict === 'bar' ? m.worst?.bar : m.from, dir: m.worst?.dir });
+            said = true;
+            const mm = Math.round(Math.abs(m.median ?? 0));
+            T.pairWords = m.verdict === 'bar' && m.worst ? `Bar ${m.worst.bar} runs ${m.worst.dir === 'early' ? 'early' : 'late'} against your left, about ${Math.max(5, Math.round(Math.abs(m.worst.ms) / 5) * 5)} ms.`
+              : m.verdict === 'loose' ? `It wanders from your left from bar ${m.from || 1}.` : `Within ${Math.max(1, mm)} ms of your left take, on the median.`;
+            review.render();
+          }
+        }
       }
     } catch (e) { console.error('takes: measuring the pair', e); }
+    if (!said && gr.take === T) tell('gtake.pair', { verdict: null });
   }
   // hear what you just played: the part from its 1 to the take's out, once (any press stops it)
   function hear() {
@@ -587,7 +596,9 @@ export function mount(R) {
     const p = store.get(), ln = PP.partLine(p);
     const track = ln.roles.guitarL;
     if (!track) return { ok: false, error: 'There’s no guitar track in this room.' };
-    const idx = typeof at === 'string' ? Math.max(0, ln.parts.findIndex((x) => x.id === at)) : at;
+    // (a section id: before that part; one that isn't there any more: at the end)
+    const k = typeof at === 'string' ? ln.parts.findIndex((x) => x.id === at) : -1;
+    const idx = typeof at === 'string' ? (k < 0 ? null : k) : at;
     const pl = PP.planRiffPart(p, { at: idx, riff: into, track, name: riff.name || into.clip?.name || null });
     if (pl.error) return { ok: false, error: pl.error };
     const r = step(pl);

@@ -11,8 +11,10 @@
 //     the recording view, Space, the review; the take and its part are one step by you; the out handle's trim joins
 //     it; Toss leaves History as it was; Again counts in again; Keep opens the part line. A take on that part (tailFrom
 //     its end), ↑ ↓ the takes, the other side (the monitor moved to Guitar R and back, both lanes in review), a new
-//     part after and before, moved, deleted and ⌘Z, a name typed on a card (its letters stay in the field), Enter and
-//     Home play, Esc in a take tosses it, a riff placed (the tape's place(), stood in for), no <select>, no range, no
+//     part after and before, moved, deleted and ⌘Z, a card dragged with the pointer, a name typed on a card (its letters
+//     stay in the field), Enter and Home play, Enter and Space with the part line focused (a focused list or handle
+//     swallows no key: Enter on a handle dragged with the pointer keeps the take), the other side's tightness said,
+//     Esc in a take tosses it, a riff placed (the tape's place(), stood in for), no <select>, no range, no
 //     console or page errors. Screenshots: tools/.out/liveroom/gr-takes-*.png
 import path from 'node:path';
 import { openRoom, press, history } from './harness.js';
@@ -199,13 +201,27 @@ export async function run(T, ctx) {
     await waitFor((b) => window.overdub.engine.beat >= b, b1 + 8, 30000);
     await press(page, 'Space');
     await waitFor(() => window.overdub.ui.state.liveRoom.gr.overlay === 'review', null, 20000);
+    // the out handle dragged back with the pointer (it keeps focus), then Keep with Enter on it: a focused handle
+    // never swallows the room's Enter
+    const hd0 = (await history(page)).length, len0 = (await READ()).L[0]?.length;
+    const ob = await page.locator('.grt-h.grt-out').boundingBox();
+    // (by its upper half: the part's end, when the take stopped just past a bar line, sits on it below)
+    await page.mouse.move(ob.x + ob.width / 2, ob.y + 40);
+    await page.mouse.down();
+    await page.mouse.move(ob.x + ob.width / 2 - 70, ob.y + 40, { steps: 6 });
+    await page.mouse.up();
+    await settle(120);
+    const dr = await READ();
+    const hFocus = await E(() => document.activeElement?.classList.contains('grt-out'));
+    T.ok(dr.L[0]?.length < len0 && (await history(page)).length === hd0 && dr.overlay === 'review' && hFocus,
+      `the out handle dragged with the pointer trims the take (${len0} → ${dr.L[0]?.length} beats, snapped to the beat), joined to its step; the handle has focus`);
     // Keep
     await press(page, 'Enter');
     await settle(200);
     const k = await READ();
     const hk = await history(page);
     T.ok(k.overlay !== 'review' && k.drawer && k.cards.length === 1 && k.card === k.sections[0]?.id && hk.length === h0.length + 1 && k.said.some((x) => /^Kept: /.test(x)),
-      `Enter keeps it: the part line opens on ${k.cards.join(', ')} (selected), one step by you ("${hk.at(-1)?.label}")`);
+      `Enter on the focused handle keeps it: the part line opens on ${k.cards.join(', ')} (selected), one step by you ("${hk.at(-1)?.label}")`);
     await press(page, 'Space');
     await settle(100);
     await shot(s, 'parts');
@@ -237,7 +253,12 @@ export async function run(T, ctx) {
     const mon = await E(() => window.__tk.monitor.slice());
     const two = await E(() => document.querySelector('.grt-tl')?.classList.contains('grt-two'));
     T.ok(sd.take?.side === 'R' && sd.R.length === 1 && mon[0] === installed.guitars[1] && two, `D records the other side on Guitar R (the monitor moved there: ${mon.join(' → ')}); the review shows both lanes`);
-    await settle(1200);
+    await waitFor(() => window.__tk.said.some((x) => /^The other side is in/.test(x)), null, 10000).catch(() => {});
+    const pairSaid = (await E(() => window.__tk.said.filter((x) => /^The other side is in/.test(x)))).at(-1) || '';
+    const pairMeta = await E(() => document.querySelector('.grt-meta')?.textContent || '');
+    T.ok(/^The other side is in(: (within \d+ ms of your left|bar \d+ runs (early|late) against your left|it wanders))?.*Keep it/.test(pairSaid) && !/Bar \d+ again\?/.test(pairSaid),
+      `the other side measured against the left (measurePair): "${pairSaid}"; the review says "${pairMeta}"`);
+    await settle(300);
     await shot(s, 'review-side');
     await press(page, 'Enter');
     await settle(200);
@@ -265,6 +286,25 @@ export async function run(T, ctx) {
     T.ok(rm.sections.length === 2 && back.sections.length === 3 && JSON.stringify(back.sections) === JSON.stringify(mv.sections), `⌫ deletes the selected part, ⌘Z puts it back (${rm.sections.map((x) => x.name).join(', ')} → ${back.sections.map((x) => x.name).join(', ')})`);
     await settle(150);
     await shot(s, 'line');
+    // a card dragged with the pointer past the last one: one step by you, then ⌘Z
+    {
+      const hd = (await history(page)).length;
+      const c0 = await page.locator('.grt-card').first().boundingBox();
+      const cl = await page.locator('.grt-card').last().boundingBox();
+      await page.mouse.move(c0.x + 60, c0.y + 50);
+      await page.mouse.down();
+      await page.mouse.move(c0.x + 120, c0.y + 50, { steps: 4 });
+      await page.mouse.move(cl.x + cl.width - 20, cl.y + 50, { steps: 10 });
+      const lit = await E(() => document.querySelector('.grt-gap.grt-hot')?.dataset.drop ?? null);
+      await page.mouse.up();
+      await settle(120);
+      const dg = await READ();
+      const hdg = await history(page);
+      T.ok(lit === '3' && dg.sections.at(-1).id === back.sections[0].id && hdg.length === hd + 1 && hdg.at(-1).by === 'you' && !(await E(() => !!document.querySelector('.grt-ghost'))),
+        `a card dragged past the last: the gap lights (${lit}), it moves there, one step by you ("${hdg.at(-1)?.label}": ${dg.sections.map((x) => x.name).join(', ')})`);
+      await press(page, 'Meta+KeyZ');
+      await settle(120);
+    }
 
     // a name typed on a card: its letters stay in the field
     await page.dblclick('.grt-card[aria-selected="true"] .grt-cn');
@@ -289,6 +329,28 @@ export async function run(T, ctx) {
     await settle();
     const st = await READ();
     T.ok(pf.playing && pf.run === 'play' && pf.from === selSec?.start && hf.playing && hf.from === 0 && st.run === 'idle', `Enter plays from ${selSec?.name} (beat ${pf.from}), Home from the top (beat ${hf.from}), Space stops (${st.run})`);
+
+    // with the part line focused (a card clicked): Enter plays from it and it keeps playing; Space stops it
+    {
+      await page.click('.grt-card[aria-selected="true"] .grt-cm');
+      const fl = await E(() => document.activeElement?.getAttribute('role'));
+      await press(page, 'Enter');
+      await waitFor(() => window.overdub.engine.playing, null, 5000).catch(() => {});
+      await settle(500);
+      const pl1 = await E(() => ({ playing: window.overdub.engine.playing, run: window.overdub.ui.state.liveRoom.run, plays: window.__lrPlays.length }));
+      await press(page, 'Space');
+      await settle(300);
+      const pl2 = await E(() => ({ playing: window.overdub.engine.playing, run: window.overdub.ui.state.liveRoom.run, focus: document.activeElement?.getAttribute('role') }));
+      // ↑ on the focused list: the take before plays on the card with two (the live room's holds mark the key on its way)
+      await page.locator('.grt-card', { hasText: 'of 2' }).locator('.grt-cm').click();
+      const hu = (await history(page)).length;
+      await press(page, 'ArrowUp');
+      const hu2 = await history(page);
+      T.ok(fl === 'listbox' && pl1.playing && pl1.run === 'play' && !pl2.playing && pl2.run === 'idle' && pl2.focus === 'listbox' && hu2.length === hu + 1 && /: take 1$/.test(hu2.at(-1)?.label || ''),
+        `with the part line focused (${fl}), Enter plays from the card and keeps playing (${pl1.run}), Space stops it (${pl2.run}), ↑ picks a take ("${hu2.at(-1)?.label}"): the list swallows none`);
+      await press(page, 'ArrowDown');
+      await E(() => document.activeElement?.blur());
+    }
 
     // Esc in a take tosses it
     const he = await history(page);

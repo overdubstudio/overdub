@@ -78,7 +78,7 @@ describe('the part line', () => {
     const ids = PP.partLine(store.get()).parts.map((c) => c.id);
     assert.equal(PP.planMovePart(store.get(), { section: ids[0], to: 1 }).ops.length, 0, 'to its own place is no move');
     const mv = PP.planMovePart(store.get(), { section: ids[0], to: 3 });
-    assert.equal(mv.where, 'after bridge');
+    assert.equal(mv.where, 'after Bridge');
     step(store, mv);
     assert.deepEqual(parts(store), [
       ['Chorus', 0, 8],
@@ -106,8 +106,8 @@ describe('the part line', () => {
     const line = {
       parts: [{ name: 'Verse' }, { name: 'Chorus' }],
     };
-    assert.equal(PP.whereWords(line, 0), 'before chorus');
-    assert.equal(PP.whereWords(line, 1), 'after verse');
+    assert.equal(PP.whereWords(line, 0), 'before Chorus');
+    assert.equal(PP.whereWords(line, 1), 'after Verse');
     assert.equal(PP.whereWords({ parts: [{ name: 'Verse' }] }, 0), '');
   });
 });

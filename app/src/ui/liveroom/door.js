@@ -18,6 +18,7 @@ import { h, css } from '../dom.js';
 import { screens } from './screens.js';
 import { drawCrop } from './pixels/index.js';
 import { planPlace } from '../../core/liveroom/plans.js';
+import { planGuitarRoom, guitarSetup } from '../../core/liveroom/guitar/setup.js';
 import { setupOf, placeOf, PLACES } from '../../core/liveroom/places.js';
 import { PLAYERS } from '../../core/liveroom/kitchen-plans.js';
 import { bandFor } from '../../core/liveroom/band.js';
@@ -30,6 +31,10 @@ import { prefetchKit } from '../kitload.js';
 export const PREVIEW_LUFS = -18;
 const say = (id, vars) => LINES[id].text(vars || {});
 const ORDER = ['metal', 'basement', 'bluesbar', 'kitchen'];
+// The places the door offers (the guitar room, docs/research/GUITAR-ROOM.md §1: the metal club, rebuilt for the
+// guitarist, and the control room). The others are held: their code stays and press('place:<id>') still opens one, but
+// no card shows until each is rebuilt the same way.
+export const OFFERED = ['metal'];
 const ELECTRIC = new Set(['metal', 'basement', 'bluesbar']);
 const KICK = { metal: 'VOID', basement: 'SUMP PUMP', bluesbar: 'LAST CALL', kitchen: 'COOLER' };
 const CROP = { w: 128, h: 72 };
@@ -149,6 +154,7 @@ const CSS = `
 .lrd-link:hover, .lrd-link:focus-visible { color: var(--text); outline: none; text-decoration-color: currentColor; }
 .lrd-small { margin: 0; font-size: 13px; color: var(--text-3); }
 @media (max-width: 1100px) { .lrd-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lrd-cards[data-n="1"] { grid-template-columns: minmax(0, 440px); justify-content: center; }
 @media (max-width: 640px) { .lrd-cards { grid-template-columns: 1fr; } .lrd-num { display: none; } .lrd-card { padding: 12px; } }
 `;
 
@@ -168,7 +174,7 @@ screens.add({
     const { app, ui, store } = ctx;
     css('liveroom-door', CSS);
     const previews = createPreviews(app);
-    const order = phone() ? ['kitchen', 'metal', 'basement', 'bluesbar'] : ORDER;
+    const order = OFFERED;
     // (auto: the door putting focus on its first card as it opens, which plays nothing: a preview is for a card you
     // move to)
     let picking = false, gone = false, auto = false;
@@ -179,7 +185,8 @@ screens.add({
       previews.stop();
       const p = store.get();
       let plan = null;
-      try { plan = planPlace(p, { place, tuning: null }); } catch (e) {
+      // (the metal club is the guitar room now: its own setup, ./guitar/; the held places as they were)
+      try { plan = place === 'metal' ? planGuitarRoom(p, { tuning: null }) : planPlace(p, { place, tuning: null }); } catch (e) {
         // (the place's plan failed: the door stays, and says so, rather than opening a stage with no room)
         console.error('overdub: planPlace', place, e);
         picking = false;
@@ -193,10 +200,10 @@ screens.add({
       try { ctx.prefs.set({ place }); } catch { /* storage: fine */ }
       // (Rusty Sticks is 24 MB: it starts coming now, while you plug in)
       try {
-        const setup = place === 'kitchen' ? null : setupOf(place);
+        const setup = place === 'kitchen' ? null : place === 'metal' ? guitarSetup() : setupOf(place);
         for (const t of setup?.tracks || []) { const id = t?.instrument?.device || t?.device; const def = id && app.devices?.getDevice?.(id); if (def) prefetchKit(def).catch(() => {}); }
       } catch { /* the stage loads it */ }
-      app.liveRoom.open({ screen: place === 'kitchen' ? 'kitchen' : 'stage' });
+      app.liveRoom.open({ screen: place === 'kitchen' ? 'kitchen' : place === 'metal' && screens.has('guitar') ? 'guitar' : 'stage' });
       return true;
     }
     // the control room's own door: a blank song there (the arranger draws ui/start.js doorOf on it)
@@ -242,10 +249,11 @@ screens.add({
     });
     const root = h('div.lrd',
       h('h1.lr-h.disp', say('door.ask')),
-      h('div.lrd-cards', { role: 'group', 'aria-label': say('door.ask') }, cards),
+      h('div.lrd-cards', { role: 'group', 'aria-label': say('door.ask'), dataset: { n: String(cards.length) } }, cards),
       h('div.lrd-quiet',
         h('button.lrd-link.lrd-nogtr', { type: 'button', onclick: control }, say('door.nogtr')),
-        h('button.lrd-link.lrd-house', { type: 'button', onclick: house }, say('door.house', { title: HOUSE.title })),
+        // (held with the places: the door offers the club and the control room; press('house') still plays it)
+        h('button.lrd-link.lrd-house', { type: 'button', hidden: true, onclick: house }, say('door.house', { title: HOUSE.title })),
         h('p.lrd-small', say('door.local'))));
     el.append(root);
 

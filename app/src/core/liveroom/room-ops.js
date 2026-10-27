@@ -3,12 +3,13 @@
 // (p, op, ctx) -> { inverse: [ops], created? }, as every op is, and keeps the song's room canonical
 // (core/liveroom/model.js ORDER), so an inverse puts back exactly what was there, the order of its keys included.
 //
-//   room.set       { patch: { place?, rig?, tuning?, finish?, master?, mic?, tracks?, takes?, managed? } }
+//   room.set       { patch: { place?, rig?, tuning?, finish?, master?, mic?, tracks?, takes?, managed?, beat?, pins?,
+//                  stack? } }
 //                  whole values; null deletes a key (an empty map too); makes the room ({ v: 1 }) when the song has
 //                  none. { clear: true } takes the whole room out.
 //                  -> inverse: room.set with each key's old value (null where it was absent), or { clear: true } when
 //                     the song had no room
-//   room.part.set  { section, patch: { feel?, busy?, loud?, reps?, oneSide?, drop?, sheet?, learned? } }
+//   room.part.set  { section, patch: { feel?, busy?, loud?, reps?, oneSide?, drop?, sheet?, learned?, beat? } }
 //                  merged into room.parts[section] (null deletes a key; a part left with none goes, and so does an
 //                  empty parts); makes the room when the song has none. { section, remove: true } takes the part out.
 //                  -> inverse: the old values, or { section, remove: true } when the section had no part
@@ -19,12 +20,15 @@
 //   managed: { track | 'master': { gain -96..24 dB, pan -1..1, chain (a short hash, 64 characters at most) } }
 //   feel: FEEL_IDS · busy, loud: -1, 0 or 1 · reps: 1-4 · oneSide, drop: true or false · sheet: a sheet section ·
 //   learned: { from (the clip it was learned from), thin (the read was thin) }
+//   The guitar room's (core/liveroom/model.js; core/liveroom/guitar/beats.js): beat (room's and a part's): a beat name,
+//   a groove id 'style/slug' or 'pin:<pin id>'; pins: the riser's cards, whole, [{ id, groove, name?, hits? }] (at
+//   most 8; hits [{ t, row, v }], at most 256); stack: { id, name } (the rack stack the chain was loaded from)
 // Track, clip, section and sheet section ids may be $refs made earlier in the same dispatch; a track is also found
 // by its name. false and capo 0 are stored as no key (as clip.set stores mute and capo). Undo, redo and reverts
 // (ctx.restore) put back what was there without holding it to these rules or to the song: a track it names may have
 // gone since. Internal forms, for inverses only: room.set { _restore, _at } and room.part.set { section, _restore, _at }.
 
-import { PLACE_IDS, RIG_IDS, FINISHES, FEEL_IDS, ROLES, ORDER, putKey, placeKey } from './model.js';
+import { PLACE_IDS, RIG_IDS, FINISHES, FEEL_IDS, ROLES, ORDER, ROOM_LIMITS, putKey, placeKey } from './model.js';
 
 const clone = (x) => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
 // (what isn't plain text: control characters and bidi overrides or isolates, core/project.js plainText's rule)
@@ -35,7 +39,10 @@ const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
 const isWord = (v) => typeof v === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(v);
 const isRef = (v) => typeof v === 'string' && v.length > 0 && v.length <= 64 && !/[\u0000-\u001f]/.test(v) && !UNSAFE.has(v);
 const list = (xs) => xs.join(', ');
-const SET_KEYS = ['place', 'rig', 'tuning', 'finish', 'master', 'mic', 'tracks', 'takes', 'managed'];
+const SET_KEYS = ['place', 'rig', 'tuning', 'finish', 'master', 'mic', 'tracks', 'takes', 'managed', 'beat', 'pins', 'stack'];
+// (a beat's name: core/liveroom/model.js's rule)
+const BEAT = /^(pin:[A-Za-z0-9_-]{1,32}|[a-z0-9][a-z0-9-]{0,31}\/[a-z0-9][a-z0-9-]{0,63})$/;
+const beatArg = (v, what) => { if (typeof v !== 'string' || !BEAT.test(v)) throw new Error(`${what} is a beat: a groove id like "modernmetal/double-kick-gallop", "house/guide", or "pin:<pin id>"`); return v; };
 const ALL_FINISHES = [...new Set(Object.values(FINISHES).flat())];
 
 function resolve(ctx, id) {
@@ -103,6 +110,41 @@ function roomValue(p, ctx, k, v) {
       }
       return Object.keys(out).length ? out : null;
     }
+    case 'beat': return beatArg(v, 'beat');
+    case 'pins': {
+      if (!Array.isArray(v)) throw new Error('pins is the riser\'s cards, [{ id, groove, name?, hits? }] (or null)');
+      if (!v.length) return null;
+      if (v.length > ROOM_LIMITS.pins) throw new Error(`the riser holds ${ROOM_LIMITS.pins} cards at most`);
+      const seen = new Set();
+      return v.map((e, i) => {
+        if (!isObj(e)) throw new Error(`pins[${i}] is { id, groove, name?, hits? }`);
+        for (const kk of Object.keys(e)) if (!['id', 'groove', 'name', 'hits'].includes(kk)) throw new Error(`a pin is { id, groove, name, hits }: not "${kk}"`);
+        if (typeof e.id !== 'string' || !/^[A-Za-z0-9_-]{1,32}$/.test(e.id) || UNSAFE.has(e.id)) throw new Error(`pins[${i}].id is a short id (letters, digits, - and _)`);
+        if (seen.has(e.id)) throw new Error(`pins: the id "${e.id}" is used twice`);
+        seen.add(e.id);
+        beatArg(e.groove, `pins[${i}].groove`);
+        if (e.groove.startsWith('pin:')) throw new Error(`pins[${i}].groove is a groove, not another pin`);
+        const x = { id: e.id, groove: e.groove };
+        if (e.name != null) {
+          if (typeof e.name !== 'string' || UNSEEN.test(e.name) || !e.name.trim() || e.name.length > ROOM_LIMITS.pinName || e.name !== e.name.trim()) throw new Error(`pins[${i}].name is plain text, 1 to ${ROOM_LIMITS.pinName} characters, no spaces at its ends`);
+          x.name = e.name;
+        }
+        if (e.hits != null) {
+          if (!Array.isArray(e.hits) || e.hits.length > ROOM_LIMITS.pinHits) throw new Error(`pins[${i}].hits is a bar's hits, [{ t, row, v }] (${ROOM_LIMITS.pinHits} at most)`);
+          x.hits = e.hits.map((hh, j) => {
+            if (!isObj(hh) || !(fin(hh.t) && hh.t >= 0 && hh.t < 64) || typeof hh.row !== 'string' || !/^[a-z][a-z0-9]{0,15}$/.test(hh.row) || !(fin(hh.v) && hh.v > 0 && hh.v <= 1)) throw new Error(`pins[${i}].hits[${j}] is { t (beats, 0..64), row (kick, snare, hat ...), v (0..1] }`);
+            return { t: hh.t, row: hh.row, v: hh.v };
+          });
+        }
+        return x;
+      });
+    }
+    case 'stack': {
+      if (!isObj(v) || typeof v.id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(v.id)) throw new Error('stack is { id, name } (the rack stack the chain came from), or null');
+      for (const kk of Object.keys(v)) if (kk !== 'id' && kk !== 'name') throw new Error(`stack is { id, name }: not "${kk}"`);
+      if (v.name != null && (typeof v.name !== 'string' || UNSEEN.test(v.name) || v.name.length > 100 || v.name !== v.name.trim())) throw new Error('stack.name is plain text, 100 characters at most');
+      return v.name ? { id: v.id, name: v.name } : { id: v.id };
+    }
     case 'managed': {
       const m = mapArg(v, 'managed');
       if (!m) return null;
@@ -136,6 +178,7 @@ function partValue(p, ctx, k, v) {
     case 'busy': case 'loud': if (v !== -1 && v !== 0 && v !== 1) throw new Error(`${k} is -1, 0 or 1 (${k === 'busy' ? 'simpler, as it is, busier' : 'softer, as it is, louder'})`); return v;
     case 'reps': if (!(Number.isInteger(v) && v >= 1 && v <= 4)) throw new Error('reps is how many times the part plays its riff, 1 to 4'); return v;
     case 'oneSide': case 'drop': if (typeof v !== 'boolean') throw new Error(`${k} is true or false`); return v || null;
+    case 'beat': return beatArg(v, 'a part\'s beat');
     case 'sheet': {
       const id = resolve(ctx, v);
       const secs = isObj(p.sheet) && Array.isArray(p.sheet.sections) ? p.sheet.sections : [];

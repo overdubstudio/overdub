@@ -22,8 +22,13 @@
 //
 // The two fields (§9.1):
 //   room:  { v: 1, place, rig, tuning, finish, master, mic, tracks: { role: trackId }, parts: { sectionId: { feel,
-//            busy, loud, reps, oneSide, drop, sheet, learned: { from, thin } } }, takes: { clipId: { capo, bpm,
-//            onMaster } }, managed: { trackId | 'master': { gain, pan, chain } } }
+//            busy, loud, reps, oneSide, drop, sheet, learned: { from, thin }, beat } }, takes: { clipId: { capo, bpm,
+//            onMaster } }, managed: { trackId | 'master': { gain, pan, chain } }, beat, pins, stack }
+//   The guitar room's (docs/research/GUITAR-ROOM.md §2.2, §2.9; core/liveroom/guitar/beats.js): beat, the riser's beat
+//   now (a beat name: a groove id 'style/slug', the house's 'house/guide', or 'pin:<pin id>'); pins, the riser's beat
+//   cards [{ id, groove, name?, hits? }] (at most PINS_MAX; hits: an edited bar [{ t, row, v }], at most 256); stack,
+//   the rack stack the guitars' chain was loaded from { id, name } (the song's copy may have been edited since); a
+//   part's beat, the beat it plays.
 //   sheet: { v: 1, capo, time: [n, d], notes, sections: [{ id: 'ss_…', name, lines: [{ id: 'sl_…', text, by }] }] }
 // A false flag (oneSide, drop, onMaster) and capo 0 are kept as no key at all, the way clip.set keeps mute and capo; an
 // empty map (tracks, parts, takes, managed) is no key either.
@@ -55,8 +60,8 @@ export const NAMES = deep({
 });
 
 export const ORDER = deep({
-  room: ['v', 'place', 'rig', 'tuning', 'finish', 'master', 'mic', 'tracks', 'parts', 'takes', 'managed'],
-  part: ['feel', 'busy', 'loud', 'reps', 'oneSide', 'drop', 'sheet', 'learned'],
+  room: ['v', 'place', 'rig', 'tuning', 'finish', 'master', 'mic', 'tracks', 'parts', 'takes', 'managed', 'beat', 'pins', 'stack'],
+  part: ['feel', 'busy', 'loud', 'reps', 'oneSide', 'drop', 'sheet', 'learned', 'beat'],
   take: ['capo', 'bpm', 'onMaster'],
   managed: ['gain', 'pan', 'chain'],
   sheet: ['v', 'capo', 'time', 'notes', 'sections'],
@@ -65,7 +70,9 @@ export const ORDER = deep({
 });
 
 // sheetChars counts the sheet's words: its lines, its sections' names and its notes.
-export const ROOM_LIMITS = Object.freeze({ sheetSections: 64, sheetLines: 400, sheetChars: 24000, lineChars: 200, notesChars: 2000, nameChars: 100, roomParts: 512, roomBytes: 65536 });
+// pins, pinHits, pinName: the guitar room's beat cards (at most 8, each an edited bar of at most 256 hits, its name 24
+// characters)
+export const ROOM_LIMITS = Object.freeze({ sheetSections: 64, sheetLines: 400, sheetChars: 24000, lineChars: 200, notesChars: 2000, nameChars: 100, roomParts: 512, roomBytes: 65536, pins: 8, pinHits: 256, pinName: 24 });
 
 /* ------------------------------------------------------------------------------------------------ text and ids */
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -89,6 +96,10 @@ const isRef = (v) => typeof v === 'string' && v.length > 0 && v.length <= 64 && 
 // An id the sheet makes for its sections and lines.
 const isSheetId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) && safe(v);
 const fin = (x) => typeof x === 'number' && Number.isFinite(x);
+// A beat's name (the guitar room's: core/liveroom/guitar/beats.js BEAT_RE, the same rule): a groove id, or a pin's
+const isBeat = (v) => typeof v === 'string' && /^(pin:[A-Za-z0-9_-]{1,32}|[a-z0-9][a-z0-9-]{0,31}\/[a-z0-9][a-z0-9-]{0,63})$/.test(v);
+const isPinId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v) && safe(v);
+const isRow = (v) => typeof v === 'string' && /^[a-z][a-z0-9]{0,15}$/.test(v);
 const json = (x) => { try { return JSON.parse(JSON.stringify(x)); } catch { return undefined; } };
 
 function idSet(list) {
@@ -124,6 +135,7 @@ function cleanPart(e) {
   if (Number.isInteger(e.reps) && e.reps >= 1 && e.reps <= 4) k.reps = e.reps;
   for (const s of ['oneSide', 'drop']) if (e[s] === true) k[s] = true;
   if (isSheetId(e.sheet)) k.sheet = e.sheet;
+  if (isBeat(e.beat)) k.beat = e.beat;
   if (isObj(e.learned)) {
     const l = {};
     if (isRef(e.learned.from)) l.from = e.learned.from;
@@ -152,6 +164,32 @@ function cleanManaged(e) {
   const out = ordered(k, ORDER.managed, e);
   return Object.keys(out).length ? out : null;
 }
+// The riser's beat cards: each { id, groove, name?, hits? }, ids unique, at most ROOM_LIMITS.pins; a card that doesn't
+// clean is left out.
+function cleanPins(x) {
+  if (!Array.isArray(x)) return undefined;
+  const out = [], seen = new Set();
+  for (const e of x) {
+    if (out.length >= ROOM_LIMITS.pins) break;
+    if (!isObj(e) || !isPinId(e.id) || seen.has(e.id) || !isBeat(e.groove) || e.groove.startsWith('pin:')) continue;
+    seen.add(e.id);
+    const k = { id: e.id, groove: e.groove };
+    if (typeof e.name === 'string') { const n = cut(plain(e.name), ROOM_LIMITS.pinName).trim(); if (n) k.name = n; }
+    if (Array.isArray(e.hits)) {
+      const hits = [];
+      for (const hh of e.hits.slice(0, ROOM_LIMITS.pinHits)) if (isObj(hh) && fin(hh.t) && hh.t >= 0 && hh.t < 64 && isRow(hh.row) && fin(hh.v) && hh.v > 0 && hh.v <= 1) hits.push({ t: hh.t, row: hh.row, v: hh.v });
+      k.hits = hits;
+    }
+    out.push(ordered(k, ['id', 'groove', 'name', 'hits'], e));
+  }
+  return out.length ? out : undefined;
+}
+// The rack stack the guitars' chain came from: { id, name }
+function cleanStackRef(x) {
+  if (!isObj(x) || typeof x.id !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(x.id)) return undefined;
+  const name = typeof x.name === 'string' ? cut(plain(x.name), ROOM_LIMITS.nameChars).trim() : '';
+  return ordered({ id: x.id, ...(name ? { name } : {}) }, ['id', 'name'], x);
+}
 // A map of id -> entry: entries whose id passes `ok` and that clean to something.
 function cleanMap(x, ok, fn) {
   if (!isObj(x)) return undefined;
@@ -176,6 +214,9 @@ export function cleanRoom(x, { tracks = null, sections = null, warn = null } = {
   k.parts = cleanMap(x.parts, has(sectionIds), cleanPart);
   k.takes = cleanMap(x.takes, has(clipIds), cleanTake);
   k.managed = cleanMap(x.managed, (id) => id === 'master' || has(trackIds)(id), cleanManaged);
+  if (isBeat(x.beat)) k.beat = x.beat;
+  k.pins = cleanPins(x.pins);
+  k.stack = cleanStackRef(x.stack);
   const out = ordered(k, ORDER.room, x);
   // the caps: parts, then the whole room as JSON (what goes first: unknown keys and roles, then the last entries of the
   // maps, the known roles last)

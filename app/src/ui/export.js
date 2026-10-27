@@ -547,7 +547,7 @@ export default function (app) {
     if (!lr) return;
     const p = store.get(), roomy = !!(p.room && typeof p.room === 'object');
     // (the kitchen table has its own screen; the electric places share the stage)
-    if (roomy && (lr.isOpen() || !navigator.webdriver)) lr.open({ screen: p.room.place === 'kitchen' ? 'kitchen' : 'stage' });
+    if (roomy && (lr.isOpen() || !navigator.webdriver)) lr.open({ screen: p.room.place === 'kitchen' ? 'kitchen' : p.room.place === 'metal' ? 'guitar' : 'stage' });
     else if (!roomy && lr.isOpen()) lr.close();
   }
   // ⌘O and Song ▸ Open: a project file, or a Send the song zip (its recordings come back into this browser first)

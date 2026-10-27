@@ -54,7 +54,7 @@
 <li><a href="#capture-and-bringing-material-in">Capture and bringing material in</a></li>
 <li><a href="#the-agent-layer">The agent layer</a></li>
 <li><a href="#songs-in-and-out">Songs in and out</a></li>
-<li><a href="#boot-and-the-app-object">Boot and the app object</a></li>
+<li><a href="#boot-and-the-app-object">Boot and the app object</a><ol><li><a href="#the-guitar-room-uiliveroomguitar-coreliveroomguitar">The guitar room (ui/liveroom/guitar/, core/liveroom/guitar/)</a></li></ol></li>
 <li><a href="#how-features-ship">How features ship</a></li>
 <li><a href="#testing">Testing</a></li>
       </ol></nav>
@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 151 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 156 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -196,6 +196,13 @@ are covered by <code>tools/compat-test.js</code>.</li>
                          scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
                          riffs-db.js (the riff library, overdub-riffs), rack-db.js (the stack rack, overdub-rack),
                          idb.js (their opener)                                                         [guitar room]
+  app/src/ui/liveroom/guitar/   the guitar room, the screen 'guitar' (the metal club rebuilt for the guitarist):
+                         index.js (the frame, R, the router), keys.js (the one key table), camera.js, layout.js,
+                         state.js (ui.state.liveRoom.gr), bind.js (the gear bound to the song), prefs.js
+                         (overdub:guitar-room), style.js; one module per stream: stage.js [room], shop.js [shop],
+                         drummer.js [drummer], start.js [start], takes.js [takes], tape.js [tape]
+  app/src/core/liveroom/guitar/ the guitar room's pure part: setup.js (the club's setup and stack, GUITAR_DB), rig.js
+                         (the rig on both guitars and its plans), beats.js (the riser's beats and cards) [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -2005,7 +2012,7 @@ side); a first visit opens the room's door. Under <code>navigator.webdriver</cod
 room, as before the room, so the suites see what they always saw. On the room's side <code>main.js</code> sets <code>data-room</code> on
 <code>&lt;html&gt;</code>, and <code>app.css</code> keeps the studio out of sight until the room has mounted over it.</p>
 <p><strong>The live room</strong> (<code>ui/liveroom/index.js</code>) is a screen over an inert studio, one at a time from its registry
-(<code>door</code>, <code>stage</code>, <code>kitchen</code>, <code>shelf</code>, <code>send</code>), drawn from the shell's loop. <code>app.liveRoom</code> is <code>{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }</code>: <code>busy()</code> is true through a
+(<code>door</code>, <code>stage</code>, <code>kitchen</code>, <code>shelf</code>, <code>send</code>, <code>guitar</code>: the guitar room, below), drawn from the shell's loop. <code>app.liveRoom</code> is <code>{ isOpen(), busy(), open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }</code>: <code>busy()</code> is true through a
 count, a take and the band's read, and the agent's song-changing tools refuse while it is (<code>agent/tools.js</code>,
 <code>recordingBlock</code>); <code>say</code> puts a line in the talkback, the house's unsigned and an agent's signed. Its state is
 <code>ui.state.liveRoom</code>; its memory in this browser is <code>localStorage overdub:room</code> (<code>ui/liveroom/prefs.js</code>: the side
@@ -2048,6 +2055,58 @@ yours takes the chain and keeps its name: the only way a saved stack's sound cha
 first), <code>get(id)</code> (a house id too), <code>load(id, track)</code> → the ops for the song (the rack is read, never written: the
 song keeps its own copy, the track's inserts, and edits on the stage are <code>insert.set</code>s on it), <code>rename</code>, <code>remove(id)</code>
 → the stack, <code>restore(it)</code>, <code>house(place)</code>. Store <code>stacks</code> (keyPath <code>id</code>, index <code>modified</code>).</li>
+</ul>
+<h3 id="the-guitar-room-uiliveroomguitar-coreliveroomguitar"><a class="h-link" href="#the-guitar-room-uiliveroomguitar-coreliveroomguitar">The guitar room (<code>ui/liveroom/guitar/</code>, <code>core/liveroom/guitar/</code>)</a></h3>
+<p>The metal club, rebuilt for the guitarist (<code>docs/research/GUITAR-ROOM.md</code>; the blueprint is the second mock,
+<code>design/mock/guitar-room-2/</code>). It is the live room's screen <code>guitar</code>: the door offers the club and the control room
+(<code>ui/liveroom/door.js</code> <code>OFFERED</code>; the basement, the blues bar and the kitchen are held, their code kept and
+<code>press('place:&lt;id&gt;')</code> still opening one), and a song whose room is the metal club opens on it (<code>homeOf</code> in
+<code>ui/liveroom/index.js</code>). The screen is the stage seen from the front, every physical thing a real control at a usable
+size, a camera to go closer, and the shop through a door. Six streams build it on one frame, <code>ui/liveroom/guitar/index.js</code>,
+which draws nothing itself:</p>
+<ul>
+<li><strong>R</strong> is the room as a stream sees it: <code>{ app, ui, store, deck, lr, getDevice, gr, L, gprefs, el, camera, rig, panel(target), sheet(id), overlay(id), drawer(open?), say(text, { by }), line(id, vars), press(id), run(next?), busy(), on, emit, parts }</code>. <code>R.el</code> holds the slots: the stage world and its layers back to front (<code>pixels</code>, <code>gear</code>, <code>riser</code>, <code>hot</code>,
+<code>spot</code>), the shop world (<code>pixels</code>, <code>wall</code>, <code>case</code>, <code>corner</code>, <code>hot</code>), <code>panels</code> (a camera target's side panel),
+<code>sheets</code> (a bottom sheet per overlay), <code>drawer</code> (<code>tray</code>, <code>parts</code>), <code>over</code> (the recording view), <code>callout</code>, <code>strip</code>
+(<code>talk</code> holds the live room's talkback, <code>tools</code>) and <code>tools</code> (the header's <code>.lr-tools</code>). The bus: <code>cam</code>, <code>overlay</code>,
+<code>drawer</code>, <code>rig</code>, <code>press</code>, and <code>&lt;stream&gt;:&lt;what&gt;</code> for a stream's own.</li>
+<li><strong>A stream's module</strong> exports <code>mount(R)</code> → <code>{ press?(id), back?(), frame?(now), unmount?(), ...its API }</code>, mounted in
+<code>ORDER</code> (room, shop, drummer, start, takes, tape); its API is <code>R.parts[name]</code>. The router sends each action to its
+owner (<code>OWNER</code>: by id or prefix): <code>space</code> goes to takes (<code>stop</code>) while a count, a take or the song plays, to takes
+(<code>hear</code>) in review, else to the drummer; <code>back</code> (Esc) asks each stream in <code>BACK</code> order (takes, tape, start, shop,
+drummer, room), then the camera; <code>glass</code> (⌘G) and <code>cam:&lt;target&gt;</code> and <code>shop</code> are the frame's. <code>app.liveRoom.press(id)</code>
+reaches the same router. The frozen APIs are in each module's header and in <code>tools/liveroom/checks-guitar.js</code>
+(<code>FROZEN</code>, <code>STREAM_API</code>).</li>
+<li><strong>The camera</strong> (<code>camera.js</code>) dollies over a world (a CSS transform on the world's element, GLIDE 660 ms, a cut under
+reduced motion) to a registered target: <code>head</code>, <code>cab</code>, <code>kit</code>, <code>board</code>, <code>tuner</code>, <code>tape</code> on the stage, <code>wall</code>, <code>case</code>,
+<code>tryout-head</code>, <code>tryout-cab</code> in the shop, each world's overview by its own name; a target in the other world goes
+through the door (a fade, WALK 600 ms). The world is 1440 × 804 units at 4 px a pixel-art pixel (<code>layout.js</code>
+<code>REGIONS</code>, <code>SHOP_REGIONS</code>); the room stream re-registers the targets with the drawn gear's boxes.</li>
+<li><strong>One key table</strong> (<code>keys.js</code> <code>KEYS</code>): each key's action by where you are (<code>contextOf</code>: <code>rec</code>, <code>review</code>, <code>talk</code>, <code>gs</code>,
+<code>tape</code>, <code>library</code>, <code>shop</code>, <code>stage</code>, <code>any</code>), installed first in the group 'Live room'. Letters and digits stay in a
+text field; arrows go to a focused slider or list, Enter to a focused button; Space is the transport's everywhere
+but a text field (the shell's rule). On the stage: R record, D side, Enter play, Home, ⌫ remove a part, N / ⇧N a
+part after / before, ⌥← ⌥→ move it, ← → tempo (⇧ by 10), T tap, [ ] the beat, ⇧K the count-in, 1–8 stomp, H C K B U
+the head, the cab, the kit, the board, the tuner, G the tape, S the shop, L the riffs, ⇧L the library, / talk;
+⌘G through the glass. ⌘S stays the studio's.</li>
+<li><strong>The state</strong> is <code>ui.state.liveRoom.gr</code> (<code>state.js</code>: <code>world</code>, <code>cam</code>, <code>trail</code>, <code>overlay</code>, <code>drawer</code>, <code>slot</code>, <code>tuner</code>,
+<code>jam</code>, <code>take</code>, <code>tape</code>, <code>shop</code>, <code>gs</code>, <code>talk</code>, <code>said</code>; each key names its owner), and the run is
+<code>ui.state.liveRoom.run</code> (<code>'idle' | 'count' | 'take' | 'play' | 'jam'</code>). The musician's own settings are
+<code>localStorage overdub:guitar-room</code> (<code>prefs.js</code>: <code>countIn</code>, <code>gs</code>, <code>tuning</code>, <code>tunerStyle</code>, <code>snap</code>, and a stream's own
+keys), a name that is forever.</li>
+<li><strong>The gear is the song's</strong> (<code>bind.js</code> over <code>core/liveroom/guitar/rig.js</code>): the rig is the run of gear on Guitar L
+(<code>rigOf</code>: its slots, the amp, the board in order), and every change is made on both guitars at once, one undo step
+by you: a knob is <code>insert.set</code> (a drag coalesces), a footswitch the insert's <code>on</code>, a drag on the board
+<code>insert.move</code>s, the + pedal <code>insert.add</code> at its place in the order (<code>PEDAL_RANK</code>), a swap the whole run for a stack
+(<code>core/stacks.js</code> <code>planStacks</code>). Swaps, adds, removes and moves wait for a take to finish; a knob and a stomp don't.</li>
+<li><strong>The song's fields</strong> (<code>core/liveroom/model.js</code>): the room's <code>beat</code> (a groove id <code>style/slug</code>, the house's
+<code>house/guide</code>, or <code>pin:&lt;id&gt;</code>), <code>pins</code> (the riser's cards, at most 8, <code>[{ id, groove, name?, hits? }]</code>) and <code>stack</code>
+(<code>{ id, name }</code>, the rack stack the chain was loaded from), and a part's <code>beat</code>, through <code>room.set</code> and
+<code>room.part.set</code>. The club's setup (<code>core/liveroom/guitar/setup.js</code> <code>planGuitarRoom</code>) is one step: both guitars on
+the club's stack (<code>CLUB_STACK</code>: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
+<code>GUITAR_DB</code> (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.</li>
+<li><strong>Checks</strong>: <code>tools/liveroom/checks-guitar.js</code> holds the seams; each stream has its own <code>checks-&lt;stream&gt;.js</code> (the tape
+stream's is <code>checks-tape.js</code>, beside the rolling tape's), run with <code>ONLY=&lt;name&gt; node tools/liveroom-test.js</code>.</li>
 </ul>
 <p>The app object (<code>window.overdub</code>): <code>{ store, engine, ui, devices, music, summarize, version, opened, trust, agent, tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter, analytics, plugin, jam, songs, site, siteConfig, door, liveRoom }</code> plus the panels that publish an API (<code>arranger</code>, <code>pianoroll</code>, <code>drumgrid</code>, <code>rack</code>, <code>mixer</code>,
 <code>browser</code>, <code>transport</code>). <code>app.site</code> is which site this is (<code>ui/preview.js</code> reads <code>app/site-config.json</code>; deploy/README.md). <code>app.siteConfig</code> is

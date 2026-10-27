@@ -12,7 +12,8 @@
 //       holds have one). A room opened at load mounts its screen once the studio is up, so mount has the whole app. press(id), if it has one, is what app.liveRoom.press(id) asks first: { ok, error? }, or
 //       false for an id it doesn't know.
 //   screens.get(id), screens.has(id), screens.list() -> [ids]
-// The ids are the room's: 'door', 'stage', 'shelf', 'send', 'kitchen' (ui.state.liveRoom.screen).
+// The ids are the room's: 'door', 'stage', 'shelf', 'send', 'kitchen', 'guitar' (ui.state.liveRoom.screen; 'guitar' is
+// the metal club as the guitar room, ./guitar/index.js). A view may also have where() -> text, the header's line.
 
 const registry = new Map();
 

@@ -315,6 +315,33 @@ const CASES = [
   ],
   ['room.part.set remove', (i) => ({ type: 'room.part.set', section: i.verse, remove: true }), { room: true }],
   [
+    "room.set the guitar room's beat, cards and stack",
+    () => ({
+      type: 'room.set',
+      patch: {
+        beat: 'pin:p2',
+        pins: [
+          { id: 'p1', groove: 'house/guide', name: 'Guide' },
+          {
+            id: 'p2',
+            groove: 'modernmetal/double-kick-gallop',
+            hits: [
+              { t: 0, row: 'kick', v: 1 },
+              { t: 1, row: 'snare', v: 0.9 },
+            ],
+          },
+        ],
+        stack: { id: 'house.metal.club', name: 'The club' },
+      },
+    }),
+    { room: true },
+  ],
+  [
+    "room.part.set a part's beat",
+    (i) => ({ type: 'room.part.set', section: i.verse, patch: { beat: 'house/guide' } }),
+    { room: true },
+  ],
+  [
     'sheet.set makes the sheet',
     () => ({ type: 'sheet.set', patch: { capo: 3, time: [3, 4], notes: 'Slow.\nThen fast.' } }),
   ],

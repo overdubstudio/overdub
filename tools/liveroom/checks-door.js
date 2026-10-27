@@ -3,8 +3,9 @@
 //   1. the door's previews in Node: one bar of each place's band renders through the canonical renderer to a level the
 //      door can bring to about −18 LUFS: the drums and bass of places.js setupOf, the kitchen's shaker player
 //   2. the front door (muted Chromium, navigator.webdriver read as false, as a visitor's browser has it): a first visit
-//      to bare /app/ shows the door and #studio is never visible before the room mounts; the four cards, their crops,
-//      slates and lines; a preview only after a gesture, and nothing in History from it; 1-4 picks a place (one step by
+//      to bare /app/ shows the door and #studio is never visible before the room mounts; the club's card alone (the
+//      guitar room: the other places are held), its crop, slate and line; a preview only after a gesture, and nothing in
+//      History from it; 1 picks the club (one step by
 //      you) and the stage comes up; coming back after the room opens the room, with where you left it; after the
 //      control room, the control room; ?studio, ?demo and a share link open the control room; the control room's New
 //      song opens the door; No guitar? and Hear one the house made go through the glass; a phone puts the kitchen
@@ -179,25 +180,26 @@ async function frontDoor(T, ctx) {
       for (let i = 3; i < px.length; i += 4) if (px[i]) lit++;
       return { place: c.dataset.place, name: c.querySelector('.lrd-name')?.textContent, slate: c.querySelector('.lrd-slate')?.textContent, line: c.querySelector('.lrd-line')?.textContent, kick: c.querySelector('.lrd-kick')?.textContent, lit, w: cv.width, h: cv.height };
     }));
-    T.ok(cards.map((c) => c.place).join() === 'metal,basement,bluesbar,kitchen', `four places, in order: ${cards.map((c) => c.place).join(', ')}`);
+    // (the guitar room: the door offers the metal club and the control room; the other places are held, door.js OFFERED)
+    T.ok(cards.map((c) => c.place).join() === 'metal', `the metal club alone, the other places held: ${cards.map((c) => c.place).join(', ')}`);
     T.ok(cards.every((c) => c.lit > c.w * c.h * 0.5), `each card draws its room’s crop (${cards.map((c) => `${c.place} ${c.lit}/${c.w * c.h}`).join(', ')})`);
-    T.ok(cards[0].slate === 'ELECTRIC · 132 · TWO STACKS AND A BIG KIT' && cards[0].kick === 'VOID' && /kick locks to your chugs/.test(cards[0].line) && cards[3].slate === 'ACOUSTIC AND VOICE · YOUR TEMPO', `the cards’ slates, kick heads and lines (“${cards[0].slate}”, ${cards.map((c) => c.kick).join(', ')})`);
-    const quiet = await s.E(() => [...document.querySelectorAll('.lrd-quiet button, .lrd-quiet p')].map((x) => x.textContent));
-    T.ok(quiet.join(' | ') === 'No guitar? Hum, tap or play keys in the control room. | Hear one the house made: Boiler Room. | Your takes stay in this browser.', `the quiet links under the cards: ${quiet.join(' | ')}`);
+    T.ok(cards[0].slate === 'ELECTRIC · 132 · TWO STACKS AND A BIG KIT' && cards[0].kick === 'VOID' && /kick locks to your chugs/.test(cards[0].line), `the card’s slate, kick head and line (“${cards[0].slate}”, ${cards.map((c) => c.kick).join(', ')})`);
+    const quiet = await s.E(() => [...document.querySelectorAll('.lrd-quiet button, .lrd-quiet p')].filter((x) => !x.hidden).map((x) => x.textContent));
+    T.ok(quiet.join(' | ') === 'No guitar? Hum, tap or play keys in the control room. | Your takes stay in this browser.', `the quiet links under the card (the control room's; the house's song held): ${quiet.join(' | ')}`);
     await s.shot('liveroom-door');
 
     // previews: nothing before a gesture; after one, a bar of the band, and nothing in History
     await s.E(() => { window.__lrPrev = []; window.overdub.ui.on('liveroom:preview', (e) => window.__lrPrev.push(e)); });
-    await s.page.hover('.lrd-card[data-place="basement"]');
+    await s.page.hover('.lrd-card[data-place="metal"]');
     await new Promise((r) => setTimeout(r, 400));
     T.ok((await s.E(() => window.__lrPrev.length)) === 0, 'before a gesture, hovering a card plays nothing');
     await s.page.mouse.click(700, 830);
     await until(s, () => window.overdub.engine.ctx?.state === 'running');
-    await s.page.hover('.lrd-card[data-place="bluesbar"]');
-    await s.page.hover('.lrd-card[data-place="basement"]');
-    const heard = await until(s, () => window.__lrPrev.some((e) => e.place === 'basement'), null, 30000);
-    const prev = await s.E(() => window.__lrPrev.find((e) => e.place === 'basement'));
-    T.ok(heard && Number.isFinite(prev.lufs) && Math.abs(prev.lufs + 20 * Math.log10(prev.gain) - (-18)) < 0.05, `after a gesture, hovering the basement plays a bar of its band, measured at ${prev ? prev.lufs.toFixed(1) : '?'} LUFS and played at about −18`);
+    await s.page.mouse.move(700, 880);
+    await s.page.hover('.lrd-card[data-place="metal"]');
+    const heard = await until(s, () => window.__lrPrev.some((e) => e.place === 'metal'), null, 30000);
+    const prev = await s.E(() => window.__lrPrev.find((e) => e.place === 'metal'));
+    T.ok(heard && Number.isFinite(prev.lufs) && Math.abs(prev.lufs + 20 * Math.log10(prev.gain) - (-18)) < 0.05, `after a gesture, hovering the metal club plays a bar of its band, measured at ${prev ? prev.lufs.toFixed(1) : '?'} LUFS and played at about −18`);
     await s.page.mouse.move(700, 880);
     T.ok((await history(s.page)).length === 0, 'the door’s previews leave nothing in History');
     // the door opening again with the audio running: focus on its first card, and nothing played for it
@@ -207,20 +209,20 @@ async function frontDoor(T, ctx) {
     const reopened = await s.E(() => ({ focused: document.activeElement?.dataset?.place || null, played: window.__lrPrev.length }));
     T.ok(reopened.focused === 'metal' && reopened.played === 0, `the door opening again puts focus on the first card and plays nothing for it (focus ${reopened.focused}, ${reopened.played} played)`);
 
-    // 1-4 picks
+    // 1 picks the club
     await forget(s);
     await go(s, '/app/');
     await s.page.keyboard.press('Digit1');
-    await until(s, () => window.overdub.ui.state.liveRoom.screen === 'stage');
+    await until(s, () => window.overdub.ui.state.liveRoom.screen === 'guitar');
     st = await state(s);
     const hist = await history(s.page);
-    T.ok(st.screen === 'stage' && st.room?.place === 'metal' && hist.length === 1 && hist[0].by === 'you' && /metal/.test(hist[0].label), `1 picks the metal club: one step by you (“${hist[0]?.label}”), and the stage comes up`);
+    T.ok(st.screen === 'guitar' && st.room?.place === 'metal' && hist.length === 1 && hist[0].by === 'you' && /metal/.test(hist[0].label), `1 picks the metal club: one step by you (“${hist[0]?.label}”), and the guitar room comes up`);
     // coming back after the room: the room, with where you left it
     await new Promise((r) => setTimeout(r, 900));
     await go(s, '/app/');
     await until(s, () => /where you left it/.test(document.querySelector('.lr-tb-line')?.textContent || ''), null, 8000);
     st = await state(s);
-    T.ok(st.open && st.screen === 'stage' && st.door.side === 'room' && st.door.song === 'saved' && st.room?.place === 'metal', `coming back after the room opens the room on the saved song (${JSON.stringify(st.door)})`);
+    T.ok(st.open && st.screen === 'guitar' && st.door.side === 'room' && st.door.song === 'saved' && st.room?.place === 'metal', `coming back after the room opens the room on the saved song (${JSON.stringify(st.door)})`);
     T.ok(/^Untitled · 132 · drop C, where you left it: nothing on tape yet\.$/.test(st.talk), `…and says where you left it: “${st.talk}”`);
     // after the control room: the control room
     await s.E(() => window.overdub.liveRoom.close());
@@ -270,18 +272,18 @@ async function frontDoor(T, ctx) {
     T.ok(!st.open && st.tracks === 0 && startDoor, `No guitar? goes through the glass to the control room’s own door on the blank song (start door: ${startDoor})`);
     // Hear one the house made: Boiler Room, playing, in the control room
     await s.E(() => window.overdub.liveRoom.open({ screen: 'door' }));
-    await s.page.click('.lrd-house');
+    await s.E(() => window.overdub.liveRoom.press('house'));
     await until(s, () => window.overdub.store.get().title === 'Boiler Room' && window.overdub.engine.playing && !window.overdub.liveRoom.isOpen(), null, 20000);
     st = await state(s);
     const playing = await s.E(() => { const p = window.overdub.engine.playing; window.overdub.engine.stop(); return p; });
-    T.ok(!st.open && st.title === 'Boiler Room' && playing, `Hear one the house made opens Boiler Room in the control room, playing (“${st.title}”)`);
+    T.ok(!st.open && st.title === 'Boiler Room' && playing, `the house's song (held off the door, press('house')) opens Boiler Room in the control room, playing (“${st.title}”)`);
 
-    // a phone: the kitchen first, and the electric cards say what they need
+    // a phone: the club's card says what it needs
     await s.page.setViewportSize({ width: 390, height: 844 });
     await s.E(() => window.overdub.liveRoom.open({ screen: 'door' }));
     await until(s, () => !!document.querySelector('.lrd-card'));
     const ph = await s.E(() => ({ order: [...document.querySelectorAll('.lrd-card')].map((c) => c.dataset.place), iface: [...document.querySelectorAll('.lrd-iface')].filter((x) => !x.hidden).length, wide: document.documentElement.scrollWidth - innerWidth, small: [...document.querySelectorAll('.lr *')].filter((x) => x.childElementCount === 0 && x.textContent.trim() && x.checkVisibility?.() && parseFloat(getComputedStyle(x).fontSize) < 12).length }));
-    T.ok(ph.order[0] === 'kitchen' && ph.iface === 3, `on a phone the kitchen table comes first (${ph.order.join(', ')}) and the electric cards say they need an interface (${ph.iface})`);
+    T.ok(ph.order.join() === 'metal' && ph.iface === 1, `on a phone the club's card (${ph.order.join(', ')}) says it needs an interface (${ph.iface})`);
     T.ok(ph.wide <= 0 && ph.small === 0, `the door on a phone: no sideways scroll (${ph.wide} px over), no text under 12 px (${ph.small})`);
     await s.shot('liveroom-door-phone');
     T.ok(!s.errors.length, `no page errors at the door${s.errors.length ? ': ' + s.errors.slice(0, 2).join(' | ') : ''}`);
@@ -379,7 +381,7 @@ async function sending(T, ctx) {
     await t.page.keyboard.press(process.platform === 'darwin' ? 'Meta+KeyO' : 'Control+KeyO');
     const fc = await chooser;
     await fc.setFiles({ name: 'Void Weather.overdub.zip', mimeType: 'application/zip', buffer: Buffer.from(zip) });
-    await until(t, () => window.overdub.store.get().id === 'p_send' && window.overdub.ui.state.liveRoom.screen === 'stage', null, 20000);
+    await until(t, () => window.overdub.store.get().id === 'p_send' && window.overdub.ui.state.liveRoom.screen === 'guitar', null, 20000);
     const st = await state(t);
     const got = await t.E(async () => {
       const out = {};
@@ -392,7 +394,7 @@ async function sending(T, ctx) {
       }
       return out;
     });
-    T.ok(before.screen === 'door' && st.open && st.screen === 'stage' && st.room?.place === 'metal', `⌘O of the zip in a fresh browser opens the song in the room (${before.screen} → ${st.screen})`);
+    T.ok(before.screen === 'door' && st.open && st.screen === 'guitar' && st.room?.place === 'metal', `⌘O of the zip in a fresh browser opens the song in the room (${before.screen} → ${st.screen})`);
     T.ok(got.a_send1 === sha(fixture.assets.a_send1) && got.a_send2 === sha(fixture.assets.a_send2), `…with every recording back in this browser, bit for bit (${Object.entries(got).map(([k, v]) => `${k} ${v ? v.slice(0, 8) : 'missing'}`).join(', ')})`);
     T.ok(!t.errors.length, `no page errors opening the zip${t.errors.length ? ': ' + t.errors.slice(0, 2).join(' | ') : ''}`);
   } finally { await t.close(); }

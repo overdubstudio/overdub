@@ -34,7 +34,8 @@ const line = (id, vars) => LINES[id].text(vars || {});
 const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
 const roomy = (p) => isObj(p?.room);
 // the screen a room song plays on: the kitchen table's own, else the stage
-const stageOf = (p) => (p?.room?.place === 'kitchen' ? 'kitchen' : 'stage');
+// (the metal club is the guitar room's screen, ./guitar/)
+const stageOf = (p) => (p?.room?.place === 'kitchen' ? 'kitchen' : p?.room?.place === 'metal' ? 'guitar' : 'stage');
 const MB = (b) => Math.round(b / 1e6);
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const dayOf = (at) => { const d = new Date(at); return `${DAYS[d.getDay()]} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };

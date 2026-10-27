@@ -12,7 +12,8 @@
 //   app.liveRoom = {
 //     isOpen()             the room is over the studio
 //     busy()               a count, a take or a read is running (song-changing agent tools wait, §3.16)
-//     open({ screen })     opens it on that screen: by default the stage when the song has a room, else the door
+//     open({ screen })     opens it on that screen: by default the song's own (homeOf: the guitar room for the metal
+//                          club, the kitchen table, else the stage) when the song has a room, else the door
 //     close()              through the glass, to the control room; the song isn't changed
 //     say(text, { by })    a line in the talkback: the house's ('overdub', the default) unsigned, an agent's signed
 //     selection()          { screen, card, side, menu }: what the room has selected (an agent acts on it)
@@ -28,8 +29,9 @@
 //       per song: ./prefs.js said and mark); -> whether it was said. prefs: ./prefs.js. scene: the room's place's scene
 //       (./pixels sceneOf).
 //
-// ui.state.liveRoom = { open, screen: 'door' | 'stage' | 'shelf' | 'send' | 'kitchen', card, menu, run: 'idle' | 'count'
-//   | 'take' | 'learn' | 'play', side: 'L' | 'R' } (not ui.state.room, which is the Jam room's)
+// ui.state.liveRoom = { open, screen: 'door' | 'stage' | 'shelf' | 'send' | 'kitchen' | 'guitar', card, menu, run: 'idle'
+//   | 'count' | 'take' | 'learn' | 'play' | 'jam', side: 'L' | 'R', gr (the guitar room's: ./guitar/state.js) } (not
+//   ui.state.room, which is the Jam room's). A screen may have where() -> text: the header's place line while it's up.
 //
 // While the room is open the studio under it is inert and doesn't paint (ui.covered = 'liveroom', ui/shell.js), focus
 // stays in the room (ui.state.focus 'liveroom'), and the studio's keys are held, as on Start a song's stage: a screen
@@ -61,6 +63,7 @@ import './stage.js';
 import './kitchen.js';
 import './shelf.js';
 import './send.js';
+import './guitar/index.js';
 
 export { screens };
 
@@ -148,7 +151,8 @@ export default function installLiveRoom(app) {
     whereEl = h('span.lr-where', 'The live room');
     el = h('section.lr', { role: 'region', 'aria-label': 'The live room', tabindex: -1, hidden: true },
       h('header.lr-top',
-        h('span.lr-brand.disp-s', 'Overdub'), whereEl, h('span.lr-gap'),
+        // (.lr-tools: a screen's own header keys, the guitar room's; emptied when the screen goes)
+        h('span.lr-brand.disp-s', 'Overdub'), whereEl, h('span.lr-tools'), h('span.lr-gap'),
         h('button.btn.btn-txt.lr-shelf', { type: 'button', onclick: () => press('shelf') }, 'Shelf'),
         // (Send: the stage shows it once the song's been heard top to bottom, never after a first take alone, §3.14)
         h('button.btn.btn-txt.lr-send', { type: 'button', hidden: true, onclick: () => press('send') }, 'Send'),
@@ -173,6 +177,7 @@ export default function installLiveRoom(app) {
     current = null;
     if (was?.view?.unmount) { try { was.view.unmount(); } catch (e) { console.error('liveroom unmount', was.id, e); } }
     body?.replaceChildren();
+    el?.querySelector('.lr-tools')?.replaceChildren();
     // (the talkback home again, wherever the screen had it)
     if (el && talkback.el.parentNode !== el) el.append(talkback.el);
   }
@@ -225,13 +230,22 @@ export default function installLiveRoom(app) {
     const fresh = !entered;
     // (the holds again, over every key declared by now: the screen's own, added as it mounts, go before them)
     if (fresh) { unhold(); hold(); roomKeys(true); }
-    const want = asked || (!fresh && current && L.screen) || (roomOf(store.get()) ? 'stage' : 'door');
+    const want = asked || (!fresh && current && L.screen) || homeOf(store.get());
     asked = null;
     if (fresh || want !== L.screen || !current) go(want);
     entered = true;
     delete document.documentElement.dataset.room;
     try { prefs.set({ side: 'room' }); } catch { /* storage: fine */ }
     if (fresh) { emit('open', { screen: L.screen }); sayBack(); }
+  }
+  // A song's own screen: the metal club is the guitar room (./guitar/), the kitchen its table, the other places the
+  // stage; no room yet, the door.
+  function homeOf(p) {
+    const room = roomOf(p);
+    if (!room) return 'door';
+    if (room.place === 'metal' && screens.has('guitar')) return 'guitar';
+    if (room.place === 'kitchen' && screens.has('kitchen')) return 'kitchen';
+    return 'stage';
   }
   // (after every 'ready' listener has run: the keys they declare are held too)
   ui.on?.('ready', () => queueMicrotask(() => { up = true; enter(); }));
@@ -305,7 +319,11 @@ export default function installLiveRoom(app) {
   });
   function frame(now) {
     if (!L.open) return;
-    if (whereEl) {
+    if (whereEl && current?.view?.where) {
+      let t = null;
+      try { t = current.view.where(); } catch { t = null; }
+      if (t && whereEl.textContent !== t) whereEl.textContent = t;
+    } else if (whereEl) {
       const pl = view().place, t = pl && NAMES.place[pl] ? `The live room · ${NAMES.place[pl][0].toUpperCase()}${NAMES.place[pl].slice(1)}` : 'The live room';
       if (whereEl.textContent !== t) whereEl.textContent = t;
     }
@@ -367,7 +385,8 @@ export default function installLiveRoom(app) {
     roomOffs = [];
     if (!on) return;
     const k = (o) => roomOffs.push(ui.keys.add({ first: true, group: 'Live room', ...o }));
-    k({ key: 'KeyG', when: free, run: () => press('glass'), label: 'Through the glass, to the control room' });
+    // (not in the guitar room: G is its tape machine there, ⌘G the glass: ./guitar/keys.js)
+    k({ key: 'KeyG', when: () => free() && L.screen !== 'guitar', run: () => press('glass'), label: 'Through the glass, to the control room' });
     k({
       key: 'KeyZ', mod: 'mod', label: 'Undo the take and the band’s learning together',
       when: () => free() && !!(pairAt(store.history) || learnAlone(store.history)),

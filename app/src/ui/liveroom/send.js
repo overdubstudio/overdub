@@ -139,7 +139,8 @@ screens.add({
     const mixSays = h('b', 'Send a mix'), songSays = h('b', 'Send the song');
     const mixBtn = h('button.lrs-choice.lrs-mix', { type: 'button', onclick: () => go('mix') }, mixSays);
     const songBtn = h('button.lrs-choice.lrs-song', { type: 'button', onclick: () => go('song') }, songSays);
-    const stage = () => (!store.get().room ? 'door' : store.get().room.place === 'kitchen' ? 'kitchen' : 'stage');
+    // (the metal club is the guitar room's screen, ./guitar/)
+    const stage = () => (!store.get().room ? 'door' : store.get().room.place === 'kitchen' ? 'kitchen' : store.get().room.place === 'metal' ? 'guitar' : 'stage');
     const back = () => app.liveRoom.open({ screen: stage() });
     el.append(h('div.lrs',
       h('h1.lr-h.disp', 'Send'),

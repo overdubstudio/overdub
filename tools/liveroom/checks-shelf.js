@@ -117,10 +117,11 @@ export async function run(T, ctx) {
     // a box opens its song in the room, with where you left it
     await s.E(() => { window.__lrBack = []; window.overdub.ui.on('liveroom:back', (e) => window.__lrBack.push(e.lines)); });
     await s.page.click('.lrsh-box[data-id="p_a"] .lrsh-open');
-    await until(s, () => window.overdub.store.get().id === 'p_a' && window.overdub.ui.state.liveRoom.screen === 'stage' && window.__lrBack.length > 0);
+    await until(s, () => window.overdub.store.get().id === 'p_a' && window.overdub.ui.state.liveRoom.screen === 'guitar' && window.__lrBack.length > 0);
     const st = await state(s);
     const back = await s.E(() => window.__lrBack[0] || []);
-    T.ok(st.open && st.screen === 'stage' && st.title === 'Void Weather', `a box opens its song in the room (${st.screen}, “${st.title}”)`);
+    // (a metal club song: the guitar room's screen)
+    T.ok(st.open && st.screen === 'guitar' && st.title === 'Void Weather', `a box opens its song in the room (${st.screen}, “${st.title}”)`);
     T.ok(back[0] === 'Void Weather, where you left it: verse doubled; chorus wants its other side; the breakdown’s still empty.' && back.length === 1, `…and says where you left it: “${back[0]}”`);
 
     // the second time the shelf opens: no offer, a quiet link

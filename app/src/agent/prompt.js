@@ -50,9 +50,9 @@ track.add { ref?, track: { name, kind?, instrument?: { device, params?, preset? 
 instrument.set { track, device?, params?, preset? }  insert.add { track, insert: { device, params?, preset?, on? }, index?, ref? }  insert.set { track, insert, patch: { on?, params?, preset?, key? } } insert.remove, insert.move
 clip.add { track, ref?, clip: { start, length, name?, notes?, grid? } }  clip.set, clip.remove, clip.move
 notes.add, notes.replace { track, clip, notes: "text" }  notes.remove { track, clip, ids }  notes.set { track, clip, notes: [{ id, p?, t?, d?, v? }] }
-section.add { section: { name, start, length } }  section.set, section.remove, section.duplicate  section.move { section, before }  time.insert, time.remove { at, length }  clip.repeat, clip.split  clip.trim { track, clip, start?, end?, snap? }
+section.add { section: { name, start, length } }  section.set, section.remove, section.duplicate  section.move { section, before }  time.insert, time.remove { at, length }  clip.repeat, .split, .trim
 auto.write { track, insert?, param, points: "beat:value ...", from?, to? }  auto.clear, auto.set
-sheet.set, sheet.section.*, sheet.line.*: the lyric sheet  room.*: the live room's own
+sheet.set, sheet.section.*, sheet.line.*: lyric sheet  room.*: the live room's own
 Tracks by id or exact name ('master' takes inserts); times in beats; ref: 'x' on an op that makes something, '$x' later in the same call. Notes text: pitch@start:dur[*vel], e.g. "A2@0:0.5 C3@0.5:0.5*0.9" (beats from the clip start). preset: "<name>" is a device's whole sound (get_device lists them), params on top. Params are in their own units (out of range is refused, with the range; a switch takes its number or name).`;
 
 export const NOTES_FORMAT = `Notes text format: pitch@start:dur[*vel], space separated. Pitch is a name (C4 = 60, F#3, Bb2) or MIDI number; start and dur in beats FROM THE CLIP START (quarter notes); vel 0..1 (default 0.8). Chords = same start. "C2@0:0.5 C2@0.5:0.5 G1@1:1*0.9". Fractions work: E4@1/3:1/3.

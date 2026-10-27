@@ -102,7 +102,8 @@ overdub/
                          (calibration), capture.js (never lose an idea), importers.js (MIDI and audio files in),
                          tape.js + tape-core.js + tape-worklet.js (the rolling tape: the last minute of the input
                          on the band's grid, its default selection and grab),
-                         index.js (app.input)                                                           [input]
+                         tuner.js (the steady tuner: strings, tunings), level.js (the gain window and its advice),
+                         calibrate.js (the strum along around latency.js), index.js (app.input)         [input]
   app/src/ui/            shell.js + dom.js (fixed frame), workspace.js + workspace-view.js (Find anything), 
                          transport.js, arranger.js, lanes.js (automation lanes),
                          arrange-kit.js, pianoroll.js, drumgrid.js, grooves.js (the Grooves tab)        [ui-arrange]
@@ -113,6 +114,8 @@ overdub/
                          editors/ (generic.js, and the editors the studio's own devices name: eq8.js, shaper.js,
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
+                         gauges/ (Getting started's instruments, mounted by any screen: tuner.js, level.js,
+                         timing.js)                                                                     [input]
                          export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
                          Overdub account, app.songs), account.js (the account key beside Song and its sheet: sign
                          in, the plan and Get Plus, the songs' rows, app.account), provenance.js, share.js,
@@ -1781,7 +1784,41 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
   nothing else; a riff goes in the song only when it's kept, as `tape.ops(grab, { track, at })` (`riffOps`:
   `asset.add` and the clip, one dispatch by whoever keeps it). The full API is `input/tape.js`'s header.
 - **Latency** (`input/latency.js`): tap along to eight clicks, or a loopback, once per input device; takes, hums and
-  beatbox are shifted by the measured round trip.
+  beatbox are shifted by the measured round trip. A strum along is judged by `judgeTaps(hits)` (one wild strum left
+  out; grade good, fair, poor or none; a confidence 0 to 1), and the confidence is kept beside the round trip
+  (`measured.confidence`, `localStorage overdub:latency`, per deviceId).
+- **Getting started's gauges** (the guitar room, `docs/research/GUITAR-ROOM.md` §2.1): three instruments any screen
+  mounts, each a pure module under `input/` and a drawn one under `ui/gauges/`. The drawn ones own no keys and no
+  loop: the host calls `frame(now)` from its own (the shell's, or the room's), and they read `app.input.audio`, or
+  anything else with `samples() -> { buf, sr } | null` (a check's fake). `audio.samples()` is the picked input's
+  latest analyser window (4096 samples at 48 kHz, 8192 over 50 kHz).
+  - **The tuner** (`input/tuner.js`): `createSteadyTuner({ tuning })` -> `{ push(buf, sr, t) -> reading, reading,
+    setTuning(id | { strings } | null), reset() }`; a reading is `{ live, held, hz, midi, p, note, octave, cents,
+    shown, inTune, settled, string: { s, number, name, open, cents, near } | null, db, floor, since, conf }`. YIN
+    (`pitch.js`, with the held note as its `hint`) in the tuning's range (a fourth under its low string; 30 Hz up with
+    no tuning), a noise floor and a gate 10 dB over it, a new note on an attack, a median and a one-euro smoother,
+    whole cents shown with hysteresis, in tune within ±2 (out past ±4). `TUNER_TUNINGS` is the fretboard's tunings
+    plus `drop-a`, `7-standard` and `7-drop-a`; `tuningsFromLow(midi)` asks which a low string is, `guessTuning(heard)`
+    settles it from the strings heard, `stringOf(midi, tuning)` names the string. Measured in `tools/input-test.js` on
+    Karplus-Strong strings (`tools/strings.js`) from E1 to E4 at 48 and 96 kHz: named within 100 ms of the pluck,
+    within 3 cents within 180 ms, a tenth of a cent clean and six tenths with hum at -48 dBFS at the median.
+    `ui/gauges/tuner.js`: `mountTuner(el, { source, tuning, style: 'needle' | 'strobe', size: 'big' | 'small',
+    onReading })` -> `{ frame(now), reading, setTuning, setStyle, tuner, el, unmount() }`.
+  - **The level** (`input/level.js`): `createLevel({ lo: -12, hi: -6, device })` -> `{ push(samples | { peak } |
+    peak, nowMs) -> state, state, reset(), clearClip() }`; the state is `{ db (the bar), peak, hold, clip, clips,
+    strum (the hardest in 3 s), verdict: 'none' | 'quiet' | 'low' | 'ok' | 'hot' | 'clip', advice: { id, text, turn:
+    'up' | 'down' | null, by (dB) }, inWindow, good (ms in the window) }`; `levelAdvice(verdict, db, { device })` is
+    the words alone (the knob on the interface; on a Focusrite, the ring round it). `ui/gauges/level.js`:
+    `mountLevel(el, { source, device, onPickChannel, advice })` -> `{ frame(now), state, setDevice, reset(), meter,
+    el, unmount() }`.
+  - **Calibration** (`input/calibrate.js`): `createCalibration({ latency, label, autoKeep })` -> `{ state: { phase:
+    'idle' | 'listening' | 'done' | 'stopped' | 'error', step, hits, result, kept, measured, estimate, error },
+    start(), stop(), keep(), again(), forget(), line(), on(fn) }`; a good one is kept by itself, a fair or poor one
+    waits for keep(); `calibrationLine(state)` is the words. `ui/gauges/timing.js`: `mountTiming(el, { latency, label
+    })` -> `{ frame(now), start(), stop(), cal, el, unmount() }`. The clicks are sound: a check swaps
+    `latency.measure` for a fake that calls `onStep` as the real one does.
+  - `design/bench/getting-started/` (served locally, never deployed) mounts all three on the input module alone, to
+    try them on a real guitar.
 - **Audio inputs** (`input/audioin.js`): an interface opens with all its channels (`channelCount` up to what the
   device reports) and the chosen input is split off (`state.channels`, `state.channel` '1'…'32', 'both', 'stereo'); a
   channel the device doesn't have is silence, never input 1. Monitoring plays through the track a take would record

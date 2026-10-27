@@ -54,6 +54,10 @@ stack (Half Stack, a metal setting, a boost and a gate on the floor) or the stac
 4. **Your sound.** Three or four strong stacks to try while you play. Pick one, or walk into the tone room.
 5. A short tour: the floor, the drummer, the tape, the part line, the glass.
 
+Under the hood, steps 1 to 3 are built: `input/level.js`, `input/tuner.js` and `input/calibrate.js`, drawn by
+`ui/gauges/` (`ARCHITECTURE.md`, "Getting started's gauges"), and on a page of their own to play through at
+`/design/bench/getting-started/`.
+
 ### 2.2 Jam
 Space starts the drummer: a simple, metronome-like guide beat at the place's tempo, with the tempo in reach (← → or
 tap). You play. The tape is rolling, shown only as a faint line along the bottom.

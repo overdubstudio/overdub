@@ -15,7 +15,9 @@
 //       { id, title }) it was saved from, kept as its tag
 //   list() -> [Stack]   every saved stack, the last changed first: { id, name, chain, amp, at, modified, song,
 //       songTitle, v }
-//   get(id) -> Stack | null     (a house stack's id, 'house.<place>.<rig>', gives that one: houseStacks)
+//   get(id) -> Stack | null     (a house stack's id, 'house.<place>.<rig>', gives that one: houseStacks; and the
+//       guitar room's club stack, 'house.metal.club': core/liveroom/guitar/setup.js CLUB_STACK, the song's stack when
+//       the door made it)
 //   load(id, track, { getDevice }?) -> { ok: true, ops, label, by: 'you', stack, replaced } | { ok: false, error }
 //       the ops that put the stack on the track in place of its current chain (stacks.js loadOps): dispatch them with
 //       { by: 'you', label }. One undo step. The rack is read, never written, and the song gets copies
@@ -28,7 +30,8 @@
 // When IndexedDB is refused, the rack is this page's memory for the visit, and note() says so.
 // DB 'overdub-rack', version 1, store 'stacks' (keyPath 'id'; index 'modified').
 
-import { cleanStack, loadOps, houseStacks } from '../../core/liveroom/stacks.js';
+import { cleanStack, loadOps, houseStacks, ampOf } from '../../core/liveroom/stacks.js';
+import { CLUB_STACK } from '../../core/liveroom/guitar/setup.js';
 import { songTag, nameOf } from '../../core/liveroom/riffs.js';
 import { newId } from '../../core/project.js';
 import { opener, done, req } from './idb.js';
@@ -109,6 +112,7 @@ export async function list() {
 }
 
 export async function get(id) {
+  if (id === CLUB_STACK.id) return copy({ id: CLUB_STACK.id, house: true, name: CLUB_STACK.name, chain: CLUB_STACK.chain, amp: ampOf(CLUB_STACK.chain), place: 'metal', rig: 'club' });
   if (typeof id === 'string' && id.startsWith('house.')) {
     const place = id.split('.')[1];
     return copy(houseStacks(place).find((s) => s.id === id) || null);

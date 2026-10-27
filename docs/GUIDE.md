@@ -117,7 +117,7 @@ signed too, one step `⌘Z` takes back.
 
 ### The shop
 
-The door under NO STAIRWAY (`S`) is the shop: the amp wall in sections (clean, crunch, weird, high gain, bass; `A`),
+The door under NO STAIRWAY is the shop, and `S` walks through it: the amp wall in sections (clean, crunch, weird, high gain, bass; `A`),
 the pedal case in drawers by type (`P`, `[` `]` between drawers), and your stack big in the try-out corner (`H` the
 head, `C` the cab). Look at something to read its card; hold the look and you're hearing it; a click or `Enter`
 carries it onto your stack. **Save to rack** keeps a stack under a name, and the rack loads one back into the song in

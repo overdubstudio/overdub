@@ -47,7 +47,7 @@
 
 import { h, css } from '../../dom.js';
 import { renderFace, valueText } from '../../faces.js';
-import { normParam } from '../../../devices/registry.js';
+import { normParam, listDevices } from '../../../devices/registry.js';
 import { createLevel, WINDOW } from '../../../input/level.js';
 import { beatsPerBar } from '../../../core/music.js';
 import { sameChain } from '../../../core/stacks.js';
@@ -154,9 +154,39 @@ export function mount(R) {
     for (const k of [...els.keys()]) if (/^(head|cab|board|meter|jack|tuner|slot:)/.test(k)) els.delete(k);
   }
 
+  // the hand's place across a new drawing (a move, a pedal off, an undo): the same control on the same piece of gear,
+  // so a tag's arrows can be pressed again and again, and a knob keeps the keys it had
+  const FOCUSABLE = 'button, [role=slider], [tabindex]:not([tabindex="-1"])';
+  let lastBy = 'key';
+  const byPointer = () => { lastBy = 'pointer'; }, byKey = () => { lastBy = 'key'; };
+  document.addEventListener('pointerdown', byPointer, true);
+  document.addEventListener('keydown', byKey, true);
+  offs.push(() => { document.removeEventListener('pointerdown', byPointer, true); document.removeEventListener('keydown', byKey, true); });
+  function focusOf() {
+    const a = document.activeElement;
+    if (!a || !(G.gear.contains(a) || G.hot.contains(a))) return null;
+    // (a button the mouse pressed gives the keys back to the room, ui/liveroom/index.js: only one the keys pressed is
+    // followed; a knob keeps the focus a grab gave it)
+    if (a.matches('button') && lastBy === 'pointer') return null;
+    const box = a.closest('.gr-r-head, .gr-r-slot, .gr-r-tag, .gr-r-add');
+    if (!box) return null;
+    const where = box.classList.contains('gr-r-head') ? 'head' : box.classList.contains('gr-r-slot') ? 'slot' : box.classList.contains('gr-r-tag') ? 'tag' : 'add';
+    return { where, device: box.dataset.tuner ? 'tuner' : box.dataset.device || '', idx: [...box.querySelectorAll(FOCUSABLE)].indexOf(a) };
+  }
+  function refocus(f) {
+    if (!f || !built) return;
+    const box = f.where === 'head' ? built.head?.el : f.where === 'add' ? built.add?.el
+      : f.where === 'slot' ? built.slots.find((q) => (q.tuner ? 'tuner' : q.s.device) === f.device)?.el
+        : [...G.hot.querySelectorAll('.gr-r-tag')].find((t) => t.dataset.device === f.device);
+    if (!box) return;
+    const list = box.matches(FOCUSABLE) ? [box] : [...box.querySelectorAll(FOCUSABLE)];
+    (list[f.idx] || list[0])?.focus?.({ preventScroll: true });
+  }
+
   function build() {
     const rig = R.rig.now();
     const before = built?.devices || null;
+    const hand = focusOf();
     clearRig();
     built = { key: shapeOf(rig), rig, slots: [], devices: rig ? rig.slots.map((s) => s.device) : [] };
     if (!rig) return;
@@ -237,7 +267,7 @@ export function mount(R) {
         if (it.loop && loopAt == null) { loopAt = x - gap / 2 + 6; x += loopGap; }
         const zz = Math.min(z, (inner - 6) / it.nh), w = it.nw * zz, hh = it.nh * zz, y = BOARD.y + BOARD.h - 26 - hh;
         if (!it.tuner) n++;
-        const key = it.tuner ? 'T' : String(n);
+        const key = it.tuner ? 'U' : String(n);
         const cap = h('span.gr-r-keycap', { style: `top:${hh + 6}px` }, key, h('b', ''));
         const slot = h('div.gr-r-slot', { dataset: it.tuner ? { tuner: '1' } : { slot: String(it.s.slot), device: it.s.device } },
           h('div.gr-r-face', { style: `transform:scale(${zz})` }, it.fc.el), cap,
@@ -291,6 +321,7 @@ export function mount(R) {
       tmp.remove();
     }
     update(rig);
+    refocus(hand);
   }
 
   function place(el, x, y, w, hh) {
@@ -319,10 +350,11 @@ export function mount(R) {
       q.el.classList.toggle('gr-r-off', !s.on);
       setCap(q, s.on);
     }
-    for (const q of built.slots) q.el.classList.toggle('gr-r-focus', !q.tuner && R.gr.slot === q.s.slot);
+    markSlot();
     built.plugKey = '';
     renderPanel();
   }
+  function markSlot() { if (built) for (const q of built.slots) q.el.classList.toggle('gr-r-focus', !q.tuner && R.gr.slot != null && R.gr.slot === q.s.slot); }
   function setCap(q, on) { const b = q.cap.lastChild; const t = on ? 'on' : 'off'; if (b.textContent !== t) b.textContent = t; q.cap.classList.toggle('gr-r-k-off', !on); q.el.classList.toggle('gr-r-off', !on && !q.tuner); }
 
   function placeMics(values) {
@@ -384,7 +416,7 @@ export function mount(R) {
     const r = R.rig.stomp(slot, on);
     if (!r.ok) { say(r.error); return r; }
     const s = R.rig.now()?.slots[slot];
-    if (s) say(s.kind === 'amp' ? (s.on ? `${nameOf(slot)} is back in.` : `${nameOf(slot)} bypassed: you’re hearing the board and the cab.`) : `${nameOf(slot)} ${s.on ? 'on' : 'off'}.`);
+    if (s) say(s.kind === 'amp' ? (s.on ? `${nameOf(slot)} is back in.` : `${nameOf(slot)} bypassed, and its cab with it: you’re hearing the pedals alone.`) : `${nameOf(slot)} ${s.on ? 'on' : 'off'}.`);
     return r;
   }
   function move(from, to) {
@@ -421,6 +453,8 @@ export function mount(R) {
         const dx = (ev.clientX - x0) / s;
         if (!on && Math.abs(ev.clientX - x0) < 6) return;
         if (!on) { on = true; q.el.setPointerCapture?.(e.pointerId); q.el.classList.add('gr-r-drag'); dragging = { q, left }; }
+        // (Esc let go of it: back() put it back, and it stays there till the button comes up)
+        if (dragging?.q !== q) return;
         q.el.style.left = clamp(left + dx, BOARD.x, BOARD.x + BOARD.w - q.w) + 'px';
         q.at = left + dx + q.w / 2;
       };
@@ -458,12 +492,12 @@ export function mount(R) {
   // a hang tag: what it is, what it tips its hat to, and moving it (the keys' way to do what a drag does)
   function tagOf(q) {
     if (q.tuner) {
-      return h('div.gr-r-tag', h('small', 'Tuner · mutes while on'), h('b', 'Tuna Fork'), h('div', 'Reads one open string at a time, low to high; mutes you while it’s on.'),
+      return h('div.gr-r-tag', { dataset: { device: 'tuner' } }, h('small', 'Tuner · mutes while on'), h('b', 'Tuna Fork'), h('div', 'Reads one open string at a time, low to high; mutes you while it’s on.'),
         h('div.gr-r-nod', 'Tips its hat to the strobe and needle tuners at the front of every board.'),
         h('div.gr-r-mv', h('button', { type: 'button', onclick: () => R.press('cam:tuner') }, 'Tunings'), h('span.gr-r-fix', 'Always first')));
     }
     const d = q.d, s = q.s;
-    return h('div.gr-r-tag', { dataset: { slot: String(s.slot) } },
+    return h('div.gr-r-tag', { dataset: { slot: String(s.slot), device: s.device } },
       h('small', kindOf(d)), h('b', d.name),
       d.blurb ? h('div', d.blurb) : null, d.nod ? h('div.gr-r-nod', `Tips its hat to ${d.nod}.`) : null,
       h('div.gr-r-mv',
@@ -497,7 +531,7 @@ export function mount(R) {
     if (key === panelKey) return;
     panelKey = key;
     panel.replaceChildren();
-    if (!d) { panel.append(h('p', 'There’s no amp on the rig. The shop’s amp wall has thirty: S.')); return; }
+    if (!d) { const n = listDevices().filter((x) => /^amp\./.test(x.id)).length; panel.append(h('p', `There’s no amp on the rig. The shop’s amp wall has ${n}: S.`)); return; }
     panel.append(
       h('div.gr-r-kind', `${TONE_WORD[d.tone] || 'Amp'} · your stack`),
       h('h2.disp', d.name),
@@ -565,7 +599,8 @@ export function mount(R) {
 
   /* ------------------------------------------------------------------------------------------- following the song and the room */
   offs.push(R.on('rig', (rig) => { if (shapeOf(rig) !== built?.key) build(); else update(rig); }));
-  offs.push(R.on('cam', () => { renderBack(); if (built) for (const q of built.slots) q.el.classList.toggle('gr-r-focus', !q.tuner && R.gr.slot === q.s.slot); }));
+  // (the piece of gear in focus is for the head's and the board's zooms: back on the stage, or in the shop, it's let go)
+  offs.push(R.on('cam', (d) => { if (d?.to !== 'head' && d?.to !== 'board') R.gr.slot = null; renderBack(); markSlot(); }));
   offs.push(R.on('drawer', () => { renderStrip(); countRiffs(); }));
   for (const e of ['tape:grab', 'tape:riff', 'tape:riffs']) offs.push(R.on(e, () => countRiffs()));
   if (R.store.on) { const off = R.store.on('change', () => { renderStrip(); renderPanel(); }); if (typeof off === 'function') offs.push(off); }

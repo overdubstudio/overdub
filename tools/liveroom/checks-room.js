@@ -146,7 +146,7 @@ async function checks(T, s, ctx) {
   });
   T.ok(drawn.slots.join() === drawn.want.join() && drawn.amp === drawn.ampWant && drawn.cables >= 8, `the stage draws the real rig: ${drawn.amp} on its cab, the board in signal order (${drawn.slots.join(' → ')}), ${drawn.cables / 2} cables`);
   T.ok(!drawn.missing.length && !drawn.off.length, `rect(name) and el(name) are where each thing is drawn (${drawn.missing.length ? 'missing: ' + drawn.missing.join(', ') : 'all 11'}${drawn.off.length ? '; off: ' + drawn.off.join(', ') : ''})`);
-  T.ok(!drawn.sel && !drawn.range && drawn.keycaps[0].startsWith('T') && drawn.keycaps[1].startsWith('1'), `no <select>, no range input (${drawn.sel}, ${drawn.range}); keycaps ${drawn.keycaps.join(', ')}`);
+  T.ok(!drawn.sel && !drawn.range && drawn.keycaps[0].startsWith('U') && drawn.keycaps[1].startsWith('1'), `no <select>, no range input (${drawn.sel}, ${drawn.range}); keycaps ${drawn.keycaps.join(', ')}`);
   await shot('stage');
 
   // 4. the gear plays: each one step by you on both guitars, undone exactly
@@ -183,6 +183,17 @@ async function checks(T, s, ctx) {
     (a, b) => b.on[b.amp] !== a.on[a.amp]);
   // a footswitch clicked, and a digit
   await oneStep('Snapper’s footswitch clicked', async () => { await E(() => document.querySelector('.gr-r-slot[data-device="pedal.gate"] .pd-sw').click()); }, (a, b) => b.on[0] !== a.on[0]);
+  // a footswitch the mouse pressed doesn't keep the hand: Enter is the room's (play), not a second stomp
+  const sw = await center('.gr-r-slot[data-device="pedal.gate"] .pd-sw');
+  const h7 = (await history(page)).length;
+  await page.mouse.click(sw.x, sw.y);
+  await page.waitForTimeout(80);
+  const held7 = await E(() => !!document.activeElement?.closest('.gr-r-slot'));
+  await press(page, 'Enter');
+  await page.waitForTimeout(80);
+  const n7 = (await history(page)).length - h7;
+  for (let i = 0; i < n7; i++) await undo();
+  T.ok(!held7 && n7 === 1, `a footswitch clicked with the mouse doesn't keep the focus (${held7}), so Enter isn't a second stomp (${n7} step${n7 === 1 ? '' : 's'})`);
   await oneStep('2 stomps the second pedal', async () => { await E(() => document.querySelector('.lr').focus()); await press(page, 'Digit2'); }, (a, b) => b.on[a.board[1]] !== a.on[a.board[1]]);
   // a pedal dragged along the board: Snapper after Mantis Boost
   const sn = await center('.gr-r-slot[data-device="pedal.gate"]'), mb = await center('.gr-r-slot[data-device="pedal.mantisboost"]');
@@ -195,10 +206,50 @@ async function checks(T, s, ctx) {
   await oneStep('Snapper dragged past Mantis Boost', () => dragTo(sn, mb.x + mb.w * 0.4), (a, b) => b.devices.indexOf('pedal.gate') === a.devices.indexOf('pedal.mantisboost') && b.devices.length === a.devices.length);
   const echo = await center('.gr-r-slot[data-device="pedal.delay"]');
   await oneStep('Mantis Boost dragged into the amp’s loop', () => dragTo(mb, echo.x + echo.w * 0.6), (a, b) => b.devices.indexOf('pedal.mantisboost') > b.amp && a.devices.indexOf('pedal.mantisboost') < a.amp);
+  // Esc lets go of a pedal mid-drag: it goes back, stays back while the hand moves on, and nothing changes
+  const h6 = (await history(page)).length, sn2 = await center('.gr-r-slot[data-device="pedal.gate"]');
+  const left0 = await E(() => document.querySelector('.gr-r-slot[data-device="pedal.gate"]').style.left);
+  await page.mouse.move(sn2.x + sn2.w * 0.3, sn2.y - sn2.h * 0.12); await page.mouse.down();
+  for (let i = 1; i <= 5; i++) await page.mouse.move(sn2.x + sn2.w * 0.3 + i * 30, sn2.y - sn2.h * 0.12);
+  const mid = await E(() => document.querySelector('.gr-r-slot[data-device="pedal.gate"]').style.left);
+  await press(page, 'Escape');
+  for (let i = 6; i <= 10; i++) await page.mouse.move(sn2.x + sn2.w * 0.3 + i * 30, sn2.y - sn2.h * 0.12);
+  const held = await E(() => document.querySelector('.gr-r-slot[data-device="pedal.gate"]').style.left);
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+  const after6 = { left: await E(() => document.querySelector('.gr-r-slot[data-device="pedal.gate"]').style.left), steps: (await history(page)).length - h6, cam: await E(() => window.overdub.ui.state.liveRoom.gr.cam) };
+  T.ok(mid !== left0 && held === left0 && after6.left === left0 && after6.steps === 0 && after6.cam === 'stage', `Esc lets go of a pedal mid-drag: back where it was (${left0}; mid-drag ${mid}, after Esc ${held}, after the button ${after6.left}), no step (${after6.steps}), the camera stays (${after6.cam})`);
   // at the board: the tags' arrows and Back in the case
   await E(() => window.overdub.liveRoom.press('cam:board'));
   await page.waitForTimeout(800);
   await shot('board');
+  // the hand stays on the tag's arrow across the new drawing (pressed again and again from the keys)
+  // (reached with the keys: Shift+Tab from its →, then pressed; ui/liveroom/index.js's hold on Enter keeps Enter from
+  // a focused button in the live room, so the press is the button's click)
+  const kept = {};
+  const arrowSel = '.gr-r-tag[data-device="pedal.delay"] [aria-label^="Move Echo Reef earlier"]';
+  await E(() => document.querySelector('.gr-r-tag[data-device="pedal.delay"] [aria-label^="Move Echo Reef later"]').focus());
+  await press(page, 'Shift+Tab');
+  const h8 = (await history(page)).length;
+  kept.on = await E((sel) => document.activeElement === document.querySelector(sel), arrowSel);
+  await E((sel) => document.activeElement.matches(sel) && document.activeElement.click(), arrowSel);
+  await page.waitForTimeout(60);
+  const arrowHeld = () => E((sel) => document.activeElement === document.querySelector(sel), arrowSel);
+  kept.moved = (await history(page)).length === h8 + 1;
+  kept.a = await arrowHeld();
+  if (kept.moved) await undo();
+  await page.waitForTimeout(60);
+  kept.b = await arrowHeld();
+  T.ok(kept.on && kept.moved && kept.a && kept.b, `a tag's ← reached with the keys moves the pedal (${kept.moved}) and keeps the hand on it through the move and its undo (${kept.a}, ${kept.b})`);
+  // (pressed with the mouse, it gives the keys back to the room: ui/liveroom/index.js)
+  const ar = await center('.gr-r-tag[data-device="pedal.delay"] [aria-label^="Move Echo Reef earlier"]');
+  const h9 = (await history(page)).length;
+  await page.mouse.click(ar.x, ar.y);
+  await page.waitForTimeout(80);
+  const mouse9 = { moved: (await history(page)).length === h9 + 1, held: await E(() => !!document.activeElement?.closest('.gr-r-tag')) };
+  if (mouse9.moved) await undo();
+  await page.waitForTimeout(60);
+  T.ok(mouse9.moved && !mouse9.held, `a tag's ← clicked with the mouse moves the pedal (${mouse9.moved}) and gives the keys back to the room (held: ${mouse9.held})`);
   await oneStep('Echo Reef’s tag: ← (before the amp)', () => E(() => document.querySelector('.gr-r-tag[data-slot="3"] [aria-label^="Move Echo Reef earlier"]').click()), (a, b) => b.devices.indexOf('pedal.delay') < b.amp);
   await oneStep('Lobster Plate: Back in the case', () => E(() => [...document.querySelectorAll('.gr-r-tag button')].find((x) => x.textContent === 'Back in the case' && x.closest('.gr-r-tag').textContent.includes('Lobster')).click()), (a, b) => !b.devices.includes('pedal.lobsterplate') && b.devices.length === a.devices.length - 1);
   // an agent's edit is drawn too (the drawing follows the song, whoever changed it)
@@ -306,6 +357,8 @@ async function checks(T, s, ctx) {
   });
   await press(page, 'Escape');
   await page.waitForTimeout(700);
+  slot.after = await E(() => ({ marks: document.querySelectorAll('.gr-r-slot.gr-r-focus').length, slot: window.overdub.ui.state.liveRoom.gr.slot }));
+  T.ok(slot.after.marks === 0 && slot.after.slot == null, `back on the stage the pedal in focus is let go (${slot.after.marks} marked, gr.slot ${slot.after.slot})`);
   T.ok(slot.ok && slot.cam === 'board' && slot.focus && slot.mark, `slot:1 goes to the board and puts the hand on pedal 2 (${slot.cam}, focused ${slot.focus})`);
   const strip = await E(() => ({ talk: !!document.querySelector('.gr-strip-tools .gr-r-chip'), drawer: document.querySelectorAll('.gr-strip-tools .gr-r-chip')[1]?.textContent || '', gs: !!document.querySelector('.lr-tools .gr-r-gs') }));
   T.ok(strip.talk && /Riffs/.test(strip.drawer) && /Part line/.test(strip.drawer) && strip.gs, `the strip's buttons (Talk to Claude; ${strip.drawer.replace(/\s+/g, ' ').trim()}) and the header's Getting started`);

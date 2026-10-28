@@ -5,6 +5,7 @@
 // and a second mic blended in (phase flip and all). With the cab on 'Its own' and one mic where it was voiced, it's
 // the amp exactly as it was voiced (the network isn't in the path at all).
 import { defineDevice } from '../registry.js';
+import { failure } from '../lifecycle.js';
 import { gear, workletFiles } from './gear/index.js';
 
 const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS } = gear;
@@ -71,8 +72,14 @@ export function ampDevice(id) {
     latency: 256 / 48000, // (the two 2x-oversampled stages: 128 samples each; the instance reports it at its own rate)
     worklets,
     build(c, kit) {
-      if (A.sub) c.__clawdAmpWorklets = kit.loaded('clawd-amps'); // (plugAmp builds the octave only when they're in)
+      // An amp with an octave (Abyss) is that amp only with it: no worklet, or an octave that can't be made, is a
+      // 'worklet' failure (the engine stands in, says so and builds it again), never a quiet Abyss without its octave.
+      if (A.sub) {
+        c.__clawdAmpWorklets = kit.loaded('clawd-amps'); // (plugAmp builds the octave only when they're in)
+        if (!c.__clawdAmpWorklets) throw failure('worklet', `${A.name}'s octave (the clawd-amps worklet) didn't load`);
+      }
       const amp = gear.plugAmp(c);
+      if (A.sub && !amp.octave()) { amp.dispose(); throw failure('worklet', `${A.name}'s octave couldn't be made`); }
       return {
         input: amp.input, output: amp.output, latency: amp.latency, amp,
         set(v, x) { amp.set(ampSettings(id, v), x && !x.first ? x.t : undefined); },

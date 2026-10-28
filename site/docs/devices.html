@@ -53,6 +53,7 @@
 <li><a href="#clip-lamp-coreclipper-a-ceiling-it-never-passes">Clip Lamp (core.clipper): a ceiling it never passes</a></li>
 <li><a href="#sandbag-coreclubkit-a-club-kit-for-bass-music">Sandbag (core.clubkit): a club kit for bass music</a></li>
 <li><a href="#keys-an-effect-that-hears-another-track">Keys: an effect that hears another track</a></li>
+<li><a href="#graph-devices-in-a-live-chain">Graph devices in a live chain</a></li>
 <li><a href="#under-the-hood">Under the hood</a></li>
 <li><a href="#expression-pitch-bend-the-mod-wheel-and-the-sustain-pedal">Expression: pitch bend, the mod wheel and the sustain pedal</a></li>
 <li><a href="#presets">Presets</a></li>
@@ -81,7 +82,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Devices: writing instruments and effects</a></h1>
-    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 68 min to read</p>
+    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 72 min to read</p>
     <article class="prose">
 <p>Overdub's instruments and effects are <strong>devices</strong>: a small definition (id, name, params, look) plus either a Web Audio
 graph (<code>build(c, kit)</code>, trusted built-ins like the ported pedals and amps) or a <strong>kernel</strong>: a few dozen lines of pure DSP
@@ -345,6 +346,58 @@ with an undo.</li>
 <li>The key is the source's place on the master timeline after delay compensation; inserts after the keyed device that
 add latency make the key that much late (reported in the latency, not corrected).</li>
 </ul>
+<h2 id="graph-devices-in-a-live-chain"><a class="h-link" href="#graph-devices-in-a-live-chain">Graph devices in a live chain</a></h2>
+<p>The pedals, the amps and the studio's other <code>build(c, kit)</code> devices run on <code>app/src/devices/graph.js</code>, which wraps a
+build in the Instance contract, and <code>app/src/devices/kit.js</code>, the kit a build gets. In a live chain each one follows
+the lifecycle in <code>app/src/devices/lifecycle.js</code>, the contract between them and the engine:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>stage</th><th>what happens</th></tr></thead>
+<tbody>
+<tr><td>build</td><td><code>build(c, kit)</code> makes the nodes; the first <code>set(v, x)</code> and the bypass follow. On a live context the bypass gains are set by <code>.value</code>, with nothing scheduled.</td></tr>
+<tr><td>ready</td><td><code>inst.ready</code> resolves once that's done. It <strong>rejects</strong> with <code>lifecycle.failure(code, message)</code> when <code>build</code> threw (<code>'threw'</code>), returned no <code>output</code>, or an effect no <code>input</code> (<code>'no-output'</code>), or a worklet the def declares didn't load (<code>'worklet'</code>). What a failed build started is let go. The engine plays its own stand-in (an effect passes its input through), reports an <code>'error'</code> and builds the device again later (<code>engine/strip.js</code> <code>BUILD</code>). A device never stands in for itself.</td></tr>
+<tr><td>bypass</td><td><code>setOn(on, at?)</code> moves the dry and wet gains along a 10 ms raised cosine, from <strong>one</strong> read of the audio clock, as 23 linear ramps through the cosine's points (<code>kit.js</code> <code>glide</code>, <code>cosineRamp</code>).</td></tr>
+<tr><td>health</td><td><code>inst.health()</code> returns <code>{ ok, failed, on, settled, dry, wet, want: { dry, wet } }</code>: the bypass gains as they are and as they should be. A switch is <code>settled</code> once the audio clock is past its fade, or 100 ms after it by the wall clock.</td></tr>
+<tr><td>assure</td><td><code>inst.assure()</code> snaps the bypass gains to their targets by <code>.value</code> (and feeds an insert that's on but isn't fed), and returns true if it had to. The engine calls it after it wires a device, and when the health check finds one wrong.</td></tr>
+<tr><td>dispose</td><td>Idempotent. The kit stops what it started and clears its timers, the device's own <code>dispose()</code> runs, and the wrapper disconnects.</td></tr>
+</tbody></table></div>
+<p>Why, measured on AJ's Chrome 156 and the harness's Chromium 151 (<code>docs/research/AMP-PATH.md</code> §1):</p>
+<ul>
+<li><strong>No value curve on a live context.</strong> Chrome 155 and 156 drop a <code>setValueCurveAtTime</code> that ends before its node
+first renders, and leave the param where it was. Every freshly built device is such a node, because the strip builds
+it before it wires it. That left an amp passing dry plus wet, or a pedal silent, until it was stomped. Linear ramps,
+<code>setTargetAtTime</code> and <code>setValueAtTime</code> land on every browser. The only curves left in <code>app/src</code> are offline
+branches, each behind <code>isOffline(c)</code>, which keep renders bit-identical.</li>
+<li><strong>One read of the clock.</strong> Chrome's <code>currentTime</code> moves in 5.8 ms steps (256 frames), even inside one task, so a
+second read can be later than the first. Read it once (<code>const now = c.currentTime</code>), hold at <code>now</code>, and schedule
+everything from that read.</li>
+<li><strong>Linear ramps through the cosine, not <code>setTargetAtTime</code>, for a footswitch.</strong> Web Audio draws a value curve as
+straight lines between its points, so 23 ramps through the same 24 points are the trajectory the curve had. The live
+stomp check measures the same click as before (tools/guitar-test.js 6). On a 196 Hz crossfade the third difference
+at the switch is 1.0x the steady tone's for the ramps, 2.7x for one 10 ms ramp and 8.6x for <code>setTargetAtTime</code> at
+2.5 ms, whose start is a corner. Knob moves (<code>x.to</code>) stay <code>setTargetAtTime</code>, which is right for a knob.</li>
+<li><strong>A worklet that failed is asked for again.</strong> <code>kit.loadWorklet</code> doesn't keep a failure for the page's life. The
+next request tries again, <code>WORKLET_RETRY</code> (1 s) after the failure at the soonest. <code>workletsReady</code> names what didn't
+load.</li>
+</ul>
+<p>When you write a graph device's <code>build</code> and <code>set</code>:</p>
+<ul>
+<li>In <code>build</code>, set node params by <code>.value</code>. In <code>set</code>, use <code>x.to(param, value)</code>: it's <code>setValueAtTime</code> at <code>x.t</code> on the
+first call and a 15 ms <code>setTargetAtTime</code> after that. Don't schedule a ramp, glide or curve while the device is being
+built.</li>
+<li>Never call <code>setValueCurveAtTime</code> on a live context. If a sound needs a shaped move (a tape stopping), schedule linear
+ramps through its points live, as Low-Batt Limpet's motor does, and keep any curve behind <code>isOffline(c)</code>.</li>
+<li>Read <code>c.currentTime</code> once per move, or use <code>x.t</code> (graph.js read it once for that <code>set</code>).</li>
+<li>Start sources through the kit (<code>kit.lfo</code>, <code>kit.constant</code>, <code>kit.noiseSource</code>, or <code>kit.own(node)</code> for your own), set
+timers with <code>kit.later</code>, and stop anything else in your <code>dispose()</code>. An amp's wow oscillator outlived every amp a
+swap threw away until <code>plugAmp</code>'s <code>dispose</code> stopped it.</li>
+<li>A device that can't be what it says should fail its build: throw, or throw <code>lifecycle.failure('worklet', ...)</code> (Abyss
+without its octave does). Don't pass the signal through quietly.</li>
+</ul>
+<p>The checks: <code>test/unit/kit.test.js</code> and <code>test/unit/graph.test.js</code> (a glide on a clock that moves between reads, the
+offline events held to what they always were, ready's failures, health and assure), and <code>tools/guitar-test.js</code> 6c.
+In 6c, every pedal and amp is built live on a clock that reads 11.6 ms stale every other time and stomped before and
+after it's wired, and it must report itself at its targets. 6c also covers a build that throws (through the engine),
+a worklet that fails once, a sabotaged dry gain and 50 amp swaps.</p>
 <h2 id="under-the-hood"><a class="h-link" href="#under-the-hood">Under the hood</a></h2>
 <ul>
 <li><strong>One processor for every kernel.</strong> <code>ensureKernelWorklet(c)</code> loads <code>app/src/kernel/processor.js</code> (the processor and

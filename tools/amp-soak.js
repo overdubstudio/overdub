@@ -13,7 +13,10 @@
 // A step that isn't wet (or what it expects) is measured again 3 s later: one that stays is stuck, one that clears was
 // passing. Failures print as they happen (XX), then a tally; the exit code is 1 on any.
 //
-//   node tools/amp-soak.js [scenario[,scenario] ...] [--n N] [--list]       (default: every scenario, N = 4)
+//   node tools/amp-soak.js [scenario[,scenario] ...] [--n N] [--reuse] [--list]   (default: every scenario, N = 4)
+//   --reuse          the scenarios that run in a session keep one browser for all N cycles (the room as a guitarist
+//                    leaves it, cycle after cycle; a new one after a cycle that failed, threw or logged a page error);
+//                    the cold and first-visit ones always launch their own
 //   CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"   AJ's Chrome (default: the harness's Chromium)
 //   SR=48000         the context at this rate (default: the browser's)
 //   LABELS=0         no standing microphone grant: enumerateDevices has no ids or labels until the first getUserMedia
@@ -328,6 +331,7 @@ function verdict(m, { ref = null, at = 'speaker' } = {}) {
 /* ---- the run */
 const args = process.argv.slice(2);
 const N = args.includes('--n') ? Math.max(1, +args[args.indexOf('--n') + 1] || 1) : 4;
+const REUSE = args.includes('--reuse');
 const only = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--n').flatMap((a) => a.split(',')).filter(Boolean);
 const browserName = /Google Chrome/.test(process.env.CHROMIUM || '') ? 'chrome' : 'chromium';
 const SR = +process.env.SR || 0;
@@ -724,32 +728,43 @@ const unknown = list.filter((n) => !SCEN[n]);
 if (unknown.length) { console.error(`amp-soak: no scenario ${unknown.join(', ')} (--list)`); process.exit(2); }
 const OUT = process.env.OUT || path.join(OUTDIR, `${browserName}-${SR || 'default'}${only.length ? '-' + only.join('+') : ''}.json`);
 console.log(`amp-soak on ${process.env.CHROMIUM || 'the harness’s Chromium'}${SR ? ' at ' + SR : ''}${process.env.LABELS === '0' ? ', no labels' : ''}${process.env.STRICT === '1' ? ', strict autoplay' : ''}: ${list.join(', ')} x${N}  (serving ${TREE})`);
+const T0 = Date.now(), secs = {};
 for (const name of list) {
+  let s = null;
+  const t0 = Date.now();
   for (let rep = 1; rep <= N; rep++) {
+    const before = rows.filter((r) => r.bad).length;
     try {
       if (OWN_SESSION.has(name)) await SCEN[name](rep);
       else {
-        const s = await session();
+        if (!s) s = await session();
+        else { await intoClub(s); await plugIn(s, 'tuner'); }
+        let keep = false;
         try {
           const r0 = await check(s, name, rep, 'before', { once: true });
           if (r0.v === 'wet' && !REF) REF = r0.share;
           await SCEN[name](rep, s);
+          keep = REUSE;
         } finally {
-          if (s.errors.length) { rows.push({ scen: name, rep, step: 'page errors', v: 'errors', bad: true, errors: s.errors.slice(0, 6) }); console.log('XX page errors:', s.errors.slice(0, 3).join(' | ').slice(0, 400)); }
-          await s.close();
+          if (s.errors.length) { rows.push({ scen: name, rep, step: 'page errors', v: 'errors', bad: true, errors: s.errors.slice(0, 6) }); console.log('XX page errors:', s.errors.slice(0, 3).join(' | ').slice(0, 400)); keep = false; }
+          if (rows.filter((r) => r.bad).length > before) keep = false;
+          if (!keep) { const x = s; s = null; await x.close(); }
         }
       }
     } catch (e) { console.log(`XX ${name}#${rep} threw: ${String(e && e.message).split('\n')[0]}`); rows.push({ scen: name, rep, step: 'threw', v: 'error', bad: true, error: String(e && e.message).slice(0, 300) }); }
   }
+  if (s) await s.close();
+  secs[name] = Math.round((Date.now() - t0) / 1000);
+  console.log(`-- ${name}: ${N} cycles in ${secs[name]} s`);
 }
-fs.writeFileSync(OUT, JSON.stringify({ browser: process.env.CHROMIUM || 'chromium', sr: SR, ref: REF, rows }, null, 1));
+fs.writeFileSync(OUT, JSON.stringify({ browser: process.env.CHROMIUM || 'chromium', sr: SR, ref: REF, n: N, reuse: REUSE, secs, rows }, null, 1));
 const tally = {};
 for (const r of rows) {
   const t = (tally[r.scen] ??= { n: 0, bad: {} });
   t.n++;
   if (r.bad) { const k = `${r.step.replace(/ \(\+3 s\)/, ' +3 s')}: ${r.v}`; t.bad[k] = (t.bad[k] || 0) + 1; fails++; }
 }
-console.log(`\n== amp-soak: ${rows.length} measurements, ${fails} failed (the club's stack wet at share ${REF})`);
+console.log(`\n== amp-soak: ${rows.length} measurements, ${fails} failed (the club's stack wet at share ${REF}) in ${Math.round((Date.now() - T0) / 60000)} min`);
 for (const [k, t] of Object.entries(tally)) { const b = Object.entries(t.bad); console.log(`${b.length ? 'XX' : 'ok'} ${k}: ${t.n} measured${b.length ? '' : ', all as expected'}`); for (const [w, n] of b) console.log(`     ${n}x ${w}`); }
 console.log('rows ->', OUT);
 process.exitCode = fails ? 1 : 0;

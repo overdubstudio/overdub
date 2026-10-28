@@ -204,6 +204,7 @@ export function createAudioIn(app, input) {
   if (saved.deviceId === 'default' || saved.deviceId === 'communications') saved.deviceId = '';
   const state = { open: false, deviceId: saved.deviceId || '', realId: '', label: '', channel: saved.channel || '1', channels: 0, settings: {}, processed: false, inputKind: '', role: '', monitoring: false, monitorAuto: false, monitorBy: '', monitorOff: '', monitorLine: '', monitorHolds: [], monitorTrack: null, monitorWaiting: false, picking: false, path: null, recording: false, countIn: saved.countIn !== false, error: '', sr: 0, opening: false, firstFrame: null, split: null };
   let ctx = null, ownCtx = null, rig = null, cap = null, capReady = null, mon = null, monDest = null, recording = false;
+  let openQ = Promise.resolve(), inflight = 0, best = null;   // (opens run one at a time: audio.open; an openBest on its way)
   let warned = false, syncT = 0, via = null;   // (the monitor: said once that it waits for a track; a sync queued; where it plays)
   // Monitoring: one decision { for: the real device id, on, by: 'auto' | 'hand' | 'open' | 'guard', why }, the holds
   // that mute it for a moment ('tuner'), and what was decided by hand (or by the feedback guard) for each device, kept
@@ -272,7 +273,14 @@ export function createAudioIn(app, input) {
     // choose, open, and on a blind first open (no labels until the grant) choose again and reopen if an interface is
     // now there that isn't the one open. In the guitar room (role 'instrument') the channel that moves on the first
     // strum is picked (unless one is picked by hand).
-    async openBest({ role = state.role, capture = false } = {}) {
+    // (an open already on its way, Plug in and then M or R while the browser answers: this joins it)
+    async openBest(o = {}) {
+      if (best) { await best.catch(() => {}); if (state.open) return state; }
+      if (inflight) { await openQ; if (state.open) return state; }
+      const run = (best = audio._best(o));
+      try { return await run; } finally { if (best === run) best = null; }
+    },
+    async _best({ role = state.role, capture = false } = {}) {
       const c = await audio.choose({ role });
       const listen = role === 'instrument';
       await audio.open({ device: c.device, channel: c.channel, capture, role, listen });
@@ -287,7 +295,16 @@ export function createAudioIn(app, input) {
     // monitor: 'auto' (decide for this input: see below), true or false (this open's own word: kept while the same
     // device reopens for the same role), 'keep'. role: 'instrument' in the guitar room (livepath.js), '' elsewhere.
     // listen: pick the channel that moves on the first strum.
-    async open({ device = picker.deviceId, channel = picker.channel, forTrack = null, monitor = 'auto', capture = false, split = null, role = state.role, listen = false } = {}) {
+    // One open at a time, in the order asked: two overlapping (each awaits the browser and the device list) would both
+    // close the input before either was open, so the first one's stream ran on unstopped and the monitor stayed on its
+    // pick while the meter read the second's.
+    open(o = {}) {
+      inflight++;
+      const run = openQ.then(() => audio._open(o)).finally(() => { inflight--; });
+      openQ = run.catch(() => {});
+      return run;
+    },
+    async _open({ device = picker.deviceId, channel = picker.channel, forTrack = null, monitor = 'auto', capture = false, split = null, role = state.role, listen = false } = {}) {
       const md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) { state.error = 'Can’t open an audio input here: the page needs https (or localhost) and a browser that allows audio input.'; changed(); throw new Error(state.error); }
       state.opening = true; changed();
@@ -390,7 +407,7 @@ export function createAudioIn(app, input) {
       pathEvt('open');
       return state;
     },
-    async ensureOpen() { if (!state.open) await audio.open(); return state; },
+    async ensureOpen() { if (best) await best.catch(() => {}); if (inflight) await openQ; if (!state.open) await audio.open(); return state; },
     // The input a track records from: the Inspector's (track.input) when it was set, else Sketch's picker
     inputOf(t) {
       const inp = t && t.input;

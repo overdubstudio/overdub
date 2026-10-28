@@ -969,6 +969,21 @@ function drum(kind, sr, len = 0.25) {
       await a.open({ device: 'mbp-mic' }); a.monitor(true); await w(40); a.hush(); await w(40);
       out.mic = { on: a.state.monitoring, by: a.state.monitorBy, through: through() };
       a.close();
+      // two opens overlapping (Plug in, then M or R while the browser answers), and two openBests: one stream left
+      // running, the one the monitor plays from; openBests join the open in flight
+      {
+        const md = navigator.mediaDevices, gum = md.getUserMedia, en = md.enumerateDevices, got = [];
+        md.getUserMedia = async (c) => { const s = await gum.call(md, c); got.push(s); return s; };
+        md.enumerateDevices = async () => { await w(30); return en.call(md); };
+        const live = () => got.filter((s) => s.getAudioTracks()[0].readyState === 'live').length;
+        await Promise.all([a.open({ device: 'scarlett-1', channel: '1' }), a.open({ device: 'scarlett-1', channel: '2' })]); await w(80);
+        out.overlap = { live: live(), asked: got.length, channel: a.state.channel, through: through() };
+        a.close(); got.length = 0;
+        await Promise.all([a.openBest({ role: 'instrument' }), a.openBest({ role: 'instrument' }), a.ensureOpen()]); await w(80);
+        out.overlap.best = { live: live(), asked: got.length };
+        a.close(); out.overlap.closed = live();
+        md.getUserMedia = gum; md.enumerateDevices = en;
+      }
       window.__gum = [];
       await a.open({ device: 'gone-1234' }); await w(40);
       out.stale = { real: a.state.realId, open: a.state.open, asks: window.__gum.map((c) => ({ id: c && c.deviceId ? (c.deviceId.exact ? c.deviceId.exact : 'loose:' + c.deviceId) : '', off: !!c && c.echoCancellation === false && c.noiseSuppression === false && c.autoGainControl === false })) };
@@ -982,6 +997,8 @@ function drum(kind, sr, len = 0.25) {
     T.ok(q.held.on && q.held.holds.join() === 'tuner' && q.held.through === null && q.released.on && !q.released.holds && q.released.through === 'Guitar',
       `a hold mutes without deciding (held: monitoring ${q.held.on ? 'on' : 'off'}, playing through ${q.held.through}); released, it plays through ${q.released.through} again`);
     T.ok(!q.mic.on && q.mic.by === 'hand' && q.mic.through === null, `the killswitch turns a microphone's monitoring off by hand (${q.mic.on ? 'on' : 'off'}, by ${q.mic.by})`);
+    T.ok(q.overlap.live === 1 && q.overlap.asked === 2 && q.overlap.channel === '2' && q.overlap.through === 'Guitar' && q.overlap.best.live === 1 && q.overlap.best.asked === 1 && q.overlap.closed === 0,
+      `two opens overlapping run one after the other: ${q.overlap.live} stream left running of ${q.overlap.asked}, on input ${q.overlap.channel} (the last asked for); two openBests and an ensureOpen at once ask the browser ${q.overlap.best.asked} time${q.overlap.best.asked === 1 ? '' : 's'}; closed, ${q.overlap.closed} running`);
     const loose = q.stale.asks.filter((x) => x.id.startsWith('loose:')).length, wet = q.stale.asks.filter((x) => !x.off).length;
     T.ok(q.stale.open && q.stale.real === 'scarlett-1' && !loose && !wet && q.stale.asks.some((x) => x.id === 'gone-1234') && q.stale.asks.at(-1).id === 'scarlett-1',
       `a remembered id that's gone is chosen again by its label (${q.stale.real}: asked ${q.stale.asks.map((x) => x.id || 'default').join(', ')}), never loosely (${loose}), the voice processing off on every ask (${wet} with it on)`);

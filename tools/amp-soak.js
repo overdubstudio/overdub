@@ -287,6 +287,7 @@ async function intoClub(s) {
   await sleep(400);
   return E(() => window.overdub.ui.state.liveRoom?.screen === 'guitar');
 }
+const gsAtPlug = (s) => s.E(async () => { const { gprefs } = await import('/app/src/ui/liveroom/guitar/prefs.js'); gprefs.set({ gs: { step: 'plug' } }); });
 // the room's ways to open the input: 'tuner' (U on, U off, real key presses), 'gs' (Getting started's Plug in, then
 // Skip), 'api' (audio.open with the picker's input)
 async function plugIn(s, how = 'tuner') {
@@ -298,6 +299,9 @@ async function plugIn(s, how = 'tuner') {
     await key(page, 'KeyU');
     await sleep(300);
   } else if (how === 'gs') {
+    // (Getting started opens where it was left: a session that skipped past Plug in before comes back to Tune, whose
+    // own way in is the tuner. This is its Plug in: the step it was left at is Plug in)
+    await gsAtPlug(s);
     await E(() => window.overdub.liveRoom.press('gs'));
     await sleep(700);
     const b = page.locator('.gr-co-b.go', { hasText: 'Plug in' });
@@ -619,6 +623,7 @@ const SCEN = {
   // Getting started's "Default - Scarlett" chip (it opens on input 1; the first strum picks input 2), a reload and the
   // tuner, then the Scarlett's own chip
   async chipdefault(rep, s) {
+    await gsAtPlug(s);
     await R(s, () => window.overdub.liveRoom.press('gs'));
     await sleep(800);
     const chip = s.page.locator('.gr-co-chip', { hasText: 'Default - ' });
@@ -634,6 +639,7 @@ const SCEN = {
     if ((await R(s, () => window.overdub.ui.state.liveRoom?.screen)) !== 'guitar') await intoClub(s);
     await plugIn(s, 'tuner');
     await check(s, 'chipdefault', rep, 'reloaded, the tuner (U U)');
+    await gsAtPlug(s);
     await R(s, () => window.overdub.liveRoom.press('gs'));
     await sleep(800);
     const own = s.page.locator('.gr-co-chip', { hasText: /^Scarlett/ });

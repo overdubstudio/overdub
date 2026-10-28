@@ -76,7 +76,9 @@ that pedal. pedal-check also fails on two pedals with the same `name` (ignoring 
 
 Anything else on the object is yours. Tests reach it with `rig.chain.pedal(uid)`; the gate puts its worklet node there.
 
-If `build` throws or returns no `input`/`output`, the pedal becomes a wire and the error goes to the console.
+If `build` throws or returns no `input`/`output`, the pedal fails to build. In Overdub its `ready` rejects
+(`devices/lifecycle.js`), and the engine plays its own stand-in, says so and builds it again. The pedal is never a
+quiet wire.
 
 ### In time with the band
 
@@ -204,6 +206,26 @@ Phones (390 px) show two pedals across, with `wide` and `rack` full width.
 
 The kit stops everything it started (`lfo`, `constant`, `noiseSource`) and clears its timers when the pedal leaves the
 board. Anything you started with `c.create…().start()` yourself must go through `kit.own(node)`.
+
+### The live rules (Overdub)
+
+A pedal runs in a live chain under Overdub's device lifecycle (`docs/DEVICES.md`, "Graph devices in a live chain"),
+and its code keeps these rules:
+
+- **Nothing scheduled at build.** In `build`, set node params by `.value`. In `set`, use `x.to`: `setValueAtTime` at
+  `x.t` on the first call, `setTargetAtTime` after. The wrapper sets the bypass by `.value` when the pedal is built.
+- **No value curve on a live context.** Chrome 155 and 156 drop a `setValueCurveAtTime` that ends before its node first
+  renders, and a freshly built pedal hasn't rendered. Shape a move with linear ramps through its points, as Low-Batt
+  Limpet's motor stop does. A curve may stay offline, behind `isOffline(c)`.
+- **One read of the clock.** Chrome's `currentTime` steps 5.8 ms at a time, even inside one task. Read it once per
+  move (or use `x.t`) and schedule everything from that read. The footswitch does this: it holds at the read, then
+  makes 23 linear ramps through the raised cosine's points (`devices/kit.js` `glide`). `pfxGlide` and the kit's
+  convolver crossfade work the same way.
+- **What you start, you stop.** Sources go through the kit or `kit.own`, timers through `kit.later`, and everything
+  else through `dispose` (the amps' `plugAmp` stops its wow oscillator and clears its duck timers there).
+- **A declared worklet that didn't load fails the build** (`ready` rejects with `'worklet'`), so `k.worklet(...)` is
+  never null in a pedal that's playing. Keep the `|| k.G(1)` fallback for pedalRig's own board. The module is asked
+  for again on the next build.
 
 ### Worklets
 

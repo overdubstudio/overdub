@@ -15,6 +15,12 @@
 //  6. live: stomping a few pedals on and off while a tone plays is click-free (the 10 ms crossfades).
 //  6b. live: a pedal and an amp built on and wired in a moment later (as a strip does) play through themselves from
 //     the first note, not their dry signal.
+//  6c. live, the lifecycle (docs/DEVICES.md, "Graph devices in a live chain"; devices/lifecycle.js): every pedal and amp
+//     built on a context whose clock moves 11.6 ms between reads, stomped before and after it's wired 25 ms later, says
+//     health().ok with its bypass gains at their targets, and nothing calls setValueCurveAtTime live; a device whose
+//     build throws rejects ready with 'threw' and plays the engine's stand-in with an 'error' report; a worklet module
+//     that fails once loads on the next build; assure() snaps a sabotaged dry gain; 50 amp swaps leave no wow
+//     oscillator running.
 //  7. faces: gallery.html renders a face for every device with no page errors; knobs turn (keys, double-click reset),
 //     switches flip, footswitches stomp; screenshots at 1440 and 390 wide (tools/.out/gallery-*.png).
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
@@ -369,9 +375,10 @@ async function boot(page) {
   for (const l of live) t.ok(l.ratio < 1.6 && l.secs > 1, `live stomps on ${l.id} are click-free (second difference at the stomps ${l.ratio.toFixed(2)}× the steady sound's, ${l.secs.toFixed(1)} s captured)`);
 
   // 6b. live: built on and wired in a moment later, as a strip wires a device in after its dip, it plays through itself
-  // from the first note. Chrome 155 drops a curve that is over before its node first renders, so the footswitch's 10 ms
-  // switch to on was lost and every pedal and amp passed its dry signal until it was stomped off and on (kit.js endAt).
-  // (Chromium 151, the one tools/pw.js finds, lands the curve: CHROMIUM=<a Chrome 155 or later> makes this one bite.)
+  // from the first note. Chrome 155 and 156 drop a value curve that is over before its node first renders, so a
+  // footswitch curve at build left every pedal and amp passing its dry signal until it was stomped off and on. Now a
+  // device is built with its bypass set by .value and switches with linear ramps (kit.js glide, graph.js).
+  // (Chromium 151, the one tools/pw.js finds, landed the curve: CHROMIUM=<a Chrome 155 or later> makes this one bite.)
   const late = await page.evaluate(async () => {
     const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
     await c.resume();
@@ -399,6 +406,121 @@ async function boot(page) {
     return res;
   });
   for (const l of late) t.ok(l.db > -20 && l.n > 50, `${l.id} built on and wired in 80 ms later plays through itself from the first note, not its dry signal (${Number.isFinite(l.db) ? l.db.toFixed(1) + ' dB' : '-inf'} from the dry)`);
+
+  // 6c. live, the lifecycle. Chrome's audio clock steps 5.8 ms (256 frames) at a time, even inside one task, and Chrome
+  // 155 and 156 drop a value curve that's over before its node first renders: a footswitch that read the clock twice
+  // left an amp dry plus wet, or a pedal silent, until it was stomped (docs/research/AMP-PATH.md §1). Here the clock
+  // reads 11.6 ms stale every other time, every device is stomped off and on before it's wired (unrendered) and again
+  // after, and each must say it's where it was asked to be.
+  const life = await page.evaluate(async () => {
+    const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+    await c.resume();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const real = Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'currentTime').get;
+    let reads = 0;
+    Object.defineProperty(c, 'currentTime', { configurable: true, get() { const t = real.call(c); return reads++ % 2 ? t : Math.max(0, t - 0.0116); } });
+    const P = AudioParam.prototype, curve = P.setValueCurveAtTime;
+    let curves = 0;
+    P.setValueCurveAtTime = function (...a) { curves++; return curve.apply(this, a); };
+    const ids = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id)).map((d) => d.id), bad = [];
+    const src = c.createOscillator(), g = c.createGain(), sink = c.createGain();
+    src.frequency.value = 196; g.gain.value = 0.25; sink.gain.value = 0; src.connect(g); sink.connect(c.destination); src.start();
+    for (let k = 0; k < ids.length; k += 16) {
+      await Promise.all(ids.slice(k, k + 16).map(async (id) => {
+        let inst;
+        try { inst = await R.instantiate(c, id, { uid: 'life-' + id, on: true, bpm: 120 }); await inst.ready; } catch (e) { bad.push(id + ' ' + (e.code || '') + ' ' + e.message); return; }
+        inst.setOn(false); inst.setOn(true); // (stomped while nothing has rendered)
+        await sleep(25);
+        g.connect(inst.input); inst.output.connect(sink);
+        await sleep(150);
+        let h = inst.health();
+        const near = (x, y) => Math.abs(x - y) <= 1e-3 * Math.max(1, Math.abs(y));
+        if (!h.ok || !near(h.dry, h.want.dry) || !near(h.wet, h.want.wet)) bad.push(`${id} unwired-stomp ${JSON.stringify(h)}`);
+        inst.setOn(false); await sleep(60); inst.setOn(true); // (and once it's playing)
+        await sleep(150);
+        h = inst.health();
+        if (!h.ok || !near(h.dry, h.want.dry) || !near(h.wet, h.want.wet)) bad.push(`${id} wired-stomp ${JSON.stringify(h)}`);
+        try { g.disconnect(inst.input); } catch { /* gone */ }
+        inst.dispose(); inst.dispose();
+      }));
+    }
+    src.stop(); delete c.currentTime;
+    P.setValueCurveAtTime = curve;
+    // assure(): the dry gain put back to 1 under an amp that's on (what Chrome 156 left) is seen, and snapped
+    const gains = [], mk = c.createGain;
+    c.createGain = function () { const n = mk.call(c); gains.push(n); return n; };
+    const amp = await R.instantiate(c, 'amp.recto', { uid: 'sabotage', on: true }); await amp.ready;
+    c.createGain = mk;
+    const dry = gains[2]; // (graph.js: in, out, dry, wet)
+    await sleep(30);
+    dry.gain.cancelScheduledValues(0); dry.gain.value = 1;
+    const before = amp.health(), snapped = amp.assure(), after = amp.health(), again = amp.assure();
+    amp.dispose();
+    await c.close();
+    return { n: ids.length, bad, curves, before, snapped, after, again };
+  });
+  t.ok(life.n >= 128 && !life.bad.length, `all ${life.n} pedals and amps, built live with the clock moving 11.6 ms between reads and stomped before and after they're wired, say they're where they were asked to be (health ok, dry and wet at target)${life.bad.length ? ': ' + life.bad.slice(0, 4).join(' | ') : ''}`);
+  t.ok(life.curves === 0, `nothing called setValueCurveAtTime on the live context (${life.curves})`);
+  t.ok(!life.before.ok && life.before.dry === 1 && life.snapped === true && life.after.ok && life.after.dry === 0 && life.again === false, `assure() sees an amp's dry gain put back to 1 (health ok ${life.before.ok}), snaps it (${life.snapped}: dry ${life.after.dry}, ok ${life.after.ok}) and has nothing to do after (${life.again})`);
+
+  // a build that throws, through the engine; a worklet that fails once; 50 amp swaps
+  const fail = await page.evaluate(async () => {
+    const { R } = window.__gt;
+    const { failureCode } = await import('/app/src/devices/lifecycle.js');
+    const E = await import('/app/src/engine/engine.js'), S = await import('/app/src/core/store.js');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const warn = console.warn; console.warn = () => {};
+    const out = {};
+    try {
+      R.defineDevice({ id: 'test.throws', name: 'Throws', kind: 'effect', cat: 'utility', params: [], look: {}, build() { throw new Error('a test build that throws'); } }, { replace: true });
+      const c0 = new AudioContext();
+      const i0 = await R.instantiate(c0, 'test.throws', { uid: 't0' });
+      out.code = await i0.ready.then(() => 'resolved', (e) => failureCode(e));
+      i0.dispose(); await c0.close();
+      const store = S.createStore();
+      let r = store.dispatch({ type: 'track.add', track: { name: 'Guitar', kind: 'audio' }, ref: 'g' }, { by: 'you' });
+      const tid = r.created.g;
+      r = store.dispatch({ type: 'insert.add', track: tid, insert: { device: 'test.throws' }, ref: 'fx' }, { by: 'you' });
+      const fxId = r.created.fx;
+      const engine = E.createEngine(store), errs = [];
+      engine.on('error', (e) => errs.push(e.message));
+      await engine.start(); await engine.settled();
+      const inst = engine.instance(tid, fxId);
+      out.standIn = !!(inst && inst.fallback);
+      out.reported = errs.filter((m) => /test\.throws/.test(m) && /a test build that throws/.test(m));
+      await engine.ctx.close();
+      // the gate's worklet module failing once: a 'worklet' failure, then the next build loads it
+      const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
+      const c = new AudioContext(), add = c.audioWorklet.addModule.bind(c.audioWorklet);
+      let failed = 0;
+      c.audioWorklet.addModule = (u, o) => (String(u) === WORKLETS['clawd-gate'] && !failed++ ? Promise.reject(new Error('a blip')) : add(u, o));
+      const a = await R.instantiate(c, 'pedal.gate', { uid: 'wk1' });
+      out.first = await a.ready.then(() => 'resolved', (e) => failureCode(e));
+      a.dispose();
+      const b = await R.instantiate(c, 'pedal.gate', { uid: 'wk2' });
+      out.second = await b.ready.then(() => 'resolved', (e) => failureCode(e));
+      out.gateNode = !!(b.device && b.device.node);
+      b.dispose();
+      // 50 amp swaps: each one's wow oscillator stops with it
+      const running = new Set(), mkOsc = c.createOscillator;
+      c.createOscillator = function () { const o = mkOsc.call(c), st = o.start, sp = o.stop; o.start = (...x) => { running.add(o); return st.apply(o, x); }; o.stop = (...x) => { running.delete(o); return sp.apply(o, x); }; return o; };
+      const amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.')).map((d) => d.id);
+      let cur = null;
+      for (let k = 0; k < 50; k++) {
+        const next = await R.instantiate(c, amps[k % amps.length], { uid: 'swap' + k }); await next.ready;
+        if (cur) cur.dispose();
+        cur = next;
+      }
+      out.whileOne = running.size;
+      cur.dispose();
+      out.after = running.size;
+      await sleep(10); await c.close();
+    } finally { console.warn = warn; }
+    return out;
+  });
+  t.ok(fail.code === 'threw' && fail.standIn && fail.reported.length > 0, `a device whose build throws rejects ready with 'threw' (${fail.code}), and the engine plays its stand-in (${fail.standIn}) and says so (${fail.reported[0] || 'no error report'})`);
+  t.ok(fail.first === 'worklet' && fail.second === 'resolved' && fail.gateNode, `the Snapper with its worklet failing to load once is a 'worklet' failure (${fail.first}), and the next build loads it (${fail.second}, gate ${fail.gateNode ? 'in' : 'missing'})`);
+  t.ok(fail.whileOne === 1 && fail.after === 0, `50 amp swaps leave only the playing amp's wow oscillator running (${fail.whileOne}), and none once it's gone (${fail.after})`);
 
   t.ok(!errors.length, `no page errors in the audio checks${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await close();

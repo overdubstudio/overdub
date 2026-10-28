@@ -127,6 +127,8 @@ export function graphInstance(c, def, opts = {}) {
   // same read: Chrome's clock can step 5.8 ms between two). Offline, exactly as it always was: straight there before
   // anything has played, else the glide scheduled ahead from the gain's last target.
   let swEnd = 0, swWall = 0; // (the last switch's fade: where it ends on the audio clock, and when by the wall clock)
+  // no switch fade still running: the audio clock past its end, or (a stalled or suspended clock) the wall's
+  const settledNow = () => offline || c.state !== 'running' || c.currentTime >= swEnd || performance.now() >= swWall;
   const sw = (param, v, at, first, now) => {
     if (!offline) {
       if (first) { param.cancelScheduledValues(0); param.value = v; return; }
@@ -253,15 +255,17 @@ export function graphInstance(c, def, opts = {}) {
     health() {
       const why = failed || (dead ? 'disposed' : p ? '' : 'building');
       if (!fx) return { ok: !why, failed: why, on: true, settled: true, dry: null, wet: null, want: null };
-      const settled = offline || c.state !== 'running' || c.currentTime >= swEnd || performance.now() >= swWall;
+      const settled = settledNow();
       const want = { dry: dry.gain.__to ?? 1, wet: wet.gain.__to ?? 0 }, dv = dry.gain.value, wv = wet.gain.value;
       const fedOk = trails || !on || fed || !p;
       return { ok: !why && settled && near(dv, want.dry) && near(wv, want.wet) && fedOk, failed: why, on, settled, dry: dv, wet: wv, want };
     },
     // Snap the bypass gains to their targets at once (cancel what's scheduled, set .value), and feed an insert that's
-    // on and isn't fed: true if anything had to move. (The engine calls it once a wired device's fades are over.)
+    // on and isn't fed: true if anything had to move. (The engine calls it once a wired device's fades are over.) A
+    // footswitch fade still running is left alone: snapped halfway it would jump, a click; once it's over, a fade the
+    // browser dropped is snapped like any other.
     assure() {
-      if (!fx || !p || dead) return false;
+      if (!fx || !p || dead || !settledNow()) return false;
       let moved = false;
       for (const g of [dry.gain, wet.gain]) {
         const want = g.__to;

@@ -272,6 +272,24 @@ describe('the footswitch, live: one clock read, linear ramps; health and assure'
     assert.equal(assure(inst), false, 'nothing to do the second time');
     inst.dispose();
   });
+  test('assure() leaves a stomp that is still fading alone (a snap mid-fade is a click)', async () => {
+    const c = live(4),
+      inst = G.graphInstance(c, fx(), { uid: 'm', on: true });
+    await inst.ready;
+    inst.setOn(false);
+    // (the strip's assure after a wiring, or anything else, landing inside the 10 ms crossfade)
+    c.t = 4.006;
+    take();
+    try {
+      assert.equal(assure(inst), false, 'nothing snapped while the fade runs');
+      assert.ok(!take().some((e) => e[1] === 'cancel' || e[1] === 'value'), 'the fade is not cancelled or jumped');
+      // once it's over, a fade the browser dropped is snapped as ever
+      c.t = 4.05;
+      assert.equal(assure(inst), true);
+    } finally {
+      inst.dispose();
+    }
+  });
   test('an instrument: ok once built, no bypass gains', async () => {
     const c = live(),
       inst = G.graphInstance(

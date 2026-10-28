@@ -287,7 +287,13 @@ async function intoClub(s) {
   await sleep(400);
   return E(() => window.overdub.ui.state.liveRoom?.screen === 'guitar');
 }
-const gsAtPlug = (s) => s.E(async () => { const { gprefs } = await import('/app/src/ui/liveroom/guitar/prefs.js'); gprefs.set({ gs: { step: 'plug' } }); });
+// (Getting started stays up after Skip, on its next step: a cycle before left it at Tune. Paused with Esc first, then
+// left at Plug in, as a guitarist coming back to plug in would find it)
+const gsAtPlug = (s) => s.E(async () => {
+  const o = window.overdub, { gprefs } = await import('/app/src/ui/liveroom/guitar/prefs.js');
+  for (let i = 0; i < 3 && o.ui.state.liveRoom?.gr?.overlay === 'gs'; i++) { o.liveRoom.press('back'); await new Promise((r) => setTimeout(r, 100)); }
+  gprefs.set({ gs: { step: 'plug' } });
+});
 // the room's ways to open the input: 'tuner' (U on, U off, real key presses), 'gs' (Getting started's Plug in, then
 // Skip), 'api' (audio.open with the picker's input)
 async function plugIn(s, how = 'tuner') {
@@ -299,8 +305,6 @@ async function plugIn(s, how = 'tuner') {
     await key(page, 'KeyU');
     await sleep(300);
   } else if (how === 'gs') {
-    // (Getting started opens where it was left: a session that skipped past Plug in before comes back to Tune, whose
-    // own way in is the tuner. This is its Plug in: the step it was left at is Plug in)
     await gsAtPlug(s);
     await E(() => window.overdub.liveRoom.press('gs'));
     await sleep(700);

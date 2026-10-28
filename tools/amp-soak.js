@@ -22,6 +22,8 @@
 //   NOPERM=1         the microphone not granted before the page asks
 //   TREE=/checkout   serve another checkout (its tools/pw.js and server), to compare before and after
 //   OUT=file.json    where the rows go (default tools/.out/amp-soak/<browser>-<sr>[-scenarios].json)
+//   FAKE_OUTPUT=1    the browser plays to a fake output (tools/pw.js): when the Mac's output device has stopped
+//                    answering, every context's clock stalls and every step reads silent
 // The machine is shared and the browser is muted: run it under nice -n 10, one browser at a time. A timed step that
 // fails under load and passes alone is load: say so.
 //
@@ -208,7 +210,7 @@ async function openStrict(route, { fakeAudio, init }) {
   const { startServer, ready } = await imp('server/serve.js');
   await ready;
   const srv = await startServer({ port: 0, quiet: true });
-  const args = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--mute-audio', '--font-render-hinting=none', `--use-file-for-fake-audio-capture=${fakeAudio}`];
+  const args = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--mute-audio', ...PW.QUIET, ...PW.TEXT, `--use-file-for-fake-audio-capture=${fakeAudio}`];
   if (process.env.STRICT !== '1') args.push('--autoplay-policy=no-user-gesture-required');
   let exe = process.env.CHROMIUM;
   if (!exe) { const base = path.join(os.homedir(), 'Library/Caches/ms-playwright'); if (fs.existsSync(base)) for (const d of fs.readdirSync(base)) if (d.startsWith('chromium_headless_shell')) exe = path.join(base, d, 'chrome-headless-shell-mac-arm64/chrome-headless-shell'); }

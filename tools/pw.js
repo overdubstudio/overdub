@@ -6,7 +6,8 @@
 //   await close();
 //
 // Env: PLAYWRIGHT_CORE (path to playwright-core), CHROMIUM (a chromium or chrome-headless-shell binary),
-// HEADED=1 (watch it), OUTDIR (screenshots; default tools/.out). Falls back to the copies already on this machine.
+// HEADED=1 (watch it), OUTDIR (screenshots; default tools/.out), FAKE_OUTPUT=1 (see QUIET). Falls back to the copies
+// already on this machine.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -42,7 +43,12 @@ function findChromium() {
 
 // Test browsers keep quiet on this machine's speakers: Chromium's --mute-audio silences only what reaches the speakers
 // (the audio graph, its taps, captures and renders run as before). SOUND=1 lets a run be heard.
-export const QUIET = process.env.SOUND ? [] : ['--mute-audio'];
+// The audio clock is still the Mac's output device's: when that device stops answering (the display asleep, the
+// interface gone) a context reads 'running' and moves about 6 ms in a second, and every timed check fails at once.
+// FAKE_OUTPUT=1 plays to Chromium's own timer instead (--disable-audio-output), as on a CI runner with no sound card;
+// outputLatency then reads 16 ms where it read 0.
+const FAKE_OUT = process.env.FAKE_OUTPUT === '1' ? ['--disable-audio-output'] : [];
+export const QUIET = process.env.SOUND ? [] : ['--mute-audio', ...FAKE_OUT];
 // Text measures as it does on a Mac: Chromium on Linux hints fonts by default, which rounds each glyph's advance to a
 // whole pixel, so a line of text comes out a few px wider and the checks that fit a bar or a panel to the window ran
 // 2-16 px over on a Linux CI runner. No hinting is what macOS does anyway, so this changes nothing there.

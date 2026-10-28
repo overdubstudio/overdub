@@ -74,14 +74,15 @@ export async function makeInstance(c, kind, deviceId, { uid, params, on = true, 
   };
   if (!def) return fallback(`no device "${deviceId}" (playing a stand-in until it is defined)`);
   if (def.kind !== kind) return fallback(`device "${deviceId}" is an ${def.kind}, not an ${kind}`);
-  let inst = null;
+  let inst = null, made = null;
   try {
     const values = paramValues(def, params || {});
     // kernel data (a sampled kit): an export waits for the files before BUILD.ready starts counting, since 23 MB on a slow
     // line can take longer than that, and a stand-in synth must never play in an export for want of a download. (Live,
     // the instance starts at once and plays nothing until they land: kernel/host.js.)
     if (def.data && isOffline(c)) await Promise.all(Object.values(def.data).map((h) => loadData(h)));
-    inst = await within(instantiate(c, def, { uid, seed: seedOf(uid), clock, params: values, on }), BUILD.ready, deviceId);
+    made = instantiate(c, def, { uid, seed: seedOf(uid), clock, params: values, on });
+    inst = await within(made, BUILD.ready, deviceId);
     await within(inst.ready, BUILD.ready, deviceId);
     if (!inst.output) throw new Error('instance has no output');
     if (kind === 'effect' && !inst.input) throw new Error('effect instance has no input');
@@ -98,6 +99,9 @@ export async function makeInstance(c, kind, deviceId, { uid, params, on = true, 
     return { inst, key, failed: false };
   } catch (e) {
     if (inst) { try { inst.dispose(); } catch { /* gone */ } }
+    // (one that turns up after its time ran out is let go when it does: nobody else holds it, and a kernel's processor
+    // would run on for the page's life, one more on every retry)
+    else if (made) made.then((late) => { try { late && late.dispose(); } catch { /* gone */ } }, () => {});
     // (a device's ready rejects with a code, devices/lifecycle.js failure(): 'threw', 'no-output' or 'worklet')
     const code = failureCode(e);
     return fallback(`device "${deviceId}" failed to build${code ? ` (${code})` : ''}: ${e && e.message || e}`, true, code || 'threw');

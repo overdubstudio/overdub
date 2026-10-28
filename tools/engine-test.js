@@ -1302,6 +1302,18 @@ await page.evaluate(() => {
     out.kill = { maxPos, minNeg, end, n: c.L.length };
     s3.dispose();
     src.stop(); await ctx.close();
+    // 4. a build that isn't ready in time plays its stand-in; the instance that turns up later is let go (a kernel's
+    // processor would otherwise run for the page's life, one more on every try)
+    const c4 = new AudioContext(), add = c4.audioWorklet.addModule.bind(c4.audioWorklet), AW = window.AudioWorkletNode, made = [], was = S.BUILD.ready;
+    c4.audioWorklet.addModule = (u, o) => T.sleep(500).then(() => add(u, o));
+    window.AudioWorkletNode = class extends AW { constructor(...a) { super(...a); made.push(this); const d = this.disconnect.bind(this); this.disconnect = (...x) => { this.gone = true; return d(...x); }; } };
+    S.BUILD.ready = 150;
+    try {
+      const got = [];
+      for (let k = 0; k < 2; k++) { const m = await S.makeInstance(c4, 'effect', 'core.stack', { uid: 'late' + k, params: {}, bpm: 120, report: () => {} }); got.push(!!m.inst.fallback); m.inst.dispose(); }
+      await T.sleep(1500);
+      out.late = { standIn: got.every(Boolean), made: made.length, running: made.filter((n) => !n.gone).length };
+    } finally { S.BUILD.ready = was; window.AudioWorkletNode = AW; await c4.close(); }
     return out;
   });
   T.ok(r.dip.resolved && Math.abs(r.dip.pre - 1) < 0.01 && Math.abs(r.dip.post - 1) < 0.01 && r.dip.dips === 0 && r.dip.reported,
@@ -1310,6 +1322,8 @@ await page.evaluate(() => {
     `renews racing builds never wire a disposed device: one insert wired, ${r.race.live} built and alive, the chain passing it (${r.race.mean.toFixed(3)}, want -0.500)`);
   T.ok(r.kill.n > 4000 && r.kill.maxPos < 0.05 && Math.abs(r.kill.end + 0.5) < 0.02,
     `while the killswitch's renew builds, the chain's end is silence, never the dry input (highest ${r.kill.maxPos.toFixed(4)}: the dry input reads +0.5), and the new chain comes up wet (${r.kill.end.toFixed(3)})`);
+  T.ok(r.late.standIn && r.late.made === 2 && r.late.running === 0,
+    `a build not ready in time plays its stand-in (${r.late.standIn}), and the instance that turns up after is let go: ${r.late.running} of ${r.late.made} late kernels left running`);
 }
 
 const pageErrors = errors.filter((e) => !/overdub engine:/.test(e));

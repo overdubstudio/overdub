@@ -5,6 +5,13 @@ Status: the design, frozen on 28 October 2026 for two build streams (`amp/path` 
 play. What it changes in the contracts goes into `docs/ARCHITECTURE.md` (the path stream) and `docs/DEVICES.md` (the
 devices stream) as each piece lands; this file is the why and the plan.
 
+Built: both streams merged into `amp/base` on 28 October, the seams unchanged. The bar in §11 met on that tree in muted
+headless browsers: every scenario N=4 with no failure on Chrome 156 (408 measurements) and Chromium 151 (408); the
+first-visit set with `LABELS=0` (36 each) and `SR=48000` (36 each) on both; `cold` N=300 on Chrome 156 (600, none);
+`race` 0 of 6 gains stuck at every skew on both. What only the merge could show is held in `checks-start`: a footswitch
+the browser dropped on the guitar room's own amp is found by the path's check, snapped without a rebuild and said once.
+Still to do: AJ on the real Scarlett in Chrome 156.
+
 ## 0. Why
 
 AJ demoed the guitar room to a friend and "the amps just didn't work at all. They've been so finicky." The Scarlett was

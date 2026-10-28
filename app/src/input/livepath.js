@@ -114,6 +114,7 @@ export const HEALTH = Object.freeze({
   dryCorr: 0.995,  // the chain's end this alike to the strip's input (best normalised cross-correlation): dry
   settle: 150,     // a device's fade is over this long after a switch (graph.js's is 10 ms; a crossfade 30)
   tries: 3,        // rebuilds in one episode before it says it gave up
+  stall: 0.25,     // a running context's clock moving under this share of the wall clock, over two of `every`: stalled
   backoff: 5000,   // between two rebuilds in one episode
 });
 
@@ -122,6 +123,7 @@ export const LINES = Object.freeze({
   off: 'Monitoring is off, so the rig can’t hear you. Press M to play through it.',
   offMic: 'Monitoring is off: this is a microphone, and through speakers it would howl. Use headphones, then press M.',
   suspended: 'The browser paused the audio. Press any key to bring it back.',
+  stalled: 'The browser’s audio has stopped: the output it plays through isn’t answering, so nothing can sound. Check your sound output, then reload; the song is saved.',
   noEngine: 'The studio’s audio didn’t start, so the rig can’t play. Reload the page; the song is saved.',
   unwired: 'Your input wasn’t reaching {track}. Plugged it back in.',
   standIn: '{device} didn’t build, so you were going round it dry. Rebuilt the chain.',
@@ -143,10 +145,11 @@ export function say(key, vars = {}) {
 
 /**
  * The health check's verdict on one measurement. First match wins:
- *   closed, suspended (repair 'resume'), no-engine, off, held, waiting, quiet, unwired ('rewire'), stand-in
+ *   closed, suspended (repair 'resume'), stalled (the context 'running' but its clock not moving: the output device
+ *   isn't answering; nothing in the page can fix that), no-engine, off, held, waiting, quiet, unwired ('rewire'), stand-in
  *   ('rebuild'), stuck ('assure'), silent ('rebuild'), dry ('rebuild'), muted, ok
  * @param {{
- *   open?: boolean, ctx?: string, engine?: boolean, monitoring?: boolean, monitorOff?: string, holds?: string[],
+ *   open?: boolean, ctx?: string, stalled?: boolean, engine?: boolean, monitoring?: boolean, monitorOff?: string, holds?: string[],
  *   track?: { id: string, name?: string } | null, audible?: boolean,
  *   levels?: { in?: number, strip?: number, chain?: number },
  *   inserts?: Array<{ id: string, device?: string, name?: string, on?: boolean, amp?: boolean,
@@ -163,6 +166,7 @@ export function pathVerdict(s = {}) {
   const V = (state, repair = 'none', key = '', insert = null, more = {}) => ({ state, repair, insert: insert ? insert.id : null, key, line: key ? say(key, { ...vars, ...more }) : '' });
   if (!s.open) return V('closed');
   if (s.ctx !== 'running') return V('suspended', 'resume', 'suspended');
+  if (s.stalled) return V('stalled', 'none', 'stalled');
   if (s.engine === false) return V('no-engine', 'none', 'noEngine');
   if (!s.monitoring) return V('off', 'none', s.monitorOff === 'mic' ? 'offMic' : s.monitorOff === 'feedback' ? '' : 'off');
   if (s.holds && s.holds.length) return V('held');
@@ -197,6 +201,7 @@ export function pathVerdict(s = {}) {
 // rewired once, then the chain rebuilt; rebuilds up to HEALTH.tries, HEALTH.backoff apart, then LINES.gaveUp and no more.
 // A state with a line but no repair (off, the mic, suspended, the engine, muted) is said only to a room listening
 // (path.speaker), and off or muted only while something is coming in: it's news when you play and hear nothing.
+// Stalled (the output device stopped answering) is said anywhere: nothing in the studio can sound.
 
 const AMP_RE = /^amp\.|^core\.stack$/;
 const peakDb = (b) => { let pk = 0; for (let i = 0; i < b.length; i++) { const v = b[i] < 0 ? -b[i] : b[i]; if (v > pk) pk = v; } return pk > 1e-9 ? 20 * Math.log10(pk) : -Infinity; };
@@ -222,7 +227,7 @@ export function dryLike(x, y, sr) {
   return { dry: best >= HEALTH.dryCorr, corr: best, lag: at };
 }
 
-const LINE_ONLY = new Set(['off', 'offMic', 'suspended', 'noEngine', 'muted']);
+const LINE_ONLY = new Set(['off', 'offMic', 'suspended', 'stalled', 'noEngine', 'muted']);
 
 /**
  * @param {any} app  { engine, store, ui, input, devices }
@@ -233,6 +238,21 @@ export function createLivePath(app, audio) {
   const blank = () => ({ state: 'closed', repair: 'none', insert: null, key: '', line: '', at: 0, levels: { in: -Infinity, strip: -Infinity, chain: -Infinity }, tries: 0 });
   let status = blank();
   let speaker = null, ep = null, due = 0, dueT = 0, iv = 0, checking = null, rebuilding = 0;
+  // the audio clock against the wall clock, read on the ticker: a context that reads 'running' while its clock stands
+  // still (the output device stopped answering: one render quantum, then nothing) is stalled, and every analyser here
+  // holds its last window. { c, ct, wall, slow (intervals in a row under HEALTH.stall), stalled }
+  const clock = { c: null, ct: 0, wall: 0, slow: 0, stalled: false };
+  function readClock() {
+    const c = engine.ctx, now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (!c || c.state !== 'running' || clock.c !== c) { Object.assign(clock, { c: c && c.state === 'running' ? c : null, ct: c ? c.currentTime : 0, wall: now, slow: 0, stalled: false }); return false; }
+    const dw = (now - clock.wall) / 1000, dt = c.currentTime - clock.ct;
+    if (dw < 0.5) return clock.stalled;
+    clock.slow = dt < dw * HEALTH.stall ? clock.slow + 1 : 0;
+    clock.ct = c.currentTime; clock.wall = now;
+    const was = clock.stalled;
+    clock.stalled = clock.slow >= 2;
+    return clock.stalled !== was;
+  }
   // the analysers: { c, inAn, offIn, stripAn, chainAn, from: { input, chain } }
   const T = { c: null, inAn: null, offIn: null, stripAn: null, chainAn: null, from: null, bufs: null };
   const getDevice = (id) => { try { return app.devices?.getDevice?.(id) || null; } catch { return null; } };
@@ -277,8 +297,8 @@ export function createLivePath(app, audio) {
   function measure() {
     const st = audio.state, c = audio.ctx || engine.ctx;
     const own = !!audio.ctx && !!engine.ctx && audio.ctx !== engine.ctx;
-    const base = { open: !!st.open, ctx: c ? c.state : 'suspended', engine: !!engine.ctx && !own && typeof engine.inputNode === 'function', monitoring: !!st.monitoring, monitorOff: st.monitorOff || '', holds: st.monitorHolds || [] };
-    if (!base.open || base.ctx !== 'running' || !base.engine || !base.monitoring || base.holds.length) return { snap: { ...base, track: null }, extra: null };
+    const base = { open: !!st.open, ctx: c ? c.state : 'suspended', stalled: clock.stalled && clock.c === c, engine: !!engine.ctx && !own && typeof engine.inputNode === 'function', monitoring: !!st.monitoring, monitorOff: st.monitorOff || '', holds: st.monitorHolds || [] };
+    if (!base.open || base.ctx !== 'running' || base.stalled || !base.engine || !base.monitoring || base.holds.length) return { snap: { ...base, track: null }, extra: null };
     const t = audio.monitorTrack ? audio.monitorTrack() : null;
     if (!t) return { snap: { ...base, track: null }, extra: null };
     if (engine.silencing || rebuilding) return null;
@@ -321,7 +341,8 @@ export function createLivePath(app, audio) {
     if (st === 'quiet' || st === 'held' || st === 'waiting') return;
     if (!ep) ep = { t0: Date.now(), said: new Set(), assured: new Set(), rewired: 0, tries: 0, last: 0, gaveUp: false };
     if (v.repair === 'none') {
-      if (!v.key || !speaker || !LINE_ONLY.has(v.key)) return;
+      // (a stalled output silences the whole studio, not only the rig: said anywhere, as a toast outside a room)
+      if (!v.key || !LINE_ONLY.has(v.key) || (!speaker && v.key !== 'stalled')) return;
       if ((v.key === 'off' || v.key === 'offMic') && audio.state.monitorBy === 'hand') return;
       if ((v.key === 'off' || v.key === 'offMic' || v.key === 'muted') && !(snap.levels && snap.levels.in >= HEALTH.quiet)) return;
       sayOnce(v.key, v.line);
@@ -391,6 +412,7 @@ export function createLivePath(app, audio) {
     iv = setInterval(() => {
       const st = audio.state;
       if (!st.open) { clearInterval(iv); iv = 0; return; }
+      if (readClock() && !checking) { check(); return; }
       if (!st.monitoring || checking || dueT || !T.inAn || !engine.ctx) return;
       T.inAn.getFloatTimeDomainData(T.bufs[0]);
       if (peakDb(T.bufs[0]) >= HEALTH.quiet) check();

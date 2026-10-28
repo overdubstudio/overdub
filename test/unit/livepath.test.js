@@ -118,7 +118,7 @@ const club = (over = {}) => ({
 
 describe('the health check’s verdict', () => {
   test('the club stack, wet: ok', () => assert.equal(pathVerdict(club()).state, 'ok'));
-  test('in order: closed, suspended, no engine, off, held, waiting, quiet', () => {
+  test('in order: closed, suspended, stalled, no engine, off, held, waiting, quiet', () => {
     assert.equal(pathVerdict(club({ open: false })).state, 'closed');
     assert.deepEqual(pathVerdict(club({ ctx: 'suspended' })), {
       state: 'suspended',
@@ -127,6 +127,16 @@ describe('the health check’s verdict', () => {
       key: 'suspended',
       line: LINES.suspended,
     });
+    // (a running context whose clock stands still: the output device isn't answering; a line, nothing to repair)
+    assert.deepEqual(pathVerdict(club({ stalled: true })), {
+      state: 'stalled',
+      repair: 'none',
+      insert: null,
+      key: 'stalled',
+      line: LINES.stalled,
+    });
+    assert.equal(pathVerdict(club({ ctx: 'suspended', stalled: true })).state, 'suspended');
+    assert.equal(pathVerdict(club({ stalled: true, engine: false })).state, 'stalled');
     assert.equal(pathVerdict(club({ engine: false })).key, 'noEngine');
     assert.equal(pathVerdict(club({ monitoring: false })).line, LINES.off);
     assert.equal(pathVerdict(club({ monitoring: false, monitorOff: 'mic' })).key, 'offMic');

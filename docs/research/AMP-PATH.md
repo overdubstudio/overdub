@@ -165,7 +165,9 @@ points of the monitored path and changes nothing in the sound:
   normalised cross-correlation over lags up to 20 ms; `HEALTH.dryCorr`).
 
 `pathVerdict(snapshot)` (`livepath.js`, pure, frozen) turns that into one state, in this order: `closed`, `suspended`
-(repair: resume on the next gesture), `no-engine`, `off`, `held`, `waiting`, `quiet` (nothing coming in: nothing to
+(repair: resume on the next gesture), `stalled` (the context reads `running` but its clock moves under `HEALTH.stall` of
+the wall clock over two ticks: the output device stopped answering, which nothing in the page can repair; a line),
+`no-engine`, `off`, `held`, `waiting`, `quiet` (nothing coming in: nothing to
 judge), `unwired` (the input moves, the strip doesn't: repair `rewire`), `stand-in` (repair `rebuild`), `stuck` (a device
 reports itself wrong once settled: repair `assure`), `silent` (the strip moves, the chain's end doesn't: repair
 `rebuild`), `dry` (an amp on and the chain's end a copy of its input: repair `rebuild`), `muted` (the track is muted or

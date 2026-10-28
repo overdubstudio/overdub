@@ -695,7 +695,7 @@ export function mount(R) {
     if (!m) return;
     const a = app.input?.audio, st = a?.state || {};
     const path = st.path?.state || '';
-    const bad = ['unwired', 'stand-in', 'stuck', 'silent', 'dry', 'suspended', 'no-engine', 'muted'].includes(path);
+    const bad = ['unwired', 'stand-in', 'stuck', 'silent', 'dry', 'suspended', 'stalled', 'no-engine', 'muted'].includes(path);
     const mode = !st.open ? 'none' : !st.monitoring ? 'off' : st.monitorHolds?.length ? 'held' : bad ? 'fault' : 'on';
     const line = mode === 'fault' ? st.path?.line || '' : '';
     const key = mode + '|' + line;

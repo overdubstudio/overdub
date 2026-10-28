@@ -292,6 +292,25 @@ export async function run(T, ctx) {
       `the path's check: the amp's output cut is found (${health.cut.found}), the chain rebuilt (${health.cut.fixed ? 'ok again' : 'still ' + health.cut.found}), and said once ("${health.cut.said.join('" | "')}")`);
     T.ok(health.threw.threw === 1 && health.standIn && health.threw.found !== 'ok' && health.threw.fixed && health.threw.said.length === 1 && health.steps === 0,
       `an amp that fails to build once: found (${health.threw.found}), rebuilt (${health.threw.fixed ? 'ok again' : 'not'}), said once ("${health.threw.said.join('" | "')}"); the song never moved (${health.steps} steps)`);
+    // 3. the audio clock standing still on a context that reads 'running' (the Mac's output device stopped answering:
+    // every analyser holds its last window, so the levels look fine): the check names it once, and clears when the
+    // clock moves again
+    const stall = await E(async () => {
+      const o = window.overdub, path = o.input.path, R = window.__rig, c = o.engine.ctx;
+      const said = [], toast = o.ui.toast;
+      o.ui.toast = (t, opt) => { said.push(String(t)); return toast(t, opt); };
+      const until = async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (fn()) return true; await R.sleep(100); } return !!fn(); };
+      const frozen = c.currentTime;
+      Object.defineProperty(c, 'currentTime', { configurable: true, get: () => frozen });
+      let found = false, back = false;
+      try { found = await until(() => path.status().state === 'stalled', 9000); } finally { delete c.currentTime; }
+      const line = path.status().line;
+      back = await until(() => path.status().state !== 'stalled', 9000);
+      o.ui.toast = toast;
+      return { found, back, line, said, now: path.status().state };
+    });
+    T.ok(stall.found && stall.back && stall.said.length === 1 && stall.said[0] === stall.line,
+      `the audio clock standing still on a running context: the check says so once ("${stall.said.join('" | "')}"), and lets go when it moves (${stall.found ? 'found' : 'not found'}; then ${stall.now})`);
     const errs = s.errors.filter((e) => !/Failed to load resource|favicon|net::ERR|fonts\.g|status of 404|test\.slow|failed to build once/.test(e));
     T.ok(!errs.length, `no page errors${errs.length ? `: ${errs.slice(0, 3).join(' | ')}` : ''}`);
   } finally {

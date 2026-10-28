@@ -77,9 +77,16 @@ The camera goes closer: `H` the head (every knob), `C` the cab (which cab, the m
 angle, a second mic), `K` the kit and the drummer's book, `B` the board, `U` the tuner, `G` the tape. `Esc` steps back
 one at a time, and never further than the stage.
 
+The lamp by the first pedal's jack, **MON**, is monitoring: lit while you're heard through the rig, dark when it's off,
+dim while the tuner holds you muted, red when something on the way is wrong. `M` (or a click on the lamp) turns it on
+or off. An interface is monitored as soon as it opens, however you picked it; a microphone isn't, since through
+speakers it howls. The room keeps listening to the way through: if your guitar stops reaching the amp, a pedal didn't
+build, or the amp comes up dry, it puts it right (plugs the input back in, or rebuilds the chain) and the talkback says
+what it did, once. If the browser pauses the audio, any key or click brings it back.
+
 **Getting started** (the button at the top) comes up by itself the first time, in the room: **Plug in** (the cable
 goes into the first pedal's jack, and the meter on the head wants your hardest strum between −12 and −6 dBFS),
-**Tune** (Tuna Fork, first on the board: `U` stomps it and mutes you while it's on), **Timing** (the drummer clicks
+**Tune** (Tuna Fork, first on the board: `U` stomps it and holds you muted while it's on), **Timing** (the drummer clicks
 their sticks eight times and you strum on each, so takes land on the beat), **Your sound** (keep the club's stack, or
 go through the door), and a short tour. `Esc` pauses it; the button carries on where you left it.
 
@@ -613,8 +620,8 @@ and pedalboard), then your guitar and practice, then ideas. The song plays on wh
   down, DADGAD, open G, D standard, drop C, C standard, B standard, drop B), or **Left-handed**. What you play lights up wherever it falls: filled when it fits, a ring
   when it's outside, and the line under the neck says what it is ("G: the blue third over E7; bend it a little toward
   G#").
-- **Your guitar.** With an interface, choose it and its input under **Your guitar** and open it. An interface or a
-  line input you pick is monitored at once, through the Guitar track's effects, and the line under it says through
+- **Your guitar.** With an interface, choose it and its input under **Your guitar** and open it. An interface is
+  monitored at once, however you picked it (the browser's default entry for one too), through the Guitar track's effects, and the line under it says through
   which tone; a microphone stays unmonitored, since through speakers it howls, and the line says that too. **Monitor**
   turns it on or off by hand. Your guitar's track starts loud, where a guitar at an interface's usual level sits over
   the band. **Match the band** listens while you play along for five seconds and puts your guitar 3 dB over the band,

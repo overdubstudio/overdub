@@ -248,7 +248,51 @@ export async function run(T, ctx) {
       return { firstly, later: !!then && !then.fallback, steps };
     });
     T.ok(retry.firstly && retry.later && retry.steps === 1, `a device that wasn’t ready in time plays its stand-in, then is built again on its own (stand-in first: ${retry.firstly}; built after: ${retry.later}; song steps: ${retry.steps})`);
-    const errs = s.errors.filter((e) => !/Failed to load resource|favicon|net::ERR|fonts\.g|status of 404|test\.slow/.test(e));
+    // the live path's check (input/livepath.js createLivePath; docs/research/AMP-PATH.md §7): monitoring on through
+    // Guitar L, the amp's output cut behind the engine's back, then the amp's build throwing once (the strip's own retry
+    // held off, so the check is what finds it); each time the check finds it, repairs it (the chain rebuilt), says one
+    // line for it (here, a toast: this room has no talkback speaker), and the song never moves.
+    const health = await E(async () => {
+      const o = window.overdub, a = o.input.audio, path = o.input.path, R = window.__rig;
+      const said = [], say = o.liveRoom.say.bind(o.liveRoom), toast = o.ui.toast;
+      o.liveRoom.say = (line, opt) => { said.push(String(line)); return say(line, opt); };
+      o.ui.toast = (t, opt) => { said.push(String(t)); return toast(t, opt); };
+      const S = await import('/app/src/engine/strip.js'), was = { ...S.BUILD };
+      Object.assign(S.BUILD, { retry: 60000 });
+      const L = () => o.store.get().tracks.find((t) => t.name === 'Guitar L');
+      const amp = () => L().inserts.find((x) => /^amp\.|^core\.stack$/.test(x.device));
+      const until = async (fn, ms = 9000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (fn()) return true; await R.sleep(50); } return !!fn(); };
+      const out = { steps0: o.store.history.length };
+      a.monitor(true);
+      await o.engine.settled(); await R.sleep(600);
+      out.before = (await path.check()).state;
+      // 1. the amp's output cut
+      const inst = o.engine.instance(L().id, amp().id);
+      try { inst.output.disconnect(); } catch { /* ok */ }
+      const found = async () => { let st = 'ok'; await until(() => { path.check(); st = path.status().state; return st !== 'ok'; }, 6000); return st; };
+      const s1 = await found();
+      out.cut = { found: s1, fixed: await until(() => path.status().state === 'ok'), renewed: o.engine.instance(L().id, amp().id) !== inst, said: said.slice() };
+      said.length = 0;
+      // 2. the amp's build throwing once (the next build; the rebuild after it builds): its worklet node refused once
+      const AWN = window.AudioWorkletNode, ampId = amp().device;
+      let threw = 0;
+      window.AudioWorkletNode = class extends AWN {
+        constructor(c, n, o) { if (!threw && o?.processorOptions?.device === ampId) { threw++; throw new Error('an amp that failed to build once'); } super(c, n, o); }
+      };
+      try {
+        await o.engine.rebuild(L().id);
+        out.standIn = o.engine.instance(L().id, amp().id)?.fallback === true;
+        const s2 = await found();
+        out.threw = { threw, found: s2, fixed: await until(() => path.status().state === 'ok'), said: said.slice() };
+      } finally { window.AudioWorkletNode = AWN; Object.assign(S.BUILD, was); o.liveRoom.say = say; o.ui.toast = toast; }
+      out.steps = o.store.history.length - out.steps0;
+      return out;
+    });
+    T.ok(health.before === 'ok' && health.cut.found !== 'ok' && health.cut.fixed && health.cut.renewed && health.cut.said.length === 1,
+      `the path's check: the amp's output cut is found (${health.cut.found}), the chain rebuilt (${health.cut.fixed ? 'ok again' : 'still ' + health.cut.found}), and said once ("${health.cut.said.join('" | "')}")`);
+    T.ok(health.threw.threw === 1 && health.standIn && health.threw.found !== 'ok' && health.threw.fixed && health.threw.said.length === 1 && health.steps === 0,
+      `an amp that fails to build once: found (${health.threw.found}), rebuilt (${health.threw.fixed ? 'ok again' : 'not'}), said once ("${health.threw.said.join('" | "')}"); the song never moved (${health.steps} steps)`);
+    const errs = s.errors.filter((e) => !/Failed to load resource|favicon|net::ERR|fonts\.g|status of 404|test\.slow|failed to build once/.test(e));
     T.ok(!errs.length, `no page errors${errs.length ? `: ${errs.slice(0, 3).join(' | ')}` : ''}`);
   } finally {
     await s.close();

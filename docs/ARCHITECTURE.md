@@ -665,8 +665,20 @@ Instance = {
   expr?({ bend?, mod?, sustain? }, time),   // kernels: the channel's pitch bend, mod wheel and pedal (docs/DEVICES.md)
   cancel?(pitch, time, off?, to?),    // take back a note handed over but not started (kernels, the fallback synth)
   latency: 0, meter?(): number, dispose(),
+  health?(): { ok, failed, on, settled, dry, wet, want },   // what the device says about itself (below)
+  assure?(): boolean,                 // snap anything not at its target at once; true if it had to
 }
 ```
+
+A device's life in a live chain is `devices/lifecycle.js` (a frozen seam between the engine and the devices;
+`docs/research/AMP-PATH.md` §5): `ready` resolves once the instance is at its state (params set, bypass as asked,
+worklets in) and **rejects** with `failure(code, message)` (`code` one of `FAILURE_CODES`: `'threw'`, `'no-output'`,
+`'worklet'`) when the device can't be what it says, so a device never stands in for itself as a quiet unity gain. A
+rejected `ready` plays the engine's stand-in, is reported (the report carries the code) and is built again later
+(`strip.js` `BUILD`). Nothing is scheduled on a node that hasn't rendered yet (no value curve on a live context:
+Chrome 155 and 156 drop one that ends before its node first renders). `healthOf(inst)` normalises `health()` (a
+device without it, a kernel, is ok unless it's a stand-in) and never throws; the strip calls `assure(inst)` on each
+device it has newly wired once its fades are over, and the live path's check calls it when it finds one wrong.
 
 `clock` (from the engine; `engine.clock`) is `{ playing(), bpm(), beatsPerBar(), barTime(b), barAt(t), bar(), next(t),
 phaseAt(t, bars = 1) }`, the shape the ported pedals expect (clawd-o-matic's `PLUG.clock` / `x.clock`). Offline it is
@@ -787,6 +799,10 @@ engine.liveNoteOn(trackId, pitch, vel) ; engine.liveNoteOff(trackId, pitch)   //
 engine.audition(trackId, pitch, vel = 0.8, beats = 0.5)
 engine.inputNode(trackId)             // a GainNode feeding that track's inserts (live input monitoring)
 engine.instance(trackId, insertId | 'instrument')   // the live Instance
+engine.monitored(trackId | null)      // the track live input plays through (audio.monitorVia's): never renewed while stopped
+engine.monitoredTrack                 // its id, or null
+engine.rebuild(trackId) → Promise<{ ok, failed: [insertId | 'instrument'] }>   // the strip renewed (fresh devices, atomically)
+engine.chainTaps(trackId) → { input, chain, settling, strip } | null   // for analysers: the strip's input and its chain's end
 engine.masterTap                      // an AudioNode to tap (recorders, analysers); don't feed it
 engine.clock                          // the device clock above
 engine.latency                        // { base, output, tracks, comp, max, master, total } (seconds; comp in samples)
@@ -859,13 +875,16 @@ Timing rules (`engine/engine.js` header; checked in `tools/engine-test.js`):
   an agent). It stops the transport, ramps the speakers' feed (the last gain before the destination) to zero in 6 ms,
   releases every note and emits `'silence'` (Sketch's previews stop on it); then every strip builds fresh instances of
   its devices (`Strip.renew`), so held voices and reverb and delay tails are gone, and the feed opens again. `play()`
-  waits for that. Anything that plays to the speakers on its own should go through the feed (`engine._monitor`) or stop
+  waits for that. A renew is a fresh build under the strip's job lock: the strip hushes (its tail and instrument at
+  zero), builds every device new (nothing reused, so a renew racing a build never wires a disposed device), wires the
+  new chain and crossfades it in; while it builds the strip passes silence, never its dry input. A rewire that throws
+  is reported and still brings the strip's dips back up (`dipped()` always ends). Anything that plays to the speakers on its own should go through the feed (`engine._monitor`) or stop
   on `'silence'`. `tools/silence-test.js` measures it.
 - **The polite stop.** Tails ring on after `stop()`, but not for ever: 2 s after a stop (still stopped), every strip
   still over -50 dBFS fades out over 1 s (a gain only live strips have, `Strip.calmDown`) and is renewed like the
   killswitch renews it, then comes back up; the master too when it has inserts and nothing live goes through it. A
   strip that took a live note or an audition since the stop, or hears its input (listened for through the fade), is
-  left alone; play during the fade brings it straight back. `tools/stopping-test.js` holds every demo song to -60 dBFS
+  left alone, and so is the strip live input monitors through (`engine.monitored`), sounding or not; play during the fade brings it straight back. `tools/stopping-test.js` holds every demo song to -60 dBFS
   3.5 s after Stop.
 - **Held keys.** The keys the musician holds (`liveNoteOn`) are theirs. The song's end, an agent's
   `stop({ live: false })`, a seek or a play from elsewhere let the transport's notes go (one by one on an instrument
@@ -1445,8 +1464,9 @@ so each gets the whole area, one click apart, and the song plays on across them.
   uses the one that matches what you play with and makes it when needed (its fader set by measuring the band against
   a lick on it: the guitar sits 3 dB over the band, up to the fader's top, +6 dB; **Match the band** measures your own
   playing for five seconds and sets it again, one undo step). The input opens with `audio.open({ monitor: 'auto' })`:
-  an interface or line input you pick is monitored at once, a microphone isn't (`state.monitorLine` says why), and a
-  feedback guard turns monitoring off if it hears a howl; with no audio track the monitor waits and the room makes
+  an interface is monitored at once however it was picked (the browser's "Default - " entry for one too), a microphone
+  isn't (`state.monitorLine` says why), and a feedback guard turns monitoring off if it hears a howl (the live path's
+  rules: "The live path" under the input); with no audio track the monitor waits and the room makes
   Live guitar in the `'monitor'` event, so nothing toasts. A tone is a Guitar Studio rig loaded with
   `rigOps(track, rig, { replace })`, one undo step; with both guitars present a tone loads on both, and a knob on the
   board moves both chains.
@@ -1550,7 +1570,8 @@ locked() → boolean                      // a take is running: tempo, meter and
 - **The record key** shows the recorder's state: a ring (nothing to record onto), the ring in record ink (a target),
   its dot lit on each beat of the count, a filled lamp with REC beside the position (recording), dimmed while the take
   goes in.
-- **All off** (`silence()`, a key printed in record red; ⇧Esc from anywhere): input monitoring off, the ui event
+- **All off** (`silence()`, a key printed in record red; ⇧Esc from anywhere): the input hushed (`audio.hush()`: an
+  interface's monitoring comes back with the renewed chain; a microphone's is turned off, by hand), the ui event
   `'silence'`, then `engine.silence()` (see the engine). Every panic path in the studio comes here.
 - **Back to the lanes (n held)** appears on the bar while any lane in the song is held, and gives every held lane
   back in one `auto.set` dispatch.
@@ -1856,6 +1877,30 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
   for the blues bar's solo) while it's up and lets go (`null`)
   through the glass, so an older audio track ahead of the room's never takes the guitar dry. A `devicechange` emits `app.input` `'devices'` and ui
   `'input:devices'` (the Inspector and Sketch re-read the list without a reload).
+- **The live path** (`input/livepath.js`, `docs/research/AMP-PATH.md`): the input, its monitoring and the chain it
+  plays through, owned by `audioin.js` and checked by `app.input.path`. Its rules are pure and unit-tested
+  (`test/unit/livepath.test.js`):
+  - *Which input.* Every opener (Getting started, the Jam room, Sketch, the soundcheck) chooses with
+    `chooseInput(list, { saved, role })` (`audio.choose()`, `audio.openBest({ role })`): the remembered device by its
+    id, else by its label, else for an instrument the interface. What's remembered (`overdub:input`'s `deviceId`) is
+    the device's own id, never `'default'`: the browser's "Default - " entry is resolved to the device behind it
+    (`realIdOf`, `state.realId`). A remembered id that's gone is chosen again by its label, never asked for loosely,
+    and every ask turns the browser's voice processing off; a first visit (no labels before the grant) opens blind and
+    chooses again once they're in. An instrument open (`listen: true`) picks the channel that moves as you play. The
+    input's `ended` is its own: a device that goes away closes (`LINES.gone`) and reopens by itself when it's back.
+  - *Monitoring* is one decision per real device: `autoMonitor({ kind, channels, role })` (an interface monitors
+    however it was picked, its "Default - " entry too; a microphone or a virtual device doesn't), or what you said
+    by hand (`monitor(on)`, M in the guitar room), kept for that device. `state.monitorBy` is `'auto'`, `'hand'`,
+    `'open'` (an opener's `monitor: false`) or `'guard'` (the feedback guard). Closing never decides. A hold mutes
+    without deciding (`hold('tuner')` / `release('tuner')`, `state.monitorHolds`); `hush()` is the killswitch's.
+    Monitoring plays through `engine.monitored`'s strip, which the polite stop never renews.
+  - *The check* (`app.input.path`: `status()`, `check()`, `wake()`, `speaker(fn)`): analysers on the input, the
+    strip's input and its chain's end (`engine.chainTaps`), read once a change settles and every 2 s while something
+    comes in (`HEALTH`); `pathVerdict` names what's wrong (the context suspended, the monitor unwired, a stand-in, a
+    device stuck half on, a silent chain, an amp passing its input dry, the track muted) and the repair: resume,
+    rewire once, `assure` once, then `engine.rebuild` up to three times 5 s apart, then `LINES.gaveUp`. Each
+    episode's line is said once (`LINES`), through the room's talkback when one listens (`speaker`), else a toast.
+    `state.path` and the `'path'` event carry the verdict; the guitar room's lamp by the jack shows it.
 - **Files in** (`input/importers.js`, `app.importers`): a Standard MIDI File (types 0 and 1; running status, note-on at
   velocity 0, the first tempo of a tempo map, time and key signatures, markers, track names, program changes) dropped
   anywhere or from Song menu → Import MIDI… becomes a track per part (type 0 split by channel; channel 10 →
@@ -2304,8 +2349,10 @@ which draws nothing itself:
   Tuna Fork, is the room's own (nothing in the song): drawn once, by the room stream on the board (`room-rig.js`
   `tunerFace`), from the reading the start stream puts at `R.gr.tuner.reading` (`{ note, octave, cents, string,
   inTune, held, input }`); U or its footswitch stomps it, the camera goes to it (`R.panel('tuner')`: the gauge, the strings lighting as each comes
-  in, the tunings), and while it's on the monitor is muted (`audio.monitor(false)`), put back as it was when it goes
-  off, when a take starts, or when the screen goes. A tuning picked on it that the song knows is the song's: one step
+  in, the tunings), and while it's on the monitor is held (`audio.hold('tuner')`: muted without deciding anything),
+  released when it goes off, when a take starts, or when the screen goes. **M** (or a click on the lamp by the jack)
+  turns monitoring on or off by hand; the lamp shows on, off, held (the tuner) or a fault the path's check found (its
+  line in the title, the talkback says it). A tuning picked on it that the song knows is the song's: one step
   by you (`room.set { tuning }` and the guitars' low cut). Bus: `start:gs`, `start:tuner`, `start:plug`.
 - **Takes and the part line** (`takes.js`; `parts-plans.js` is its pure part). A part is a section, in start order;
   the room adds none unasked. R records the selected part (fixed length; what rings past it is the take's tail, the

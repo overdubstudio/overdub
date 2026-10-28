@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 162 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 166 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -668,7 +668,18 @@ Instance = {
   expr?({ bend?, mod?, sustain? }, time),   <span class="c">// kernels: the channel's pitch bend, mod wheel and pedal (docs/DEVICES.md)</span>
   cancel?(pitch, time, off?, to?),    <span class="c">// take back a note handed over but not started (kernels, the fallback synth)</span>
   latency: 0, meter?(): number, dispose(),
+  health?(): { ok, failed, on, settled, dry, wet, want },   <span class="c">// what the device says about itself (below)</span>
+  assure?(): boolean,                 <span class="c">// snap anything not at its target at once; true if it had to</span>
 }</code></pre></div>
+<p>A device's life in a live chain is <code>devices/lifecycle.js</code> (a frozen seam between the engine and the devices;
+<code>docs/research/AMP-PATH.md</code> §5): <code>ready</code> resolves once the instance is at its state (params set, bypass as asked,
+worklets in) and <strong>rejects</strong> with <code>failure(code, message)</code> (<code>code</code> one of <code>FAILURE_CODES</code>: <code>'threw'</code>, <code>'no-output'</code>,
+<code>'worklet'</code>) when the device can't be what it says, so a device never stands in for itself as a quiet unity gain. A
+rejected <code>ready</code> plays the engine's stand-in, is reported (the report carries the code) and is built again later
+(<code>strip.js</code> <code>BUILD</code>). Nothing is scheduled on a node that hasn't rendered yet (no value curve on a live context:
+Chrome 155 and 156 drop one that ends before its node first renders). <code>healthOf(inst)</code> normalises <code>health()</code> (a
+device without it, a kernel, is ok unless it's a stand-in) and never throws; the strip calls <code>assure(inst)</code> on each
+device it has newly wired once its fades are over, and the live path's check calls it when it finds one wrong.</p>
 <p><code>clock</code> (from the engine; <code>engine.clock</code>) is <code>{ playing(), bpm(), beatsPerBar(), barTime(b), barAt(t), bar(), next(t), phaseAt(t, bars = 1) }</code>, the shape the ported pedals expect (clawd-o-matic's <code>PLUG.clock</code> / <code>x.clock</code>). Offline it is
 a free grid from time 0 at the project tempo. A track that names a device that isn't there plays through
 <code>engine/fallback.js</code> (a small deterministic synth, or a pass-through effect); a held device (its code not allowed
@@ -773,6 +784,10 @@ engine.liveNoteOn(trackId, pitch, vel) ; engine.liveNoteOff(trackId, pitch)   <s
 engine.audition(trackId, pitch, vel = 0.8, beats = 0.5)
 engine.inputNode(trackId)             <span class="c">// a GainNode feeding that track's inserts (live input monitoring)</span>
 engine.instance(trackId, insertId | 'instrument')   <span class="c">// the live Instance</span>
+engine.monitored(trackId | null)      <span class="c">// the track live input plays through (audio.monitorVia's): never renewed while stopped</span>
+engine.monitoredTrack                 <span class="c">// its id, or null</span>
+engine.rebuild(trackId) → Promise&lt;{ ok, failed: [insertId | 'instrument'] }&gt;   <span class="c">// the strip renewed (fresh devices, atomically)</span>
+engine.chainTaps(trackId) → { input, chain, settling, strip } | null   <span class="c">// for analysers: the strip's input and its chain's end</span>
 engine.masterTap                      <span class="c">// an AudioNode to tap (recorders, analysers); don't feed it</span>
 engine.clock                          <span class="c">// the device clock above</span>
 engine.latency                        <span class="c">// { base, output, tracks, comp, max, master, total } (seconds; comp in samples)</span>
@@ -838,13 +853,16 @@ back by <code>latency.total</code>; it is never in <code>masterTap</code> or a r
 an agent). It stops the transport, ramps the speakers' feed (the last gain before the destination) to zero in 6 ms,
 releases every note and emits <code>'silence'</code> (Sketch's previews stop on it); then every strip builds fresh instances of
 its devices (<code>Strip.renew</code>), so held voices and reverb and delay tails are gone, and the feed opens again. <code>play()</code>
-waits for that. Anything that plays to the speakers on its own should go through the feed (<code>engine._monitor</code>) or stop
+waits for that. A renew is a fresh build under the strip's job lock: the strip hushes (its tail and instrument at
+zero), builds every device new (nothing reused, so a renew racing a build never wires a disposed device), wires the
+new chain and crossfades it in; while it builds the strip passes silence, never its dry input. A rewire that throws
+is reported and still brings the strip's dips back up (<code>dipped()</code> always ends). Anything that plays to the speakers on its own should go through the feed (<code>engine._monitor</code>) or stop
 on <code>'silence'</code>. <code>tools/silence-test.js</code> measures it.</li>
 <li><strong>The polite stop.</strong> Tails ring on after <code>stop()</code>, but not for ever: 2 s after a stop (still stopped), every strip
 still over -50 dBFS fades out over 1 s (a gain only live strips have, <code>Strip.calmDown</code>) and is renewed like the
 killswitch renews it, then comes back up; the master too when it has inserts and nothing live goes through it. A
 strip that took a live note or an audition since the stop, or hears its input (listened for through the fade), is
-left alone; play during the fade brings it straight back. <code>tools/stopping-test.js</code> holds every demo song to -60 dBFS
+left alone, and so is the strip live input monitors through (<code>engine.monitored</code>), sounding or not; play during the fade brings it straight back. <code>tools/stopping-test.js</code> holds every demo song to -60 dBFS
 3.5 s after Stop.</li>
 <li><strong>Held keys.</strong> The keys the musician holds (<code>liveNoteOn</code>) are theirs. The song's end, an agent's
 <code>stop({ live: false })</code>, a seek or a play from elsewhere let the transport's notes go (one by one on an instrument
@@ -1352,8 +1370,9 @@ it doesn't).</li>
 uses the one that matches what you play with and makes it when needed (its fader set by measuring the band against
 a lick on it: the guitar sits 3 dB over the band, up to the fader's top, +6 dB; <strong>Match the band</strong> measures your own
 playing for five seconds and sets it again, one undo step). The input opens with <code>audio.open({ monitor: 'auto' })</code>:
-an interface or line input you pick is monitored at once, a microphone isn't (<code>state.monitorLine</code> says why), and a
-feedback guard turns monitoring off if it hears a howl; with no audio track the monitor waits and the room makes
+an interface is monitored at once however it was picked (the browser's &quot;Default - &quot; entry for one too), a microphone
+isn't (<code>state.monitorLine</code> says why), and a feedback guard turns monitoring off if it hears a howl (the live path's
+rules: &quot;The live path&quot; under the input); with no audio track the monitor waits and the room makes
 Live guitar in the <code>'monitor'</code> event, so nothing toasts. A tone is a Guitar Studio rig loaded with
 <code>rigOps(track, rig, { replace })</code>, one undo step; with both guitars present a tone loads on both, and a knob on the
 board moves both chains.</li>
@@ -1447,7 +1466,8 @@ beats left in this bar (<code>live().counting</code>).</li>
 <li><strong>The record key</strong> shows the recorder's state: a ring (nothing to record onto), the ring in record ink (a target),
 its dot lit on each beat of the count, a filled lamp with REC beside the position (recording), dimmed while the take
 goes in.</li>
-<li><strong>All off</strong> (<code>silence()</code>, a key printed in record red; ⇧Esc from anywhere): input monitoring off, the ui event
+<li><strong>All off</strong> (<code>silence()</code>, a key printed in record red; ⇧Esc from anywhere): the input hushed (<code>audio.hush()</code>: an
+interface's monitoring comes back with the renewed chain; a microphone's is turned off, by hand), the ui event
 <code>'silence'</code>, then <code>engine.silence()</code> (see the engine). Every panic path in the studio comes here.</li>
 <li><strong>Back to the lanes (n held)</strong> appears on the bar while any lane in the song is held, and gives every held lane
 back in one <code>auto.set</code> dispatch.</li>
@@ -1729,6 +1749,32 @@ one: the live room's stage names the guitar its next take goes on (Guitar L, Gui
 for the blues bar's solo) while it's up and lets go (<code>null</code>)
 through the glass, so an older audio track ahead of the room's never takes the guitar dry. A <code>devicechange</code> emits <code>app.input</code> <code>'devices'</code> and ui
 <code>'input:devices'</code> (the Inspector and Sketch re-read the list without a reload).</p></li>
+<li><p><strong>The live path</strong> (<code>input/livepath.js</code>, <code>docs/research/AMP-PATH.md</code>): the input, its monitoring and the chain it
+plays through, owned by <code>audioin.js</code> and checked by <code>app.input.path</code>. Its rules are pure and unit-tested
+(<code>test/unit/livepath.test.js</code>):</p>
+<ul>
+<li><em>Which input.</em> Every opener (Getting started, the Jam room, Sketch, the soundcheck) chooses with
+<code>chooseInput(list, { saved, role })</code> (<code>audio.choose()</code>, <code>audio.openBest({ role })</code>): the remembered device by its
+id, else by its label, else for an instrument the interface. What's remembered (<code>overdub:input</code>'s <code>deviceId</code>) is
+the device's own id, never <code>'default'</code>: the browser's &quot;Default - &quot; entry is resolved to the device behind it
+(<code>realIdOf</code>, <code>state.realId</code>). A remembered id that's gone is chosen again by its label, never asked for loosely,
+and every ask turns the browser's voice processing off; a first visit (no labels before the grant) opens blind and
+chooses again once they're in. An instrument open (<code>listen: true</code>) picks the channel that moves as you play. The
+input's <code>ended</code> is its own: a device that goes away closes (<code>LINES.gone</code>) and reopens by itself when it's back.</li>
+<li><em>Monitoring</em> is one decision per real device: <code>autoMonitor({ kind, channels, role })</code> (an interface monitors
+however it was picked, its &quot;Default - &quot; entry too; a microphone or a virtual device doesn't), or what you said
+by hand (<code>monitor(on)</code>, M in the guitar room), kept for that device. <code>state.monitorBy</code> is <code>'auto'</code>, <code>'hand'</code>,
+<code>'open'</code> (an opener's <code>monitor: false</code>) or <code>'guard'</code> (the feedback guard). Closing never decides. A hold mutes
+without deciding (<code>hold('tuner')</code> / <code>release('tuner')</code>, <code>state.monitorHolds</code>); <code>hush()</code> is the killswitch's.
+Monitoring plays through <code>engine.monitored</code>'s strip, which the polite stop never renews.</li>
+<li><em>The check</em> (<code>app.input.path</code>: <code>status()</code>, <code>check()</code>, <code>wake()</code>, <code>speaker(fn)</code>): analysers on the input, the
+strip's input and its chain's end (<code>engine.chainTaps</code>), read once a change settles and every 2 s while something
+comes in (<code>HEALTH</code>); <code>pathVerdict</code> names what's wrong (the context suspended, the monitor unwired, a stand-in, a
+device stuck half on, a silent chain, an amp passing its input dry, the track muted) and the repair: resume,
+rewire once, <code>assure</code> once, then <code>engine.rebuild</code> up to three times 5 s apart, then <code>LINES.gaveUp</code>. Each
+episode's line is said once (<code>LINES</code>), through the room's talkback when one listens (<code>speaker</code>), else a toast.
+<code>state.path</code> and the <code>'path'</code> event carry the verdict; the guitar room's lamp by the jack shows it.</li>
+</ul></li>
 <li><p><strong>Files in</strong> (<code>input/importers.js</code>, <code>app.importers</code>): a Standard MIDI File (types 0 and 1; running status, note-on at
 velocity 0, the first tempo of a tempo map, time and key signatures, markers, track names, program changes) dropped
 anywhere or from Song menu → Import MIDI… becomes a track per part (type 0 split by channel; channel 10 →
@@ -2147,8 +2193,10 @@ camera). It comes up by itself once in a visitor's browser (never under <code>na
 it is (<code>gprefs</code> <code>gs.step</code>; the header's button carries on), and the tour's Done sets <code>gs.done</code>. The tuner pedal,
 Tuna Fork, is the room's own (nothing in the song): drawn once, by the room stream on the board (<code>room-rig.js</code>
 <code>tunerFace</code>), from the reading the start stream puts at <code>R.gr.tuner.reading</code> (<code>{ note, octave, cents, string, inTune, held, input }</code>); U or its footswitch stomps it, the camera goes to it (<code>R.panel('tuner')</code>: the gauge, the strings lighting as each comes
-in, the tunings), and while it's on the monitor is muted (<code>audio.monitor(false)</code>), put back as it was when it goes
-off, when a take starts, or when the screen goes. A tuning picked on it that the song knows is the song's: one step
+in, the tunings), and while it's on the monitor is held (<code>audio.hold('tuner')</code>: muted without deciding anything),
+released when it goes off, when a take starts, or when the screen goes. <strong>M</strong> (or a click on the lamp by the jack)
+turns monitoring on or off by hand; the lamp shows on, off, held (the tuner) or a fault the path's check found (its
+line in the title, the talkback says it). A tuning picked on it that the song knows is the song's: one step
 by you (<code>room.set { tuning }</code> and the guitars' low cut). Bus: <code>start:gs</code>, <code>start:tuner</code>, <code>start:plug</code>.</li>
 <li><strong>Takes and the part line</strong> (<code>takes.js</code>; <code>parts-plans.js</code> is its pure part). A part is a section, in start order;
 the room adds none unasked. R records the selected part (fixed length; what rings past it is the take's tail, the

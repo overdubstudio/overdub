@@ -1250,6 +1250,68 @@ await page.evaluate(() => {
   else T.ok(r.late - r.early > 6, `a graph pedal follows its lane in a render (Drive's level swept up: ${r.early.toFixed(1)} dB at the start, ${r.late.toFixed(1)} dB at the end)`);
 }
 
+{
+  // The strip on the live path (docs/research/AMP-PATH.md §6), live and sounding: a rewire that throws still brings the
+  // dips back up and ends its job; a renew racing builds never wires a disposed device; and while a renew builds (the
+  // killswitch's), the strip passes silence, never the dry input. The insert flips the polarity, so its wet signal is
+  // the input's negative and the dry input is the only thing that reads positive.
+  const r = await page.evaluate(async () => {
+    const { R, capture } = T, S = await import('/app/src/engine/strip.js');
+    const ctx = new AudioContext(); await ctx.resume();
+    const live = window.__flipLive = new Set();
+    R.defineDevice({ id: 'test.flip', name: 'Flip', kind: 'effect', params: [{ key: 'x', min: 0, max: 1, def: 0 }],
+      build(c) { const g = c.createGain(); g.gain.value = -1; const me = { g }; live.add(me); return { input: g, output: g, set() {}, dispose() { live.delete(me); } }; } });
+    const reports = [];
+    const mkStrip = () => new S.Strip(ctx, { id: 't_x', clock: null, bpm: () => 120, report: (e) => reports.push(e), dest: null });
+    const spec = (n) => ({ instrument: null, inserts: Array.from({ length: n }, (_, i) => ({ id: 'fx_' + i, device: 'test.flip', on: true, params: {} })) });
+    const src = ctx.createConstantSource(); src.offset.value = 0.5; src.start();
+    const sink = ctx.createGain(); sink.gain.value = 0; sink.connect(ctx.destination);
+    const out = {};
+    // 1. a throwing rewire
+    const s1 = mkStrip(); s1.out.connect(sink);
+    await s1.sync(spec(1));
+    let resolved = false;
+    await Promise.race([s1.dipped(() => { throw new Error('a connect that threw'); }).then(() => { resolved = true; }), T.sleep(1500)]);
+    await T.sleep(80);
+    out.dip = { resolved, pre: s1.preDip.gain.value, post: s1.postDip.gain.value, dips: s1.dips, reported: reports.some((e) => /rewire: a connect that threw/.test(e.message)) };
+    s1.dispose();
+    // 2. renews racing builds (one insert, then two, then one: every pass a renew, a sync and a renew again)
+    const s2 = mkStrip(); s2.out.connect(sink); src.connect(s2.input);
+    await s2.sync(spec(1));
+    for (let k = 0; k < 12; k++) {
+      const a = s2.sync(spec(1 + (k % 2))), b = s2.renew(), c = k % 3 ? s2.sync(spec(1 + ((k + 1) % 2))) : null;
+      if (k % 4 === 0) await T.sleep(3);
+      await Promise.all([a, b, c].filter(Boolean));
+    }
+    await s2.sync(spec(1)); await s2.job; await T.sleep(150);
+    const an = ctx.createAnalyser(); an.fftSize = 512; s2.keyTap().connect(an);
+    await T.sleep(60);
+    const buf = new Float32Array(512); an.getFloatTimeDomainData(buf);
+    out.race = { wired: s2.fx.length, live: live.size, mean: buf.reduce((x, y) => x + y, 0) / buf.length };
+    s2.dispose(); src.disconnect(s2.input);
+    // 3. the killswitch's renew, captured at the chain's end
+    const s3 = mkStrip(); s3.out.connect(sink); src.connect(s3.input);
+    await s3.sync(spec(1)); await T.sleep(100);
+    const cap = await capture(ctx, s3.keyTap());
+    await T.sleep(60);
+    const r0 = s3.renew(), r1 = s3.renew();
+    await Promise.all([r0, r1]); await T.sleep(120);
+    const c = await cap.stop();
+    let maxPos = -1, minNeg = 1; for (let i = 0; i < c.L.length; i++) { if (c.L[i] > maxPos) maxPos = c.L[i]; if (c.L[i] < minNeg) minNeg = c.L[i]; }
+    let end = 0; for (let i = Math.max(0, c.L.length - 256); i < c.L.length; i++) end += c.L[i]; end /= Math.min(256, c.L.length);
+    out.kill = { maxPos, minNeg, end, n: c.L.length };
+    s3.dispose();
+    src.stop(); await ctx.close();
+    return out;
+  });
+  T.ok(r.dip.resolved && Math.abs(r.dip.pre - 1) < 0.01 && Math.abs(r.dip.post - 1) < 0.01 && r.dip.dips === 0 && r.dip.reported,
+    `a rewire that throws: the dip still comes back (preDip ${r.dip.pre.toFixed(3)}, postDip ${r.dip.post.toFixed(3)}), it resolves (${r.dip.resolved}), and the throw is reported (${r.dip.reported})`);
+  T.ok(r.race.wired === 1 && r.race.live === 1 && Math.abs(r.race.mean + 0.5) < 0.02,
+    `renews racing builds never wire a disposed device: one insert wired, ${r.race.live} built and alive, the chain passing it (${r.race.mean.toFixed(3)}, want -0.500)`);
+  T.ok(r.kill.n > 4000 && r.kill.maxPos < 0.05 && Math.abs(r.kill.end + 0.5) < 0.02,
+    `while the killswitch's renew builds, the chain's end is silence, never the dry input (highest ${r.kill.maxPos.toFixed(4)}: the dry input reads +0.5), and the new chain comes up wet (${r.kill.end.toFixed(3)})`);
+}
+
 const pageErrors = errors.filter((e) => !/overdub engine:/.test(e));
 T.ok(pageErrors.length === 0, `no page errors${pageErrors.length ? ': ' + pageErrors.slice(0, 5).join(' | ') : ''}`);
 await close();

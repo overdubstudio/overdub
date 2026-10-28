@@ -287,6 +287,17 @@ const only = await page.evaluate(async () => {
   let low = 0;
   while (performance.now() - t0 < 4000) { await w(40); if (performance.now() - t0 > 2450) low = Math.min(low, engine.meters.tracks.t_g?.peak ?? -120); }
   out.gtr = { playing, low, renewed: engine.instance('t_g', 'i_v') !== g0 };
+  // the strip monitoring plays through (engine.monitored): silent through the whole polite stop, never faded or renewed
+  // (a renew there would be the guitar's chain rebuilt under the player's next note)
+  engine.monitored('t_g');
+  await engine.play(0); await w(800);
+  const g1 = engine.instance('t_g', 'i_v');
+  gate.gain.setValueAtTime(0, ctx.currentTime);
+  engine.stop();
+  await w(4200);
+  gate.gain.setValueAtTime(1, ctx.currentTime); await w(300);
+  out.mon = { renewed: engine.instance('t_g', 'i_v') !== g1, back: engine.meters.tracks.t_g?.peak ?? -120, marked: engine.monitoredTrack };
+  engine.monitored(null);
   osc.stop(); gate.disconnect();
   return out;
 });
@@ -299,6 +310,7 @@ t.ok(only.waiting === true && only.b === false, `Play while the killswitch renew
 t.ok(only.cState === 'count' && !only.c.playing && only.c.rec === 'idle', `R while the killswitch renews, then cancelling the count: nothing plays (${JSON.stringify(only.c)})`);
 t.ok(/^c*R+$/.test(only.take.states) && /^R{8}$/.test(only.take.states.slice(-8)) && only.take.playing && only.take.rec === 'rec', `an agent's ${only.take.secs} s play, R while it plays: the take runs on past the play's end (${only.take.states}: c count, R rec, '.' stopped)`);
 t.ok(only.takeover === true, 'an agent\'s play, then Space twice (the musician takes the transport over): their playback runs on past the agent\'s end');
+t.ok(only.mon.marked === 't_g' && !only.mon.renewed && only.mon.back > -30, `the monitored strip, silent through a whole polite stop, is never renewed (the same reverb after: ${!only.mon.renewed}; the guitar back at ${only.mon.back.toFixed(1)} dBFS)`);
 t.ok(only.gtr.playing > -30 && only.gtr.low > -12 && !only.gtr.renewed, `a monitored guitar that comes back in 2.3 s after Stop is not faded or renewed under the player (${only.gtr.playing.toFixed(1)} dBFS playing, lowest ${only.gtr.low.toFixed(1)} from 2.45 s)`);
 
 // ------------------------------------------------------------------------------------------------ 6. the click in 7/8

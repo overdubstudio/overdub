@@ -186,7 +186,7 @@ export function soundSays({ stack = '', amp = '', cab = '', pedals = [] } = {}) 
   return `That’s ${stack || 'your stack'}: ${what}. Play through it.`;
 }
 
-/** @param {{ open?: boolean, label?: string, input?: number | null, channels?: number, error?: string }} v */
+/** @param {{ open?: boolean, label?: string, input?: number | null, channels?: number, error?: string, monitoring?: boolean | null }} v */
 export function plugSays({ open = false, label = '', input = null, channels = 0, error = '', monitoring = null } = {}) {
   if (error) return error;
   if (!open) return W.plugAsk;

@@ -864,17 +864,24 @@ function drum(kind, sr, len = 0.25) {
 }
 
 /* ------------------------------------------------------------------ monitoring by itself, and the feedback guard (the studio) */
-// Inputs with names: getUserMedia gives a page-made stream named as the device asked for. The browser's own pick (a
-// Scarlett as the default) doesn't start monitoring; the person picking the Scarlett does, ramped in over 150 ms; the
-// laptop's microphone leaves it off and says why; off by hand stays off when the same input opens again; after a reload
-// the remembered Scarlett starts it. Then, monitoring, a guitar through it trips nothing, and a howl ringing up turns
-// monitoring off with one toast.
+// Inputs with names: getUserMedia gives a page-made stream named as the device asked for. The Scarlett starts monitoring
+// by itself however it was picked (the browser's "Default - Scarlett" entry is the Scarlett: docs/research/AMP-PATH.md
+// §4), ramped in over 150 ms; the laptop's microphone leaves it off and says why; off by hand stays off when the same
+// input opens again; after a reload the remembered Scarlett starts it. Then, monitoring, a guitar through it trips
+// nothing, and a howl ringing up turns monitoring off with one toast. Then the live path's input end (§3, §4): what's
+// remembered is the device's own id, the killswitch leaves an interface monitoring, closing never decides, a hold
+// mutes and lets go, a stale id is chosen again by its label with the voice processing off on every ask, and a first
+// visit (no labels before the grant) chooses again once they're in.
 {
   const NAMED = `(() => {
     const md = navigator.mediaDevices;
     window.__devs = { 'scarlett-1': 'Scarlett 2i2 USB', 'mbp-mic': 'MacBook Pro Microphone', default: 'Default - Scarlett 2i2 USB' };
-    md.enumerateDevices = async () => Object.entries(window.__devs).map(([deviceId, label]) => ({ deviceId, label, kind: 'audioinput', groupId: 'g' }));
+    window.__gum = [];
+    // (__blind: no grant yet, so one input with no id and no label, until the first getUserMedia)
+    md.enumerateDevices = async () => (window.__blind ? [{ deviceId: '', label: '', kind: 'audioinput', groupId: '' }] : Object.entries(window.__devs).map(([deviceId, label]) => ({ deviceId, label, kind: 'audioinput', groupId: 'g' })));
     md.getUserMedia = async (c) => {
+      window.__gum.push(c && c.audio);
+      window.__blind = false;
       const app = window.overdub; await app.engine.start();
       const ctx = app.engine.ctx, want = c && c.audio && c.audio.deviceId, id = (want && (want.exact || want)) || 'default';
       if (!(id in window.__devs)) { const e = new Error('gone'); e.name = 'OverconstrainedError'; throw e; }
@@ -913,8 +920,8 @@ function drum(kind, sr, len = 0.25) {
       a.close();
       return out;
     });
-    T.ok(r.browser.kind === 'interface' && !r.browser.on && r.picked.kind === 'interface' && r.picked.on && r.picked.auto && r.picked.through === 'Guitar' && r.early > 0.02 && r.early < 0.9 && r.late > 0.98,
-      `monitoring starts by itself when the person picks an interface (the Scarlett: on through ${r.picked.through}, ramped in: ${r.early?.toFixed?.(2)} after 30 ms, ${r.late?.toFixed?.(2)} after 300), never on the browser's own pick (the same Scarlett as the default: ${r.browser.on ? 'on' : 'off'})`);
+    T.ok(r.browser.kind === 'interface' && r.browser.on && r.picked.kind === 'interface' && r.picked.on && r.picked.auto && r.picked.through === 'Guitar' && r.early > 0.02 && r.early < 0.9 && r.late > 0.98,
+      `monitoring starts by itself for an interface (the Scarlett: on through ${r.picked.through}, ramped in: ${r.early?.toFixed?.(2)} after 30 ms, ${r.late?.toFixed?.(2)} after 300), the browser's own pick too (the same Scarlett as the default: ${r.browser.on ? 'on' : 'off'})`);
     T.ok(r.mic.kind === 'mic' && !r.mic.on && r.mic.off === 'mic' && r.mic.line === AUDIOIN.MIC_LINE && r.back.on && !r.byHand.on && !r.byHand.line,
       `a microphone leaves it off and says why ("${r.mic.line}"); back on the Scarlett it starts again; turned off by hand it stays off when the Scarlett opens again`);
     await page.reload({ waitUntil: 'load' });
@@ -943,6 +950,57 @@ function drum(kind, sr, len = 0.25) {
     }, { guitar: Array.from(guitar), howl: Array.from(howl), sr, line: AUDIOIN.FEEDBACK_LINE || '(none)' });
     T.ok(g.calm.on && !g.calm.toasts && g.iface.on && !g.iface.toasts && !g.on && g.off === 'feedback' && g.line === AUDIOIN.FEEDBACK_LINE && g.toasts === 1 && g.ms < 1200 && g.gain === null,
       `the feedback guard: through the Scarlett a guitar and even a howl trip nothing (${g.calm.on && g.iface.on ? 'still on' : 'off'}); on the mic, monitored by hand, a howl ringing up turns monitoring off ${g.ms} ms after it starts, with one toast ("${g.line}")`);
+    // the live path's input end, on a clean page (nothing decided by hand yet)
+    await page.evaluate(() => { try { localStorage.removeItem('overdub:input'); } catch { /* ok */ } });
+    await page.reload({ waitUntil: 'load' });
+    await ready();
+    const q = await page.evaluate(async () => {
+      const o = window.overdub, a = o.input.audio, w = (ms) => new Promise((res) => setTimeout(res, ms)), out = {};
+      const saved = () => { try { return JSON.parse(localStorage.getItem('overdub:input') || '{}').deviceId; } catch { return null; } };
+      const through = () => a.monitorTrack()?.name || null;
+      await a.open({ device: 'default' }); await w(80);
+      out.def = { on: a.state.monitoring, by: a.state.monitorBy, real: a.state.realId, dev: a.state.deviceId, saved: saved(), through: through(), marked: o.engine.monitoredTrack };
+      a.hush(); await o.engine.silence(); await w(120);
+      out.kill = { on: a.state.monitoring, through: through() };
+      a.close(); out.closed = { on: a.state.monitoring, by: a.state.monitorBy };
+      await a.open({ device: 'scarlett-1' }); await w(80); out.reopen = { on: a.state.monitoring, through: through() };
+      a.hold('tuner'); await w(40); out.held = { on: a.state.monitoring, holds: [...a.state.monitorHolds], through: through(), gain: a._monitorGain };
+      a.release('tuner'); await w(40); out.released = { on: a.state.monitoring, holds: a.state.monitorHolds.length, through: through() };
+      await a.open({ device: 'mbp-mic' }); a.monitor(true); await w(40); a.hush(); await w(40);
+      out.mic = { on: a.state.monitoring, by: a.state.monitorBy, through: through() };
+      a.close();
+      window.__gum = [];
+      await a.open({ device: 'gone-1234' }); await w(40);
+      out.stale = { real: a.state.realId, open: a.state.open, asks: window.__gum.map((c) => ({ id: c && c.deviceId ? (c.deviceId.exact ? c.deviceId.exact : 'loose:' + c.deviceId) : '', off: !!c && c.echoCancellation === false && c.noiseSuppression === false && c.autoGainControl === false })) };
+      a.close();
+      return out;
+    });
+    T.ok(q.def.on && q.def.by === 'auto' && q.def.real === 'scarlett-1' && q.def.dev === 'scarlett-1' && q.def.saved === 'scarlett-1' && q.def.through === 'Guitar' && !!q.def.marked,
+      `the browser's "Default - Scarlett" entry monitors (${q.def.on ? 'on' : 'off'}, through ${q.def.through}), and what's remembered is the Scarlett's own id (${q.def.saved}), never 'default'`);
+    T.ok(q.kill.on && q.kill.through === 'Guitar', `the killswitch leaves an interface monitoring (${q.kill.on ? 'on' : 'off'}, through ${q.kill.through})`);
+    T.ok(q.closed.on && q.reopen.on && q.reopen.through === 'Guitar', `closing never decides: closed, monitoring is still ${q.closed.on ? 'on' : 'off'}; opened again, heard through ${q.reopen.through}`);
+    T.ok(q.held.on && q.held.holds.join() === 'tuner' && q.held.through === null && q.released.on && !q.released.holds && q.released.through === 'Guitar',
+      `a hold mutes without deciding (held: monitoring ${q.held.on ? 'on' : 'off'}, playing through ${q.held.through}); released, it plays through ${q.released.through} again`);
+    T.ok(!q.mic.on && q.mic.by === 'hand' && q.mic.through === null, `the killswitch turns a microphone's monitoring off by hand (${q.mic.on ? 'on' : 'off'}, by ${q.mic.by})`);
+    const loose = q.stale.asks.filter((x) => x.id.startsWith('loose:')).length, wet = q.stale.asks.filter((x) => !x.off).length;
+    T.ok(q.stale.open && q.stale.real === 'scarlett-1' && !loose && !wet && q.stale.asks.some((x) => x.id === 'gone-1234') && q.stale.asks.at(-1).id === 'scarlett-1',
+      `a remembered id that's gone is chosen again by its label (${q.stale.real}: asked ${q.stale.asks.map((x) => x.id || 'default').join(', ')}), never loosely (${loose}), the voice processing off on every ask (${wet} with it on)`);
+    // a first visit: no labels until the grant; the browser's default is the MacBook's mic, the Scarlett is plugged in
+    await page.evaluate(() => { try { localStorage.removeItem('overdub:input'); } catch { /* ok */ } });
+    await page.addInitScript(() => { window.__blind = true; window.__devs = { 'scarlett-1': 'Scarlett 2i2 USB', 'mbp-mic': 'MacBook Pro Microphone', default: 'Default - MacBook Pro Microphone' }; });
+    await page.reload({ waitUntil: 'load' });
+    await ready();
+    const b = await page.evaluate(async () => {
+      const a = window.overdub.input.audio, w = (ms) => new Promise((res) => setTimeout(res, ms));
+      const first = await a.choose({ role: 'instrument' });
+      await a.openBest({ role: 'instrument' }); await w(80);
+      const saved = JSON.parse(localStorage.getItem('overdub:input') || '{}').deviceId;
+      const out = { first, real: a.state.realId, kind: a.state.inputKind, on: a.state.monitoring, through: a.monitorTrack()?.name || null, saved, asks: window.__gum.length };
+      a.close();
+      return out;
+    });
+    T.ok(b.first.reask && b.first.why === 'blind' && b.real === 'scarlett-1' && b.kind === 'interface' && b.on && b.through === 'Guitar' && b.saved === 'scarlett-1',
+      `a first visit opens blind (${b.first.why}), then, the labels in, chooses again: the Scarlett (${b.real}, ${b.kind}), monitoring ${b.on ? 'on' : 'off'} through ${b.through}, remembered as ${b.saved}`);
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `monitoring by itself and the guard: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }

@@ -376,6 +376,7 @@ export function createLivePath(app, audio) {
     return checking;
   }
   // a check `ms` from now (the sooner of two asked for)
+  /** @param {number} [ms] */
   function later(ms = HEALTH.after) {
     const at = Date.now() + ms;
     if (dueT && due <= at) return;

@@ -47,6 +47,20 @@ function fakeGuitar() {
   return { wav: { sr: SR, channels: [one, two] } };
 }
 
+// the fake input by an interface's name (Chromium calls it "Fake Default Audio Input", which reads as a microphone):
+// the browser's default entry is "Default - Scarlett Solo USB", the first input the Scarlett itself
+function scarlett() {
+  const rename = (l) => (/fake default/i.test(l) ? 'Default - Scarlett Solo USB' : /fake audio input 1/i.test(l) ? 'Scarlett Solo USB' : l);
+  try {
+    const lab = Object.getOwnPropertyDescriptor(MediaStreamTrack.prototype, 'label');
+    Object.defineProperty(MediaStreamTrack.prototype, 'label', { configurable: true, get() { const l = lab.get.call(this); return this.kind === 'audio' ? rename(l) : l; } });
+    const en = MediaDevices.prototype.enumerateDevices;
+    MediaDevices.prototype.enumerateDevices = async function () {
+      return (await en.call(this)).map((d) => (d.kind !== 'audioinput' ? d : { deviceId: d.deviceId, groupId: d.groupId, kind: d.kind, label: rename(d.label), toJSON() { return { deviceId: d.deviceId, groupId: d.groupId, kind: d.kind, label: rename(d.label) }; } }));
+    };
+  } catch { /* the names as they are */ }
+}
+
 export async function run(T, ctx) {
   /* ---------------------------------------------------------------------------------------- Node */
   const plan = await import(W_ + 'start-plan.js');
@@ -87,7 +101,7 @@ export async function run(T, ctx) {
   }
 
   const fake = fakeGuitar();
-  const s = await openRoom('/app/?room', { name: 'start', fake, webdriver: false });
+  const s = await openRoom('/app/?room', { name: 'start', fake, webdriver: false, init: scarlett });
   const { page, E, errors } = s;
   const shot = (n) => page.screenshot({ path: path.join(OUT, `gr-start-${n}.png`) });
   try {
@@ -104,8 +118,12 @@ export async function run(T, ctx) {
     // 2. plug in
     await press(page, 'Enter');
     await page.waitForFunction(() => window.overdub.input.audio.state.open, null, { timeout: 8000 }).catch(() => {});
-    // (the fake isn't an interface the browser names, so monitoring is turned on here as an interface's would be)
-    await E(() => window.overdub.input.audio.monitor(true));
+    // (the fake, named as a Scarlett, is an interface, so monitoring comes on by itself: docs/research/AMP-PATH.md §4)
+    await page.waitForFunction(() => window.overdub.input.audio.state.monitoring, null, { timeout: 4000 }).catch(() => {});
+    await page.waitForFunction(() => window.overdub.input.audio.state.path?.state === 'ok', null, { timeout: 6000 }).catch(() => {});
+    const plugMon = await E(() => { const a = window.overdub.input.audio; return { on: a.state.monitoring, by: a.state.monitorBy, real: a.state.realId, through: a.monitorTrack()?.name || null, path: a.state.path?.state || '', lamp: document.querySelector('.gr-r-mon')?.dataset.mon || '' }; });
+    T.ok(plugMon.on && plugMon.by === 'auto' && !!plugMon.through && !!plugMon.real && plugMon.real !== 'default' && plugMon.path === 'ok' && plugMon.lamp === 'on',
+      `Plug in (the browser's "Default - Scarlett") monitors by itself: heard through ${plugMon.through} (decided ${plugMon.by}), the Scarlett's own id kept (${String(plugMon.real).slice(0, 8)}…), the path ${plugMon.path}, the lamp by the jack ${plugMon.lamp || '(not drawn)'}`);
     await page.waitForFunction(() => String(window.overdub.input.audio.state.channel) === '2', null, { timeout: 8000 }).catch(() => {});
     await page.waitForFunction(() => /window/i.test(document.querySelector('.gr-callout .gg-lv-say')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
     const plug = await E(() => {
@@ -122,24 +140,25 @@ export async function run(T, ctx) {
     await shot('tune');
 
     // 3. tune
-    const mon0 = await E(() => window.overdub.input.audio.state.monitoring);
+    const mon0 = await E(() => { const a = window.overdub.input.audio; return a.state.monitoring && !a.state.monitorHolds.length; });
     await press(page, 'KeyU');
     await page.waitForFunction(() => window.overdub.ui.state.liveRoom.gr.cam === 'tuner', null, { timeout: 3000 }).catch(() => {});
     await page.waitForFunction(() => /^C/.test(document.querySelector('.gr-r-tn-note')?.textContent || '') && /STRING 6/.test(document.querySelector('.gr-r-tn-str')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
     await wait(1500);
     const tune = await E(() => {
       const o = window.overdub, gr = o.ui.state.liveRoom.gr, p = document.querySelector('.gr-panel[data-target=tuner]');
-      return { on: gr.tuner.on, mon: o.input.audio.state.monitoring, was: gr.tuner.monitorWas, cam: gr.cam, panel: !!p && !p.hidden, note: document.querySelector('.gr-r-tn-note')?.textContent || '', str: document.querySelector('.gr-r-tn-str')?.textContent || '',
+      const a = o.input.audio;
+      return { on: gr.tuner.on, mon: a.state.monitoring && !a.state.monitorHolds.length, was: a.state.monitorHolds.includes('tuner') && a.state.monitoring, through: a.monitorTrack()?.name || null, cam: gr.cam, panel: !!p && !p.hidden, note: document.querySelector('.gr-r-tn-note')?.textContent || '', str: document.querySelector('.gr-r-tn-str')?.textContent || '',
         cents: document.querySelector('.gr-r-tn-cents')?.textContent || '', verdict: p?.querySelector('.gr-tp-verdict')?.textContent || '', side: document.querySelector('.gr-callout')?.dataset.side, gauge: p?.querySelector('.gg-tu-note')?.textContent || '' };
     });
     const cents = Number(String(tune.cents).replace('−', '-').replace('¢', ''));
-    T.ok(tune.on && mon0 && !tune.mon && tune.was === true && tune.cam === 'tuner' && tune.panel && tune.side === 'left',
-      `U stomps the Tuna Fork: the camera on it, its panel up, the slate to the left, you muted (monitoring ${mon0} → ${tune.mon})`);
+    T.ok(tune.on && mon0 && !tune.mon && tune.was === true && tune.through === null && tune.cam === 'tuner' && tune.panel && tune.side === 'left',
+      `U stomps the Tuna Fork: the camera on it, its panel up, the slate to the left, you muted by a hold, not a decision (heard ${mon0} → ${tune.mon}, monitoring still on: ${tune.was})`);
     T.ok(/^C2?$/.test(tune.note) && tune.str === 'STRING 6' && Math.abs(cents + 13) <= 3 && /\bC string \(6\)/.test(tune.verdict),
       `its window reads ${tune.note} ${tune.str} ${tune.cents} (the fake: C2, 13 cents flat); the panel: "${tune.verdict}" (gauge ${tune.gauge})`);
     await shot('tuner');
     await press(page, 'KeyU');
-    const off = await E(() => ({ on: window.overdub.ui.state.liveRoom.gr.tuner.on, mon: window.overdub.input.audio.state.monitoring, cam: window.overdub.ui.state.liveRoom.gr.cam, slate: document.querySelector('.gr-callout').textContent }));
+    const off = await E(() => ({ on: window.overdub.ui.state.liveRoom.gr.tuner.on, mon: window.overdub.input.audio.state.monitoring && !window.overdub.input.audio.state.monitorHolds.length, cam: window.overdub.ui.state.liveRoom.gr.cam, slate: document.querySelector('.gr-callout').textContent }));
     T.ok(!off.on && off.mon && off.cam === 'gs' && /Next: timing/.test(off.slate), `U again: off, you're back on (monitoring ${off.mon}), the camera back on the step, Next: timing offered`);
 
     // a tuning picked on the tuner: the song's, one step by you, undone exactly
@@ -167,17 +186,18 @@ export async function run(T, ctx) {
     const never = await E(async () => {
       const o = window.overdub, a = o.input.audio, R = document.querySelector('.gr').__gr, st = R.parts.start;
       const tick = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const heard = () => a.state.monitoring && !a.state.monitorHolds.length;
       const out = {};
       a.monitor(true);
-      st.tuner(true); await tick(); out.muted = !a.state.monitoring;
+      st.tuner(true); await tick(); out.muted = !heard();
       // a take starts while it's on
-      R.run('take'); await tick(); out.take = { on: o.ui.state.liveRoom.gr.tuner.on, mon: a.state.monitoring }; R.run('idle');
+      R.run('take'); await tick(); out.take = { on: o.ui.state.liveRoom.gr.tuner.on, mon: heard() }; R.run('idle');
       // refused while a take runs
-      R.run('take'); out.refused = st.tuner(true) === false && a.state.monitoring; R.run('idle');
+      R.run('take'); out.refused = st.tuner(true) === false && heard(); R.run('idle');
       // Getting started skipped past it
-      st.tuner(true); await tick(); R.press('gs:skip'); await tick(); out.skip = { on: o.ui.state.liveRoom.gr.tuner.on, mon: a.state.monitoring, step: st.step() };
-      // monitoring turned on again by an input reopened while it's on: off again
-      st.tuner(true); await tick(); a.monitor(true); await tick(); await tick(); out.held = !a.state.monitoring;
+      st.tuner(true); await tick(); R.press('gs:skip'); await tick(); out.skip = { on: o.ui.state.liveRoom.gr.tuner.on, mon: heard(), step: st.step() };
+      // monitoring turned on again (by hand) while it's on: still held
+      st.tuner(true); await tick(); a.monitor(true); await tick(); await tick(); out.held = !heard();
       st.tuner(false);
       // monitoring was off before: it stays off after
       a.monitor(false); st.tuner(true); await tick(); st.tuner(false); out.stayOff = !a.state.monitoring;
@@ -189,8 +209,8 @@ export async function run(T, ctx) {
       st.tuner(true); await new Promise((r) => setTimeout(r, 100));
       a.open = realOpen;
       await a.open({ ...dev, capture: true, monitor: true }); await tick(); await tick();
-      out.late = { muted: !a.state.monitoring };
-      st.tuner(false); out.late.back = a.state.monitoring;
+      out.late = { muted: !heard() };
+      st.tuner(false); out.late.back = heard();
       a.monitor(true);
       return out;
     });
@@ -276,16 +296,36 @@ export async function run(T, ctx) {
     const nope = await E(() => [...document.querySelectorAll('.gr-callout select, .gr-callout input[type=range], .gr-panel[data-target=tuner] select, .gr-panel[data-target=tuner] input[type=range], .gr-spot select, .gr-spot input')].length);
     T.ok(nope === 0, `no <select> and no range slider in Getting started or the tuner (${nope})`);
 
+    // M and the monitor lamp by the jack: off by hand and on again, the lamp following; held by the tuner, the lamp says so
+    {
+      const lamp = () => E(() => { const b = document.querySelector('.gr-r-mon'), a = window.overdub.input.audio; return { lamp: b?.dataset.mon || '', pressed: b?.getAttribute('aria-pressed') || '', on: a.state.monitoring, by: a.state.monitorBy, through: a.monitorTrack()?.name || null }; });
+      await E(() => { window.overdub.input.audio.monitor(true); const R = document.querySelector('.gr').__gr; if (R.gr.tuner.on) R.parts.start.tuner(false); });
+      await wait(150);
+      const m0 = await lamp();
+      await press(page, 'KeyM'); await wait(150);
+      const m1 = await lamp();
+      await press(page, 'KeyM'); await wait(150);
+      const m2 = await lamp();
+      await E(() => document.querySelector('.gr').__gr.parts.start.tuner(true)); await wait(150);
+      const m3 = await lamp();
+      await E(() => document.querySelector('.gr').__gr.parts.start.tuner(false)); await wait(100);
+      await E(() => document.querySelector('.gr-r-mon')?.click()); await wait(150);
+      const m4 = await lamp();
+      await E(() => document.querySelector('.gr-r-mon')?.click()); await wait(150);
+      T.ok(m0.lamp === 'on' && m0.pressed === 'true' && !m1.on && m1.by === 'hand' && m1.lamp === 'off' && m1.pressed === 'false' && !m1.through && m2.on && m2.lamp === 'on' && !!m2.through && m3.lamp === 'held' && !m4.on && m4.lamp === 'off',
+        `M turns monitoring off by hand and on again, and so does a click on the lamp by the jack (${m0.lamp} → ${m1.lamp} → ${m2.lamp}; the tuner on: ${m3.lamp}; clicked: ${m4.lamp})`);
+    }
+
     // the screen goes with the tuner on: never left muted
     const gone = await E(async () => {
       const o = window.overdub, a = o.input.audio, R = document.querySelector('.gr').__gr;
       a.monitor(true);
       R.parts.start.tuner(true);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const muted = !a.state.monitoring;
+      const muted = !(a.state.monitoring && !a.state.monitorHolds.length);
       o.liveRoom.close();
       await new Promise((r) => setTimeout(r, 50));
-      return { muted, mon: a.state.monitoring, pedal: !!document.querySelector('.gr-r-tuner'), btn: !!document.querySelector('.gr-gs-btn') };
+      return { muted, mon: a.state.monitoring && !a.state.monitorHolds.length, pedal: !!document.querySelector('.gr-r-tuner'), btn: !!document.querySelector('.gr-gs-btn') };
     });
     T.ok(gone.muted && gone.mon && !gone.pedal && !gone.btn, `the room closed with the tuner on: monitoring back (${gone.mon}), the pedal and the button gone`);
     T.ok(!errors.length, `no console or page errors${errors.length ? ': ' + errors.slice(0, 4).join(' | ') : ''}`);

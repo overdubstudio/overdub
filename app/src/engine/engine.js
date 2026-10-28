@@ -27,6 +27,10 @@
 //   engine.probeLatency({ tracks, withMix }) -> { tracks, max } (what render's delay compensation would line up to; stems use it)
 //   engine.settled() -> Promise (every strip matches the document) ; engine.dispose()
 //   engine.silence() -> Promise (the killswitch: see below) ; engine.silencing ; engine.on('silence', fn)
+//   engine.monitored(trackId | null) ; engine.monitoredTrack (the strip live input plays through: the polite stop never
+//     fades or renews it) ; engine.rebuild(trackId) -> Promise<{ ok, failed }> (the strip renewed, atomically: a repair)
+//     ; engine.chainTaps(trackId) -> { input, chain, settling, strip } | null (where the live path's check listens:
+//     input/livepath.js)
 //   engine.voices() -> Promise<{ [trackId]: { device, voices, held, peak, stuck } }> (debug: what each instrument is
 //     sounding: voices alive, voices whose note is still down, its output's peak in dBFS over the last ~40 ms, and
 //     how many voices the kernel host's watchdog has let go; tools/stuck-test.js)

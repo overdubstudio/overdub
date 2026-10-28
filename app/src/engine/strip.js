@@ -18,9 +18,15 @@
 // The dips are how rewires stay click-free: both ramp to 0 over 8 ms, the chain is rewired once the audio clock has
 // passed the ramp, then both ramp back. A live chain swapped for one that shares no built device with it (a guitar's
 // whole chain for another's: core/stacks.js) crossfades instead, with no gap: the new chain is wired beside the old one
-// from preDip to postDip, each behind its own tail gain, and the old one's ramps down while the new one's ramps up,
-// linearly over XFADE (linear ramps, never a value curve: Chrome 155 drops a curve that ends before its node first
-// renders), then the old path is undone. Each path ends in its tail gain: preDip -> inserts... -> tail -> postDip. Devices are instantiated through the registry (instantiate / paramValues);
+// from preDip to postDip, each behind its own tail gain, and the new one's ramps up linearly over XFADE while the old
+// one's falls from wherever it is (setTargetAtTime; never a value curve: Chrome 155 drops a curve that ends before its
+// node first renders), then the old path is undone. A rewire that throws is reported and the dips still come back up.
+//
+// Renew (the killswitch, the polite stop, a repair: engine.rebuild) is a fresh build under the job lock: hush() takes
+// the tail and the instrument down at once, every device is built anew (nothing reused, so a renew racing a build never
+// wires a disposed device), and once the hush is all the way down the new chain is wired and crossfaded in: a slow build
+// is silence, never the dry input. After any wiring, once the fades are over, each newly wired device is assured
+// (devices/lifecycle.js assure: a bypass a browser dropped is snapped to its target). Each path ends in its tail gain: preDip -> inserts... -> tail -> postDip. Devices are instantiated through the registry (instantiate / paramValues);
 // a missing device or one whose build throws becomes a FALLBACK (fallback.js) plus an 'error' report. A held device
 // (a song's, whose code this browser hasn't allowed: devices/trust.js) is silence for an instrument and a pass-through
 // for an effect, with no report; nothing of it is compiled or run, live or in any render.

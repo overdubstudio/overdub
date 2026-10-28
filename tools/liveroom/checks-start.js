@@ -8,7 +8,8 @@
 //   two seconds and peaking at −9 dBFS), the club opened with planGuitarRoom on the screen 'guitar':
 //     1. Getting started stays down in a check's browser and comes up by itself in a visitor's, once, at Plug in
 //     2. Plug in: Enter opens the input; input 2 is picked by itself (the one moving); the meter says the strum is in
-//        the window; the jack lights
+//        the window; the jack lights; it monitors by itself with the path ok, and a footswitch the browser dropped on
+//        the amp (dry left at 1 beside the wet) is found by the path's check, snapped back and said once
 //     3. Tune: U stomps the Tuna Fork; the camera goes to it; you're muted; its window and its panel read C2, about 13
 //        cents flat, on string 6; U again and the monitor's back as it was. A tuning picked on it is one step by you
 //        (the song's tuning and the guitars' low cut), undone exactly
@@ -133,6 +134,36 @@ export async function run(T, ctx) {
     T.ok(plug.open && plug.ch === '2' && plug.ring, `Enter plugs in: ${plug.from} (input ${plug.ch} of ${plug.chs}, picked as the one moving), and the jack lights`);
     T.ok(/Right in the window/.test(plug.say), `the meter puts the strum in the −12 to −6 window and says so: "${plug.say}"`);
     await shot('plug-in');
+
+    // the live path's check on the room's own rig: a footswitch the browser dropped (what Chrome 155 and 156 did to a
+    // freshly built amp: the stomp scheduled and never landing, the amp left dry beside its wet). The amp on the
+    // monitored track stomped off, then back on with every scheduled change refused: the check finds it stuck, snaps it
+    // where it was asked to be (assure, the same instance: no rebuild), says one line in the talkback, and the song
+    // never moves.
+    const drop = await E(async () => {
+      const o = window.overdub, path = o.input.path, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const until = async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (fn()) return true; await sleep(50); } return !!fn(); };
+      const t = o.input.audio.monitorTrack(), h0 = o.store.history.length;
+      const x = t && t.inserts.find((i) => i.on !== false && /^amp\./.test(i.device));
+      const gi = x && o.engine.instance(t.id, x.id);
+      if (!gi || typeof gi.health !== 'function') return { device: x?.device || '', why: 'no amp on the monitored track that says how it is' };
+      const said = [], say = o.liveRoom.say;
+      o.liveRoom.say = (line, opt) => { said.push(String(line)); return say.call(o.liveRoom, line, opt); };
+      try {
+        gi.setOn(false);
+        await sleep(300);
+        const AP = AudioParam.prototype, keep = { c: AP.cancelScheduledValues, s: AP.setValueAtTime, l: AP.linearRampToValueAtTime };
+        AP.cancelScheduledValues = function () { return this; }; AP.setValueAtTime = function () { return this; }; AP.linearRampToValueAtTime = function () { return this; };
+        try { gi.setOn(true); } finally { Object.assign(AP, { cancelScheduledValues: keep.c, setValueAtTime: keep.s, linearRampToValueAtTime: keep.l }); }
+        const h = gi.health();
+        let found = 'ok';
+        await until(() => { path.check(); found = path.status().state; return found !== 'ok'; }, 8000);
+        const fixed = await until(() => path.status().state === 'ok' && gi.health().ok, 9000);
+        return { device: x.device, dropped: !h.ok && h.dry === 1, found, fixed, same: o.engine.instance(t.id, x.id) === gi, said, steps: o.store.history.length - h0 };
+      } finally { o.liveRoom.say = say; }
+    });
+    T.ok(drop.dropped && drop.found === 'stuck' && drop.fixed && drop.same && drop.said?.length === 1 && drop.steps === 0,
+      `a footswitch the browser dropped (${drop.device || drop.why}: back on, dry still at 1): the path's check finds it ${drop.found}, snaps it where it was asked to be (${drop.fixed ? 'ok again' : 'not'}; the same instance, no rebuild: ${drop.same}), says it once ("${(drop.said || []).join('" | "')}"), and the song never moved (${drop.steps} steps)`);
     await press(page, 'Enter');
     const toTune = await E(() => document.querySelector('.gr').__gr.parts.start.step());
     T.ok(toTune === 'tune', `Enter: Next, to Tune (${toTune})`);

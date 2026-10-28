@@ -7,13 +7,13 @@
 // room: the camera goes to each thing, the engineer's slate beside it, a pool of light on it.
 //
 // No sound and no mic: the meters, the tuner, the drummer and the tape are fake state moved by one animation loop. The
-// gear is the studio's real faces (app/src/ui/faces.js) of the real devices (app/vendor/clawd/), crisp in front of the
+// gear is the studio's real faces (app/src/ui/faces.js) of the real devices (app/src/devices/guitar/gear/), crisp in front of the
 // pixel rooms (./room-pixels.js). window.mock.go(id) jumps to a screen (the Screens menu does the same).
 
 import { renderFace, AMP_LOOK_IDS, hashId } from '/app/src/ui/faces.js';
 import { paramValues } from '/app/src/devices/registry.js';
-import { evaluate as evalLooks } from '/app/src/devices/guitar/looks.gen.js';
-import { clawd } from '/app/src/devices/guitar/clawd.js';
+import { evaluate as evalLooks } from '/app/src/devices/guitar/gear/looks.js';
+import { gear } from '/app/src/devices/guitar/gear/index.js';
 import {
   getDevice, ampsBySection, pedalsByCat, typeWord, toneWord, CAT_WORD, RANK, inLoop, CABS, MICS, MIC_IDS, GUITAR_CABS, cabBox,
   whereOnCone, onCone, inches, HOUSE, TUNER, TUNINGS, gridOf, library, PINS, GUIDE, riffShape,
@@ -50,7 +50,7 @@ const place = (el, x, y, w, hh) => { el.style.left = x + 'px'; el.style.top = y 
 const fmt1 = (v) => Number(v).toFixed(1);
 const minus = (n) => String(n).replace('-', '−');
 const sentence = (s) => { s = String(s || '').toLowerCase(); return s ? s[0].toUpperCase() + s.slice(1) : s; };
-const LOOKS = evalLooks({ FONTS: { dirt: '"Rubik Dirt", Impact, "Arial Black", sans-serif', pixel: 'Silkscreen, ui-monospace, monospace' }, PLUG_AMPS: clawd.PLUG_AMPS });
+const LOOKS = evalLooks({ FONTS: { dirt: '"Rubik Dirt", Impact, "Arial Black", sans-serif', pixel: 'Silkscreen, ui-monospace, monospace' }, PLUG_AMPS: gear.PLUG_AMPS });
 const ampLookId = (d) => (d.look?.amp && LOOKS.AMP_LOOKS[d.look.amp] ? d.look.amp : d.amp && LOOKS.AMP_LOOKS[d.amp] ? d.amp : AMP_LOOK_IDS[hashId(d.id) % AMP_LOOK_IDS.length]);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const GLIDE = REDUCED ? 30 : 660;

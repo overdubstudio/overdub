@@ -1,18 +1,18 @@
 // @ts-check
-// Every clawd-o-matic amp as an Overdub effect device, 'amp.<id>' (cat 'amp'). The sound is clawd-o-matic's own
-// plugAmp (app/vendor/clawd/amps.js, verbatim): the same knobs give the same samples. Each amp also has its cab and mic
+// Every amp in the guitar gear as an Overdub effect device, 'amp.<id>' (cat 'amp'). The sound is the gear's own
+// plugAmp (gear/code.js, its amps.js section): the same knobs give the same samples. Each amp also has its cab and mic
 // network (plugCabNet): any of the cabs, a mic of any type moved across the cone, back from the grille and off axis,
 // and a second mic blended in (phase flip and all). With the cab on 'Its own' and one mic where it was voiced, it's
 // the amp exactly as it was voiced (the network isn't in the path at all).
 import { defineDevice } from '../registry.js';
-import { clawd, workletFiles } from './clawd.js';
+import { gear, workletFiles } from './gear/index.js';
 
-const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS } = clawd;
+const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS } = gear;
 export const CAB_IDS = Object.keys(PLUG_CABS);              // 'own' first
 export const MIC_IDS = Object.keys(PLUG_MICS);
 const TONE_LABEL = { clean: 'CLEAN AMP', crunch: 'CRUNCH AMP', high: 'HIGH-GAIN AMP', weird: 'WEIRD AMP', bass: 'BASS AMP' };
 
-// where a mic is on a cone, in words (as clawd-o-matic's cab view says it)
+// where a mic is on a cone, in words (as the gear's cab view says it)
 const where = (r) => (r < 0.12 ? 'centre' : r < 0.4 ? 'cap edge' : r < 0.82 ? 'cone' : r <= 1.04 ? 'cone edge' : 'off cone');
 const inches = (d) => (d < 1 ? d.toFixed(1) : d < 10 ? String(Math.round(d * 2) / 2) : String(Math.round(d))) + '"';
 const knob = (key, label, def, role) => ({ key, label, min: 0, max: 10, def, step: 0, role, fmt: (v) => (+v).toFixed(1) });
@@ -35,7 +35,7 @@ export const AMP_PARAMS = [
   { key: 'flip', label: 'PHASE', opts: ['NORM', 'FLIP'], def: 0, group: 'cab', desc: "flip mic 2's polarity" },
 ];
 
-// Overdub params -> clawd-o-matic's amp settings P ({ amp, gain, ..., cab?, mic?, mic2? }); the defaults left out, so
+// Overdub params -> the gear's amp settings P ({ amp, gain, ..., cab?, mic?, mic2? }); the defaults left out, so
 // the amp at its own cab and one mic where it was voiced takes the straight wire, bit for bit.
 export function ampSettings(id, v) {
   const P = { amp: id };
@@ -48,7 +48,7 @@ export function ampSettings(id, v) {
   if (t2 > 0) P.mic2 = { type: MIC_IDS[t2 - 1] || 'ribbon', x: +v.mic2pos, y: 0, dist: +v.mic2dist, ang: +v.mic2ang, s: 0, blend: +v.blend, flip: Math.round(v.flip) === 1 };
   return P;
 }
-// clawd-o-matic amp settings (a preset's) -> Overdub params
+// the gear's amp settings (a preset's) -> Overdub params
 export function ampParams(S) {
   const v = {};
   for (const k of ['gain', 'bass', 'mid', 'treble', 'presence', 'level']) if (S[k] != null) v[k] = +S[k];
@@ -65,14 +65,14 @@ export function ampDevice(id) {
   const worklets = A.sub ? workletFiles({ 'clawd-amps': PLUG_WORKLETS }, 'amp.' + id) : null;
   return {
     id: 'amp.' + id, name: A.name, kind: 'effect', cat: 'amp', amp: id, kindLabel: TONE_LABEL[A.tone] || 'AMP', tone: A.tone, style: A.style,
-    blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic',
+    blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic', // (both ids: kept as they were)
     params: AMP_PARAMS.map((p) => Object.assign({}, p)),
     look: { amp: id, style: A.style },
     latency: 256 / 48000, // (the two 2x-oversampled stages: 128 samples each; the instance reports it at its own rate)
     worklets,
     build(c, kit) {
       if (A.sub) c.__clawdAmpWorklets = kit.loaded('clawd-amps'); // (plugAmp builds the octave only when they're in)
-      const amp = clawd.plugAmp(c);
+      const amp = gear.plugAmp(c);
       return {
         input: amp.input, output: amp.output, latency: amp.latency, amp,
         set(v, x) { amp.set(ampSettings(id, v), x && !x.first ? x.t : undefined); },

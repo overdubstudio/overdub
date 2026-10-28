@@ -39,7 +39,7 @@ const LICENSES = ['MIT-0', 'MIT', 'CC0-1.0'];
 const CLIP_TYPES = ['audio/mpeg', 'audio/wav'];
 const INPUTS = ['strum', 'drums', 'bass'];
 const CATS = DEVICE_CATS.map(([k]) => k);
-// the shapes, finishes, knobs and labels a face can draw (ui/faces.js FACE_LOOKS, the vendored PEDAL_LOOKS); listed
+// the shapes, finishes, knobs and labels a face can draw (ui/faces.js FACE_LOOKS, the guitar gear's PEDAL_LOOKS); listed
 // here so the reader stays free of the DOM. A value outside them is dropped and the face draws its default.
 export const LOOK_VALUES = {
   shape: ['box', 'wide', 'mini', 'round', 'wah', 'rack'],

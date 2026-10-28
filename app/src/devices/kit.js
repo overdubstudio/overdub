@@ -1,6 +1,6 @@
-// The graph DSP kit: what a graph device's build(c, kit) gets. A port of clawd-o-matic's PFX (web/pedals.js, the pedal
-// platform of AJ's Guitar Studio: app/vendor/clawd/pedals.js is the original), so the hundred-odd pedals ported from
-// there run unchanged, and Overdub's own graph devices get the same tools.
+// The graph DSP kit: what a graph device's build(c, kit) gets. A port of the guitar gear's PFX (the pedal platform:
+// devices/guitar/gear/code.js, its pedals.js section, is the original), so the hundred-odd pedals in the gear run
+// unchanged, and Overdub's own graph devices get the same tools.
 //
 //   PFX                         the context-free helpers: dB, toDb, clamp, rng, noteSec, noteFmt, NOTES, ENV, END
 //   makeKit(c, { uid, seed, clock })   -> kit (below) plus kit.release() (stops what it started: devices/graph.js calls it)
@@ -12,7 +12,7 @@
 //   glide(c, param, v, dur, at) move an AudioParam along a raised cosine (no click at either end)
 //   isOffline(c)
 //
-// The kit (k.G, k.F, ...): the same names and meanings as clawd-o-matic's (docs/PEDALS.md there, "The kit"):
+// The kit (k.G, k.F, ...): the same names and meanings as the gear's (devices/guitar/gear/docs/PEDALS.md, "The kit"):
 //   G(v) F(type, f, Q?, gain?) chain(...nodes) curve(fn, over, n) shaper(k, bias, over) delay(max, t) lfo(rate, shape)
 //   constant(v) noise({ secs, seed, color, channels }) noiseSource(opts) ir({ secs, pre, seed, tail, damp, darken,
 //   width, channels }) convolver(buffer?) merge(L, R) pan(v) envelope({ attack, release }) worklet(name, opts)

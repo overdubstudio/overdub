@@ -42,8 +42,6 @@ overdub/
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/<family>/: each woff2 and its licence)         [brand]
   app/style/app.css      the shell, shared widgets and the phone layout                                [core / ui]
-  app/vendor/clawd/      verbatim Claw'd-o-Matic sources (pedals, amps, presets) and worklets/ (each processor they
-                         build, as a file); tools/vendor-clawd.js writes them, never edited here      [guitar]
   app/src/main.js        boot: devices, store, engine, shell, then MODULES; window.overdub             [core]
   app/src/analytics.js   anonymous counts on the live site only                                        [core]
   app/src/core/          project.js (schema, ids, defaults, a take's tail: clipTail, clipBodyEnd), ops.js (every
@@ -86,7 +84,11 @@ overdub/
                          dsp.js, pool.js + dsp-worker.js, runner.js)                                 [jobs]
   app/src/devices/       registry.js (fixed), trust.js (which song devices run here), graph.js + kit.js (graph devices:
                          bypass, glide, the PFX kit), worklets/ (the kit's END and envelope follower modules),
-                         guitar/ (ported pedals, amps, cabs, rigs)                                     [guitar]
+                         guitar/ (the pedals, amps, cabs and rigs as devices: index.js, pedals.js, amps.js,
+                         rigs.js; gear/ is the gear's own code, ours: code.js the sound and looks.js the
+                         faces, each one function scope, evaluated once by gear/index.js; worklets/ each
+                         processor code.js builds, as a file, byte for byte; docs/ and LICENSE, MIT, from
+                         Claw'd-o-Matic, where it began)                                              [guitar]
                          builtin/ (Overdub's own kernels: synths, drums, pluck, bass, eq, comp, verb...;
                          wavetables.js is Light Table's tables, which its kernel embeds and its face imports;
                          akwf.js the AKWF single cycles they carry),
@@ -518,14 +520,14 @@ through `core/music.js` `kitNotes(def)` (as text only: notes 0-127, strings of a
 A graph device that needs its own AudioWorkletProcessor lists `worklets: { name: url }`, the URL of a module file on
 the studio's origin (`new URL('./x.js', import.meta.url).href`), never source: the pages' policy refuses scripts from
 `data:` and `blob:` URLs. `kit.loadWorklet` loads each once per context behind END (`devices/worklets/end.js`, which
-stops a disposed node's processor); the vendored pedals' are `WORKLETS` in `devices/guitar/clawd.gen.js`.
+stops a disposed node's processor); the guitar gear's are `WORKLETS` in `devices/guitar/gear/code.js`.
 
 Ids are forever; display names are not. The built-ins are named after studio objects (core.poly Patch Bay, core.bass
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
 core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
-with the vendored pedals' (`tools/guitar-test.js` checks).
+with the guitar pedals' (`tools/guitar-test.js` checks).
 A def the studio ships may carry `describe(params)` (one line of text for `get_project`, in place of the params' JSON:
 core/project.js `summarize`), and a param `hidden` (not on the face or in the generic window), `auto: false` (no lane)
 and `quantum` (a window control's smallest step); DEVICES.md, "Params that aren't knobs".
@@ -925,9 +927,9 @@ kernels (`tools/golden-test.js`; most scenes come out bit-identical, the rest di
 round `Math.exp`/`sin`/`tanh` in the last bit). `tools/golden.json` pins each scene's hash (`tools/golden-scenes.js`:
 built-in instruments on the test phrase, effects on the DI strum, the demo). **It is never regenerated casually:** a
 moved hash means the sound moved; regenerate only the scenes changed on purpose (`UPDATE_GOLDEN=<scene,...>`) and say
-why in the commit (clawd-o-matic has the same rule). Hashes hold for the Node major and CPU arch in `golden.json`
+why in the commit (Claw'd-o-Matic, where the guitar gear began, had the same rule). Hashes hold for the Node major and CPU arch in `golden.json`
 `made`; elsewhere loudness must match to 0.05 dB. Graph devices built on native nodes are held to −80 dB between
-renders (a few vendored pedals move their LFOs from main-thread timers; `tools/guitar-test.js` names them).
+renders (a few of the guitar gear's pedals move their LFOs from main-thread timers; `tools/guitar-test.js` names them).
 
 ## The ears (`audio/measure.js`)
 

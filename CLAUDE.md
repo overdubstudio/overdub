@@ -54,7 +54,7 @@ The browser checks use `tools/pw.js` (playwright-core + a cached Chromium; overr
   rule for determinism, not a security boundary; never call kernels "sandboxed" or "secure" in copy.
 - **Renders are deterministic.** No `Math.random` in anything that makes sound; seed it (`dsp.rng(seed)`,
   `kit.rng(seed)`). Kernels can't call it at all and render bit-exact. Graph devices built on native nodes are held to
-  −80 dB: a few vendored pedals (seasick and other pre-clock ones) move their LFOs from main-thread timers, so under
+  −80 dB: a few guitar pedals (seasick and other pre-clock ones) move their LFOs from main-thread timers, so under
   heavy load two renders can differ by a hair. `tools/guitar-test.js` names them.
 - **The canonical render is the Node one** (`node tools/render.js song.json --hash`); the browser is the preview.
   **Never regenerate `tools/golden.json` casually.** A moved hash means the sound moved: regenerate only the scenes
@@ -74,5 +74,6 @@ The browser checks use `tools/pw.js` (playwright-core + a cached Chromium; overr
   deck and the launch drafts (both in the private `overdub-private` repo beside this one, read when present) come from
   the code or the last full run, and `tools/pages-test.js` (the claims block) checks tool, suite and check counts
   against the studio and `tools/.out/run-all.json`. Change one, change all of them.
-- **Clawd-o-Matic is vendored, not forked.** `app/vendor/clawd/` holds verbatim copies of the pedals, amps and
-  presets from Claw'd-o-Matic (`../clawd-o-matic/web`); `node tools/vendor-clawd.js` re-syncs them. Don't edit the copies.
+- **The guitar gear is ours.** The pedals, amps, cabs, mics and presets (`app/src/devices/guitar/gear/`) began in
+  Claw'd-o-Matic and are maintained here as our own code; nothing reads that project. Its credit stays in
+  `gear/LICENSE` (MIT). A worklet the gear builds from a string is also a file in `gear/worklets/`: change both.

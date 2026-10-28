@@ -43,8 +43,8 @@
 
 import { h, css } from '../../dom.js';
 import { renderFace, injectFaceCss, AMP_LOOK_IDS, hashId } from '../../faces.js';
-import { evaluate as evalLooks } from '../../../devices/guitar/looks.gen.js';
-import { clawd } from '../../../devices/guitar/index.js';
+import { evaluate as evalLooks } from '../../../devices/guitar/gear/looks.js';
+import { gear } from '../../../devices/guitar/index.js';
 import { paramValues } from '../../../devices/registry.js';
 import { planSwap, planAdd } from '../../../core/liveroom/guitar/rig.js';
 import { CLUB_STACK } from '../../../core/liveroom/guitar/setup.js';
@@ -62,7 +62,7 @@ import {
 
 const FONTS = { dirt: '"Rubik Dirt", Impact, "Arial Black", sans-serif', pixel: 'Silkscreen, ui-monospace, monospace' };
 let LOOKS = null;
-const looks = () => (LOOKS ||= evalLooks({ FONTS, PLUG_AMPS: clawd.PLUG_AMPS }));
+const looks = () => (LOOKS ||= evalLooks({ FONTS, PLUG_AMPS: gear.PLUG_AMPS }));
 const ampLookId = (d) => { const L = looks(); return d.look?.amp && L.AMP_LOOKS[d.look.amp] ? d.look.amp : d.amp && L.AMP_LOOKS[d.amp] ? d.amp : AMP_LOOK_IDS[hashId(d.id) % AMP_LOOK_IDS.length]; };
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const place = (el, x, y, w, hh) => { el.style.left = x + 'px'; el.style.top = y + 'px'; if (w != null) el.style.width = w + 'px'; if (hh != null) el.style.height = hh + 'px'; return el; };

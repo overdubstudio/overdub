@@ -1,5 +1,5 @@
 // Device faces: the UI of any device, drawn from its def, so nobody writes UI to make a pedal. The Guitar Studio's
-// procedural pedal faces (clawd-o-matic's pedalboard.js) and its amps (ampui.js), vendored verbatim (looks.gen.js) and
+// procedural pedal faces (pedalboard.js) and its amps (ampui.js), in devices/guitar/gear/looks.js, and
 // drawn here for ANY def: the ported pedals and amps, Overdub's own devices, and ones an agent wrote with a partial
 // look or none (the gaps are picked from a hash of the id, so two devices don't look alike).
 //
@@ -24,7 +24,7 @@
 // A device written by someone other than Overdub or clawd-o-matic wears a badge with its author (an agent's in --agent).
 // A param with face: false stays off the face (it lives in the device's window). A studio device may draw a screen on
 // its stompbox or rack: def.screen(ctx2d, { w, h, ink, dim }, values), a function, so never a song's (JSON) device's.
-import { evaluate as evalLooks } from '../devices/guitar/looks.gen.js';
+import { evaluate as evalLooks } from '../devices/guitar/gear/looks.js';
 import { normParam } from '../devices/registry.js';
 import { toPos, fromPos } from '../core/automation.js';
 import { holdToMove } from './touch.js';
@@ -151,7 +151,7 @@ function wireMenu(w, target, open) {
   });
 }
 
-/* ---- the knob (clawd-o-matic's plugKnob, the same markup, so the vendored styles dress it) */
+/* ---- the knob (the gear's plugKnob, the same markup, so the gear's styles dress it) */
 function makeKnob(p, value, { name, onInput }) {
   const w = document.createElement('div');
   w.className = 'kn';
@@ -287,7 +287,7 @@ function makeControl(p, value, ctx) {
 }
 
 /* ---- the author's byline: "by Claude" under the face, the name in cool (an agent) or warm (a person) ink, no
-   pill, no glow (design/LINER-NOTES-KIT.md). The house (and clawd-o-matic's vendored pedals) is unsigned. */
+   pill, no glow (design/LINER-NOTES-KIT.md). The house (and the guitar gear's pedals) is unsigned. */
 function badge(by) {
   if (!by || by === 'overdub' || by === 'clawd') return null;
   const id = String(by), a = dom && dom.authorOf ? dom.authorOf(id) : null;
@@ -541,7 +541,7 @@ export function renderFace(def, values = {}, opts = {}) {
   };
 }
 
-/* ---- the styles: clawd-o-matic's (vendored, scoped under .ewf), and Overdub's around them */
+/* ---- the styles: the gear's (gear/looks.js, scoped under .ewf), and Overdub's around them */
 // Prefix every rule's selectors with `scope ` (inside @media / @supports / @container too); @keyframes as they are.
 export function scopeCss(css, scope, { drop } = {}) {
   css = css.replace(/\/\*[\s\S]*?\*\//g, '');

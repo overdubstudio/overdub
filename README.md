@@ -131,7 +131,6 @@ what's being built and where help is wanted.
 site/          the landing page, the press page, the docs hub (site/docs/, built from docs/)
 app/           the studio: index.html, library.html, style/, src/{core,engine,audio,devices,kernel,input,ui,agent}
 app/kits/      the sampled kits' samples (gitignored: node tools/fetch-kits.js builds them; deploy uploads them)
-app/vendor/    verbatim sources from Claw'd-o-Matic (pedals, amps, presets); tools/vendor-clawd.js re-syncs them
 server/        serve.js (static + agent bridge), mcp.js (MCP stdio server), relay.js (the claude.ai relay)
 tools/         checks (node tools/run-all.js), the Node renderer, OverdubBench, screenshot and film scripts
 integrations/  the Claude Code plugin and skill, configs for other MCP clients

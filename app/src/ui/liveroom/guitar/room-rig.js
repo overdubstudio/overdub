@@ -19,10 +19,10 @@
 //   MIC_WORD, inches(d), whereOnCone(r), onCone(r) (the place in a sentence)
 
 import { h } from '../../dom.js';
-import { clawd } from '../../../devices/guitar/clawd.js';
+import { gear } from '../../../devices/guitar/gear/index.js';
 import { CAB_IDS, MIC_IDS } from '../../../devices/guitar/amps.js';
 
-const { PLUG_CABS, PLUG_AMP_BOX, PLUG_MICS } = clawd;
+const { PLUG_CABS, PLUG_AMP_BOX, PLUG_MICS } = gear;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export const inches = (d) => (d < 1 ? (+d).toFixed(1) : d < 10 ? String(Math.round(d * 2) / 2) : String(Math.round(d))) + '″';
 export const whereOnCone = (r) => (r < 0.12 ? 'centre' : r < 0.4 ? 'cap edge' : r < 0.82 ? 'cone' : r <= 1.04 ? 'cone edge' : 'off the cone');

@@ -1,11 +1,11 @@
 // @ts-check
-// Every clawd-o-matic pedal as an Overdub effect device, 'pedal.<id>' (ids are forever: the original ones, prefixed).
+// Every pedal in the guitar gear as an Overdub effect device, 'pedal.<id>' (ids are forever: the original ones, prefixed).
 // The pedal's own build(c, kit) runs unchanged on Overdub's kit (devices/kit.js) inside devices/graph.js's bypass.
 // Params are its knobs, with a role and a unit added where the label or the knob's own readout makes them obvious.
 import { defineDevice } from '../registry.js';
-import { clawd, workletFiles } from './clawd.js';
+import { gear, workletFiles } from './gear/index.js';
 
-// clawd-o-matic's pedal categories -> Overdub's (registry DEVICE_CATS). 'synth' there means a guitar-synth effect
+// the gear's pedal categories -> Overdub's (registry DEVICE_CATS). 'synth' there means a guitar-synth effect
 // (a synth voice, a freeze, an arpeggiator): Overdub's 'synth' is for instruments, so those file under pitch.
 const CAT = { dynamics: 'dynamics', filter: 'filter', pitch: 'pitch', drive: 'drive', fuzz: 'fuzz', synth: 'pitch', mod: 'mod', time: 'time', ambient: 'ambient', glitch: 'glitch', utility: 'utility' };
 
@@ -38,7 +38,7 @@ export function unitOf(k) {
   if (k.type === 'switch' || k.type === 'tap' || !k.fmt) return null;
   let s = '';
   try { s = String(k.fmt(k.def)); } catch { return null; }
-  if (k.fmt === clawd.PFX.noteFmt || /^1\/(2|4|8|16|32)(\.|T)?$/.test(s)) return 'note';
+  if (k.fmt === gear.PFX.noteFmt || /^1\/(2|4|8|16|32)(\.|T)?$/.test(s)) return 'note';
   if (/dB$/.test(s)) return 'dB';
   if (/\d\s*k?Hz$/.test(s) || /^\d+(\.\d+)?k$/.test(s)) return 'Hz';
   if (/\d\s*ms$/.test(s)) return 'ms';
@@ -64,13 +64,14 @@ export function pedalParam(k, cat) {
 // set()'s `at`: an automation lane on them would land up to the scheduler's 120 ms lookahead early, so they get none
 // (auto: false; docs/research/AUTOMATION.md 3.5). Found by tools/guitar-test.js, which fails on any it doesn't see
 // here. Tape Crab and Ping Pong Prawn (feedback delays) sometimes move early in that check and sometimes don't, so
-// all of their knobs are out. The vendored pedals are never edited.
+// all of their knobs are out. (The list is here, not in the pedals' code, so their defs read as they were written.)
 export const NO_LANE = {
   wub: ['rate', 'shape'], riser: ['bars'], jellypulse: ['rate'], spinlobster: ['width'], sidestep: ['rate'],
   clawchop: ['pat', 'len'], tapecrab: ['time', 'int', 'age', 'mix'], pingprawn: ['time', 'fb', 'tone', 'width', 'mix'], lowbatt: ['batt'],
 };
 
-// One clawd-o-matic def (normalised by its pedalDef) -> an Overdub device def.
+// One gear pedal def (normalised by its pedalDef) -> an Overdub device def. by 'clawd' and source 'clawd-o-matic' are
+// ids (the faces, the plugin editor and saved devices read them): kept as they were.
 export function pedalDevice(d) {
   const L = d.look || {};
   return {
@@ -79,14 +80,14 @@ export function pedalDevice(d) {
     params: d.knobs.map((k) => { const q = pedalParam(k, d.cat); if ((NO_LANE[d.id] || []).includes(k.key)) q.auto = false; return q; }),
     look: Object.assign({ color: d.color, ink: d.ink }, L),
     where: d.where, trails: !!d.trails, trim: d.trim || 0, latency: d.latency || 0, drone: !!d.drone, tail: d.tail || 0, stereo: !!d.stereo,
-    worklets: d.worklets ? workletFiles(d.worklets, d.id) : null, // (the files the vendored sources were written to)
+    worklets: d.worklets ? workletFiles(d.worklets, d.id) : null, // (their files in gear/worklets/)
     build: d.build,
   };
 }
 
 export function registerPedals() {
   const out = [];
-  for (const d of clawd.PEDAL_LIST) {
+  for (const d of gear.PEDAL_LIST) {
     try { out.push(defineDevice(pedalDevice(d))); } catch (e) { console.error('guitar: pedal ' + d.id + ' not registered:', e.message); }
   }
   return out;

@@ -1,19 +1,19 @@
-// Rigs: every clawd-o-matic preset, from every bank, as a chain of Overdub devices in signal order (the pedals before
+// Rigs: every preset in the guitar gear, from every bank, as a chain of Overdub devices in signal order (the pedals before
 // the amp, the amp, the pedals after it). The classic `fx: { gate, drive, ... }` presets come out as the classic board
-// (gate, drive, fuzz, amp, chorus, delay, reverb) with the ones they don't use switched off, as clawd-o-matic shows them.
+// (gate, drive, fuzz, amp, chorus, delay, reverb) with the ones they don't use switched off, as the gear shows them.
 //   RIGS                 [{ id, name, bank: { id, name, color, blurb }, blurb, nod, tags, hot, amp, chain: [{ device, params, on }] }]
 //   rigOps(track, rig, { replace: [insertIds], index }) -> ops that put the chain on a track (or 'master'), as one
 //                        transaction: insert.remove for each id in replace (the rig it replaces), then insert.add each.
 //   rigById(id)
-import { clawd } from './clawd.js';
+import { gear } from './gear/index.js';
 import { ampParams } from './amps.js';
 
 function rigOf(p, banks) {
-  const S = clawd.presetResolve(p);
+  const S = gear.presetResolve(p);
   const chain = [];
   for (const e of S.board) {
     if (e.id === 'amp') { chain.push({ device: 'amp.' + S.amp, params: ampParams(S), on: true }); continue; }
-    const def = clawd.PEDAL_DEFS[e.id];
+    const def = gear.PEDAL_DEFS[e.id];
     if (!def) continue;
     const params = {};
     for (const k of def.knobs) if (e[k.key] != null) params[k.key] = e[k.key];
@@ -26,9 +26,9 @@ function rigOf(p, banks) {
   };
 }
 
-const BANKS = Object.fromEntries(clawd.PRESET_BANKS.map((b) => [b.id, b]));
-export const RIGS = clawd.PLUG_PRESETS.map((p) => rigOf(p, BANKS));
-export const RIG_BANKS = clawd.PRESET_BANKS.map((b) => ({ id: b.id, name: b.name, color: b.color, blurb: b.blurb || '', count: RIGS.filter((r) => r.bank.id === b.id).length })).filter((b) => b.count);
+const BANKS = Object.fromEntries(gear.PRESET_BANKS.map((b) => [b.id, b]));
+export const RIGS = gear.PLUG_PRESETS.map((p) => rigOf(p, BANKS));
+export const RIG_BANKS = gear.PRESET_BANKS.map((b) => ({ id: b.id, name: b.name, color: b.color, blurb: b.blurb || '', count: RIGS.filter((r) => r.bank.id === b.id).length })).filter((b) => b.count);
 export const rigById = (id) => RIGS.find((r) => r.id === id) || null;
 
 export function rigOps(trackId, rig, { replace = [], index } = {}) {

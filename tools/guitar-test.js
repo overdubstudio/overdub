@@ -1,12 +1,13 @@
 // The Guitar Studio in Overdub (devices/guitar, devices/graph.js + kit.js, ui/faces.js, gallery.html):
-//  1. registry: every clawd-o-matic pedal and amp is registered (ids kept: pedal.<id>, amp.<id>), none refused, and
-//     every rig's devices exist; rigOps dispatch through the real store. Every worklet the vendored code builds is a
-//     file on the studio's origin with that source byte for byte, and the pedals and amps load theirs from those files.
+//  1. registry: every pedal and amp in the gear (devices/guitar/gear/) is registered (ids kept: pedal.<id>, amp.<id>),
+//     none refused, and every rig's devices exist; rigOps dispatch through the real store. Every worklet the gear's code
+//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals and amps
+//     load theirs from those files.
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
 //  3. bypass is exact: a sample of insert and trails pedals, off, equals the dry input to -90 dB.
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
-//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is clawd-o-matic's
+//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
 //     plugAmp sample for sample (also with a cab and two mics).
 //  5. the rigs: every preset (but the keys bank's) through its whole chain lands at -14 LUFS ±1.5 (leads up to -12),
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
@@ -95,45 +96,45 @@ async function boot(page) {
     const pedals = R.listDevices().filter((d) => d.id.startsWith('pedal.')), amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.'));
     const missing = [];
     for (const r of G.RIGS) for (const s of r.chain) if (!R.getDevice(s.device)) missing.push(r.id + ':' + s.device);
-    const ids = G.clawd.PEDAL_LIST.map((d) => d.id).filter((id) => !R.getDevice('pedal.' + id));
+    const ids = G.gear.PEDAL_LIST.map((d) => d.id).filter((id) => !R.getDevice('pedal.' + id));
     const badParams = [];
     for (const d of pedals.concat(amps)) for (const p of d.params) { if (!(p.def >= Math.min(p.min, p.max) && p.def <= Math.max(p.min, p.max))) badParams.push(d.id + '.' + p.key); if (p.fmt) { try { if (typeof p.fmt(p.def) !== 'string') badParams.push(d.id + '.' + p.key + ' fmt'); } catch { badParams.push(d.id + '.' + p.key + ' fmt throws'); } } }
     const roles = pedals.reduce((n, d) => n + d.params.filter((p) => p.role).length, 0), units = pedals.reduce((n, d) => n + d.params.filter((p) => p.unit).length, 0);
     const knobs = pedals.reduce((n, d) => n + d.params.length, 0);
-    return { pedals: pedals.length, clawdPedals: G.clawd.PEDAL_LIST.length, refused: G.clawd.PFX.refused, amps: amps.length, clawdAmps: Object.keys(G.clawd.PLUG_AMPS).length,
-      rigs: G.RIGS.length, presets: G.clawd.PLUG_PRESETS.length, banks: G.RIG_BANKS.length, missing, ids, badParams, roles, units, knobs,
+    return { pedals: pedals.length, clawdPedals: G.gear.PEDAL_LIST.length, refused: G.gear.PFX.refused, amps: amps.length, clawdAmps: Object.keys(G.gear.PLUG_AMPS).length,
+      rigs: G.RIGS.length, presets: G.gear.PLUG_PRESETS.length, banks: G.RIG_BANKS.length, missing, ids, badParams, roles, units, knobs,
       trails: pedals.filter((d) => d.trails).length, cats: [...new Set(pedals.map((d) => d.cat))].join(' ') };
   });
-  t.ok(reg.pedals === reg.clawdPedals && reg.pedals >= 100 && !reg.ids.length, `${reg.pedals} pedals registered (clawd-o-matic has ${reg.clawdPedals}) as pedal.<id>${reg.ids.length ? '; missing ' + reg.ids.join(' ') : ''}`);
+  t.ok(reg.pedals === reg.clawdPedals && reg.pedals >= 100 && !reg.ids.length, `${reg.pedals} pedals registered (the gear has ${reg.clawdPedals}) as pedal.<id>${reg.ids.length ? '; missing ' + reg.ids.join(' ') : ''}`);
   t.ok(!reg.refused.length, `no pedal refused by its pedalDef${reg.refused.length ? ': ' + JSON.stringify(reg.refused) : ''}`);
-  t.ok(reg.amps === reg.clawdAmps && reg.amps >= 27, `${reg.amps} amps registered as amp.<id> (clawd-o-matic has ${reg.clawdAmps})`);
+  t.ok(reg.amps === reg.clawdAmps && reg.amps >= 27, `${reg.amps} amps registered as amp.<id> (the gear has ${reg.clawdAmps})`);
   t.ok(reg.rigs === reg.presets && reg.rigs > 100, `${reg.rigs} rigs from ${reg.banks} banks (every preset)`);
   t.ok(!reg.missing.length, `every rig's devices are registered${reg.missing.length ? ': ' + reg.missing.slice(0, 5).join(' ') : ''}`);
   t.ok(!reg.badParams.length, `every param's default is in range and its fmt returns a string${reg.badParams.length ? ': ' + reg.badParams.slice(0, 5).join(' ') : ''}`);
   t.note(`${reg.knobs} pedal params: ${reg.roles} with a role, ${reg.units} with a unit; ${reg.trails} trails pedals; cats: ${reg.cats}`);
 
   // the worklets: the studio loads worklet modules only from files on its own origin (its policy refuses data: and
-  // blob: scripts), so tools/vendor-clawd.js wrote every processor source the vendored code builds to a file of its own
-  // (app/vendor/clawd/worklets/). Each file is that source byte for byte (after its one line saying so), and every
+  // blob: scripts), so every processor source the gear's code builds is also a file of its own
+  // (devices/guitar/gear/worklets/). Each file is that source byte for byte (after its one line saying so), and every
   // pedal and amp device names those files for its worklets.
   const wl = await page.evaluate(async () => {
     const { G, R } = window.__gt;
-    const { WORKLETS } = await import('/app/src/devices/guitar/clawd.js');
-    const src = { 'clawd-amps': G.clawd.PLUG_WORKLETS };
-    for (const [n, w] of Object.entries(G.clawd.PFX.worklets)) src[n] = w.src;
+    const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
+    const src = { 'clawd-amps': G.gear.PLUG_WORKLETS };
+    for (const [n, w] of Object.entries(G.gear.PFX.worklets)) src[n] = w.src;
     const diff = [], files = Object.values(WORKLETS);
     for (const [n, s] of Object.entries(src)) {
       if (!WORKLETS[n]) { diff.push(n + ': no file'); continue; }
       const u = new URL(WORKLETS[n]);
       const text = await (await fetch(u)).text();
-      if (u.origin !== location.origin || !u.pathname.startsWith('/app/vendor/clawd/worklets/')) diff.push(n + ': ' + u.href);
+      if (u.origin !== location.origin || !u.pathname.startsWith('/app/src/devices/guitar/gear/worklets/')) diff.push(n + ': ' + u.href);
       else if (text.slice(text.indexOf('\n') + 1) !== s) diff.push(n + ': not its source');
     }
     const devs = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id) && d.worklets);
     const named = devs.flatMap((d) => Object.entries(d.worklets).filter(([n, u]) => u !== WORKLETS[n] || !files.includes(u)).map(([n]) => d.id + ':' + n));
     return { n: Object.keys(src).length, files: files.length, diff, devs: devs.length, named };
   });
-  t.ok(wl.n >= 40 && wl.files === wl.n && !wl.diff.length, `${wl.n} worklets the vendored code builds, each a file of its own on the studio's origin with its source byte for byte (app/vendor/clawd/worklets/)${wl.diff.length ? ': ' + wl.diff.slice(0, 5).join(', ') : ''}`);
+  t.ok(wl.n >= 40 && wl.files === wl.n && !wl.diff.length, `${wl.n} worklets the gear's code builds, each a file of its own on the studio's origin with its source byte for byte (gear/worklets/)${wl.diff.length ? ': ' + wl.diff.slice(0, 5).join(', ') : ''}`);
   t.ok(wl.devs >= 30 && !wl.named.length, `the ${wl.devs} pedals and amps with worklets load them from those files${wl.named.length ? '; not: ' + wl.named.slice(0, 5).join(' ') : ''}`);
   // the kit's own envelope follower (PFX.ENV, for a graph device of Overdub's that calls kit.envelope(); no built-in
   // does yet): its file loads behind END and it follows a tone
@@ -244,7 +245,7 @@ async function boot(page) {
     }
     return out;
   });
-  // Kernels are bit-exact. A few vendored pedals drive their modulation from main-thread timers (they predate the
+  // Kernels are bit-exact. A few of the gear's pedals drive their modulation from main-thread timers (they predate the
   // clock), so under heavy CPU load two renders can differ by a render quantum's worth of wobble: allowed up to
   // -80 dB, and named here so it stays visible.
   const inexact = det.filter(([, d]) => d > 0);
@@ -275,20 +276,20 @@ async function boot(page) {
       const buf = { sampleRate: SR, numberOfChannels: 2, length: r[0].length, getChannelData: (i) => r[i] };
       out.push({ id: d.id, name: d.name, bass, lufs: clawdLufs(r[0], r[1]), bs1770: M.lufs(buf), tp: tp(r), ...check(r) });
     }
-    // the same as clawd-o-matic's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
+    // the same as the gear's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
     const same = [];
-    const studio = G.clawd.presetResolve(G.clawd.PLUG_PRESETS.find((p) => p.id === 'studio'));
+    const studio = G.gear.presetResolve(G.gear.PLUG_PRESETS.find((p) => p.id === 'studio'));
     for (const [id, S] of [['punk', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['abyss', { gain: 7, bass: 4, mid: 6, treble: 5, presence: 6, level: 5 }], ['punk', studio], ['jangle', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
       const x = input('di', 2), P = Object.assign({}, S, { amp: id }); delete P.board;
       const a = await render([{ device: 'amp.' + id, params: G.ampParams(P) }], x);
       const { loadWorklet } = await import('/app/src/devices/kit.js');
-      const { WORKLETS } = await import('/app/src/devices/guitar/clawd.js');
+      const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
       // (exact: the settings the device hands plugAmp; the preset's own: within its mic position's rounding)
       const run = async (Q) => {
         const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
         b.copyToChannel(x, 0); s.buffer = b;
-        if (G.clawd.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
-        const amp = G.clawd.plugAmp(c); amp.set(Q);
+        if (G.gear.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
+        const amp = G.gear.plugAmp(c); amp.set(Q);
         s.connect(amp.input); amp.output.connect(c.destination); s.start(0);
         const o = await c.startRendering();
         let d = 0; for (let ch = 0; ch < 2; ch++) { const y = o.getChannelData(ch); for (let i = 0; i < y.length; i++) d = Math.max(d, Math.abs(a[ch][i] - y[i])); }
@@ -303,7 +304,7 @@ async function boot(page) {
     const okLevel = Math.abs(a.lufs + 14) <= 0.75;
     t.ok(!a.bad && okLevel && a.tp <= -1, `${a.id.padEnd(12)} ${a.name.padEnd(13)} ${a.lufs.toFixed(1)} LUFS (BS.1770 ${a.bs1770.toFixed(1)}), TP ${a.tp.toFixed(1)} dBTP${a.bass ? ' (bass DI)' : ''}${a.bad ? ' NaN!' : ''}`);
   }
-  t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are clawd-o-matic's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
+  t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are the gear's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
   const worstPreset = Math.max(...amps.same.map((s) => s.dPreset));
   t.ok(worstPreset < 1e-3, `a preset's amp settings come across within ${(20 * Math.log10(worstPreset + 1e-12)).toFixed(0)} dBFS (a mic's x, y on the cone become one radius, as the sound only hears the radius; plugCabClean rounds x and y)`);
 

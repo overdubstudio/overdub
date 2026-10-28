@@ -1,7 +1,7 @@
 // @ts-check
 // The shop's catalogue [ui; the guitar room's SHOP stream] (docs/research/GUITAR-ROOM.md §2.9; the second mock's
 // design/mock/guitar-room-2/data.js, made real). Who everything in the shop is and where it hangs: every amp, pedal, cab
-// and mic is the real one Overdub vendors from Claw'd-o-Matic (app/vendor/clawd/, registered by devices/guitar/), so
+// and mic is the real one in the guitar gear (devices/guitar/gear/, registered by devices/guitar/), so
 // its name, category, one-line sound and "in the spirit of" are read from the registry, never written here. Pure but
 // for the registry: no DOM, no store.
 //
@@ -27,7 +27,7 @@
 //   describeStack(chain) -> string   a stack in a phrase ("Kraken on a 4x12 Modern, a gate and a treble booster in front")
 
 import '../../../devices/guitar/index.js';
-import { CAB_IDS, MIC_IDS, clawd } from '../../../devices/guitar/index.js';
+import { CAB_IDS, MIC_IDS, gear } from '../../../devices/guitar/index.js';
 import { getDevice, listDevices, paramValues } from '../../../devices/registry.js';
 
 /* ------------------------------------------------------------------------------------------------ the amp wall */
@@ -78,8 +78,8 @@ export const inLoop = (d) => (RANK[d?.pedalCat] ?? 3) >= 5;
 export const ordinal = (n) => ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'][n - 1] || `number ${n}`;
 
 /* ------------------------------------------------------------------------------------------------ cabs and mics */
-export const CABS = clawd.PLUG_CABS;
-export const MICS = clawd.PLUG_MICS;
+export const CABS = gear.PLUG_CABS;
+export const MICS = gear.PLUG_MICS;
 export { CAB_IDS, MIC_IDS };
 // the cabs a guitarist would put under a head (the bass cabs stay with the bass amps, but any amp can have any cab)
 export const GUITAR_CABS = Object.freeze(['own', 'v412', 'g412', 'b212', 'a12', 't210', 'b410', 'j15', 'p8', 'fridge', 'box', 'phone', 'horn']);

@@ -1,12 +1,12 @@
 // The second guitar-room mock's world (design/mock/guitar-room-2/): who everything is, where it stands, and the fake
-// state that moves it. Every amp, pedal, cab and mic is the real one Overdub vendors from Claw'd-o-Matic
-// (app/vendor/clawd/, registered by app/src/devices/guitar/), so its name, category, one-line sound and "in the spirit
+// state that moves it. Every amp, pedal, cab and mic is the real one in Overdub's guitar gear
+// (app/src/devices/guitar/gear/, registered by app/src/devices/guitar/), so its name, category, one-line sound and "in the spirit
 // of" are its own, read from the registry, never written here. The drummer's book is the studio's real groove library
 // (app/src/core/grooves/). Nothing here makes a sound.
 
 import '/app/src/devices/guitar/index.js';
 import { getDevice, listDevices } from '/app/src/devices/registry.js';
-import { clawd } from '/app/src/devices/guitar/clawd.js';
+import { gear } from '/app/src/devices/guitar/gear/index.js';
 import { STYLES, GROOVES } from '/app/src/core/grooves.js';
 
 export { getDevice };
@@ -68,8 +68,8 @@ export const RANK = { dynamics: 0, utility: 0.5, filter: 1, pitch: 2, synth: 2.5
 export const inLoop = (d) => (RANK[d?.pedalCat] ?? 3) >= 5;
 
 /* ------------------------------------------------------------------------------------------------ cabs and mics */
-export const CABS = clawd.PLUG_CABS;
-export const MICS = clawd.PLUG_MICS;
+export const CABS = gear.PLUG_CABS;
+export const MICS = gear.PLUG_MICS;
 export const MIC_IDS = Object.keys(MICS);
 // the cabs a guitarist would put under a head (the bass ones stay with the bass amps)
 export const GUITAR_CABS = ['v412', 'g412', 'b212', 'a12', 't210', 'b410', 'j15', 'p8', 'fridge', 'box', 'phone', 'horn'];

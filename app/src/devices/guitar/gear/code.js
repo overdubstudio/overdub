@@ -8,6 +8,8 @@
 // pack works. Every worklet it builds from a string is also a file in worklets/, byte for byte (WORKLETS, below;
 // tools/guitar-test.js checks the two agree): change both together.
 /* eslint-disable */
+// (the live rules, Overdub's: no value curve on a live context, one read of the clock: devices/kit.js, docs/DEVICES.md)
+import { isOffline as pfxOffline, cosineRamp as pfxRamp, LEAD as PFX_LEAD } from '../../kit.js';
 
 export function evaluate(env = {}) {
   // ---- what the code expects from the page it was written for, injected
@@ -120,13 +122,12 @@ function pfxReady(c, def) {
 
 // Move an AudioParam from where it is to v along a raised cosine over dur seconds (smooth at both ends: no click).
 // (at: start no sooner than this audio time, holding where it is till then: a switch scheduled onto a bar line, scenes.js)
+// One read of the clock and linear ramps through the cosine's points (devices/kit.js cosineRamp), never a value curve:
+// Chrome 155 and 156 drop a curve that ends before its node first renders. (pedalRig's; Overdub's devices glide with
+// kit.js's glide, devices/graph.js.)
 function pfxGlide(c, param, v, dur, at) {
-  const from = param.value, t = Math.max(c.currentTime + 0.003, at || 0), n = 24, cv = new Float32Array(n);
-  if (Math.abs(from - v) < 1e-9) { param.cancelScheduledValues(0); param.setValueAtTime(v, c.currentTime); return; }
-  for (let i = 0; i < n; i++) cv[i] = from + (v - from) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (n - 1)));
-  param.cancelScheduledValues(0);
-  param.setValueAtTime(from, c.currentTime);
-  try { param.setValueCurveAtTime(cv, t, dur); } catch (e) { param.setTargetAtTime(v, t, dur / 4); }
+  const now = c.currentTime;
+  pfxRamp(param, param.value, v, now, Math.max(now + PFX_LEAD, at || 0), dur);
 }
 
 /* ---- the DSP kit. PFX has the context-free helpers; PFX.kit(c) the node makers a pedal's build(c, kit) gets. Sources
@@ -221,12 +222,13 @@ const PFX = (() => {
       let norm = true;
       const add = (b) => { const n = c.createConvolver(), g = G(1); n.normalize = norm; if (b) n.buffer = b; link(inp, n); n.connect(g); g.connect(out); return { n, g }; };
       let cur = add(buffer);
-      const glide = (param, from, to, t, dur) => { const k = 24, cv = new Float32Array(k); for (let i = 0; i < k; i++) cv[i] = from + (to - from) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (k - 1))); param.cancelScheduledValues(0); param.setValueAtTime(from, c.currentTime); param.setValueCurveAtTime(cv, t, dur); };
+      // (the new branch made first, its gain at 0 by .value, then one clock read for both fades: linear ramps)
       Object.defineProperty(inp, 'buffer', { configurable: true, get: () => cur.n.buffer, set(b) {
         if (!live || !cur.n.buffer) { cur.n.buffer = b; return; }
-        const old = cur, t = c.currentTime + 0.003;
-        cur = add(b);
-        glide(cur.g.gain, 0, 1, t, 0.05); glide(old.g.gain, old.g.gain.value, 0, t, 0.3);
+        const old = cur;
+        cur = add(b); cur.g.gain.value = 0;
+        const now = c.currentTime, t = now + PFX_LEAD;
+        pfxRamp(cur.g.gain, 0, 1, now, t, 0.05); pfxRamp(old.g.gain, old.g.gain.value, 0, now, t, 0.3);
         later(() => { unlink(inp, old.n); old.n.disconnect(); old.g.disconnect(); }, 400);
       } });
       Object.defineProperty(inp, 'normalize', { configurable: true, get: () => norm, set(v) { norm = !!v; cur.n.normalize = norm; } });
@@ -1182,13 +1184,14 @@ function plugAmp(c) {
   // a mic network runs only while it's used (a live one keeps going a moment after, while its level fades)
   const feed = (M, on) => {
     clearTimeout(M.off);
+    if (dead) return;
     if (on && !M.fed) { cab[5].connect(M.align); M.fed = true; }
-    else if (!on && M.fed) M.off = setTimeout(() => { if (M.fed && !M.want) { cab[5].disconnect(M.align); M.fed = false; } }, realtime ? 400 : 0);
+    else if (!on && M.fed) M.off = setTimeout(() => { if (M.fed && !M.want && !dead) { cab[5].disconnect(M.align); M.fed = false; } }, realtime ? 400 : 0);
     M.want = on;
   };
   // A new amp (live): duck the input and the output, and once it's quiet change the curves and jump every setting, then
   // fade back in (knob moves in the meantime just update what it will jump to). Knob moves on the same amp glide.
-  let cur = null, curCab = null, last = null, pending = false;
+  let cur = null, curCab = null, last = null, pending = false, duckT = 0, dead = false;
   const realtime = typeof OfflineAudioContext === 'undefined' || !(c instanceof OfflineAudioContext);
   // at (optional): the audio time the change lands at, a little ahead (pedalRig's set: scenes.js puts it on a bar line)
   function set(p, at) {
@@ -1203,12 +1206,14 @@ function plugAmp(c) {
       // mustn't have them jump under a live signal); back in from 30 ms after it began (or as soon as it can). A
       // scheduled one waits 40 ms, so the main thread has room to be late and it still comes back on time.
       const go = () => {
-        if (c.currentTime < t + 0.012 && c.state === 'running') { setTimeout(go, 4); return; }
+        duckT = 0;
+        if (dead) return;
+        if (c.currentTime < t + 0.012 && c.state === 'running') { duckT = setTimeout(go, 4); return; }
         pending = false; apply(last, true);
         const u = Math.max(c.currentTime, t + (at ? 0.04 : 0.03)); // (the stages' filters have drained by now: the new amp starts from silence)
         for (const m of [mute, hush]) { m.gain.cancelScheduledValues(c.currentTime); m.gain.setValueAtTime(0, u + 0.005); m.gain.linearRampToValueAtTime(1, u + 0.035); }
       };
-      setTimeout(go, Math.max(30, (t - c.currentTime) * 1000 + 14));
+      duckT = setTimeout(go, Math.max(30, (t - c.currentTime) * 1000 + 14));
       return;
     }
     apply(p, cur == null || id !== cur || cb !== curCab, at);
@@ -1262,9 +1267,20 @@ function plugAmp(c) {
   }
   // latency: what the two oversampled stages add (s), measured: 128 samples each at 2x (4x would be 192 each, and
   // measures the same through the cab: tools/plug-level.js)
-  // unplugged: the octave's worklet stops being processed (pedals.js pfxEnd)
-  const dispose = () => { if (sub && sub.w && typeof pfxEnd === 'function') pfxEnd(sub.w); };
-  return { input, output, set, dispose, latency: 256 / c.sampleRate, net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
+  // unplugged: everything it started stops (the wow's oscillator, the octave's worklet: pedals.js pfxEnd) and its timers
+  // (a duck on its way, the mics' feeds) are cleared. Idempotent.
+  const dispose = () => {
+    if (dead) return;
+    dead = true;
+    clearTimeout(duckT); duckT = 0;
+    for (const M of mics) clearTimeout(M.off);
+    try { wowLfo.stop(); } catch (e) { /* stopped */ }
+    try { wowLfo.disconnect(); } catch (e) { /* gone */ }
+    if (sub && sub.w && typeof pfxEnd === 'function') pfxEnd(sub.w);
+  };
+  // octave(): make the octave now (an amp with one: Abyss), true if it's there. Its build asks before it plays, so an
+  // octave that can't be made is the device failing to build, not a quiet amp without it (devices/guitar/amps.js).
+  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
 }
 plugAmp.amps = PLUG_AMPS; // (tools/plug-level.js)
 
@@ -4544,10 +4560,14 @@ pedalDef({
         stopped = true;
         if (x.first) stopG.gain.setValueAtTime(0, x.t);
         else {
-          // the tape slowing to a stop: the delay grows as t²/2T, so the pitch falls from 1 to 0 over T, and fades
+          // the tape slowing to a stop: the delay grows as t²/2T, so the pitch falls from 1 to 0 over T, and fades. Live,
+          // linear ramps through the curve's points from x.t (graph.js's one clock read): a value curve may be dropped
+          // (Chrome 155, 156). Offline, the value curve it always was (renders unchanged).
           const T = 1.1, n = 32, cv = new Float32Array(n), d0 = p.value;
           for (let i = 0; i < n; i++) { const u = (i / (n - 1)) * T; cv[i] = Math.min(1.95, d0 + (u * u) / (2 * T)); }
-          p.cancelScheduledValues(x.t); p.setValueAtTime(d0, x.t); p.setValueCurveAtTime(cv, x.t + 0.003, T);
+          p.cancelScheduledValues(x.t); p.setValueAtTime(d0, x.t);
+          if (pfxOffline(c)) p.setValueCurveAtTime(cv, x.t + 0.003, T); // (offline only)
+          else for (let i = 0; i < n; i++) p.linearRampToValueAtTime(cv[i], x.t + 0.003 + (i / (n - 1)) * T);
           stopG.gain.cancelScheduledValues(x.t); stopG.gain.setValueAtTime(stopG.gain.value, x.t); stopG.gain.setTargetAtTime(0, x.t, T / 3);
         }
       } else if (!v.stop && stopped !== false) {

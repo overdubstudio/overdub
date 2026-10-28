@@ -398,7 +398,9 @@ export function createAudioIn(app, input) {
         else if (!(decision && decision.for === key && decision.by === 'open' && decision.role === state.role)) autoDecide(key);
       }
       for (const t of taps) { if (t.context === c) { try { pick.connect(t); } catch { /* gone */ } } }
-      if (listeners.size || capture || picks) await attachCap();
+      // (a capture that can't start never keeps the guitar from the rig: the monitor is wired whatever it says, and a
+      // take asks for the capture again)
+      if (listeners.size || capture || picks) { try { await attachCap(); } catch (e) { console.warn('input: the capture', e); } }
       syncMonitor();
       changed();
       if (listen) listenForChannel(); else stopPicking();
@@ -522,7 +524,7 @@ export function createAudioIn(app, input) {
 
     listen(fn) {
       listeners.add(fn);
-      if (state.open && !cap) attachCap();
+      if (state.open && !cap) attachCap()?.catch((e) => console.warn('input: the capture', e));
       return () => { listeners.delete(fn); if (!listeners.size && cap && !recording) { try { cap.port.postMessage('off'); cap.disconnect(); } catch { /* ok */ } cap = null; capReady = null; } };
     },
 
@@ -668,9 +670,10 @@ export function createAudioIn(app, input) {
     return store.track(t.id);
   }
 
-  // the capture's module, loaded once per context
+  // the capture's module, loaded once per context (a load that failed is asked for again next time: a blip isn't the
+  // answer for the page's life)
   function capModule(c) {
-    if (!c.__ewCap) c.__ewCap = c.audioWorklet.addModule(CAP_WORKLET).then(() => true, () => false);
+    if (!c.__ewCap) { const p = (c.__ewCap = c.audioWorklet.addModule(CAP_WORKLET).then(() => true, () => { if (c.__ewCap === p) c.__ewCap = null; return false; })); }
     return c.__ewCap;
   }
   async function attachCap() {
@@ -697,6 +700,9 @@ export function createAudioIn(app, input) {
         cap = node;
         return node;
       })();
+      // (one that failed is tried again by the next ask)
+      const p = capReady;
+      p.catch(() => { if (capReady === p) capReady = null; });
     }
     return capReady;
   }

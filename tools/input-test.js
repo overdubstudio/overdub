@@ -958,6 +958,22 @@ function drum(kind, sr, len = 0.25) {
       const o = window.overdub, a = o.input.audio, w = (ms) => new Promise((res) => setTimeout(res, ms)), out = {};
       const saved = () => { try { return JSON.parse(localStorage.getItem('overdub:input') || '{}').deviceId; } catch { return null; } };
       const through = () => a.monitorTrack()?.name || null;
+      // the capture's module failing to load once (a blip) as the guitar room plugs in: the guitar still reaches the rig,
+      // and the capture loads the next time it's asked for
+      {
+        const c = o.engine.ctx, add = c.audioWorklet.addModule.bind(c.audioWorklet);
+        let blips = 0;
+        out.capFresh = !c.__ewCap;
+        c.audioWorklet.addModule = (u, x) => (/cap-worklet/.test(String(u)) && blips++ < 2 ? Promise.reject(new Error('a blip')) : add(u, x));
+        let err = '';
+        try { await a.open({ device: 'scarlett-1', capture: true }); } catch (e) { err = String(e.message || e); }
+        await w(80);
+        out.capBlip = { err, open: a.state.open, through: through(), cap: a.state.firstFrame != null };
+        const off = a.listen(() => {}); await w(300);
+        out.capBlip.later = a.state.firstFrame != null;
+        off(); a.close();
+        c.audioWorklet.addModule = add;
+      }
       await a.open({ device: 'default' }); await w(80);
       out.def = { on: a.state.monitoring, by: a.state.monitorBy, real: a.state.realId, dev: a.state.deviceId, saved: saved(), through: through(), marked: o.engine.monitoredTrack };
       a.hush(); await o.engine.silence(); await w(120);
@@ -997,6 +1013,8 @@ function drum(kind, sr, len = 0.25) {
     T.ok(q.held.on && q.held.holds.join() === 'tuner' && q.held.through === null && q.released.on && !q.released.holds && q.released.through === 'Guitar',
       `a hold mutes without deciding (held: monitoring ${q.held.on ? 'on' : 'off'}, playing through ${q.held.through}); released, it plays through ${q.released.through} again`);
     T.ok(!q.mic.on && q.mic.by === 'hand' && q.mic.through === null, `the killswitch turns a microphone's monitoring off by hand (${q.mic.on ? 'on' : 'off'}, by ${q.mic.by})`);
+    T.ok(q.capFresh && !q.capBlip.err && q.capBlip.open && q.capBlip.through === 'Guitar' && !q.capBlip.cap && q.capBlip.later,
+      `the capture's module failing to load as the input opens: the open stands (${q.capBlip.err || 'no error'}), the guitar plays through ${q.capBlip.through}, and the capture loads when it's next asked for (${q.capBlip.later})`);
     T.ok(q.overlap.live === 1 && q.overlap.asked === 2 && q.overlap.channel === '2' && q.overlap.through === 'Guitar' && q.overlap.best.live === 1 && q.overlap.best.asked === 1 && q.overlap.closed === 0,
       `two opens overlapping run one after the other: ${q.overlap.live} stream left running of ${q.overlap.asked}, on input ${q.overlap.channel} (the last asked for); two openBests and an ensureOpen at once ask the browser ${q.overlap.best.asked} time${q.overlap.best.asked === 1 ? '' : 's'}; closed, ${q.overlap.closed} running`);
     const loose = q.stale.asks.filter((x) => x.id.startsWith('loose:')).length, wet = q.stale.asks.filter((x) => !x.off).length;

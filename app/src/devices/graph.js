@@ -187,7 +187,10 @@ export function graphInstance(c, def, opts = {}) {
     if (p) return;
     let q = null;
     try { q = def.build(c, kit); } catch (e) { throw fail('threw', `${def.name || def.id} didn't build: ${(e && e.message) || e}`, e); }
-    if (!q || !q.output || (fx && !q.input)) throw fail('no-output', `${def.name || def.id} built with no ${!q || !q.output ? 'output' : 'input'}`);
+    if (!q || !q.output || (fx && !q.input)) {
+      if (q && typeof q.dispose === 'function') { try { q.dispose(); } catch { /* its business */ } }
+      throw fail('no-output', `${def.name || def.id} built with no ${!q || !q.output ? 'output' : 'input'}`);
+    }
     p = q;
     if (trails) { i.connect(wet); wet.connect(p.input); p.output.connect(post); post.connect(o); }
     else if (fx) { p.output.connect(wet); wet.connect(o); } else p.output.connect(o);

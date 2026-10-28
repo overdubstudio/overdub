@@ -109,6 +109,13 @@ export const CSS = `
 .gr-r-add:hover, .gr-r-add:focus-visible { color: var(--text); border-color: var(--text-3); }
 .gr-r-jack { width: 10px; height: 10px; border-radius: 50%; background: #222; box-shadow: 0 0 0 2px #777; pointer-events: none; }
 .gr-r-jack.gr-on { background: var(--lamp); box-shadow: 0 0 0 2px #777, 0 0 10px 2px #ffc85acc; }
+.gr-r-mon { position: absolute; z-index: 3; display: flex; align-items: center; gap: 5px; padding: 2px 6px 2px 4px; border: 1px solid #555; border-radius: 3px; background: #15130f; color: #b9ad90; font: 600 10px/1.2 var(--mono, ui-monospace, monospace); letter-spacing: .08em; cursor: pointer; }
+.gr-r-mon i { width: 8px; height: 8px; border-radius: 50%; background: #2a2620; box-shadow: inset 0 0 0 1px #555; }
+.gr-r-mon[data-mon=on] i { background: var(--lamp); box-shadow: 0 0 8px 1px #ffc85acc; }
+.gr-r-mon[data-mon=held] i { background: #8a6a2a; }
+.gr-r-mon[data-mon=fault] i { background: var(--bad, #ff6b6b); box-shadow: 0 0 8px 1px #ff6b6bcc; }
+.gr-r-mon[data-mon=on], .gr-r-mon[data-mon=fault] { color: var(--lamp-hi); }
+.gr-r-mon:focus-visible { outline: 2px solid var(--lamp-hi); outline-offset: 2px; }
 .gr-r-jack.gr-r-ring::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid var(--lamp); animation: gr-r-ring 1s ease-out 2; opacity: 0; }
 @keyframes gr-r-ring { from { transform: scale(1); opacity: 1; } to { transform: scale(4); opacity: 0; } }
 .gr-r-pick { font: 700 9px/1.1 var(--font-ui); letter-spacing: .04em; padding: 3px 5px; min-width: 40px; border: 1px solid #0006; border-radius: 2px; background: #111c; color: #e8e0cc; cursor: pointer; white-space: nowrap; }

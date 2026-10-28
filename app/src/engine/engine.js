@@ -186,6 +186,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   // automation (see the header): the lanes that play, what was handed over, how far each control grid has been laid
   const AU = { doc: null, lanes: [], byId: new Map(), sigs: new Map(), sent: new Set(), insts: new Set(), mix: new Map(), graph: new Map() };
   let calm = null;                   // the polite stop under way: { stopT, strips: Set<Strip>, fading, renewing, job }
+  let monitoredId = null;            // the track live input plays through (engine.monitored): never renewed by the polite stop
   const lastLive = new Map();        // track id -> audio time of its last live note or audition
   let lastEnd = null;                // the song's last sound (schedule.js lastSound), cached until the song changes
 
@@ -358,6 +359,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       let s = strips.get(t.id);
       if (!s) {
         s = new Strip(ctx, stripOpts(t.id, { dest: master.head }));
+        s.monitored = t.id === monitoredId;
         strips.set(t.id, s);
         ev.emit('graph', { kind: 'track', track: t.id, added: true });
       }
@@ -1143,7 +1145,8 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     if (T.playing || disposed || renewing || ctx.state !== 'running') { calm = null; return; }
     let busy = false;
     for (const [id, s] of strips) {
-      if ((lastLive.get(id) ?? -1) >= c.stopT || liveOn(id) || s.hearsInput()) { busy = true; continue; }
+      // (the monitored strip is live playing whatever its level: a guitar resting between phrases is still plugged in)
+      if (s.monitored || (lastLive.get(id) ?? -1) >= c.stopT || liveOn(id) || s.hearsInput()) { busy = true; continue; }
       const m = s.read();
       if (m && m.peak > CALM_DB) c.strips.add(s);
     }
@@ -1428,6 +1431,31 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       const s = strips.get(trackId);
       if (s) s.watchInput(); // (the polite stop leaves a strip alone while its input is live)
       return s ? s.input : null;
+    },
+    // The live path (input/livepath.js, docs/research/AMP-PATH.md §6). monitored(id): the track live input plays through
+    // now (input/audioin.js sets it with the monitor's target), or null; the polite stop never fades or renews it.
+    monitored(trackId = null) {
+      monitoredId = trackId ? String(trackId) : null;
+      for (const [id, s] of strips) s.monitored = id === monitoredId;
+    },
+    get monitoredTrack() { return monitoredId; },
+    // rebuild(id): the strip renewed, atomically (every device built anew behind its own tail, nothing reused, never the
+    // dry input meanwhile) -> { ok, failed: [insert ids playing a stand-in] }
+    async rebuild(trackId) {
+      const s = trackId === 'master' ? master : strips.get(trackId);
+      if (!s || s.disposed) return { ok: false, failed: [] };
+      try { await s.renew(); } catch (e) { report({ kind: 'graph', track: trackId, message: 'rebuild: ' + ((e && e.message) || e) }); }
+      updatePdc();
+      const failed = s.fx.filter((f) => f.inst && f.inst.fallback && !f.inst.held).map((f) => f.id);
+      if (s.instr && s.instr.inst && s.instr.inst.fallback && !s.instr.inst.held) failed.push('instrument');
+      return { ok: !failed.length, failed };
+    },
+    // chainTaps(id): where to listen to a strip, never fed: its input (live input monitoring arrives there) and its
+    // chain's end (after the inserts, before the fader); settling: a build, a dip or a renew under way right now
+    chainTaps(trackId) {
+      const s = strips.get(trackId);
+      if (!s || s.disposed) return null;
+      return { input: s.input, chain: s.keyTap(), get settling() { return !!(s.job || s.dips || s.disposed); }, strip: s };
     },
     instance(trackId, which = 'instrument') {
       if (trackId === 'master') return master ? master.instance(which) : null;

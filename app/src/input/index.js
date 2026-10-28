@@ -1,10 +1,12 @@
 // @ts-check
 // Inputs: meet the musician where they are. Hum it, tap it, play it, record it, and never lose an idea.
-// Builds app.input = { pitch, audio, hum, tap, midi, qwerty, capture, recorder, tape } (docs/ARCHITECTURE.md, "Capture";
-// tape: the rolling tape, input/tape.js, idle until the room starts it) plus:
+// Builds app.input = { pitch, audio, path, hum, tap, midi, qwerty, capture, recorder, tape } (docs/ARCHITECTURE.md,
+// "Capture"; path: the live path's check, input/livepath.js; tape: the rolling tape, input/tape.js, idle until the room
+// starts it) plus:
 //   input.on(type, fn) -> off ; input.emit(type, detail)
 //     'audio' (input state) 'take' (an audio take landed) 'hum' 'beatbox' 'qwerty' 'midi' 'mode' 'capture' 'note'
-//     'record' (the recorder's state) 'devices' (an input was plugged in or out)
+//     'record' (the recorder's state) 'devices' (an input was plugged in or out) 'monitor' 'pathchange' 'path' (the
+//     live path's verdict changed: input/livepath.js)
 //   input.target(kind = 'keys')    the track live notes play and record onto: the aim (recorder.targetFor), or null
 //                                  when that is a new track. The keys are heard where they'll be recorded: aimed at a
 //                                  new track, it is made when they start (musical typing on, a touch key, the first
@@ -21,6 +23,7 @@
 
 import * as pitch from './pitch.js';
 import { createAudioIn } from './audioin.js';
+import { createLivePath } from './livepath.js';
 import { createHum } from './hum.js';
 import { createTap, ROWS } from './tap.js';
 import { createMidi } from './midi.js';
@@ -98,6 +101,8 @@ export default function (app) {
   input.capture = createCapture(app, input);
   input.recorder = createRecorder(app, input);
   input.audio = createAudioIn(app, input);
+  // the live path's check (input/livepath.js: the input through the monitored track's chain, measured and repaired)
+  input.path = createLivePath(app, input.audio);
   input.hum = createHum(app, input);
   input.hum.options = input.options;
   input.tap = createTap(app, input);

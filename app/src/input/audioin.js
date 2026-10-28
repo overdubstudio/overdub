@@ -1,37 +1,56 @@
 // The audio input: a mic, or a guitar/bass/keys through an interface. It opens with the browser's voice processing off
 // (no echo cancellation, noise suppression or AGC: they wreck an instrument), picks a channel of the interface, meters
-// it, tunes it, monitors it live through an armed audio track's inserts (engine.inputNode: a guitar plays through the
-// ported pedals and amps as you play: the Guitar Studio, inside a DAW), and records it to that track through the
-// recorder (input/recorder.js: count-in, loop passes as takes). Ported from clawd-o-matic's plug in (plugin.js).
+// it, tunes it, monitors it live through an audio track's inserts (engine.inputNode: a guitar plays through the pedals
+// and amps as you play), and records it to that track through the recorder (input/recorder.js: count-in, loop passes as
+// takes).
 //
 // Which input: the track's own (the Inspector's Input: device and channel 1-8, track.input), else Sketch's picker (the
-// last one opened; localStorage overdub:input). An interface is opened with all its channels (a 4- or 8-input one
-// included) and the chosen one split off. A device plugged in or out shows up without a reload ('devices').
+// last one opened; localStorage overdub:input { deviceId, channel, countIn }: the device's real id, never the browser's
+// 'default'). An interface is opened with all its channels (a 4- or 8-input one included) and the chosen one split off.
+// A device plugged in or out shows up without a reload ('devices'). This file is the live path's input end
+// (docs/research/AMP-PATH.md; the rules it follows are input/livepath.js's, and app.input.path checks that it works).
 //
-//   audio.devices() -> Promise<[{ id, label }]>        audio.open({ device, channel, monitor, capture, split }) / close() / ensureOpen()
+//   audio.devices() -> Promise<[{ id, label, groupId, kind }]>   kind: inputKind (below)
+//   audio.choose({ role }) -> { device, channel, why, reask }    livepath.js chooseInput over the inputs there now
+//   audio.openBest({ role, capture })   choose and open; a blind first open (no labels before the grant) chooses again
+//                  once they're in and reopens if an interface is there that isn't the one open; role 'instrument'
+//                  (the guitar room's) listens for the channel that moves on the first strum (state.picking)
+//   audio.open({ device, channel, monitor, capture, split, role, listen }) / close() / ensureOpen()
 //   audio.openFor(track) -> state                       the track's input (or Sketch's picker), opened if it isn't
 //   audio.inputOf(track) -> { device, channel, from: 'track' | 'picker' }
-//   audio.state  { open, deviceId, label, channel ('1'…'32' | 'both' | 'stereo'), channels (the device's), settings,
-//                  inputKind ('interface' | 'mic' | 'virtual' | ''), monitoring, monitorAuto (it started by itself),
-//                  monitorOff ('' | 'mic' | 'feedback': why it's off), monitorLine (the sentence that says why, or ''),
-//                  monitorTrack (the id it plays through), monitorWaiting, recording, countIn, error, sr, firstFrame
-//                  (the audio-clock frame the first captured block began on, once one has: a check lines a fake guitar
-//                  up with the count by it), split ({ [channel]: track id } while two channels record at once, or null) }
+//   audio.state  { open, deviceId (the real device: the browser's "Default - " entry resolved, livepath.js realIdOf),
+//                  realId, label, channel ('1'…'32' | 'both' | 'stereo'), channels (the device's), settings, processed
+//                  (the browser kept its voice processing on), inputKind ('interface' | 'mic' | 'virtual' | ''), role,
+//                  monitoring (the decision), monitorBy ('auto' | 'hand' | 'open' | 'guard'), monitorAuto (decided by
+//                  itself and on), monitorOff ('' | 'mic' | 'virtual' | 'feedback': why it's off), monitorLine (the
+//                  sentence that says why, or ''), monitorHolds ([reason]: muted for a moment), monitorTrack (the id it
+//                  plays through), monitorWaiting, picking, path (app.input.path's status), recording, countIn, error,
+//                  sr, firstFrame (the audio-clock frame the first captured block began on, once one has: a check lines
+//                  a fake guitar up with the count by it), split ({ [channel]: track id } while two channels record at
+//                  once, or null) }
 //   settings is the track's getSettings() as the browser opened it (echoCancellation, noiseSuppression,
 //   autoGainControl, channelCount, latency, ...): the kitchen table reads whether the browser kept cleaning the mic up.
+//   Every getUserMedia asks for the voice processing off; a remembered device that's gone is chosen again by its label
+//   (never asked for loosely: that opens the browser's default with its processing on). If the browser keeps it on
+//   anyway, state.processed and LINES.processed once.
 //
-// Monitoring is decided for each input as it opens (open's monitor: 'auto', the default): an instrument interface or
-// line input the person picked (now, or last time) turns it on by itself, ramped in over 150 ms (a guitar through an
-// interface can't feed back); a microphone (built in, a webcam's, AirPods', a phone's, the browser's one-channel
-// default) leaves it off, with MIC_LINE in state.monitorLine; the browser's own pick never starts it. Reopening the same
-// input keeps it as it was; turned on or off by hand (monitor(on)) it stays that way. While it plays, the feedback guard
+// Monitoring is ONE decision per input { for: its real id, on, by, why }, made as it opens (open's monitor: 'auto', the
+// default) by livepath.js autoMonitor: an instrument interface or line input monitors, however it was picked (the
+// browser's "Default - Scarlett" entry is the Scarlett); a microphone (built in, a webcam's, AirPods', a phone's, the
+// browser's one-channel default) doesn't, with MIC_LINE in state.monitorLine; nor does a virtual one; in the guitar room
+// (role 'instrument') an input it can't name with two or more channels does. By hand (monitor(on): Sketch's chip, the
+// Jam room's button, the guitar room's M) it's that, for that device, for the page's life. An opener's own word
+// (monitor: true or false, the kitchen's) stands while the same device reopens for the same role. Holds mute it for a
+// moment without deciding anything (hold / release: the tuner's 'tuner'). Closing never decides. The killswitch's
+// hush() leaves an interface's decision alone and turns anything else off by hand. While it plays, the feedback guard
 // (createFeedbackGuard) listens to any input but an interface: a tone that rings up on its own turns monitoring off
 // with a fast fade and one toast (FEEDBACK_LINE). inputKind(label) and createFeedbackGuard() are pure: tools/input-test.js checks both.
 //   audio.level() -> { peak, db, clip }   (read it in a frame)
 //   audio.levels() -> [{ ch, peak, db }]   each of the device's channels (up to 8) as it is now, whichever one is
 //                  picked: the live room picks the one that moves on the first strum (pickChannel, pure)
-//   audio.useChannel(ch)   pick another channel of the device open now, in place (no reopen: monitoring and the
-//                  capture carry on); a channel it doesn't have, or a split, goes the setChannel way
+//   audio.useChannel(ch, { auto })   pick another channel of the device open now, in place (no reopen: monitoring and
+//                  the capture carry on); a channel it doesn't have, or a split, goes the setChannel way. A pick by
+//                  hand (not auto) ends the listening for the first strum
 //   open's capture: true attaches the capture at once (its module loaded before the browser is asked), so
 //                  state.firstFrame is the input's first block; split: { 1: trackA, 2: trackB } (or { track,
 //                  monitor, mic } per channel) records two channels to two tracks at once: one stream, a pick per
@@ -46,28 +65,39 @@
 //                  buffer is reused: read it before the next call
 //   audio.listen(fn({ f, d: [Float32Array] })) -> off    raw blocks with their audio-clock frame (hum, beatbox, latency)
 //   audio.tap(node) -> off   the picked input (a split's first channel) also into `node`, an AudioNode on audio.ctx,
-//                  through every reopen and channel change until off (the rolling tape, input/tape.js); recording,
-//                  monitoring and the capture don't change
-//   audio.monitor(on?)   live through the armed audio track's inserts; with no audio track it stays on and waits
-//   audio.monitorTrack() -> the track it plays through now | null (off, closed, or waiting: state.monitorWaiting)
-//   audio.monitorVia(trackId | null)   the audio track monitoring plays through whatever is armed or selected (the live
-//                  room's guitar: ui/liveroom/stage.js sets it while the stage is up and clears it when it goes), or
-//                  null for the usual rule (the armed audio track, else the selected one, else the first). A track
-//                  that's gone or isn't an audio track falls back to the usual rule. What a take records onto is
-//                  unchanged (recordTrack, the recorder's own target).
+//                  through every reopen and channel change until off (the rolling tape, input/tape.js; the path's
+//                  check); recording, monitoring and the capture don't change
+//   audio.monitor(on?)   by hand: live through the monitored track's inserts; with no audio track it stays on and waits
+//   audio.hold(reason) / release(reason) -> [reasons]   a mute that ends (the tuner's)
+//   audio.hush()   the killswitch's (ui/transport.js silenceAll, before engine.silence)
+//   audio.role(r)  'instrument' while the guitar room is up, '' elsewhere: a decision not made by hand is made again
+//   audio.wake() -> Promise<bool>   resume the audio context (a room's key or click; open does)
+//   audio.rewire()   the monitor unwired and wired again (the path's repair)
+//   audio.monitorTrack() -> the track it plays through now | null (off, held, closed, or waiting: state.monitorWaiting)
+//   audio.monitorVia(trackId | () => trackId | null)   where monitoring plays, whatever is armed or selected: a track,
+//                  or a function asked at every sync (the guitar room's: a take's other side, else Guitar L), or null
+//                  for the usual rule (the armed audio track, else the selected one, else the first). A track that's gone
+//                  or isn't an audio track falls back to the usual rule. What a take records onto is unchanged
+//                  (recordTrack, the recorder's own target). The engine is told (engine.monitored).
 //   audio.record({ track?, countIn? }) ; audio.stopRecord() ; audio.toggleRecord()   (through the recorder)
 //   audio.recordTrack()  the track a take would go to       audio.latency  (latency.js)
 //   events (app.input.on): 'audio' (state changed), 'take' (an audio take landed: { track, clip, asset, seconds }),
 //   'devices' (the inputs changed: [{ id, label }]), 'monitor' ({ track, waiting }: what it plays through changed;
-//   waiting: on, with no audio track to play through)
+//   waiting: on, with no audio track to play through), 'pathchange' (why: something that can change the live path:
+//   livepath.js checks it a moment later)
+//   An input that goes away (its stream ends, or it's gone at a devicechange) closes with LINES.gone; when it's back at
+//   a devicechange it opens again, on the same channel, with LINES.back.
 
 import { createLatency } from './latency.js';
 import { createTuner, fft } from './pitch.js';
+import { autoMonitor, chooseInput, realIdOf, say as sayLine } from './livepath.js';
 
 // The input recorder's processor ('ew-cap'): its module, a file on this origin (input/cap-worklet.js)
 const CAP_WORKLET = new URL('./cap-worklet.js', import.meta.url).href;
 
 const SAVE = 'overdub:input';
+// the browser's own entries, not a device: "Default - …" and Windows' "Communications - …"
+const isAlias = (id) => !id || id === 'default' || id === 'communications';
 
 // The channel that moves: levels in dB per channel (index 0 is input 1) as the first strum peaks; the one at least
 // `over` dB over every other and over `floor`, as a channel number (1-based), else null. The live room plugs in by it
@@ -90,10 +120,10 @@ export const MIC_LINE = 'Monitoring is off: this is a microphone, and through sp
 export const FEEDBACK_LINE = 'Feedback: monitoring is off. Headphones stop it.';
 
 // What an input is, by its name. An instrument interface or a line input ('interface': a guitar through one can't feed
-// back, so monitoring starts by itself when one is picked); a microphone ('mic': built in, a webcam's, AirPods', a
+// back, so monitoring starts by itself); a microphone ('mic': built in, a webcam's, AirPods', a
 // phone's, a headset's, and the browser's own one-channel default: through speakers it hears itself); a virtual or
 // loopback device ('virtual': it hears the speakers' own signal); '' (can't tell). The browser's default is named
-// "Default - <device>": the device's name decides, but the browser's pick never starts monitoring by itself.
+// "Default - <device>": the device's name decides (an interface opened as the default monitors too: livepath.js).
 const IFACE_RE = /scarlett|focusrite|clarett|\bumc ?\d|behringer|usb audio codec|audient|\bid ?\d{1,2}\b|\bevo ?\d|apogee|\bboss\b|katana|\bgt-?\d|\bhx\b|helix|line ?6|\bpod\b|irig|ik multimedia|\bmotu\b|presonus|audiobox|steinberg|\bur ?\d{2}|universal audio|\bvolt ?\d|apollo|\bssl ?\d|arturia|minifuse|komplete audio|native instruments|tascam|\bus-?\d|rubix|roland|mackie|onyx|\brme\b|babyface|fireface|m-audio|m-track|antelope|kemper|fractal|axe-?fx|quad cortex|neural dsp|fender|mustang|blackstar|\bvox\b|\bnux\b|mooer|line[ -]?in\b|instrument|guitar/i;
 const MIC_RE = /built-?in|macbook|internal|default|webcam|camera|airpods|iphone|headset/i;
 const VIRTUAL_RE = /blackhole|loopback|soundflower|virtual|vb-?audio|voicemeeter|teams audio|zoomaudio|aggregate|multi-output|cable output/i;
@@ -170,46 +200,94 @@ export function createAudioIn(app, input) {
   const engine = app.engine, store = app.store;
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(SAVE) || '{}') || {}; } catch { saved = {}; }
-  const state = { open: false, deviceId: saved.deviceId || '', label: '', channel: saved.channel || '1', channels: 0, settings: {}, inputKind: '', monitoring: false, monitorAuto: false, monitorOff: '', monitorLine: '', monitorTrack: null, monitorWaiting: false, recording: false, countIn: saved.countIn !== false, error: '', sr: 0, opening: false, firstFrame: null, split: null };
+  // (a 'default' saved before the live path: the device it named is chosen again by label)
+  if (saved.deviceId === 'default' || saved.deviceId === 'communications') saved.deviceId = '';
+  const state = { open: false, deviceId: saved.deviceId || '', realId: '', label: '', channel: saved.channel || '1', channels: 0, settings: {}, processed: false, inputKind: '', role: '', monitoring: false, monitorAuto: false, monitorBy: '', monitorOff: '', monitorLine: '', monitorHolds: [], monitorTrack: null, monitorWaiting: false, picking: false, path: null, recording: false, countIn: saved.countIn !== false, error: '', sr: 0, opening: false, firstFrame: null, split: null };
   let ctx = null, ownCtx = null, rig = null, cap = null, capReady = null, mon = null, monDest = null, recording = false;
-  let warned = false, syncT = 0, via = null;   // (the monitor: said once that it waits for a track; a sync queued)
-  // the input monitoring was decided for (null: none yet; PENDING: turned on or off by hand before one was open), the
-  // one open now, and the feedback guard while the monitor is wired
-  const PENDING = {};
-  let monFor = null, openId = null, guard = null, stopGuard = null;
+  let warned = false, syncT = 0, via = null;   // (the monitor: said once that it waits for a track; a sync queued; where it plays)
+  // Monitoring: one decision { for: the real device id, on, by: 'auto' | 'hand' | 'open' | 'guard', why }, the holds
+  // that mute it for a moment ('tuner'), and what was decided by hand (or by the feedback guard) for each device, kept
+  // for the page's life. pending: turned on or off by hand before an input was open (the next one opened gets it).
+  let decision = null, pending = null;
+  const hand = new Map();      // real id -> { on, by, why }
+  const holds = new Set();
+  let guard = null, stopGuard = null, monitoredId = null;
+  let lost = null;             // the input that went away ({ id, channel, label, role, capture }), reopened when it's back
+  let picking = null;          // listening for the channel that moves on the first strum
+  const processedSaid = new Set();
   const recorder = () => input.recorder;
   const listeners = new Set();
   const taps = new Set();     // nodes the picked input also feeds (audio.tap)
   const tuners = new Map();   // the tuner for each range asked for: `${lo}|${hi}` -> { at, last, tuner }
-  const persist = () => { try { localStorage.setItem(SAVE, JSON.stringify({ deviceId: picker.deviceId, channel: picker.channel, countIn: state.countIn })); } catch { /* ok */ } };
+  // (never 'default': the device it is, by realIdOf, or nothing)
+  const persist = () => { try { localStorage.setItem(SAVE, JSON.stringify({ deviceId: isAlias(picker.deviceId) ? '' : picker.deviceId, channel: picker.channel, countIn: state.countIn })); } catch { /* ok */ } };
   // Sketch's picker: what was last opened from it (a track's own input doesn't change it)
   let picker = { deviceId: state.deviceId, channel: state.channel };
   const changed = () => {
     state.monitorLine = state.monitorOff === 'feedback' ? FEEDBACK_LINE : state.open && !state.monitoring && state.inputKind === 'mic' ? MIC_LINE : '';
     input.emit('audio', state);
   };
+  // something that can change the live path happened: its health check runs a moment later (input/livepath.js)
+  const pathEvt = (why) => input.emit('pathchange', why);
+  // a line of the path's (livepath.js LINES): the room's talkback while a room listens (input.path.speak), else a toast
+  function speak(key, vars = {}, o = {}) {
+    const line = sayLine(key, vars);
+    if (!line) return;
+    const p = input.path;
+    if (p && typeof p.speak === 'function') { try { p.speak(line, { key, ...o }); return; } catch (e) { console.warn('input: speak', e); } }
+    app.ui?.toast?.(line, o.kind ? { kind: o.kind } : undefined);
+  }
 
   async function ensureCtx() {
     try { await engine.start(); } catch { /* silent engine */ }
-    if (engine.ctx) { ctx = engine.ctx; return ctx; }
-    // FALLBACK until the engine has a context: a private one (no monitoring through tracks then)
+    if (engine.ctx) { ctx = engine.ctx; await audio.wake(); return ctx; }
+    // FALLBACK until the engine has a context: a private one (no monitoring through tracks then: the path says so)
     if (!ownCtx) ownCtx = new AudioContext({ latencyHint: 'interactive' });
     if (ownCtx.state !== 'running') { try { await ownCtx.resume(); } catch { /* gesture */ } }
     ctx = ownCtx;
     return ctx;
   }
+  // the inputs as the browser lists them: { id, label (as given: '' before a grant), groupId, kind }
+  async function inputs() {
+    const md = navigator.mediaDevices;
+    if (!md || !md.enumerateDevices) return [];
+    const all = await md.enumerateDevices().catch(() => []);
+    return all.filter((d) => d.kind === 'audioinput').map((d) => ({ id: d.deviceId, label: d.label || '', groupId: d.groupId || '', kind: inputKind(d.label, { isDefault: d.deviceId === 'default' }) }));
+  }
 
   const audio = {
     state,
     get ctx() { return ctx; },
+    // [{ id, label, groupId, kind }]: label filled in when the browser gives none (before a grant)
     async devices() {
-      const md = navigator.mediaDevices;
-      if (!md || !md.enumerateDevices) return [];
-      const all = await md.enumerateDevices().catch(() => []);
-      return all.filter((d) => d.kind === 'audioinput').map((d, i) => ({ id: d.deviceId, label: d.label || (d.deviceId === 'default' ? 'Default input' : `Input ${i + 1}`) }));
+      const L = await inputs();
+      return L.map((d, i) => ({ ...d, label: d.label || (d.id === 'default' ? 'Default input' : `Input ${i + 1}`) }));
     },
-    // monitor: 'auto' (decide for this input: see below), true or false (turn it on or off for it), 'keep'
-    async open({ device = picker.deviceId, channel = picker.channel, forTrack = null, monitor = 'auto', capture = false, split = null } = {}) {
+    // Which input to open (livepath.js chooseInput over the inputs there now): the remembered one, an interface by its
+    // own entry in the guitar room (role 'instrument') and anywhere one is plugged in, else the browser's default;
+    // reask when the browser gave no labels yet (no grant: choose again once it's open)
+    async choose({ role = state.role } = {}) {
+      return chooseInput(await inputs(), { remembered: isAlias(picker.deviceId) ? '' : picker.deviceId, channel: picker.channel || '1', role });
+    },
+    // choose, open, and on a blind first open (no labels until the grant) choose again and reopen if an interface is
+    // now there that isn't the one open. In the guitar room (role 'instrument') the channel that moves on the first
+    // strum is picked (unless one is picked by hand).
+    async openBest({ role = state.role, capture = false } = {}) {
+      const c = await audio.choose({ role });
+      const listen = role === 'instrument';
+      await audio.open({ device: c.device, channel: c.channel, capture, role, listen });
+      if (c.why === 'moved' && state.open) speak('moved', { label: state.label });
+      if (c.reask && state.open) {
+        const L = await inputs(), again = chooseInput(L, { remembered: '', channel: state.channel, role });
+        const d = again.device ? L.find((x) => x.id === again.device) : null;
+        if (!again.reask && d && d.kind === 'interface' && again.device !== state.realId) await audio.open({ device: again.device, channel: state.channel, capture, role, listen });
+      }
+      return state;
+    },
+    // monitor: 'auto' (decide for this input: see below), true or false (this open's own word: kept while the same
+    // device reopens for the same role), 'keep'. role: 'instrument' in the guitar room (livepath.js), '' elsewhere.
+    // listen: pick the channel that moves on the first strum.
+    async open({ device = picker.deviceId, channel = picker.channel, forTrack = null, monitor = 'auto', capture = false, split = null, role = state.role, listen = false } = {}) {
       const md = navigator.mediaDevices;
       if (!md || !md.getUserMedia) { state.error = 'Can’t open an audio input here: the page needs https (or localhost) and a browser that allows audio input.'; changed(); throw new Error(state.error); }
       state.opening = true; changed();
@@ -220,18 +298,30 @@ export function createAudioIn(app, input) {
       if (capture || parts) { try { await capModule(c); } catch { /* attachCap says why */ } }
       // ask for at least the channel wanted (an 8-input interface offers 8); then all the device has (below)
       const chN = Math.max(2, Math.min(32, parts ? Math.max(...parts.map((x) => x.ch)) : parseInt(channel, 10) || 2));
-      const want = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: chN }, latency: { ideal: 0 } };
-      const plain = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
-      if (device) { want.deviceId = { exact: device }; plain.deviceId = { exact: device }; }
-      let stream = null, err = null;
-      for (const a of [want, plain, device ? { deviceId: device } : true]) {
-        try { stream = await md.getUserMedia({ audio: a }); break; } catch (e) { err = err || e; if (e && e.name === 'NotAllowedError') break; }
+      // Every attempt with the browser's voice processing off. A device that's gone isn't asked for loosely (that opens
+      // the browser's default with its processing on): it's chosen again by label, else the default, processing off.
+      let err = null, denied = false;
+      const flags = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+      const attempt = async (dev) => {
+        const want = { ...flags, channelCount: { ideal: chN }, latency: { ideal: 0 } }, plain = { ...flags };
+        if (dev) { want.deviceId = { exact: dev }; plain.deviceId = { exact: dev }; }
+        for (const a of [want, plain]) {
+          try { return await md.getUserMedia({ audio: a }); } catch (e) { err = e; if (e && e.name === 'NotAllowedError') { denied = true; return null; } }
+        }
+        return null;
+      };
+      let used = device || '', moved = false;
+      let stream = await attempt(used);
+      if (!stream && !denied && used && err && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')) {
+        if (picker.deviceId === used) { picker.deviceId = ''; persist(); }
+        const again = chooseInput(await inputs(), { remembered: '', channel, role });
+        if (again.device !== used) { used = again.device; moved = true; stream = await attempt(used); }
       }
+      if (!stream && !denied && used) { used = ''; moved = true; stream = await attempt(''); }
       state.opening = false;
       if (!stream) {
-        state.error = err && err.name === 'NotAllowedError' ? 'The browser wasn’t allowed to use the input. Allow the microphone for this site (the icon in the address bar), then try again.'
+        state.error = denied ? 'The browser wasn’t allowed to use the input. Allow the microphone for this site (the icon in the address bar), then try again.'
           : err && err.name === 'OverconstrainedError' ? 'That input isn’t there any more. Pick another.' : `Couldn’t open the input (${(err && (err.message || err.name)) || 'error'}).`;
-        if (err && err.name === 'OverconstrainedError') state.deviceId = '';
         changed();
         throw new Error(state.error);
       }
@@ -241,9 +331,13 @@ export function createAudioIn(app, input) {
       try {
         const caps = track && track.getCapabilities ? track.getCapabilities() : {}, max = caps.channelCount && caps.channelCount.max;
         const now = track && track.getSettings ? track.getSettings().channelCount : 0;
-        if (max && now && max > now && track.applyConstraints) await track.applyConstraints({ ...plain, channelCount: { ideal: Math.min(32, max) } }).catch(() => {});
+        if (max && now && max > now && track.applyConstraints) await track.applyConstraints({ ...flags, ...(used ? { deviceId: { exact: used } } : {}), channelCount: { ideal: Math.min(32, max) } }).catch(() => {});
       } catch { /* the browser can't say: what it opened is what there is */ }
       const st = (track && track.getSettings && track.getSettings()) || {};
+      // the device behind what opened (the browser's "Default - " entry is the device it names), now that labels are in
+      const listNow = await inputs().catch(() => []);
+      const label = (track && track.label) || 'Input';
+      const rid = realIdOf(listNow, { deviceId: st.deviceId || used, groupId: st.groupId || '', label }) || (isAlias(used) ? '' : used);
       const src = c.createMediaStreamSource(stream);
       const n = Math.max(1, Math.min(32, st.channelCount || 1)), ch = parseInt(channel, 10);
       // one channel of the interface (a guitar is on one input; a stereo downmix would halve it), both summed, or a pair
@@ -266,26 +360,34 @@ export function createAudioIn(app, input) {
       }
       const an = picks ? picks[0].an : c.createAnalyser();
       if (!picks) { an.fftSize = winFor(c.sampleRate); pick.connect(an); }
-      rig = { stream, src, pick, an, track, sp, picks, lv: null, buf: new Float32Array(an.fftSize), peak: 0, clipAt: 0 };
-      if (track) track.addEventListener('ended', () => { audio.close(); app.ui?.toast?.('The input went away (unplugged or switched off).', { kind: 'bad' }); });
-      Object.assign(state, { open: true, deviceId: device || st.deviceId || '', asked: device || '', forTrack, label: (track && track.label) || 'Input', channel: picks ? String(picks[0].ch) : String(channel), channels: n, settings: st, error: '', sr: c.sampleRate, firstFrame: null, split: picks ? Object.fromEntries(picks.map((x) => [String(x.ch), x.track])) : null });
-      if (!forTrack && !picks) { picker = { deviceId: device || '', channel: String(channel) }; persist(); }
-      // Monitoring for this input, decided when it isn't the input it was decided for (the same one reopened, or another
-      // of its channels, keeps it as it was). On by itself, ramped in, for an instrument interface the person picked
-      // (now, or last time: the device remembered); off for a microphone, with the line that says why; off for anything
-      // else, a guitar interface the browser chose by itself included. Turned on or off by hand, it stays that way.
-      openId = st.deviceId || device || '';
-      state.inputKind = inputKind(state.label, { channels: n, isDefault: !device || device === 'default' });
-      if (monFor === PENDING) monFor = openId;
-      if (monitor === true || monitor === false) decide(monitor, { id: openId });
-      else if (monitor === 'auto' && monFor !== openId) {
-        if (state.inputKind === 'interface' && device && device !== 'default') decide(true, { auto: true, id: openId });
-        else decide(false, { off: state.inputKind === 'mic' ? 'mic' : '', id: openId });
+      const r = (rig = { stream, src, pick, an, track, sp, picks, lv: null, buf: new Float32Array(an.fftSize), peak: 0, clipAt: 0 });
+      // (this stream's own end: a stale stream's ended can't close the input open now)
+      if (track) track.addEventListener('ended', () => { if (rig === r) wentAway(); });
+      const processed = !!(st.echoCancellation || st.noiseSuppression || st.autoGainControl);
+      Object.assign(state, { open: true, deviceId: rid || (isAlias(used) ? '' : used), realId: rid, asked: rid || (isAlias(used) ? '' : used), forTrack, label, channel: picks ? String(picks[0].ch) : String(channel), channels: n, settings: st, processed, role: role || '', error: '', sr: c.sampleRate, firstFrame: null, split: picks ? Object.fromEntries(picks.map((x) => [String(x.ch), x.track])) : null });
+      if (!forTrack && !picks) { picker = { deviceId: state.deviceId, channel: String(channel) }; persist(); }
+      lost = null;
+      // Monitoring for this input. A decision made by hand (or by the feedback guard) for this device stands; so does
+      // this open's own word (monitor true or false: the kitchen's), for the same device and role; else it's decided by
+      // itself (livepath.js autoMonitor): on for an instrument interface or line input, however it was picked (the
+      // browser's "Default - Scarlett" entry is the Scarlett), off for a microphone (MIC_LINE says why) and a virtual one.
+      state.inputKind = inputKind(label, { channels: n, isDefault: !rid && (!used || used === 'default') });
+      const key = rid || st.deviceId || used || '';
+      if (monitor === true || monitor === false) decide(monitor, { by: 'open', why: monitor ? '' : state.inputKind === 'mic' ? 'mic' : '', id: key });
+      else if (monitor === 'auto') {
+        const h = hand.get(key);
+        if (pending) { decide(pending.on, { by: 'hand', id: key }); pending = null; }
+        else if (h) decide(h.on, { by: h.by, why: h.why, id: key });
+        else if (!(decision && decision.for === key && decision.by === 'open' && decision.role === state.role)) autoDecide(key);
       }
-      for (const n of taps) { if (n.context === c) { try { pick.connect(n); } catch { /* gone */ } } }
+      for (const t of taps) { if (t.context === c) { try { pick.connect(t); } catch { /* gone */ } } }
       if (listeners.size || capture || picks) await attachCap();
       syncMonitor();
       changed();
+      if (listen) listenForChannel(); else stopPicking();
+      if (moved && device && !isAlias(device)) speak('moved', { label });
+      if (processed && !processedSaid.has(key)) { processedSaid.add(key); speak('processed', { label }); }
+      pathEvt('open');
       return state;
     },
     async ensureOpen() { if (!state.open) await audio.open(); return state; },
@@ -302,9 +404,11 @@ export function createAudioIn(app, input) {
       // (opened for a track's own input, Sketch's picker keeps its choice)
       return audio.open({ device: want.device, channel: want.channel, forTrack: want.from === 'track' ? t.id : null });
     },
+    // Closing is only closing: it never decides monitoring (the next open of this device is heard as it was)
     close(quiet) {
       if (recording) { try { recorder()?.stop({ keepPlaying: true }); } catch { /* ok */ } }
       if (cap) { try { cap.port.postMessage('off'); cap.disconnect(); } catch { /* ok */ } cap = null; capReady = null; }
+      stopPicking();
       unwireMonitor();
       unwireSplit();
       if (rig) { for (const t of rig.stream.getTracks()) t.stop(); try { rig.src.disconnect(); rig.pick.disconnect(); for (const x of rig.picks || []) x.pick.disconnect(); } catch { /* ok */ } rig = null; }
@@ -313,13 +417,15 @@ export function createAudioIn(app, input) {
       state.split = null;
       state.firstFrame = null;
       // (quiet: open() is about to reopen and wire the monitor again)
-      if (!quiet) report(false);
-      if (was && !quiet) changed();
+      if (!quiet) { report(false); markMonitored(null); }
+      if (was && !quiet) { changed(); pathEvt('close'); }
     },
-    setChannel(ch) { picker.channel = state.channel = String(ch); persist(); if (state.open) return audio.open({ channel: picker.channel }); changed(); return null; },
+    setChannel(ch) { stopPicking(); picker.channel = state.channel = String(ch); persist(); if (state.open) return audio.open({ channel: picker.channel }); changed(); return null; },
     setDevice(id) { picker.deviceId = state.deviceId = id; persist(); if (state.open) return audio.open({ device: id }); changed(); return null; },
-    // another channel of the device open now, picked in place: the stream, the monitor and the capture carry on
-    useChannel(ch) {
+    // another channel of the device open now, picked in place: the stream, the monitor and the capture carry on.
+    // (auto: the first strum's pick, ./start.js's and this file's own; anything else is a pick by hand)
+    useChannel(ch, { auto = false } = {}) {
+      if (!auto) stopPicking();
       const c = String(ch), k = parseInt(c, 10);
       if (!rig || rig.picks || !/^\d+$/.test(c) || !(k >= 1) || k > state.channels || !ctx) return audio.setChannel(c);
       if (String(state.channel) === c) return state;
@@ -331,6 +437,7 @@ export function createAudioIn(app, input) {
       state.channel = c;
       if (!state.forTrack) { picker.channel = c; persist(); }
       changed();
+      pathEvt('channel');
       return state;
     },
     // every channel of the device, as it is now (an analyser on each, made the first time it's asked)
@@ -402,24 +509,88 @@ export function createAudioIn(app, input) {
       return () => { listeners.delete(fn); if (!listeners.size && cap && !recording) { try { cap.port.postMessage('off'); cap.disconnect(); } catch { /* ok */ } cap = null; capReady = null; } };
     },
 
+    // The audio context awake: resumed if the browser paused it (a room calls this on any key or click; open() does).
+    // -> true once it runs
+    async wake() {
+      const c = engine.ctx || ctx;
+      if (!c) return false;
+      if (c.state !== 'running' && c.state !== 'closed') { try { await Promise.race([c.resume(), new Promise((r) => setTimeout(r, 250))]); } catch { /* a gesture first */ } }
+      return c.state === 'running';
+    },
+
     /* ---- monitoring: the input through the record track's inserts, as you play */
-    // the track the monitor plays through now, or null: monitoring off, the input closed, or waiting for an audio track
-    // (state.monitorWaiting)
+    // the track the monitor plays through now, or null: monitoring off, held, the input closed, or waiting for an audio
+    // track (state.monitorWaiting)
     monitorTrack: () => (monDest ? store.track(monDest.track) : null),
-    // by hand: for the input open now (or the next one opened)
+    // by hand: for the input open now (or the next one opened): kept for that device for the page's life
     monitor(on = !state.monitoring) {
-      decide(on, { id: state.open ? openId : PENDING });
+      if (state.open) decide(!!on, { by: 'hand', id: decisionKey() });
+      else { pending = { on: !!on }; decide(!!on, { by: 'hand', id: null }); }
       syncMonitor();
       changed();
+      pathEvt('decision');
       return state.monitoring;
     },
+    // a mute for a moment that leaves the decision alone (the tuner's 'tuner'): heard again when the last hold goes
+    hold(reason = 'hold') {
+      const k = String(reason);
+      if (holds.has(k)) return state.monitorHolds;
+      holds.add(k);
+      state.monitorHolds = [...holds];
+      syncMonitor();
+      changed();
+      pathEvt('hold');
+      return state.monitorHolds;
+    },
+    release(reason = 'hold') {
+      if (!holds.delete(String(reason))) return state.monitorHolds;
+      state.monitorHolds = [...holds];
+      syncMonitor();
+      changed();
+      pathEvt('hold');
+      return state.monitorHolds;
+    },
+    // The killswitch's (ui/transport.js silenceAll, before engine.silence): an interface keeps its decision (a guitar
+    // can't howl; it's heard again when the speakers open); a microphone, a virtual input or one it can't name is turned
+    // off by hand (the howl the killswitch was pressed for)
+    hush() {
+      if (!state.monitoring || state.inputKind === 'interface') return false;
+      if (state.open) decide(false, { by: 'hand', why: state.inputKind === 'mic' ? 'mic' : '', id: decisionKey() });
+      else { pending = { on: false }; decide(false, { by: 'hand', id: null }); }
+      syncMonitor({ fast: true });
+      changed();
+      pathEvt('decision');
+      return true;
+    },
+    // What the room is: 'instrument' in the guitar room (a guitar through an interface is expected), '' elsewhere. An
+    // input decided by itself (or by an opener) is decided again for it; a decision made by hand stands.
+    role(r = '') {
+      const v = String(r || '');
+      if (v === state.role) return state.role;
+      state.role = v;
+      if (state.open && !rig?.picks && decision && (decision.by === 'auto' || decision.by === 'open')) {
+        autoDecide(decision.for);
+        syncMonitor();
+        changed();
+        pathEvt('decision');
+      }
+      return state.role;
+    },
     get _monitorGain() { return mon ? mon.gain.value : null; },   // (checks: the ramp in)
-    // the track it plays through whatever is armed or selected, or null for the usual rule (the header says more)
-    monitorVia(id = null) {
-      const v = id ? String(id) : null;
-      if (v === via) return;
-      via = v;
-      if (state.monitoring && rig) syncMonitor();
+    // Where it plays: a track id, or a function asked at every sync (the guitar room's: the side a take records, else
+    // Guitar L), or null for the usual rule (the armed audio track, else the selected one, else the first). A track
+    // that's gone or isn't an audio track falls back to the usual rule. What a take records onto is unchanged.
+    monitorVia(v = null) {
+      via = typeof v === 'function' ? v : v ? String(v) : null;
+      if (rig) syncMonitor();
+      pathEvt('target');
+    },
+    // the monitor unwired and wired again (the path's repair when the input wasn't reaching the strip)
+    rewire() {
+      if (!rig) return false;
+      if (rig.picks) { for (const x of rig.picks) fadeOut(x, true); } else unwireMonitor(true);
+      syncMonitor();
+      return true;
     },
 
     /* ---- recording: the recorder (input/recorder.js) records the mic onto the armed audio track */
@@ -456,13 +627,17 @@ export function createAudioIn(app, input) {
   // the output latency the engine's playhead uses (engine.beat is what is heard now)
   function outLat() { const c = engine.ctx || ctx; return c ? (c.outputLatency || c.baseLatency || 0) : 0; }
   audio.outLatency = outLat;
-  // The audio track a take goes to: the armed one, else the selected audio track, else the first; arm it if asked to.
-  // With no audio track at all, make one (never a dead end).
   // the track the monitor plays through: monitorVia's while it names an audio track, else the record track
+  function viaId() {
+    if (typeof via === 'function') { try { const v = via(); return v ? String(v) : null; } catch (e) { console.warn('input: monitorVia', e); return null; } }
+    return via;
+  }
   function monitorTarget() {
-    const t = via ? store.track(via) : null;
+    const id = viaId(), t = id ? store.track(id) : null;
     return t && t.kind === 'audio' ? t : recordTrack(false);
   }
+  // The audio track a take goes to: the armed one, else the selected audio track, else the first; arm it if asked to.
+  // With no audio track at all, make one (never a dead end).
   function recordTrack(make) {
     const p = store.get(), sel = app.ui?.state?.selection?.track;
     const audios = p.tracks.filter((t) => t.kind === 'audio');
@@ -509,15 +684,19 @@ export function createAudioIn(app, input) {
     return capReady;
   }
 
-  // Monitoring is on while the person has it on (state.monitoring), wired through the track a take would go to. With no
-  // audio track it stays on and waits: state.monitorWaiting, monitorTrack() null and 'monitor' { track: null, waiting:
-  // true } (the Jam room remakes its Live guitar then); it says so once, and wires itself as soon as there's one.
-  // Wiring follows the track and its strip, never a mere change: a knob, a tone flip or a note leaves it alone. Started
-  // by itself it comes in over 150 ms; by hand, at once. While it's wired the feedback guard listens to the input.
+  // Monitoring is heard while it's decided on and nothing holds it (state.monitoring, state.monitorHolds), wired through
+  // the track monitorVia names (or the one a take would go to). With no audio track it stays on and waits:
+  // state.monitorWaiting, monitorTrack() null and 'monitor' { track: null, waiting: true } (the Jam room remakes its Live
+  // guitar then); it says so once, and wires itself as soon as there's one. Wiring follows the track and its strip, never
+  // a mere change: a knob, a tone flip or a note leaves it alone. Decided by itself it comes in over 150 ms; by hand, at
+  // once. While it's wired the feedback guard listens to the input. The engine is told which strip it plays through
+  // (engine.monitored: the polite stop leaves that one alone).
   function syncMonitor({ fast = false } = {}) {
     clearTimeout(syncT); syncT = 0;
     if (rig && rig.picks) { syncSplit(fast); return; }
-    const want = state.monitoring && rig && ctx ? monitorTarget() : null;
+    const target = state.monitoring && rig && ctx ? monitorTarget() : null;
+    markMonitored(target ? target.id : null);
+    const want = target && !holds.size ? target : null;
     const dest = want && engine.inputNode ? engine.inputNode(want.id) : null;
     const ok = !!dest && dest.context === ctx;
     if (!(ok && mon && monDest && monDest.node === dest && monDest.track === want.id)) {
@@ -532,13 +711,29 @@ export function createAudioIn(app, input) {
         listen();
       }
     }
-    report(!!(state.monitoring && rig && !want));
+    report(!!(state.monitoring && rig && !holds.size && !target));
   }
-  // monitoring on or off for an input (id): by itself (auto) or by hand; off for a reason ('mic', 'feedback') or none
-  function decide(on, { auto = false, off = '', id = monFor } = {}) {
-    monFor = id;
-    state.monitoring = !!on; state.monitorAuto = !!on && auto; state.monitorOff = on ? '' : off;
+  function markMonitored(id) {
+    if (id === monitoredId) return;
+    monitoredId = id;
+    try { engine.monitored?.(id); } catch { /* the silent engine */ }
+  }
+  // the key the decision is made for: the device's real id (the browser's default resolved), else what was opened
+  const decisionKey = () => state.realId || state.settings?.deviceId || state.deviceId || '';
+  // monitoring on or off for an input (id): by itself ('auto'), by the opener ('open'), by hand ('hand') or by the
+  // feedback guard ('guard'); off for a reason ('mic', 'virtual', 'feedback') or none. By hand and by the guard, it's
+  // kept for that device.
+  function decide(on, { by = 'auto', why = '', id = decision ? decision.for : null } = {}) {
+    const was = state.monitoring;
+    decision = { for: id, on: !!on, by, why: on ? '' : why, role: state.role };
+    if (id && (by === 'hand' || by === 'guard')) hand.set(id, { on: !!on, by, why: decision.why });
+    state.monitoring = !!on; state.monitorAuto = !!on && by === 'auto'; state.monitorBy = by; state.monitorOff = on ? '' : why;
     if (!on) warned = false;
+    if (was !== state.monitoring) pathEvt('decision');
+  }
+  function autoDecide(id) {
+    const a = autoMonitor({ kind: state.inputKind, channels: state.channels, role: state.role });
+    decide(a.on, { by: 'auto', why: a.why, id });
   }
   // the feedback guard: the input every 50 ms (a worker's clock: a tab in the background still hears it) while the
   // monitor is wired; a trip fades the monitor out fast, turns monitoring off and says so once. An interface is skipped:
@@ -552,7 +747,7 @@ export function createAudioIn(app, input) {
       if (state.inputKind === 'interface') { guard.reset(); return; }
       rig.an.getFloatTimeDomainData(rig.buf);
       if (!guard.push(rig.buf, ctx.sampleRate, ctx.currentTime)) return;
-      decide(false, { off: 'feedback' });
+      decide(false, { by: 'guard', why: 'feedback', id: decisionKey() });
       syncMonitor({ fast: true });
       changed();
       app.ui?.toast?.(FEEDBACK_LINE, { kind: 'bad' });
@@ -581,15 +776,16 @@ export function createAudioIn(app, input) {
     try { const t = ctx.currentTime, v = m.gain.value; m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(v, t); m.gain.setTargetAtTime(0, t, fast ? 0.004 : 0.01); } catch { /* ok */ }
     setTimeout(() => { try { m.disconnect(); } catch { /* ok */ } }, 80);
   }
-  // A split's monitoring: each channel through its own track's strip while monitoring is on and that channel isn't kept
-  // out of it (monitor: false: a mic on speakers), and the feedback guard on each mic channel that plays, whatever the
-  // device is (a mic on an interface's input 1 hears the speakers as any mic does). A trip takes that channel out.
+  // A split's monitoring: each channel through its own track's strip while monitoring is on (and not held) and that
+  // channel isn't kept out of it (monitor: false: a mic on speakers), and the feedback guard on each mic channel that
+  // plays, whatever the device is (a mic on an interface's input 1 hears the speakers as any mic does). A trip takes
+  // that channel out.
   function syncSplit(fast = false) {
     if (stopGuard) { stopGuard(); stopGuard = null; }
     if (mon) unwireMonitor(fast);
     let first = null;
     for (const x of rig.picks) {
-      const t = state.monitoring && x.monitor !== false && x.track ? store.track(x.track) : null;
+      const t = state.monitoring && !holds.size && x.monitor !== false && x.track ? store.track(x.track) : null;
       const dest = t && engine.inputNode ? engine.inputNode(t.id) : null;
       const ok = !!dest && dest.context === ctx;
       if (ok && x.mon && x.dest === dest) { first = first || t.id; continue; }
@@ -601,6 +797,7 @@ export function createAudioIn(app, input) {
       x.dest = dest;
       first = first || t.id;
     }
+    markMonitored(first);
     const mics = rig.picks.filter((x) => x.mic && x.mon);
     if (mics.length && !rig.stopGuards) {
       for (const x of mics) { x.guard = x.guard || createFeedbackGuard(); x.guard.reset(); }
@@ -644,6 +841,52 @@ export function createAudioIn(app, input) {
     out.sort((a, b) => a.ch - b.ch);
     return out.length >= 2 ? out : null;
   }
+
+  // The channel that moves on the first strum, listened for after an instrument's open (the guitar room's, openBest
+  // with role 'instrument'): each channel's peak held over half a second; the one 12 dB over the rest (pickChannel), or,
+  // every channel moving together for a second (one source on a stereo input), the loudest. Picked in place; a channel
+  // picked by hand meanwhile ends it. Two minutes at most.
+  function listenForChannel() {
+    stopPicking();
+    if (!rig || rig.picks || state.channels < 2) return;
+    const P = { holds: [], together: 0, t0: performance.now(), iv: 0 };
+    picking = P;
+    state.picking = true;
+    P.iv = setInterval(() => {
+      if (picking !== P) return;
+      if (!rig) { stopPicking(); return; }
+      const now = performance.now();
+      if (now - P.t0 > 120000) { stopPicking(); return; }
+      let lv = [];
+      try { lv = audio.levels(); } catch { lv = []; }
+      if (lv.length < 2) { stopPicking(); return; }
+      P.holds.push({ t: now, v: lv.map((x) => x.db) });
+      while (P.holds.length && P.holds[0].t < now - 500) P.holds.shift();
+      const hold = lv.map((_, i) => Math.max(...P.holds.map((x) => x.v[i] ?? -Infinity)));
+      let ch = pickChannel(hold);
+      const top = Math.max(...hold);
+      if (!ch && top >= -50) { if (!P.together) P.together = now; else if (now - P.together >= 1000) ch = hold.indexOf(top) + 1; } else if (!ch) P.together = 0;
+      if (!ch) return;
+      stopPicking();
+      if (String(state.channel) !== String(ch)) audio.useChannel(ch, { auto: true });
+    }, 50);
+  }
+  function stopPicking() {
+    if (!picking) return;
+    clearInterval(picking.iv);
+    picking = null;
+    if (state.picking) { state.picking = false; changed(); }
+  }
+
+  // The input went away (its stream ended, or it's gone from the list): closed, said, and opened again when it's back
+  function wentAway() {
+    if (!state.open) return;
+    lost = { id: state.realId, channel: String(state.channel), label: state.label, role: state.role, capture: !!cap || listeners.size > 0 };
+    const label = state.label;
+    audio.close();
+    speak('gone', { label }, { kind: 'bad' });
+  }
+
   // (after the engine has caught up with the change: one sync for a burst of them)
   const later = () => { if (!syncT) syncT = setTimeout(syncMonitor, 0); };
   // keep the monitor on the right track: another armed, one made or deleted, a new song, the engine rebuilding its strip
@@ -651,17 +894,25 @@ export function createAudioIn(app, input) {
     if (!state.monitoring || !rig) return;
     if (rig.picks) { later(); return; }
     const t = monitorTarget(), id = t ? t.id : null;
-    if (id !== (monDest ? monDest.track : null) || (t && monDest && engine.inputNode && monDest.node !== engine.inputNode(t.id))) later();
+    if (id !== monitoredId || id !== (monDest ? monDest.track : null) || (t && monDest && engine.inputNode && monDest.node !== engine.inputNode(t.id))) later();
   });
   try { engine.on('graph', (e) => { if (state.monitoring && rig && (!e || e.kind === 'track')) later(); }); } catch { /* ok */ }
-  // an interface plugged in (or out) shows up without a reload
+  // an interface plugged in (or out) shows up without a reload; the one open going away closes, and comes back by itself
   try {
     const md = navigator.mediaDevices;
     if (md && md.addEventListener) md.addEventListener('devicechange', async () => {
       const list = await audio.devices();
       input.emit('devices', list);
       app.ui?.emit?.('input:devices', list);
-      if (state.open && state.deviceId && !list.some((d) => d.id === state.deviceId)) { state.error = 'That input isn’t there any more. Pick another.'; changed(); }
+      if (state.open && state.realId && !list.some((d) => d.id === state.realId)) wentAway();
+      else if (!state.open && lost && lost.id && list.some((d) => d.id === lost.id)) {
+        const l = lost;
+        lost = null;
+        try {
+          await audio.open({ device: l.id, channel: l.channel, role: l.role, capture: l.capture });
+          speak('back', { label: state.label });
+        } catch (e) { console.warn('input: back', e); }
+      }
     });
   } catch { /* node */ }
   return audio;

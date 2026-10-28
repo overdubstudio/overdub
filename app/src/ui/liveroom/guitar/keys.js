@@ -120,6 +120,7 @@ export const KEYS = Object.freeze([
   L('KeyK', null, ['stage'], 'cam:kit', 'Closer: the kit and the drummer’s book', G),
   L('KeyB', null, ['stage'], 'cam:board', 'Closer: the pedalboard', G),
   L('KeyU', null, ['stage', 'shop', 'gs'], 'tuner', 'The tuner pedal: on (it mutes you) or off', G),
+  L('KeyM', null, ['stage', 'shop', 'gs'], 'monitor', 'Monitoring: hear yourself through the rig, or not', G),
   L('KeyG', null, ['stage', 'review'], 'tape', 'That was the one: the last minute of tape', G),
   L('KeyS', null, ['stage'], 'shop', 'Through the door to the shop', G),
   // the tape and the riffs

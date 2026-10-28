@@ -17,8 +17,9 @@
 //     drawer: false                                 [tape, takes] the riffs and the part line are up over the board
 //     slot: null | n                                [room] the piece of gear in focus (its slot in the rig, core/
 //                                                   liveroom/guitar/rig.js), for the head's and the board's zooms
-//     tuner: { on: false, monitorWas: null }        [start] the tuner pedal: on mutes the monitor (monitorWas: what to
-//                                                   put back)
+//     tuner: { on: false }                          [start] the tuner pedal: on holds the monitor (audio.hold('tuner'))
+//     monitorSide: null | track id                  [takes] the side a take records, while it isn't Guitar L: the
+//                                                   monitor plays through it (./index.js's monitorVia resolver)
 //     jam: { on: false, release: null }             [drummer] the drummer is playing past the song's end (release: the
 //                                                   jam's store.preview release)
 //     take: null | { section, side, clip, track, txn, from, to, landed }   [takes] the take in review
@@ -40,7 +41,8 @@ export function createState() {
     overlay: null,
     drawer: false,
     slot: null,
-    tuner: { on: false, monitorWas: null },
+    tuner: { on: false },
+    monitorSide: null,
     jam: { on: false, release: null },
     take: null,
     tape: { open: false, sel: null, snap: true },

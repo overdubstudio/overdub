@@ -151,8 +151,8 @@ export function mount(R) {
     faces.clear();
     G.gear.replaceChildren();
     for (const t of G.hot.querySelectorAll('.gr-r-tag')) t.remove();
-    for (const k of [...boxes.keys()]) if (/^(head|cab|board|meter|jack|tuner|slot:)/.test(k)) boxes.delete(k);
-    for (const k of [...els.keys()]) if (/^(head|cab|board|meter|jack|tuner|slot:)/.test(k)) els.delete(k);
+    for (const k of [...boxes.keys()]) if (/^(head|cab|board|meter|jack|mon|tuner|slot:)/.test(k)) boxes.delete(k);
+    for (const k of [...els.keys()]) if (/^(head|cab|board|meter|jack|mon|tuner|slot:)/.test(k)) els.delete(k);
   }
 
   // the hand's place across a new drawing (a move, a pedal off, an undo): the same control on the same piece of gear,
@@ -299,6 +299,12 @@ export function mount(R) {
       G.gear.append(jack);
       built.jack = { x: first.x - 2, y: first.y + first.h * 0.32 + 5, el: jack };
       boxes.set('jack', { x: first.x - 40, y: first.y + first.h * 0.32 - 12, w: 52, h: 24 }); els.set('jack', jack);
+      // the monitor lamp by the jack: lit while you're heard through the rig (M, or a click, turns it on or off)
+      const mon = h('button.gr-r-mon', { type: 'button', onclick: (e) => { e.currentTarget.blur(); R.press('monitor'); } }, h('i'), h('span', 'MON'));
+      place(mon, first.x - 50, first.y + first.h * 0.32 + 16);
+      G.gear.append(mon);
+      built.mon = { el: mon, key: '' };
+      boxes.set('mon', { x: first.x - 50, y: first.y + first.h * 0.32 + 16, w: 46, h: 20 }); els.set('mon', mon);
       // the board's hang tags, measured, then set in a row above the pedals
       const tagBase = Math.min(...built.slots.map((q) => q.y)) - 14;
       const tags = built.slots.map((q) => { const t = tagOf(q); tmp.append(t); return { q, t, th: t.offsetHeight || 150 }; });
@@ -681,6 +687,26 @@ export function mount(R) {
     const geo = { slots: built.slots, jack: built.jack, head: built.head, cab: built.cab, hin: built.hin, board: BOARD, worldW: STAGE.w };
     drawCables(built.svg, geo, { plugged: open, plugT: plug.t, lit });
   }
+  // The monitor lamp (docs/research/AMP-PATH.md §8): 'on' (heard through the rig), 'off' (monitoring off: M), 'held'
+  // (the tuner's mute), 'fault' (on, and the path's check found it wrong: its line in the title, the talkback says it),
+  // 'none' (no input). data-mon carries it.
+  function frameMon() {
+    const m = built?.mon;
+    if (!m) return;
+    const a = app.input?.audio, st = a?.state || {};
+    const path = st.path?.state || '';
+    const bad = ['unwired', 'stand-in', 'stuck', 'silent', 'dry', 'suspended', 'no-engine', 'muted'].includes(path);
+    const mode = !st.open ? 'none' : !st.monitoring ? 'off' : st.monitorHolds?.length ? 'held' : bad ? 'fault' : 'on';
+    const line = mode === 'fault' ? st.path?.line || '' : '';
+    const key = mode + '|' + line;
+    if (key === m.key) return;
+    m.key = key;
+    m.el.dataset.mon = mode;
+    m.el.setAttribute('aria-pressed', String(!!st.monitoring));
+    const words = { none: 'Monitoring: no input yet. M turns it on for when it opens.', off: 'Monitoring is off: you’re not heard through the rig. M turns it on.', held: 'Monitoring is held while the tuner’s on.', fault: 'Monitoring is on, and something’s wrong: ' + line, on: 'Monitoring is on: you’re heard through the rig. M turns it off.' };
+    m.el.setAttribute('aria-label', words[mode]);
+    m.el.title = words[mode];
+  }
   function frameTape(now, input) {
     const tape = app.input?.tape, eng = app.engine;
     const rolling = !!tape?.state?.rolling;
@@ -750,6 +776,7 @@ export function mount(R) {
       if (!alive) return;
       const { open, level: lv } = frameMeter(now);
       framePlug(now, open);
+      frameMon();
       frameTape(now, R.gr.tuner?.on ? 0 : lv);
       frameKit();
       frameTuner();

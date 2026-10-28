@@ -186,7 +186,8 @@ function keysOverlay(app) {
 // The killswitch: every panic path in the studio comes here, and here goes to engine.silence().
 function silenceAll(app) {
   const { engine, ui } = app;
-  try { if (app.input?.audio?.state?.monitoring) app.input.audio.monitor(false); } catch { /* ok */ }
+  // (a mic's monitoring off by hand, the howl the killswitch was pressed for; an interface's stays: input/audioin.js hush)
+  try { app.input?.audio?.hush?.(); } catch { /* ok */ }
   ui.emit('silence');
   if (!engine?.silence) { try { engine?.stop?.(); } catch { /* ok */ } return Promise.resolve(); }
   return Promise.resolve(engine.silence()).catch((e) => ui.toast('Could not silence: ' + e.message, { kind: 'bad' }));

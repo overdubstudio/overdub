@@ -18,8 +18,9 @@
 //   tunerSays(reading, { n, of, tuning }) -> string   the tuner's line: the string and how far off it, or what to do
 //   strumsWord(n, of)        'All six' | 'Four of six'
 //   soundSays({ stack, amp, cab, pedals }) -> string  the club's stack (or yours) in one sentence
-//   plugSays({ open, label, input, channels, error }) -> string   what's plugged in ('Scarlett Solo USB, input 2.'), or
-//                            what to do
+//   plugSays({ open, label, input, channels, error, monitoring }) -> string   what's plugged in ('Scarlett Solo USB,
+//                            input 2. Monitoring on.'), or what to do; monitoring: true, false (M turns it on) or null
+//                            (not said)
 
 export const STEPS = Object.freeze([
   { id: 'plug', label: 'Plug in' },
@@ -186,10 +187,11 @@ export function soundSays({ stack = '', amp = '', cab = '', pedals = [] } = {}) 
 }
 
 /** @param {{ open?: boolean, label?: string, input?: number | null, channels?: number, error?: string }} v */
-export function plugSays({ open = false, label = '', input = null, channels = 0, error = '' } = {}) {
+export function plugSays({ open = false, label = '', input = null, channels = 0, error = '', monitoring = null } = {}) {
   if (error) return error;
   if (!open) return W.plugAsk;
-  return `${label || 'Your input'}${channels >= 2 && input ? `, input ${input}` : ''}.`;
+  const mon = monitoring === true ? ' Monitoring on: you’re through the rig.' : monitoring === false ? ' Monitoring off: M puts you through the rig.' : '';
+  return `${label || 'Your input'}${channels >= 2 && input ? `, input ${input}` : ''}.${mon}`;
 }
 
 // every word above, for the copy check (the templates said with sample values)
@@ -207,6 +209,8 @@ export function allWords() {
     { id: 'tunerSays.held', text: tunerSays(reading({ live: false, held: true })) }, { id: 'tunerSays.all', text: tunerSays(null, { n: 6, of: 6, tuning: 'drop C' }) });
   out.push({ id: 'soundSays', text: soundSays({ stack: 'the club’s stack', amp: 'Kraken', cab: '4x12 Modern', pedals: ['a noise gate', 'a treble booster'] }) });
   out.push({ id: 'plugSays', text: plugSays({ open: true, label: 'Scarlett Solo USB', input: 2, channels: 2 }) });
+  out.push({ id: 'plugSays.on', text: plugSays({ open: true, label: 'Scarlett Solo USB', input: 2, channels: 2, monitoring: true }) });
+  out.push({ id: 'plugSays.off', text: plugSays({ open: true, label: 'Scarlett Solo USB', input: 2, channels: 2, monitoring: false }) });
   return out;
 }
 

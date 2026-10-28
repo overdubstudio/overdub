@@ -9,7 +9,7 @@
 // (R.sheet('review'), ./takes-review.js: the clip's in and out handles, clip.trim; Keep / Toss / Again; ↑↓ the takes),
 // the other side on the same rig and both together, hear-back, and the part line (R.el.drawer.parts, ./parts-line.js:
 // insert, drag, delete, play from, Home; ./parts-plans.js). It sets R.run ('count', 'take', 'play', 'idle') and moves the
-// monitor to the side it records (app.input.audio.monitorVia), back to Guitar L when the take's in or tossed.
+// monitor to the side it records (gr.monitorSide, read by the room's monitorVia resolver), back to Guitar L when the take's in or tossed.
 //
 // One step by you per take: the recorder's commit (the take, its asset) with the part joined to it (a new part's
 // section and room.part.set, its tail; the drummer's beatOps for a new part; the sides' pans for the other side), and
@@ -125,8 +125,9 @@ export function mount(R) {
     const t = id ? p.tracks.find((x) => x.id === id) : null;
     return !!t && t.clips.some((c) => c.start < b - EPS && c.start + c.length > a + EPS);
   }
-  function monitor(track) { try { app.input?.audio?.monitorVia?.(track || null); } catch (e) { console.error('takes: monitorVia', e); } }
-  const monitorHome = () => monitor(lineNow().roles.guitarL || null);
+  // (the monitor plays through the side a take records: the room's monitorVia resolver reads gr.monitorSide, ./index.js)
+  function monitor(track) { gr.monitorSide = track && track !== lineNow().roles.guitarL ? track : null; try { R.remonitor?.(); } catch (e) { console.error('takes: the monitor', e); } }
+  const monitorHome = () => monitor(null);
   function relabel(txn, label, reason) {
     const last = store.history.at(-1);
     if (last && last.id === txn) { if (label) last.label = label; if (reason) last.reason = reason; }
@@ -200,7 +201,8 @@ export function mount(R) {
   }
   async function go(pass) {
     const a = app.input?.audio;
-    if (a && !a.state?.open) { try { await a.ensureOpen?.(); } catch { /* said below */ } }
+    // (R before plugging in: the input every opener picks, and the channel that moves on the first strum, input/audioin.js)
+    if (a && !a.state?.open) { try { await (a.openBest ? a.openBest({ role: 'instrument', capture: true }) : a.ensureOpen?.()); } catch { /* said below */ } }
     if (P !== pass) return;
     if (!a?.state?.open) { done(pass); monitorHome(); tell('gtake.input'); return; }
     const drummer = R.parts.drummer;

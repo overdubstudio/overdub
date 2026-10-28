@@ -1555,11 +1555,14 @@ export default function (app) {
     async function toggleInput() {
       const a = app.input?.audio;
       if (!a) return;
-      if (a.state.open) { a.monitor(false); a.close(); view.input(); view.tones(); return; }
+      // (closing is only closing: the input's monitoring is as it was when it opens again, input/audioin.js)
+      if (a.state.open) { a.close(); view.input(); view.tones(); return; }
       try {
         ensureAudioGuitar();
         // monitored from the start when it's an interface or a line input you picked (the input decides: 'auto')
-        await a.open({ device: devSel.value || a.state.deviceId || '', channel: chSel.value || '1', monitor: 'auto' });
+        // ('Default input': the device chosen for you, input/livepath.js chooseInput, as Sketch and the rooms do)
+        if (devSel.value) await a.open({ device: devSel.value, channel: chSel.value || '1', monitor: 'auto' });
+        else { const c = await a.choose(); await a.open({ device: c.device, channel: chSel.value || c.channel || '1', monitor: 'auto' }); }
         await fillDevices();
         // the first time it opens: Live guitar's level is a guess, so Match the band is offered
         if (a.state.open && !J.offered) { J.offered = true; if (!J.match) J.match = { phase: 'offer' }; }

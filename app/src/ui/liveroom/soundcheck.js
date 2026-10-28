@@ -150,15 +150,15 @@ export function mountLamps(el, ctx) {
   let openedAt = 0, picked = null, okSaid = false, nothingSaid = false, holds = [], together = 0;
   async function chooseDevice() {
     const a = audio();
-    const list = await a.devices().catch(() => []);
     const kitchen = place() === 'kitchen';
+    // (an electric place: the input every opener picks, input/livepath.js chooseInput, an interface over a mic)
+    if (!kitchen) { const c = await a.choose({ role: 'instrument' }); return { device: c.device, channel: c.channel, saved: c.why === 'remembered', best: true }; }
+    const list = await a.devices().catch(() => []);
     const saved = a.state.deviceId && list.some((d) => d.id === a.state.deviceId) ? a.state.deviceId : '';
     if (saved) return { device: saved, channel: a.state.channel || '1', saved: true };
+    // (the kitchen's: a mic by its own entry, not the browser's "Default - …" one)
     const kinds = list.map((d) => ({ d, k: inputKind(d.label, { isDefault: d.id === 'default' }) }));
-    // (an interface by its own id, not the browser's "Default - …" entry for it: the input layer turns monitoring on
-    // through the amp only for an interface the person picked, never for the browser's own default)
-    const own = (k) => kinds.find((x) => x.k === k && x.d.id !== 'default') || kinds.find((x) => x.k === k);
-    const want = kitchen ? own('mic') : own('interface');
+    const want = kinds.find((x) => x.k === 'mic' && x.d.id !== 'default') || kinds.find((x) => x.k === 'mic');
     return { device: want ? want.d.id : '', channel: '1', saved: false };
   }
   async function openInput({ device = null, channel = null, by = 'room' } = {}) {
@@ -168,7 +168,8 @@ export function mountLamps(el, ctx) {
     let want = { device, channel: channel || '1', saved: false };
     if (device == null) want = await chooseDevice();
     try {
-      await a.open({ device: want.device, channel: want.channel, capture: true });
+      if (want.best) await a.openBest({ role: 'instrument', capture: true });
+      else await a.open({ device: want.device, channel: want.channel, capture: true });
     } catch (e) {
       if (gone) return;
       const refused = /allow|NotAllowed|denied/i.test(String(e?.message || e));

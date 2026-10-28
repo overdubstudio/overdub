@@ -8,7 +8,7 @@
 //                strum picked (audioin pickChannel; or press one), the meter against the −12 to −6 dBFS window and what
 //                to do with the interface's gain (input/level.js); the jack on the board lights
 //   2. Tune      the Tuna Fork pedal, first on the board (the room's; its panel ./start-tuner.js): stomp it (its footswitch, or U) and the
-//                camera goes to it, you're muted (audio.monitor(false), put back as it was when it goes off), each
+//                camera goes to it, you're muted (audio.hold('tuner'): a hold, released when it goes off), each
 //                string of the tuning lights as it comes in, and a low string that isn't in the tuning asks which
 //                tuning it is (a song tuning is one step by you: room.set { tuning } and the guitars' low cut)
 //   3. Timing    eight clicks to strum along to, the round trip measured and kept for the interface (input/calibrate.js)
@@ -21,8 +21,12 @@
 //
 // The tuner pedal is the room's own (not a device in the song): the room draws it, first on the board (./stage.js),
 // and this stream reads the input for it, putting the reading at R.gr.tuner.reading ({ note, octave, cents, string,
-// inTune, held, input }) for the pedal to show; its zoom's side panel is R.panel('tuner'). The tuner never leaves you muted: off, unmounted, a take starting, or Getting started
-// closing, the monitor goes back to what it was.
+// inTune, held, input }) for the pedal to show; its zoom's side panel is R.panel('tuner'). The tuner never leaves you
+// muted: its mute is a hold on the monitor (input/audioin.js hold / release), never a decision, so off, unmounted, a take
+// starting, or Getting started closing, the hold goes and monitoring is what it was.
+// The input opens the way every opener does (input/audioin.js openBest, role 'instrument': the one you used last, else
+// your interface, never the browser's "Default - " entry for it), and a chip opens that device (the "Default - " one
+// resolves to the device it names).
 //
 // Frozen:
 //   mount(R) -> view = {
@@ -46,7 +50,7 @@
 import { h, css } from '../../dom.js';
 import { mountLevel } from '../../gauges/level.js';
 import { mountTiming } from '../../gauges/timing.js';
-import { pickChannel, inputKind } from '../../../input/audioin.js';
+import { pickChannel } from '../../../input/audioin.js';
 import { READING_NONE, TUNER_TUNINGS, tuningName, tuningOf } from '../../../input/tuner.js';
 import { TUNINGS } from '../../../core/fretboard.js';
 import { roomOf } from '../../../core/liveroom/model.js';
@@ -145,20 +149,19 @@ export function mount(R) {
     offTarget = R.camera.target('tuner', { world: 'stage', rect: () => { const t = rect('tuner'); return t ? { x: t.x - 50, y: t.y - 40, w: t.w + 100, h: t.h + 80 } : REGIONS.tuner; }, right: 380, left: G.step ? SLATE_W + 24 : 0 });
   };
 
-  // the monitor: muted while the tuner's on, put back as it was when it goes off
-  // (monitorWas is true once the tuner has turned monitoring off, and only then: an input that wasn't open yet, or
-  // failed to open, when the tuner came on and turns monitoring on by itself later is muted and still put back)
+  // the monitor: held while the tuner's on (a hold, not a decision: an input opened meanwhile is held too, and nothing
+  // is left off when it goes). unmute -> true if you were heard through the rig before (the line says you're back)
   function mute() {
     const a = audio();
-    if (!a || !gr.tuner.on || !a.state.open || !a.state.monitoring) return;
-    gr.tuner.monitorWas = true;
-    try { a.monitor(false); } catch (e) { console.error('the tuner: mute', e); }
+    if (!a || !gr.tuner.on) return;
+    try { a.hold?.('tuner'); } catch (e) { console.error('the tuner: hold', e); }
   }
   function unmute() {
-    const a = audio(), was = gr.tuner.monitorWas;
-    gr.tuner.monitorWas = null;
-    if (a && was && !a.state.monitoring) { try { a.monitor(true); } catch (e) { console.error('the tuner: unmute', e); } }
-    return !!was;
+    const a = audio();
+    if (!a) return false;
+    const held = (a.state.monitorHolds || []).includes('tuner');
+    try { a.release?.('tuner'); } catch (e) { console.error('the tuner: release', e); }
+    return held && !!a.state.open && !!a.state.monitoring;
   }
   function tuner(on, { quiet = false, camera = true } = {}) {
     const want = on === undefined ? !gr.tuner.on : !!on;
@@ -166,12 +169,10 @@ export function mount(R) {
     if (want) {
       if (R.busy()) { if (!quiet) R.say(W.sayTunerWaits); return false; }
       gr.tuner.on = true;
-      gr.tuner.monitorWas = null;
       ensurePanel().resetDone();
       const a = audio();
-      // (the input first, then the mute: a mute before it opens would be the next input's decision, and kept)
-      if (a?.state.open) mute();
-      else if (a) openInput().then(() => mute());
+      mute();
+      if (a && !a.state.open) openInput();
       if (camera && gr.world === 'stage' && gr.cam !== 'tuner') R.camera.zoomTo('tuner');
       if (!quiet) R.say(W.sayTunerOn);
     } else {
@@ -189,16 +190,6 @@ export function mount(R) {
 
   /* ------------------------------------------------------------------------------------------- the input */
   let opening = null;
-  async function chooseDevice() {
-    const a = audio();
-    const list = await a.devices().catch(() => []);
-    if (a.state.deviceId && list.some((d) => d.id === a.state.deviceId)) return { device: a.state.deviceId, channel: a.state.channel || '1' };
-    // (an interface by its own id, not the browser's "Default - …" entry: monitoring starts by itself only for one you
-    // picked, ./input/audioin.js)
-    const kinds = list.map((d) => ({ d, k: inputKind(d.label, { isDefault: d.id === 'default' }) }));
-    const iface = kinds.find((x) => x.k === 'interface' && x.d.id !== 'default') || kinds.find((x) => x.k === 'interface');
-    return { device: iface ? iface.d.id : a.state.deviceId || '', channel: a.state.channel || '1' };
-  }
   function openInput({ device = null, channel = null } = {}) {
     const a = audio();
     if (!a) return Promise.resolve(false);
@@ -206,8 +197,10 @@ export function mount(R) {
     G.err = '';
     opening = (async () => {
       try {
-        const want = device != null ? { device, channel: channel || '1' } : await chooseDevice();
-        await a.open({ device: want.device, channel: want.channel, capture: true });
+        // (the input every opener picks, input/livepath.js chooseInput; a chip: that device, the channel that moves
+        // on the first strum found as ever)
+        if (device != null) await a.open({ device, channel: channel || '1', capture: true, role: 'instrument', listen: true });
+        else await a.openBest({ role: 'instrument', capture: true });
         if (gone) return false;
         G.openedAt = performance.now(); G.picked = a.state.channels < 2 ? 1 : null; G.byHand = false; G.holds = []; G.together = 0;
         G.devices = await a.devices().catch(() => []);
@@ -286,7 +279,7 @@ export function mount(R) {
   function paintSlate() {
     if (!G.step) { callout.hidden = true; return; }
     const a = audio(), open = !!a?.state.open, step = G.step, idx = STEPS.findIndex((s) => s.id === step);
-    const key = JSON.stringify([step, G.tour, open, a?.state.label, a?.state.channel, a?.state.channels, G.picked, G.err, gr.tuner.on, G.tuned, G.devices.length, opening ? 1 : 0, tuningId(), G.side]);
+    const key = JSON.stringify([step, G.tour, open, a?.state.label, a?.state.channel, a?.state.channels, !!a?.state.monitoring, G.picked, G.err, gr.tuner.on, G.tuned, G.devices.length, opening ? 1 : 0, tuningId(), G.side]);
     if (key === slateKey && callout.childNodes.length) return;
     slateKey = key;
     lastNext = null;
@@ -304,7 +297,7 @@ export function mount(R) {
         goNow = () => next();
         const gauge = h('div.gr-co-gauge');
         keep.add('level');
-        body = [h('h2', 'Plug in'), h('p.gr-co-from', plugSays({ open: true, label: a.state.label, input: +a.state.channel || null, channels: a.state.channels })), h('p', W.plugIn), gauge,
+        body = [h('h2', 'Plug in'), h('p.gr-co-from', plugSays({ open: true, label: a.state.label, input: +a.state.channel || null, channels: a.state.channels, monitoring: !!a.state.monitoring })), h('p', W.plugIn), gauge,
           h('p.gr-co-small', W.plugKnob), G.devices.length > 1 ? pick : null,
           h('div.gr-co-acts', btn('Next: tune', () => next(), { go: true, kbd: 'Enter', cls: 'gr-co-next' }), skipBtn())];
         // (the meter, kept across paints: it listens over seconds)
@@ -516,11 +509,8 @@ export function mount(R) {
       const a = audio(), input = !!a?.state.open;
       // (the jack is lit while the cable's in: the input open)
       if (ring.hidden === input) ring.hidden = !input;
-      // the tuner: muted while it's on (an input reopened turns monitoring back on: off again), off for a take
-      if (gr.tuner.on) {
-        if (R.busy()) tuner(false, { quiet: true });
-        else if (a?.state.open && a.state.monitoring) mute();
-      }
+      // the tuner: off for a take (its hold goes with it)
+      if (gr.tuner.on && R.busy()) tuner(false, { quiet: true });
       // (the song's tuning undone or changed elsewhere: the tuner follows)
       if (panel && now - tunAt > 500) { tunAt = now; if (panel.tuningId !== tuningId()) panel.setTuning(tuningId()); }
       const rd = panel ? panel.frame(now, gr.tuner.on && input) : null;

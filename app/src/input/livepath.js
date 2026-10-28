@@ -29,6 +29,8 @@
 // Roles: 'instrument' (the guitar room, a take there, its soundcheck: a guitar through an interface is expected) or ''
 // (anywhere else).
 
+import { healthOf, assure } from '../devices/lifecycle.js';
+
 /** An input is: 'interface' | 'mic' | 'virtual' | '' (audioin.js inputKind). */
 
 /**
@@ -177,4 +179,249 @@ export function pathVerdict(s = {}) {
   if (stripDb >= HEALTH.playing && s.dryLike === true && ins.some((x) => x.on && x.amp)) return V('dry', 'rebuild', 'dry');
   if (s.audible === false) return V('muted', 'none', 'muted');
   return V('ok');
+}
+
+/* ---------------------------------------------------------------------------------------------- the check, running */
+// createLivePath(app, audio) -> app.input.path [built by the path stream: docs/research/AMP-PATH.md §7]. Live only, and
+// it only listens: an analyser off the input's pick (audio.tap), the monitored strip's input and its chain's end
+// (engine.chainTaps), plus what each wired insert says about itself (devices/lifecycle.js healthOf). Nothing it adds
+// changes what is heard; a repair does (audio.rewire, lifecycle assure, engine.rebuild), and says so once per episode.
+//   path.status()          the last verdict: { state, repair, insert, key, line, at, levels: { in, strip, chain }, tries }
+//   path.check({ repair })  measure now (and repair what the verdict asks for) -> Promise<status>
+//   path.wake()            the audio context resumed (any key or click in a room calls it)
+//   path.speaker(fn | null)  where its lines go: fn(line, { key }) (the guitar room's talkback, R.say by the house),
+//                          else a toast. Device lines (moved, gone, back, processed) go the same way, from audioin.js
+//   path.speak(line, o)    say a line there now
+// An episode starts at the first verdict that isn't ok and ends at ok (or the input closing, a new input, a new target).
+// Within one: a device that reports itself wrong is snapped (assure) once, then the chain rebuilt; the monitor
+// rewired once, then the chain rebuilt; rebuilds up to HEALTH.tries, HEALTH.backoff apart, then LINES.gaveUp and no more.
+// A state with a line but no repair (off, the mic, suspended, the engine, muted) is said only to a room listening
+// (path.speaker), and off or muted only while something is coming in: it's news when you play and hear nothing.
+
+const AMP_RE = /^amp\.|^core\.stack$/;
+const peakDb = (b) => { let pk = 0; for (let i = 0; i < b.length; i++) { const v = b[i] < 0 ? -b[i] : b[i]; if (v > pk) pk = v; } return pk > 1e-9 ? 20 * Math.log10(pk) : -Infinity; };
+
+/**
+ * Is y a delayed, scaled copy of x? The best normalised cross-correlation over lags up to 20 ms (and a few ms the
+ * other way: two analysers read one after the other can be a render quantum apart), against HEALTH.dryCorr. Pure.
+ * @param {Float32Array} x  @param {Float32Array} y  @param {number} sr
+ * @returns {{ dry: boolean, corr: number, lag: number }}
+ */
+export function dryLike(x, y, sr) {
+  const n = Math.min(x.length, y.length), maxL = Math.min(Math.round(0.02 * sr), n >> 1), neg = Math.min(256, n >> 2);
+  let best = 0, at = 0;
+  for (let L = -neg; L <= maxL; L++) {
+    let xy = 0, xx = 0, yy = 0;
+    const a = Math.max(0, L), b = Math.min(n, n + L);
+    for (let i = a; i < b; i += 2) { const u = x[i - L], v = y[i]; xy += u * v; xx += u * u; yy += v * v; }
+    if (xx < 1e-12 || yy < 1e-12) continue;
+    const c = Math.abs(xy) / Math.sqrt(xx * yy);
+    if (c > best) { best = c; at = L; }
+    if (best >= HEALTH.dryCorr) break;
+  }
+  return { dry: best >= HEALTH.dryCorr, corr: best, lag: at };
+}
+
+const LINE_ONLY = new Set(['off', 'offMic', 'suspended', 'noEngine', 'muted']);
+
+/**
+ * @param {any} app  { engine, store, ui, input, devices }
+ * @param {any} audio  input/audioin.js's
+ */
+export function createLivePath(app, audio) {
+  const engine = app.engine, store = app.store, input = app.input;
+  const blank = () => ({ state: 'closed', repair: 'none', insert: null, key: '', line: '', at: 0, levels: { in: -Infinity, strip: -Infinity, chain: -Infinity }, tries: 0 });
+  let status = blank();
+  let speaker = null, ep = null, due = 0, dueT = 0, iv = 0, checking = null, rebuilding = 0;
+  // the analysers: { c, inAn, offIn, stripAn, chainAn, from: { input, chain } }
+  const T = { c: null, inAn: null, offIn: null, stripAn: null, chainAn: null, from: null, bufs: null };
+  const getDevice = (id) => { try { return app.devices?.getDevice?.(id) || null; } catch { return null; } };
+
+  function speak(line, o = {}) {
+    if (!line) return;
+    if (speaker) { try { speaker(line, o); return; } catch (e) { console.warn('live path: speaker', e); } }
+    app.ui?.toast?.(line, o.kind ? { kind: o.kind } : undefined);
+  }
+  function sayOnce(key, line) {
+    if (!line || !ep || ep.said.has(key)) return;
+    ep.said.add(key);
+    speak(line, { key });
+  }
+
+  // analysers on the engine's context, hooked to the strip monitoring plays through now
+  function taps(trackId) {
+    const c = engine.ctx;
+    if (!c) return null;
+    if (T.c !== c) {
+      if (T.offIn) { try { T.offIn(); } catch { /* gone */ } }
+      const A = () => { const a = c.createAnalyser(); a.fftSize = 8192; a.smoothingTimeConstant = 0; return a; };
+      Object.assign(T, { c, inAn: A(), stripAn: A(), chainAn: A(), from: null, bufs: [0, 1, 2].map(() => new Float32Array(8192)) });
+      T.offIn = audio.tap(T.inAn);
+    }
+    const ct = trackId && engine.chainTaps ? engine.chainTaps(trackId) : null;
+    if (!ct || ct.input?.context !== c) { unhook(); return { ct: null }; }
+    if (!T.from || T.from.input !== ct.input || T.from.chain !== ct.chain) {
+      unhook();
+      try { ct.input.connect(T.stripAn); ct.chain.connect(T.chainAn); T.from = { input: ct.input, chain: ct.chain }; } catch { T.from = null; }
+    }
+    return { ct };
+  }
+  function unhook() {
+    if (!T.from) return;
+    try { T.from.input.disconnect(T.stripAn); } catch { /* gone */ }
+    try { T.from.chain.disconnect(T.chainAn); } catch { /* gone */ }
+    T.from = null;
+  }
+
+  // one measurement, or null while the path is changing under it (a build, a dip, the killswitch's renew): try again
+  function measure() {
+    const st = audio.state, c = audio.ctx || engine.ctx;
+    const own = !!audio.ctx && !!engine.ctx && audio.ctx !== engine.ctx;
+    const base = { open: !!st.open, ctx: c ? c.state : 'suspended', engine: !!engine.ctx && !own && typeof engine.inputNode === 'function', monitoring: !!st.monitoring, monitorOff: st.monitorOff || '', holds: st.monitorHolds || [] };
+    if (!base.open || base.ctx !== 'running' || !base.engine || !base.monitoring || base.holds.length) return { snap: { ...base, track: null }, extra: null };
+    const t = audio.monitorTrack ? audio.monitorTrack() : null;
+    if (!t) return { snap: { ...base, track: null }, extra: null };
+    if (engine.silencing || rebuilding) return null;
+    const tp = taps(t.id);
+    if (!tp || !tp.ct || tp.ct.settling) return null;
+    const [bi, bs, bc] = T.bufs;
+    T.chainAn.getFloatTimeDomainData(bc);
+    T.stripAn.getFloatTimeDomainData(bs);
+    T.inAn.getFloatTimeDomainData(bi);
+    const levels = { in: peakDb(bi), strip: peakDb(bs), chain: peakDb(bc) };
+    const inserts = [];
+    for (const x of t.inserts || []) {
+      const inst = engine.instance ? engine.instance(t.id, x.id) : null;
+      if (!inst) return null;   // (not built yet: a reconcile on its way)
+      const def = getDevice(x.device);
+      let health = healthOf(inst);
+      // (a held device is the person's choice, and a device that isn't defined can't be built by trying again: the
+      // engine reports those; neither is the path's to repair)
+      if (inst.held || (inst.fallback && !def)) health = { ...health, ok: true, failed: '', known: false };
+      inserts.push({ id: x.id, device: x.device, name: def?.name || '', on: x.on !== false, amp: AMP_RE.test(x.device) || def?.cat === 'amp', health, inst });
+    }
+    const p = store.get(), anySolo = (p.tracks || []).some((x) => x.solo);
+    const audible = !t.mute && (!anySolo || !!t.solo);
+    let dry = null;
+    if (levels.strip >= HEALTH.playing && inserts.some((x) => x.on && x.amp)) dry = dryLike(bs, bc, T.c.sampleRate);
+    return { snap: { ...base, track: { id: t.id, name: t.name || '' }, audible, levels, inserts, dryLike: dry ? dry.dry : null }, extra: { dry } };
+  }
+
+  function setStatus(v, snap) {
+    const was = status;
+    const lv = (snap && snap.levels) || { in: -Infinity, strip: -Infinity, chain: -Infinity };
+    status = { state: v.state, repair: v.repair, insert: v.insert, key: v.key, line: v.line, at: Date.now(), levels: { in: lv.in ?? -Infinity, strip: lv.strip ?? -Infinity, chain: lv.chain ?? -Infinity }, tries: ep ? ep.tries : 0 };
+    audio.state.path = status;
+    if (was.state !== status.state || was.tries !== status.tries) input.emit('path', status);
+  }
+
+  async function act(v, snap) {
+    const st = v.state;
+    if (st === 'ok' || st === 'closed') { ep = null; return; }
+    if (st === 'quiet' || st === 'held' || st === 'waiting') return;
+    if (!ep) ep = { t0: Date.now(), said: new Set(), assured: new Set(), rewired: 0, tries: 0, last: 0, gaveUp: false };
+    if (v.repair === 'none') {
+      if (!v.key || !speaker || !LINE_ONLY.has(v.key)) return;
+      if ((v.key === 'off' || v.key === 'offMic') && audio.state.monitorBy === 'hand') return;
+      if ((v.key === 'off' || v.key === 'offMic' || v.key === 'muted') && !(snap.levels && snap.levels.in >= HEALTH.quiet)) return;
+      sayOnce(v.key, v.line);
+      return;
+    }
+    if (v.repair === 'resume') {
+      if (await audio.wake()) { later(HEALTH.after); return; }
+      if (speaker) sayOnce(v.key, v.line);
+      return;
+    }
+    if (v.repair === 'rewire' && ep.rewired < 1) {
+      ep.rewired++;
+      audio.rewire();
+      sayOnce(v.key, v.line);
+      later(HEALTH.after);
+      return;
+    }
+    if (v.repair === 'assure' && v.insert && !ep.assured.has(v.insert)) {
+      ep.assured.add(v.insert);
+      const x = (snap.inserts || []).find((i) => i.id === v.insert);
+      if (x && x.inst) assure(x.inst);
+      sayOnce(v.key, v.line);
+      later(HEALTH.settle + HEALTH.after);
+      return;
+    }
+    // rebuild (or a rewire or a snap that didn't take): the strip renewed, HEALTH.backoff apart, HEALTH.tries in all
+    if (ep.gaveUp) return;
+    if (ep.tries >= HEALTH.tries) { ep.gaveUp = true; sayOnce('gaveUp', LINES.gaveUp); setStatus({ ...v }, snap); return; }
+    const wait = ep.last ? ep.last + HEALTH.backoff - Date.now() : 0;
+    if (wait > 0) { later(wait); return; }
+    ep.tries++; ep.last = Date.now();
+    sayOnce(v.key, v.line);
+    const track = snap.track && snap.track.id;
+    if (!track || !engine.rebuild) return;
+    rebuilding++;
+    try { await engine.rebuild(track); } catch (e) { console.warn('live path: rebuild', e); } finally { rebuilding--; }
+    setStatus({ ...v }, snap);
+    later(HEALTH.after + HEALTH.settle);
+  }
+
+  async function run(repair) {
+    const m = measure();
+    if (!m) { later(HEALTH.after); return status; }
+    const v = pathVerdict(m.snap);
+    setStatus(v, m.snap);
+    if (repair) await act(v, m.snap);
+    return status;
+  }
+  function check({ repair = true } = {}) {
+    if (checking) return checking;
+    checking = (async () => { try { return await run(repair); } catch (e) { console.warn('live path: check', e); return status; } finally { checking = null; } })();
+    return checking;
+  }
+  // a check `ms` from now (the sooner of two asked for)
+  function later(ms = HEALTH.after) {
+    const at = Date.now() + ms;
+    if (dueT && due <= at) return;
+    clearTimeout(dueT);
+    due = at;
+    dueT = setTimeout(() => { dueT = 0; due = 0; check(); }, ms);
+    ensureTicking();
+  }
+  // every HEALTH.every while monitoring is on and something is coming in
+  function ensureTicking() {
+    if (iv || typeof setInterval !== 'function') return;
+    iv = setInterval(() => {
+      const st = audio.state;
+      if (!st.open) { clearInterval(iv); iv = 0; return; }
+      if (!st.monitoring || checking || dueT || !T.inAn || !engine.ctx) return;
+      T.inAn.getFloatTimeDomainData(T.bufs[0]);
+      if (peakDb(T.bufs[0]) >= HEALTH.quiet) check();
+    }, HEALTH.every);
+  }
+
+  // what can change the path: an open, a decision or a hold, a new target, the engine rebuilding the monitored strip, the
+  // context's state, the killswitch done
+  input.on('pathchange', (why) => {
+    if (why === 'open' || why === 'target' || why === 'close') ep = null;
+    if (why === 'close') { setStatus({ state: 'closed', repair: 'none', insert: null, key: '', line: '' }, null); return; }
+    later(HEALTH.after);
+  });
+  input.on('monitor', () => later(HEALTH.after));
+  try {
+    engine.on('graph', (e) => { const t = audio.monitorTrack ? audio.monitorTrack() : null; if (t && e && e.track === t.id && !rebuilding) later(HEALTH.after); });
+    engine.on('transport', (e) => { if (e && e.why === 'context' && audio.state.open) later(HEALTH.after); });
+    engine.on('silence', () => {
+      if (!audio.state.open) return;
+      const t0 = Date.now();
+      const wait = () => { if (engine.silencing && Date.now() - t0 < 5000) setTimeout(wait, 50); else later(HEALTH.after); };
+      setTimeout(wait, 50);
+    });
+  } catch { /* an engine without events */ }
+
+  return {
+    status: () => status,
+    check,
+    wake: () => audio.wake(),
+    speaker(fn) { speaker = typeof fn === 'function' ? fn : null; },
+    speak,
+    // (checks: the episode as it stands)
+    get episode() { return ep ? { tries: ep.tries, said: [...ep.said], gaveUp: ep.gaveUp, assured: [...ep.assured], rewired: ep.rewired } : null; },
+  };
 }

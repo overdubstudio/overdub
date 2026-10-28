@@ -69,7 +69,14 @@
 // The actions (the key table's, ./keys.js, and what app.liveRoom.press(id) takes), by owner:
 //   here     'space' (by where you are: stop a take or the song, hear the take in review, else the drummer), 'back'
 //            (Esc: BACK order, then the camera), 'glass' (⌘G: through to the control room), 'cam:<target>' (stage,
-//            head, cab, kit, board, tuner, tape), 'shop' (through the door, and back)
+//            head, cab, kit, board, tuner, tape), 'shop' (through the door, and back), 'monitor' (M: hear yourself
+//            through the rig, or not: input/audioin.js monitor, your decision for that input)
+//
+// The live path while the room is up (docs/research/AMP-PATH.md §8): the input's role is 'instrument' (audio.role), the
+// monitor plays through monitorVia(() => the side a take records (gr.monitorSide) || Guitar L), asked at every sync so a
+// song loaded or a track gone can't leave it pointing at nothing; any key or click wakes the audio context (audio.wake);
+// the path's check speaks through the talkback (app.input.path.speaker: R.say by the house). R.remonitor() asks the
+// monitor to follow gr.monitorSide now.
 //   room     'stomp:<1-8>', 'slot:<n>' (focus a piece of gear), 'pedal:add' (the + pedal: the shop's case)
 //   shop     'shop:wall', 'shop:case', 'shop:head', 'shop:cab', 'cat:prev', 'cat:next', 'save' (Save to rack: a button; ⌘S stays the studio's),
 //            'rack' (the rack of saved stacks)
@@ -207,9 +214,18 @@ function mountGuitar(el, ctx) {
   const rig = createRigBinding({ store, getDevice, busy });
   const offRig = rig.on('change', (r) => emit('rig', r));
   // (monitoring plays through Guitar L while the room is up, as the stage did: a take on the other side moves it, the
-  // takes stream's call; released when the screen goes)
-  const monitorTo = () => { const t = rigTracks(store.get())[0] || null; try { app.input?.audio?.monitorVia?.(t); } catch (e) { console.error('guitar room: monitorVia', e); } };
+  // takes stream's call, gr.monitorSide; asked at every sync; released when the screen goes)
+  const audio = () => app.input?.audio || null;
+  const monitorVia = () => gr.monitorSide || rigTracks(store.get())[0] || null;
+  const monitorTo = () => { try { audio()?.monitorVia?.(monitorVia); } catch (e) { console.error('guitar room: monitorVia', e); } };
+  try { audio()?.role?.('instrument'); } catch (e) { console.error('guitar room: the input', e); }
   monitorTo();
+  // (the path's lines in the talkback, unsigned: the house's)
+  try { app.input?.path?.speaker?.((line) => app.liveRoom?.say?.(line, { by: 'overdub' })); } catch (e) { console.error('guitar room: the path', e); }
+  // any key or click in the room wakes the audio context (a browser may have paused it)
+  const wake = () => { const a = audio(); if (a?.wake && a.ctx && a.ctx.state !== 'running') a.wake(); };
+  root.addEventListener('pointerdown', wake, true);
+  window.addEventListener('keydown', wake, true);
 
   /* ------------------------------------------------------------------------------------------- the router */
   const parts = { room: null, shop: null, drummer: null, start: null, takes: null, tape: null };
@@ -243,6 +259,7 @@ function mountGuitar(el, ctx) {
     else if (id === 'back') r = back();
     else if (id === 'glass') r = busy() ? { ok: false, error: 'The control room is through the glass once the take is in.' } : (app.liveRoom.close(), { ok: true });
     else if (id === 'shop') r = { ok: gr.world === 'shop' ? camera.zoomTo('stage') : camera.zoomTo('wall') };
+    else if (id === 'monitor') r = toggleMonitor();
     else if (typeof id === 'string' && id.startsWith('cam:')) {
       const t = id.slice(4);
       r = gr.world === 'stage' && STAGE_CAMS.includes(t) ? { ok: camera.zoomTo(t) } : { ok: false, error: 'The camera can’t go there from here.' };
@@ -254,12 +271,23 @@ function mountGuitar(el, ctx) {
     return r;
   }
 
+  // M: monitoring on or off, by hand, for the input (opened first if it isn't: the room's way, openBest)
+  function toggleMonitor() {
+    const a = audio();
+    if (!a) return { ok: false, error: 'There’s no input here.' };
+    const on = a.monitor(!a.state.monitoring);
+    if (on && !a.state.open) a.openBest?.({ role: 'instrument', capture: true })?.catch?.(() => {});
+    emit('monitor', { on });
+    return { ok: true };
+  }
+
   /* ------------------------------------------------------------------------------------------- R, and the streams */
   const R = {
     app, ui, store, deck, lr: ctx, getDevice, gr, L, gprefs,
     el: { root, view, stage, shop: shopEl, panels, sheets, drawer, over, callout, strip, tools },
     camera, rig, panel, sheet, overlay, drawer: drawerOpen,
     say: (text, o = {}) => app.liveRoom?.say?.(text, o),
+    remonitor: monitorTo,
     line: (id, vars) => ctx.say(id, vars),
     press,
     run: (next) => { if (next !== undefined) L.run = next; return L.run; },
@@ -281,7 +309,7 @@ function mountGuitar(el, ctx) {
     press(id) {
       // (app.liveRoom.press: the room's own ids first; 'glass' falls through to the live room when the room isn't up)
       const r = press(id);
-      return r && (r.ok || ownerOf(id) || /^(space|back|shop|cam:)/.test(id)) ? r : false;
+      return r && (r.ok || ownerOf(id) || /^(space|back|shop|monitor|cam:)/.test(id)) ? r : false;
     },
     where() {
       // (the camera's 'gs' target is Getting started's, ./start.js: the header reads it as that)
@@ -300,6 +328,10 @@ function mountGuitar(el, ctx) {
       for (const name of [...ORDER].reverse()) { try { views[name]?.unmount?.(); } catch (e) { console.error('guitar room unmount', name, e); } }
       offCam(); offRig(); rig.dispose(); camera.dispose();
       try { app.input?.audio?.monitorVia?.(null); } catch { /* fine */ }
+      try { app.input?.audio?.role?.(''); } catch { /* fine */ }
+      try { app.input?.path?.speaker?.(null); } catch { /* fine */ }
+      root.removeEventListener('pointerdown', wake, true);
+      window.removeEventListener('keydown', wake, true);
       tools.replaceChildren();
       fns.clear();
       delete root.__gr;

@@ -322,6 +322,8 @@ export class Strip {
       return slot;
     });
     await Promise.all(tasks);
+    // (a fresh build: the old instrument all the way down before the new chain hears what comes in)
+    if (fresh && this.live && this.hushEnd > c.currentTime) await new Promise((res) => afterAudio(c, this.hushEnd, res));
     if (this.disposed) { for (const s of next) if (!have.has(s.id) || have.get(s.id) !== s) safeDispose(s.inst); if (newInstr) safeDispose(newInstr.inst); return; }
     // (renewed while this one built: what it made is thrown away and the next pass builds anew)
     if (this.fresh && !fresh) { for (const s of next) if (!have.has(s.id) || have.get(s.id) !== s) safeDispose(s.inst); if (newInstr) safeDispose(newInstr.inst); this.dirty = true; return; }
@@ -390,11 +392,14 @@ export class Strip {
     await this.sync(this.spec, { fresh: true });
   }
   // what plays now, down at once (over a dip): the chain's tail and the instrument's gain. The next wiring brings it up
+  // (this.hushEnd: the audio time it's all the way down, -70 dB: a fresh chain isn't wired before then, or it would take
+  // the old instrument's last moment into a new reverb's tail)
   hush() {
     if (!this.live) return;
-    const c = this.c;
-    if (this.tail) { if (c.state === 'running') ramp(c, this.tail.gain, 0, DIP); else setNow(c, this.tail.gain, 0); }
-    if (this.instr) { try { this.instr.inst.allOff(soon(c)); } catch { /* ok */ } if (c.state === 'running') ramp(c, this.instr.gain.gain, 0, DIP); else setNow(c, this.instr.gain.gain, 0); }
+    const c = this.c, run = c.state === 'running';
+    if (this.tail) { if (run) ramp(c, this.tail.gain, 0, DIP); else setNow(c, this.tail.gain, 0); }
+    if (this.instr) { try { this.instr.inst.allOff(soon(c)); } catch { /* ok */ } if (run) ramp(c, this.instr.gain.gain, 0, DIP); else setNow(c, this.instr.gain.gain, 0); }
+    this.hushEnd = Math.max(this.hushEnd || 0, run ? soon(c) + 2 * DIP : 0);
   }
   // After a chain is wired and its fades are over (`fade`: the audio time they end), each device newly wired is asked
   // to be where it was asked to be (devices/lifecycle.js assure): a bypass a browser dropped is snapped to its target.
@@ -483,7 +488,10 @@ export class Strip {
     const nu = this.path(next, 0);
     this.fx = next; this.links = nu.links; this.tail = nu.tail;
     const t = soon(c), end = t + XFADE;
-    try { const g = old.tail.gain; g.cancelScheduledValues(0); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(0, end); g.setValueAtTime(0, end + 0.001); } catch { /* closed */ }
+    // (the old tail from wherever it is at t: only what's scheduled after t is cancelled, never the events before it, so
+    // a tail a renew hushed stays down, not back at its intrinsic 1, while the new chain comes up; setTargetAtTime starts
+    // from where the param is: util.js ramp)
+    try { const g = old.tail.gain; g.cancelScheduledValues(t); g.setTargetAtTime(0, t, XFADE / 6); g.setValueAtTime(0, end + 0.001); } catch { /* closed */ }
     try { const g = nu.tail.gain; g.setValueAtTime(0, t); g.linearRampToValueAtTime(1, end); g.setValueAtTime(1, end + 0.001); } catch { /* closed */ }
     return new Promise((resolve) => afterAudio(c, end + 0.01, () => { unpath(old.links); resolve(end); }));
   }

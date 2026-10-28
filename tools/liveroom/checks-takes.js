@@ -137,7 +137,8 @@ export async function run(T, ctx) {
       deck.take = (a = {}) => { window.__tk.takes.push(JSON.parse(JSON.stringify(a))); return take(a); };
       deck.stop = (a = {}) => { window.__tk.stops.push(JSON.parse(JSON.stringify(a))); return stop(a); };
       const mv = o.input.audio.monitorVia?.bind(o.input.audio);
-      if (mv) o.input.audio.monitorVia = (t) => { window.__tk.monitor.push(t); return mv(t); };
+      // (the room names its target by a resolver, asked at every sync: what it resolves to when it's set is recorded)
+      if (mv) o.input.audio.monitorVia = (t) => { window.__tk.monitor.push(typeof t === 'function' ? t() : t); return mv(t); };
       o.liveRoom.open({ screen: 'guitar' });
       await until(() => document.querySelector('.gr')?.__gr?.parts?.takes, 10000);
       const R = document.querySelector('.gr').__gr;

@@ -416,8 +416,10 @@ waits for each kernel to acknowledge what was posted to it (<code>instance.sync(
 <code>startRendering()</code> land on their frames. (Don't schedule your own <code>suspend</code> at exactly 0 on such a context.)</li>
 <li><strong>Params</strong> are posted whole (<code>set(params)</code>, defaults merged), clamped to their range, and smoothed per block with a
 ~10 ms one-pole (geometric for <code>curve: 'log'</code>); switches and stepped params snap; <code>set(params, { first: true })</code> jumps.</li>
-<li><strong>Bypass</strong> (<code>setOn(false)</code>) crossfades wet to dry over ~10 ms in Web Audio gains; a <code>trails</code> device keeps its wet path
-open so the tail rings out. A bypassed non-trails kernel is put to sleep (skipped) once its tail has had time to die.</li>
+<li><strong>Bypass</strong> (<code>setOn(false)</code>) crossfades wet to dry over ~10 ms in Web Audio gains, live along the graph devices' raised
+cosine (<code>cosineRamp</code>, above), offline as the exponential it always was; a <code>trails</code> device keeps its wet path open so
+the tail rings out. A kernel effect has the graph devices' <code>health()</code> and <code>assure()</code> too, about those gains, so the
+live path's check catches a stomp the browser dropped on it the same way. A bypassed non-trails kernel is put to sleep (skipped) once its tail has had time to die.</li>
 <li><strong>Transport</strong>: the host posts <code>{ bpm, playing, beat }</code> from the engine's clock every 50 ms and the worklet extrapolates
 per block, so <code>t.beat</code> is right at every block start. Offline it is the project tempo from beat 0, playing.</li>
 <li><strong>Instance extras</strong> beyond the contract: <code>errors</code>, <code>faulted</code>, <code>version</code>, <code>on('error' | 'log' | 'ready', fn)</code>,
@@ -733,7 +735,8 @@ crest from 15.4 to 12.6 dB), Room, Smash, Glue.</li>
 <p><code>tools/drumbus-test.js</code> holds it to this; the golden scene <code>fx:core.drumbus</code> pins its render.</p>
 <h2 id="half-stack-iso-cab-and-y-cable-corestack-corecab-corebassrig-a-guitar-amp-that-renders"><a class="h-link" href="#half-stack-iso-cab-and-y-cable-corestack-corecab-corebassrig-a-guitar-amp-that-renders">Half Stack, Iso Cab and Y Cable (core.stack, core.cab, core.bassrig): a guitar amp that renders</a></h2>
 <p>A high-gain head into a measured 4x12, as a kernel. The canonical render, the agent's render_and_measure and the
-studio hear the same amp, within the house's -90 dB. (The Guitar Studio's graph amps render clean in Node.) The devices
+studio hear the same amp, within the house's -90 dB. (So do the Guitar Studio's amps on the kernel engine, below; its
+graph amps render clean in Node.) The devices
 are <code>app/src/devices/builtin/stack.js</code>, <code>cab.js</code> and <code>bassrig.js</code>. The DSP they share is <code>amp-lib.js</code>: kernel text,
 not <code>dsp</code> names.</p>
 <ul>
@@ -756,6 +759,11 @@ latency.</li>
 a driven top through a guitar cab. Presets: Modern, Grind, Clean.</li>
 <li>The cab IRs are kernel data (<code>data: { cabs }</code>, 39 KB). Until they arrive, or on a server without them, every IR
 choice plays the Filter 4x12 at the same level, and the card says so.</li>
+<li><strong>The Guitar Studio's amps on the same engine.</strong> <code>amp-voiced.js</code> generalises Half Stack's chain into voicings
+(<code>app/src/devices/guitar/voicings.js</code>): a circuit's stages in order, its tone stack solved from its netlist, its
+power amp and sag, at 2x or 4x. Each keeps its <code>amp.&lt;id&gt;</code> id and params; its cab and mics are the graph amps' (the
+measured IRs, the designed cabs, the mic network), worked out number for number as before. Sea Glass, Shell Shock
+and Kraken run on it so far; the rest are graph amps until theirs is written. They aren't exported as device files.</li>
 </ul>
 <h2 id="echo-chamber-corerooms-measured-rooms"><a class="h-link" href="#echo-chamber-corerooms-measured-rooms">Echo Chamber (<code>core.rooms</code>): measured rooms</a></h2>
 <p>A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen

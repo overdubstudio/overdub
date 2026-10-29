@@ -17,9 +17,10 @@
 //   MUTE      OFF, SOFT (notes under velocity 0.35 are palm-muted: play harder to open them) or ALL (palm-muted).
 //   Letting go of a key damps the string (a finger lifting off the fret). The pitch bend wheel bends the string and
 //   the mod wheel adds finger vibrato (t.bend and t.mod: docs/DEVICES.md, "Expression").
-// The DI is mono, in the centre, at house level (about -16 LUFS on the test phrase). The amps are Web Audio graph
-// devices, so the canonical Node render (tools/render.js) bypasses them and plays this DI clean: a song with an amped
-// guitar renders its DI there, and sounds amped in the studio and its browser renders.
+// The DI is mono, in the centre, at house level (about -16 LUFS on the test phrase). Most of the amps are Web Audio
+// graph devices, so the canonical Node render (tools/render.js) bypasses them and plays this DI clean: a song with one
+// renders its DI there, and sounds amped in the studio and its browser renders. The amps on the kernel engine
+// (devices/guitar/voicings.js) render the same everywhere.
 import { defineDevice } from '../registry.js';
 import { kernel } from './lib.js';
 

@@ -103,7 +103,7 @@ export const cabTables = () => {
 // ampVoice(id, voicing?): the V its kernel reads (any amp's, with a voicing given: tools/amp-fit.js tries them)
 export function ampVoice(id, voicing = AMP_VOICINGS[id]) {
   const A = PLUG_AMPS[id];
-  return { ...voicing, cab: A.cab, box: PLUG_AMP_BOX[id] || [1, 12, 'closed'], spec: PLUG_AMP_SPEC[id] || PLUG_AMP_SPEC.punk, irE: AMP_IR_ENERGY[id], irLv: PLUG_IR_LV[id] || 0 };
+  return { ...voicing, cab: A.cab, box: PLUG_AMP_BOX[id] || [1, 12, 'closed'], spec: PLUG_AMP_SPEC[id] || PLUG_AMP_SPEC.punk, irE: AMP_IR_ENERGY[id], irLv: voicing.irLv != null ? voicing.irLv : PLUG_IR_LV[id] || 0 };
 }
 export function ampKernel(id, voicing) {
   const V = ampVoice(id, voicing);

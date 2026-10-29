@@ -349,8 +349,10 @@ a worklet that fails once, a sabotaged dry gain and 50 amp swaps.
   `startRendering()` land on their frames. (Don't schedule your own `suspend` at exactly 0 on such a context.)
 - **Params** are posted whole (`set(params)`, defaults merged), clamped to their range, and smoothed per block with a
   ~10 ms one-pole (geometric for `curve: 'log'`); switches and stepped params snap; `set(params, { first: true })` jumps.
-- **Bypass** (`setOn(false)`) crossfades wet to dry over ~10 ms in Web Audio gains; a `trails` device keeps its wet path
-  open so the tail rings out. A bypassed non-trails kernel is put to sleep (skipped) once its tail has had time to die.
+- **Bypass** (`setOn(false)`) crossfades wet to dry over ~10 ms in Web Audio gains, live along the graph devices' raised
+  cosine (`cosineRamp`, above), offline as the exponential it always was; a `trails` device keeps its wet path open so
+  the tail rings out. A kernel effect has the graph devices' `health()` and `assure()` too, about those gains, so the
+  live path's check catches a stomp the browser dropped on it the same way. A bypassed non-trails kernel is put to sleep (skipped) once its tail has had time to die.
 - **Transport**: the host posts `{ bpm, playing, beat }` from the engine's clock every 50 ms and the worklet extrapolates
   per block, so `t.beat` is right at every block start. Offline it is the project tempo from beat 0, playing.
 - **Instance extras** beyond the contract: `errors`, `faulted`, `version`, `on('error' | 'log' | 'ready', fn)`,
@@ -696,7 +698,8 @@ What a record's drum bus does, as one insert on the drum track (the studio has n
 ## Half Stack, Iso Cab and Y Cable (core.stack, core.cab, core.bassrig): a guitar amp that renders
 
 A high-gain head into a measured 4x12, as a kernel. The canonical render, the agent's render_and_measure and the
-studio hear the same amp, within the house's -90 dB. (The Guitar Studio's graph amps render clean in Node.) The devices
+studio hear the same amp, within the house's -90 dB. (So do the Guitar Studio's amps on the kernel engine, below; its
+graph amps render clean in Node.) The devices
 are `app/src/devices/builtin/stack.js`, `cab.js` and `bassrig.js`. The DSP they share is `amp-lib.js`: kernel text,
 not `dsp` names.
 - **Half Stack**:
@@ -716,6 +719,11 @@ not `dsp` names.
   a driven top through a guitar cab. Presets: Modern, Grind, Clean.
 - The cab IRs are kernel data (`data: { cabs }`, 39 KB). Until they arrive, or on a server without them, every IR
   choice plays the Filter 4x12 at the same level, and the card says so.
+- **The Guitar Studio's amps on the same engine.** `amp-voiced.js` generalises Half Stack's chain into voicings
+  (`app/src/devices/guitar/voicings.js`): a circuit's stages in order, its tone stack solved from its netlist, its
+  power amp and sag, at 2x or 4x. Each keeps its `amp.<id>` id and params; its cab and mics are the graph amps' (the
+  measured IRs, the designed cabs, the mic network), worked out number for number as before. Sea Glass, Shell Shock
+  and Kraken run on it so far; the rest are graph amps until theirs is written. They aren't exported as device files.
 
 ## Echo Chamber (`core.rooms`): measured rooms
 

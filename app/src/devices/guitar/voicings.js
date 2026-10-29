@@ -6,8 +6,11 @@
 // speaker's resonance) were fitted within physical limits to what the amp sounded like on the graph engine
 // (tools/amp-fit.js, against tools/fixtures/amp-voices.json), and nothing else: no EQ that isn't in the circuit. What
 // each one is (and what's left of the old voicing) is in the comment above it. amp-voiced.js says what each field is.
-// trim: dB, the level so the DI strum through the amp at its defaults reads -14 LUFS the way tools/guitar-test.js reads
-// it (clawd-o-matic's loudness after the band's soft clip), as the graph amps did.
+// trim: dB, the level so the DI strum through the amp at its defaults, on its default cab, is as loud as the graph amp
+// was (clawd-o-matic's loudness, tools/amp-fit.js trimFor; tools/guitar-test.js 4 reads every amp at -14 LUFS).
+// irLv: dB, the amp's measured nudge on the measured cabs (the gear's PLUG_IR_LV, for the graph amp's voice), when its
+// new voice needs its own: the measured cabs' trims weigh each IR by the graph amp's spectrum (PLUG_AMP_SPEC), and an
+// amp that sounds different reads a little louder or quieter there (tools/guitar-test.js 4c holds it to 0.5 LU).
 
 // 10 log10 of each measured IR's energy (CAB_IDS' order), weighted as the gear's plugIrTrim weighs it for each amp:
 // what an amp's trim on a measured cab is worked out from in the kernel (the bank is the same bytes: amp-lib.js
@@ -42,4 +45,40 @@ export const AMP_IR_ENERGY = {
   urchin: [17.369094, 18.22683, 22.49619, 20.150478, 18.678852, 23.07803],
 };
 
-export const AMP_VOICINGS = {};
+export const AMP_VOICINGS = {
+  // Sea Glass: a blackface 2x12 (an AB763): V1A -> the stack (250 pF, 100 nF, 47 nF; treble 250k, bass 250k, mid 10k,
+  // slope 100k) -> VOLUME (a 120 pF bright cap across it) -> V2A -> the long-tailed pair -> two 6L6s. A solid-state
+  // rectifier: little sag. PRESENCE: the feedback loop's top (the Twin has none of its own). Fitted: within 2.8 dB rms
+  // of the graph amp (4.3 at worst): it's 3-4 dB thinner at 1-2 kHz and 4 dB brighter at 2.8-5.6 kHz, a blackface's
+  // scoop and top; the same THD (0.27 %). Its MID is a 10k pot, so it moves 1.4 LU end to end, not the old 12.
+  clean: {
+    os: 2, hp: 40, tight: null,
+    chain: [['tri', 0.8, 0.08, 2.2, 15.385, 5358.368], ['stack'], ['gain', 23], ['pot'], ['tri', 1.4, 0.12, 2, 6.215, 4822.531], ['tri', 1.2, 0.02, 1.2, 6.733, 8101.853]],
+    pot: [-30, 0], bright: [120, 1e6],
+    stack: { R1: 250e3, R2: 250e3, R3: 10e3, R4: 100e3, C1: 250e-12, C2: 100e-9, C3: 47e-9 },
+    pw: -10.5, sag: 0.1, xf: [23.148, 17250], depth: [132.25, 4], pres: [4000, 1.6], trim: -5.25, irLv: -0.6,
+  },
+  // Shell Shock: a 1959 Super Lead: V1A -> VOLUME (the bright channel's cap across it) -> V2A -> V2B, a cathode follower
+  // -> the stack (500 pF, 22 nF, 22 nF; treble 220k, bass 1M, mid 25k, slope 33k) -> the long-tailed pair -> four EL34s.
+  // Fitted: within 3.2 dB rms of the graph amp (5.8 at worst), the furthest of the three: the stack at noon scoops 700
+  // Hz-1.4 kHz to -6 dB where the old voicing didn't, and the bright channel sits 5 dB hotter at 2.8-5.6 kHz, which the
+  // phase inverter's Miller corner (4 kHz, the fit's floor) only partly takes back. The same THD (18.3 %).
+  plexi: {
+    os: 4, hp: 60, tight: null,
+    chain: [['tri', 1.875, 0.1, 2.2, 8.08, 16800], ['pot'], ['tri', 6, 0.16, 1.7, 60, 6250], ['gain', -1], ['stack'], ['gain', 16], ['tri', 1.2, 0.05, 1.3, 30, 4018.776]],
+    pot: [-36, 0], bright: [500, 1e6],
+    stack: { R1: 220e3, R2: 1e6, R3: 25e3, R4: 33e3, C1: 500e-12, C2: 22e-9, C3: 22e-9 },
+    pw: 6, sag: 0.3, xf: [45, 10000], depth: [90, 2], pres: [3600, 1.6], trim: -16,
+  },
+  // Kraken: a three-channel Californian high-gain head, its modern channel: four cascaded stages (the first's cathode
+  // bypass cap small: TIGHT), then the stack (500 pF, 22 nF, 22 nF; treble 250k, bass 1M, mid 25k, slope 47k), a tube
+  // rectifier's sag. Fitted: within 2.1 dB rms of the graph amp (3.2 at worst); the first two stages' coupling sits at
+  // 340-370 Hz, as a lead channel's small caps do. The same THD (11.6 %) and GAIN travel.
+  recto: {
+    os: 4, hp: 55.556, tight: [300, -8],
+    chain: [['tri', 11.445, 0.12, 2.2, 371.159, 16800], ['pot'], ['tri', 4.915, 0.18, 1.6, 342.732, 18662.4], ['tri', 3.072, 0.32, 1.25, 6.375, 16920.576], ['tri', 3, 0.2, 1.4, 10.504, 9600], ['stack'], ['gain', 10]],
+    pot: [-22, 0], bright: null,
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 500e-12, C2: 22e-9, C3: 22e-9 },
+    pw: -4, sag: 0.3, xf: [20.094, 13000], depth: [73.913, 4], pres: [4000, 1.6], trim: -26.84,
+  },
+};

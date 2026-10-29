@@ -149,14 +149,14 @@ export function cabOf(link) {
 // its own default cab: a measured 4x12 for a guitar amp, its own designed cab for the others; the Half Stack at its own
 // defaults), against the club's stack as it is (Kraken on its measured modern 4x12): the dB it's off by, on the mean of
 // the two metal DI fixtures (chug and chords: tools/fixtures/metal-di/), rendered offline in muted Chromium and read
-// with BS.1770 (app/src/audio/measure.js lufs). The club's stack reads -20.6 LUFS that way. tools/liveroom/checks-shop.js
+// with BS.1770 (app/src/audio/measure.js lufs). The club's stack reads -19.9 LUFS that way. tools/liveroom/checks-shop.js
 // renders every one again and holds a carried amp to the club's stack within 1 LU (SHOP_PRINT=1 prints the table it
 // measured).
 export const AMP_TRIM = Object.freeze({
-  'amp.clean': -3.8, 'amp.jangle': -3.6, 'amp.crunch': -1.6, 'amp.plexi': 0.2, 'amp.punk': -0.2, 'amp.lead': -0.2, 'amp.recto': 1.3,
-  'amp.tiny': -2.1, 'amp.jc': -3.7, 'amp.hiwatt': -3.8, 'amp.bassman': -3.3, 'amp.dumble': -1.9, 'amp.brown': 1, 'amp.slo': 0.8,
-  'amp.friedman': 0.2, 'amp.metal': 0.8, 'amp.orange': 0, 'amp.radio': 0.7, 'amp.bit': 1.2, 'amp.tape': -2.7, 'amp.abyss': -0.4,
-  'amp.di': -3.8, 'amp.whale': -4.8, 'amp.walrus': -1.1, 'amp.narwhal': -6.6, 'amp.sandbar': -2.5, 'amp.urchin': -5, 'core.stack': 2.1,
+  'amp.clean': -2.6, 'amp.jangle': -3, 'amp.crunch': -1, 'amp.plexi': 1.2, 'amp.punk': 0.4, 'amp.lead': 0.4, 'amp.recto': 1,
+  'amp.tiny': -1.4, 'amp.jc': -3, 'amp.hiwatt': -3.2, 'amp.bassman': -2.7, 'amp.dumble': -1.3, 'amp.brown': 1.6, 'amp.slo': 1.4,
+  'amp.friedman': 0.8, 'amp.metal': 1.5, 'amp.orange': 0.6, 'amp.radio': 1.4, 'amp.bit': 1.9, 'amp.tape': -2.1, 'amp.abyss': 0.2,
+  'amp.di': -3.1, 'amp.whale': -4.1, 'amp.walrus': -0.4, 'amp.narwhal': -5.9, 'amp.sandbar': -1.9, 'amp.urchin': -4.4, 'core.stack': 2.7,
 });
 const CAB_KEYS = ['cab', 'mic', 'micpos', 'micdist', 'micang', 'mic2', 'mic2pos', 'mic2dist', 'mic2ang', 'blend', 'flip'];
 const round1 = (x) => Math.round(x * 10) / 10;

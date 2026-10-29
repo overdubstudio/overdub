@@ -7,7 +7,10 @@
 //   fx:core.stack:cab#7fd30c061e6b      Half Stack at its defaults: the close dynamic IR
 //   fx:core.cab#7fd30c061e6b            Iso Cab at its defaults
 //   fx:core.bassrig#7fd30c061e6b        Y Cable at its defaults, on the house's bass DI
-// (tools/stack-test.js, cab-test.js and bassrig-test.js render each in Node and in Chromium and hold them to these.)
+//   fx:amp.<id>#7fd30c061e6b            each guitar amp on the kernel engine (devices/guitar/voicings.js) at its defaults:
+//                                       its default cab is a measured one
+// (tools/stack-test.js, cab-test.js, bassrig-test.js and guitar-test.js render each in Node and in Chromium and hold them
+// to these.)
 import fs from 'node:fs';
 import { createProject } from '../app/src/core/project.js';
 import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
@@ -18,6 +21,8 @@ import { dataFor } from '../app/src/engine/node/data.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
 import { CABS_HASH, CAB_FILTER } from '../app/src/devices/builtin/amp-lib.js';
+import { AMP_VOICINGS } from '../app/src/devices/guitar/voicings.js';
+import '../app/src/devices/guitar/index.js';
 
 const STAMP = '2026-09-30T00:00:00.000Z';
 const META = { created: STAMP, modified: STAMP, authors: {} };
@@ -28,6 +33,9 @@ export const AMP_GOLDEN = {
   ['fx:core.stack:cab' + TAG]: '43844752e743f7dd47f5a117e72d241f084465e48aa4ddb2bdfb4bd9bd190467',
   ['fx:core.cab' + TAG]: '4348da3d328686a08bc0e8548753874b525688654708a0f6f0b4fbe1e14583aa',
   ['fx:core.bassrig' + TAG]: 'e6836096c6bfadeb756e8299e3f645cffbaad8d5e53e5fbdbcfae38c8b21ddea',
+  ['fx:amp.clean' + TAG]: '87e4776b58c908306517e8fa89317e4c94c87f5de00405aeeb639737f95d69bc',
+  ['fx:amp.plexi' + TAG]: 'db908e33ba5d6de361b43363f5452d0aaf72c0e3eb0279725d2286a26946f787',
+  ['fx:amp.recto' + TAG]: '958674145d4c2e102a8afa17822b3b085596eea33da15df94b74f097bc88fb69',
 };
 
 function scene(name, id, params, signal = 'strum') {
@@ -52,6 +60,7 @@ export function ampScenes() {
     { ...scene('fx:core.stack:cab' + TAG, 'core.stack', {}), data: { cabs: CABS_HASH } },
     { ...scene('fx:core.cab' + TAG, 'core.cab', {}), data: { cabs: CABS_HASH } },
     { ...scene('fx:core.bassrig' + TAG, 'core.bassrig', {}, 'bass'), data: { cabs: CABS_HASH } },
+    ...Object.keys(AMP_VOICINGS).map((id) => ({ ...scene('fx:amp.' + id + TAG, 'amp.' + id, {}), data: { cabs: CABS_HASH } })),
   ];
 }
 

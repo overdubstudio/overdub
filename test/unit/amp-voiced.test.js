@@ -207,4 +207,12 @@ describe('the kernel amps', () => {
       if (AMP_VOICINGS[id]) assert.equal(d.exportable, false, id);
     }
   });
+  test('every fitted value is inside the physical limits the fit was given (tools/amp-fit.js freeValues)', async () => {
+    const { freeValues } = await import('../../tools/amp-fit.js');
+    for (const [id, V] of Object.entries(AMP_VOICINGS)) {
+      for (const [name, get, , , , lo, hi] of freeValues(structuredClone(V)))
+        assert.ok(get() >= lo - 1e-6 && get() <= hi + 1e-6, `${id} ${name} ${get()} outside ${lo}..${hi}`);
+      assert.equal(V.pot[1], 0, `${id}: a pot full up passes all of it`);
+    }
+  });
 });

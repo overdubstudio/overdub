@@ -911,8 +911,8 @@ never doze). <code>tools/perf-check.js</code> measures 16 heavy tracks at 48 kHz
 worklet's own <code>KernelCore</code> (<code>kernel/worklet.js</code>: voices, stealing, the note queue, smoothing, the transport) in
 128-frame blocks at 48 kHz, and mirrors the strip in float32: fader, balance pan, track-order sum, master inserts,
 the soft clip's curve interpolated as Chrome does. Same song JSON, same samples; a render's identity is the SHA-256
-of its float samples (channel 0 then 1, Float32 LE). Graph devices (pedals, amps) can't run there: their inserts
-are bypassed and their tracks skipped, with a warning (<code>--strict</code> fails instead).</p>
+of its float samples (channel 0 then 1, Float32 LE). Graph devices (the pedals, and the amps not yet on the kernel
+engine) can't run there: their inserts are bypassed and their tracks skipped, with a warning (<code>--strict</code> fails instead).</p>
 <p><strong>Browser renders and playback are the preview</strong>, measured to agree with the canonical render within −90 dBFS for
 kernels (<code>tools/golden-test.js</code>; most scenes come out bit-identical, the rest differ where Chromium's and Node's V8
 round <code>Math.exp</code>/<code>sin</code>/<code>tanh</code> in the last bit). <code>tools/golden.json</code> pins each scene's hash (<code>tools/golden-scenes.js</code>:

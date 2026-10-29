@@ -7,7 +7,7 @@
     "v8": "13.6.233.17-node.49",
     "arch": "arm64",
     "platform": "darwin",
-    "date": "2026-10-27"
+    "date": "2026-10-29"
   },
   "scenes": {
     "inst:core.poly": {
@@ -683,6 +683,36 @@
       "lufs": -23.52,
       "truePeak": -12.38,
       "peak": -13
+    },
+    "fx:amp.clean#7fd30c061e6b": {
+      "sha256": "87e4776b58c908306517e8fa89317e4c94c87f5de00405aeeb639737f95d69bc",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -9.72,
+      "peak": -9.88,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.plexi#7fd30c061e6b": {
+      "sha256": "db908e33ba5d6de361b43363f5452d0aaf72c0e3eb0279725d2286a26946f787",
+      "frames": 576000,
+      "lufs": -18.54,
+      "truePeak": -14.09,
+      "peak": -14.09,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.recto#7fd30c061e6b": {
+      "sha256": "958674145d4c2e102a8afa17822b3b085596eea33da15df94b74f097bc88fb69",
+      "frames": 576000,
+      "lufs": -18.53,
+      "truePeak": -13.11,
+      "peak": -13.11,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
     }
   }
 }

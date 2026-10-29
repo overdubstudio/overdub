@@ -182,8 +182,8 @@ Phones (390 px) show two pedals across, with `wide` and `rack` full width.
 | `kit.G(v = 1)` | GainNode |
 | `kit.F(type, freq, Q?, gain?)` | BiquadFilterNode. **For lowpass/highpass, Web Audio's Q is resonance in dB** (0.7 is not Butterworth here; 0 is flat). For bandpass/peaking/notch it's the usual Q. |
 | `kit.chain(a, b, c…)` | connects them in order and returns the last |
-| `kit.shaper(k, bias = 0, over = '2x')` | WaveShaper: tanh at drive `k` with an asymmetry `bias`, normalised to ±1 and centred (no DC at rest). The drives use it. |
-| `kit.curve(fn, over = '2x', n = 4096)` | WaveShaper from `fn(x)` over [−1, 1] (folders, crushers, rectifiers…) |
+| `kit.shaper(k, bias = 0, over = '2x')` | WaveShaper: tanh at drive `k` with an asymmetry `bias`, centred (no DC at rest), ±1 in giving ±1 out on its stronger side. The drives use it. It's drawn out past ±1 as far as tanh takes to flatten (reach `'soft'`, below), so a small `k` stays soft however hard it's driven; from about `k = 3` it's flat by ±1 and is the plain node. |
+| `kit.curve(fn, over = '2x', n = 4096, reach = 1)` | WaveShaper from `fn(x)` over [−1, 1] (folders, crushers, rectifiers…). A WaveShaper **clamps** its input to the curve: past ±1 it holds `fn(±1)`, a hard corner wherever `fn` is still climbing there. `reach` R > 1 draws `fn` over [−R, R] behind a 1/R gain (the same `fn` for the signal, with `n × R` points, the clamp out at ±R); `'soft'` picks R for a soft clipper: the least R at which `fn`'s slope at ±R is 1% of its slope at 0 (`softReach` in `devices/kit.js`). Give a soft clipper `'soft'`; a curve that's meant to stop dead at ±1 (a rail, a map) keeps 1. `tools/guitar-test.js` fails a pedal's soft clipper that's still climbing at its clamp. |
 | `kit.delay(max, t = 0)` | DelayNode |
 | `kit.lfo(rate, shape = 'sine')` | a **started** OscillatorNode, ±1, `shape` is `'sine' 'triangle' 'square' 'sawtooth'` or `[harmonic amplitudes]`. Connect it through `kit.G(depth)` into a param. |
 | `kit.constant(v = 0)` | a started ConstantSourceNode (an offset to add to a param alongside an LFO or envelope) |

@@ -9,7 +9,7 @@
 // tools/guitar-test.js checks the two agree): change both together.
 /* eslint-disable */
 // (the live rules, Overdub's: no value curve on a live context, one read of the clock: devices/kit.js, docs/DEVICES.md)
-import { isOffline as pfxOffline, cosineRamp as pfxRamp, LEAD as PFX_LEAD } from '../../kit.js';
+import { isOffline as pfxOffline, cosineRamp as pfxRamp, LEAD as PFX_LEAD, softReach as pfxSoftReach } from '../../kit.js';
 
 export function evaluate(env = {}) {
   // ---- what the code expects from the page it was written for, injected
@@ -149,17 +149,30 @@ const PFX = (() => {
     const G = (v = 1) => { const n = c.createGain(); n.gain.value = v; return n; };
     const F = (type, f, q, g) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q != null) n.Q.value = q; if (g != null) n.gain.value = g; return n; };
     const chain = (...ns) => { for (let i = 0; i + 1 < ns.length; i++) ns[i].connect(ns[i + 1]); return ns[ns.length - 1]; };
-    // a WaveShaper from fn(x) over [-1, 1]
-    const curve = (fn, over = '2x', N = 4096) => {
-      const n = c.createWaveShaper(), cv = new Float32Array(N);
-      for (let i = 0; i < N; i++) cv[i] = fn((i / (N - 1)) * 2 - 1);
-      n.curve = cv; n.oversample = over; return n;
+    // A WaveShaper from fn(x) over [-1, 1], which clamps its input there. reach R > 1 (or 'soft': as far as fn takes to
+    // flatten, devices/kit.js softReach) draws fn over [-R, R] behind a 1/R gain, with as many more points: the same
+    // fn for the signal, the clamp out at ±R. (Overdub's kit, devices/kit.js, is the one that plays: the same rule.)
+    const curve = (fn, over = '2x', N = 4096, reach = 1) => {
+      const R = reach === 'soft' ? pfxSoftReach(fn) : Math.max(1, reach);
+      const n = c.createWaveShaper();
+      if (R === 1) {
+        const cv = new Float32Array(N);
+        for (let i = 0; i < N; i++) cv[i] = fn((i / (N - 1)) * 2 - 1);
+        n.curve = cv; n.oversample = over; return n;
+      }
+      const M = 2 * Math.ceil(((N - 1) * R) / 2) + 1, cv = new Float32Array(M);
+      for (let i = 0; i < M; i++) cv[i] = fn(R * ((i / (M - 1)) * 2 - 1));
+      n.curve = cv; n.oversample = over;
+      const g = G(1 / R);
+      g.connect(n); g.connect = (...a) => n.connect(...a); g.disconnect = (...a) => n.disconnect(...a);
+      return g;
     };
-    // tanh at k with a bias b (asymmetry: even harmonics), normalised to ±1 and centred (no DC at rest).
+    // tanh at k with a bias b (asymmetry: even harmonics), centred (no DC at rest), ±1 in is ±1 out on its stronger
+    // side, and drawn out as far as it takes to flatten (reach 'soft'), so a small k stays soft however hard it's hit.
     // (2x oversampling: 128 samples of latency to 4x's 192; the amp measured no audible difference)
     const shaper = (k, b = 0, over = '2x') => {
       const t0 = Math.tanh(k * b), norm = Math.max(Math.tanh(k * (1 + b)) - t0, t0 - Math.tanh(k * (b - 1)));
-      return curve((x) => (Math.tanh(k * (x + b)) - t0) / norm, over);
+      return curve((x) => (Math.tanh(k * (x + b)) - t0) / norm, over, 4096, 'soft');
     };
     const start = (n) => { n.start(); own.src.push(n); return n; };
     // an oscillator at rate Hz, ±1: 'sine', 'triangle', 'square', 'sawtooth', or [harmonic amplitudes] (a custom wave)
@@ -1420,8 +1433,9 @@ pedalDef({
     return k.c.createIIRFilter([b0, -b0], [1, (K - 1) / (K + 1)]);
   };
   // The output stage's supply rails: untouched up to 0.7 of `ceil`, then rounded off to it. For pedals whose EQ and
-  // output knobs together could otherwise swing far past anything a real 9-18 V box can put out.
-  const drvRail = (k, ceil) => [k.G(1 / ceil), k.curve((x) => { const a = Math.abs(x); return Math.sign(x) * (a < 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3)); }), k.G(ceil)];
+  // output knobs together could otherwise swing far past anything a real 9-18 V box can put out. (Drawn out to where
+  // it's flat, reach 'soft': clamped at ±1 it stopped at 0.93 of ceil with a corner, 42% of its slope still there.)
+  const drvRail = (k, ceil) => [k.G(1 / ceil), k.curve((x) => { const a = Math.abs(x); return Math.sign(x) * (a < 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3)); }, '2x', 4096, 'soft'), k.G(ceil)];
   // a LEVEL knob: unity at its default, 2.4 dB a step
   const drvLvl = (k, v, d) => k.dB((v - d) * 2.4);
 
@@ -1528,7 +1542,7 @@ pedalDef({
     knobs: [['vol', 'VOLUME', 0, 10, 5], ['drive', 'DRIVE', 0, 10, 5], ['tone', 'TONE', 0, 10, 6], { key: 'mode', label: 'MODE', opts: ['LP', 'HP'], def: 1 }],
     build(c, k) {
       const input = k.G(1), pre = k.G(1), lpG = k.G(0), hpG = k.G(1), sum = k.G(1), tone = k.F('lowpass', 4000, -2), vol = k.G(1);
-      const mos = k.curve((x) => { const y = 3 * x; return (y / Math.pow(1 + Math.pow(Math.abs(y), 2.6), 1 / 2.6)) / (3 / Math.pow(1 + Math.pow(3, 2.6), 1 / 2.6)); });
+      const mos = k.curve((x) => { const y = 3 * x; return (y / Math.pow(1 + Math.pow(Math.abs(y), 2.6), 1 / 2.6)) / (3 / Math.pow(1 + Math.pow(3, 2.6), 1 / 2.6)); }, '2x', 4096, 'soft');
       k.chain(input, k.F('highpass', 45, 0), pre);
       // (the two feedback voicings run side by side; the switch picks one)
       k.chain(pre, k.F('lowpass', 2400, -3), k.F('highpass', 160, -3), lpG, sum);
@@ -1586,7 +1600,7 @@ pedalDef({
   // Plexi Prawn: the British stack in a box. A bright cap (treble past the gain pot, fading as it goes up), two lopsided
   // valve-ish stages with a coupling cap between them, and the passive tone stack (whose mids never quite come back).
   pedalDef({
-    id: 'plexiprawn', name: 'Plexi Prawn', kind: 'AMP IN A BOX', cat: 'drive', where: 'pre', color: '#2a2019', ink: '#e8c878', trim: -24,
+    id: 'plexiprawn', name: 'Plexi Prawn', kind: 'AMP IN A BOX', cat: 'drive', where: 'pre', color: '#2a2019', ink: '#e8c878', trim: -24.3,
     nod: 'the British plexi stack squeezed into a box',
     blurb: 'Stadium crunch from a stompbox: chords that roar',
     look: { shape: 'wide', finish: 'check', knob: 'cream', label: 'plate', led: '#ffcf4a' },
@@ -1676,8 +1690,9 @@ pedalDef({
     knobs: [['blow', 'BLOW', 0, 10, 6], ['rattle', 'RATTLE', 0, 10, 4], ['vol', 'VOLUME', 0, 10, 5]],
     build(c, k) {
       const input = k.G(1), pre = k.G(1), sum = k.G(1), out = k.G(1), rat = k.G(0), buzz = k.G(0), sag = k.G(0);
-      // the cone: asymmetric, a hard stop one way and a soft flap the other
-      const cone = k.curve((x) => (x > 0 ? 0.42 * Math.tanh(x / 0.42) * (1 - 0.3 * Math.max(0, x - 0.42)) : Math.tanh(x * 1.6) / Math.tanh(1.6)));
+      // the cone: asymmetric, a hard stop one way (the magnet: it folds back, then holds at +1) and a soft flap the other
+      // (tanh, drawn out to where it's flat: the plain curve's clamp at -1 was a second hard stop, 19% of its slope left)
+      const cone = k.curve((x) => { const u = Math.min(1, x); return x > 0 ? 0.42 * Math.tanh(u / 0.42) * (1 - 0.3 * Math.max(0, u - 0.42)) : Math.tanh(x * 1.6) / Math.tanh(1.6); }, '2x', 4096, 'soft');
       k.chain(input, k.F('highpass', 45, 0), pre, sum, cone, k.F('highpass', 30, 0), k.F('peaking', 1300, 1.2, 6), k.F('lowpass', 4200, -1), out);
       const env = k.envelope({ attack: 0.02, release: 0.25 });
       if (env) k.chain(input, env, sag, sum); // (a louder note shifts the cone's rest point: it starves and farts)
@@ -1748,9 +1763,10 @@ const fzDead = (w) => (u) => Math.sign(u) * Math.max(0, Math.abs(u) - w) / (1 - 
 const fzTanh = (d, b = 0) => { const t0 = Math.tanh(d * b), nm = Math.max(Math.tanh(d * (1 + b)) - t0, t0 - Math.tanh(d * (b - 1))); return (u) => (Math.tanh(d * (u + b)) - t0) / nm; };
 // A shaper with a movable bias: a DC offset added to its input pushes it off-centre (hot germanium, a starved battery,
 // a gate trim). The same offset's output is taken off again after it, so a knob move or the pedal starting up puts no
-// step through the coupling filters (no thump): only the signal feels the bias. bias(x, v) sets it (glides).
-function fzBiased(k, fn, over = '2x') {
-  const input = k.G(1), output = k.G(1), dc = k.constant(0), undo = k.constant(0), sh = k.curve(fn, over);
+// step through the coupling filters (no thump): only the signal feels the bias. bias(x, v) sets it (glides). reach:
+// kit.curve's ('soft' for a soft fn; a dead zone that runs linear to the rails keeps them where they are).
+function fzBiased(k, fn, over = '2x', reach = 1) {
+  const input = k.G(1), output = k.G(1), dc = k.constant(0), undo = k.constant(0), sh = k.curve(fn, over, 4096, reach);
   // (the undo goes through a straight-line shaper with the same oversampling: the same latency, so they cancel)
   dc.connect(input); k.chain(input, sh, output); k.chain(undo, k.curve((u) => u, over), output);
   return { input, output, bias(x, v) { x.to(dc.offset, v); x.to(undo.offset, -fn(Math.max(-1, Math.min(1, v)))); } };
@@ -1768,7 +1784,7 @@ pedalDef({
   worklets: { 'pfx-env': PFX.ENV },
   knobs: [['fuzz', 'FUZZ', 0, 10, 7], ['temp', 'TEMP', 0, 10, 5, 0, (v) => Math.round(4 + v * 4.2) + '°C'], ['level', 'VOLUME', 0, 10, 5]],
   build(c, k) {
-    const input = k.G(1), pre = k.G(1), ge = fzBiased(k, fzTanh(2.4, 0.18)), sag = k.G(0), sens = k.G(0), tone = k.F('lowpass', 4000, 0), level = k.G(1);
+    const input = k.G(1), pre = k.G(1), ge = fzBiased(k, fzTanh(2.4, 0.18), '2x', 'soft'), sag = k.G(0), sens = k.G(0), tone = k.F('lowpass', 4000, 0), level = k.G(1);
     const env = k.envelope({ attack: 0.003, release: 0.14 });
     k.chain(input, k.F('highpass', 70, 0), k.F('lowpass', 5200, 0), pre, ge.input); k.chain(ge.output, k.F('highpass', 28, 0), tone, level);
     if (env) { input.connect(env); env.connect(sens); sens.connect(pre.gain); env.connect(sag); sag.connect(ge.input); }
@@ -1857,8 +1873,9 @@ pedalDef({
   knobs: [['boost', 'BOOST', 0, 10, 6], ['oct', 'OCTAVE', 0, 10, 8], ['level', 'LEVEL', 0, 10, 5]],
   build(c, k) {
     const input = k.G(1), split = k.G(3), octG = k.G(1), plain = k.G(0), sum = k.G(1), boost = k.G(1), level = k.G(1);
-    // germanium diodes: a small knee before they conduct
-    const rect = k.curve((u) => Math.max(0, Math.abs(u) - 0.01), '4x');
+    // germanium diodes: a small knee before they conduct (and no ceiling: drawn out to ±3, a full-scale DI times the
+    // splitter's 3, where the plain curve stopped dead at ±1, -10 dBFS in)
+    const rect = k.curve((u) => Math.max(0, Math.abs(u) - 0.01), '4x', 4096, 3);
     k.chain(input, k.F('highpass', 90, 0), k.F('lowpass', 2600, 0), split);
     k.chain(split, rect, octG, sum); k.chain(split, plain, sum);
     k.chain(sum, k.F('highpass', 60, 0), boost, k.shaper(3.2, 0.1), k.F('highpass', 30, 0), k.F('lowpass', 5500, 0), level);
@@ -4228,7 +4245,7 @@ pedalDef({
   knobs: [['time', 'RATE', 0, 5, 1, 1, PFX.noteFmt], ['int', 'INTENSITY', 0, 10, 4], ['age', 'TAPE AGE', 0, 10, 4], ['mix', 'ECHO', 0, 14, 5],
     { key: 'heads', label: 'HEADS', opts: ['1', '1+2', '1+2+3'], def: 1 }, { key: 'tap', label: 'TAP', tap: true }],
   build(c, k) {
-    const input = k.G(1), rec = k.G(0.8), sat = k.curve((x) => Math.tanh(2.2 * x) / 2.2), sum = k.G(1);
+    const input = k.G(1), rec = k.G(0.8), sat = k.curve((x) => Math.tanh(2.2 * x) / 2.2, '2x', 4096, 'soft'), sum = k.G(1);
     const heads = [0, 1, 2].map(() => k.delay(4.2, 0.25)), hg = heads.map(() => k.G(0));
     const lp = k.F('lowpass', 5000, -3), hp = k.F('highpass', 110, -3), fb = k.G(0.3), wet = k.G(0);
     k.chain(input, rec, sat);
@@ -4259,7 +4276,7 @@ pedalDef({
   nod: 'the bucket-brigade chip delays: dark, warm and a bit seasick', blurb: 'Murky, wobbly repeats that sit behind you',
   knobs: [['time', 'TIME', 20, 600, 320, 1, tmMs], ['fb', 'REPEATS', 0, 10, 4], ['mix', 'MIX', 0, 10, 5], ['mod', 'MOD', 0, 10, 3]],
   build(c, k) {
-    const input = k.G(1), aa = k.F('lowpass', 2500, -3), sum = k.G(1), sat = k.curve((x) => Math.tanh(1.8 * x) / 1.8), dl = k.delay(0.7, 0.32);
+    const input = k.G(1), aa = k.F('lowpass', 2500, -3), sum = k.G(1), sat = k.curve((x) => Math.tanh(1.8 * x) / 1.8, '2x', 4096, 'soft'), dl = k.delay(0.7, 0.32);
     const rc = k.F('lowpass', 2500, -3), rc2 = k.F('lowpass', 3500, -3), hp = k.F('highpass', 80, -3), fb = k.G(0.3), wet = k.G(0);
     k.chain(input, aa, sum, sat, dl, rc, rc2, hp, wet); k.chain(hp, fb, sum);
     const lfo = k.lfo(0.8, 'triangle'), dep = k.G(0);
@@ -4347,7 +4364,7 @@ pedalDef({
   knobs: [['time', 'SLAP', 40, 220, 110, 1, tmMs], ['level', 'LEVEL', 0, 10, 5], ['tone', 'TONE', 0, 10, 5]],
   build(c, k) {
     const input = k.G(1), sum = k.G(1), dl = k.delay(0.3, 0.11), lp = k.F('lowpass', 3500, -3), hp = k.F('highpass', 160, -3), fb = k.G(0.1), wet = k.G(0);
-    k.chain(input, k.G(0.9), k.curve((x) => Math.tanh(1.6 * x) / 1.6), sum, dl, lp, hp, wet); k.chain(hp, fb, sum);
+    k.chain(input, k.G(0.9), k.curve((x) => Math.tanh(1.6 * x) / 1.6, '2x', 4096, 'soft'), sum, dl, lp, hp, wet); k.chain(hp, fb, sum);
     const wob = k.G(0.00025); k.chain(k.lfo(0.7), wob, dl.delayTime);
     return { input, output: wet, set(v, x) {
       x.to(dl.delayTime, v.time / 1000, 0.03);
@@ -4453,7 +4470,7 @@ pedalDef({
     const input = k.G(1), sum = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 7000, -3), wet = k.G(0), shim = k.G(0);
     k.chain(input, k.F('highpass', 200, -3), sum, conv, tone, wet);
     const ps = k.worklet('halojelly-pitch', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: 'explicit' });
-    if (ps) k.chain(conv, ps, k.F('highpass', 400, -3), k.F('lowpass', 7000, -3), shim, k.curve(Math.tanh), k.delay(0.1, 0.03), sum); // (tanh: a safety net) // (no worklet: a plain reverb)
+    if (ps) k.chain(conv, ps, k.F('highpass', 400, -3), k.F('lowpass', 7000, -3), shim, k.curve(Math.tanh, '2x', 4096, 'soft'), k.delay(0.1, 0.03), sum); // (tanh: a safety net) // (no worklet: a plain reverb)
     let d = 5;
     const ir = tmIR(k, conv, () => k.ir({ secs: 1.5 + d * 0.65, pre: 0.02, seed: 71 + Math.round(d * 10), tail: 1.1, damp: 0.1, darken: 0.5 }));
     return { input, output: wet, node: ps, set(v, x) {
@@ -4500,7 +4517,7 @@ pedalDef({
   knobs: [['time', 'TIME', 0, 5, 2, 1, PFX.noteFmt], ['fb', 'FEEDBACK', 0, 10, 6], ['freq', 'FREQ', 0, 10, 5, 0, (v) => Math.round(250 * Math.pow(2, v * 0.45)) + ' Hz'],
     ['sweep', 'SWEEP', 0, 10, 5], ['rate', 'RATE', 0, 10, 4], ['mix', 'MIX', 0, 10, 4]],
   build(c, k) {
-    const input = k.G(1), sum = k.G(1), dl = k.delay(2.5, 0.375), filt = k.F('lowpass', 1200, 2), sat = k.curve((x) => Math.tanh(2 * x) / 2), fb = k.G(0.4), wet = k.G(0);
+    const input = k.G(1), sum = k.G(1), dl = k.delay(2.5, 0.375), filt = k.F('lowpass', 1200, 2), sat = k.curve((x) => Math.tanh(2 * x) / 2, '2x', 4096, 'soft'), fb = k.G(0.4), wet = k.G(0);
     k.chain(input, k.F('highpass', 120, -3), sum, dl, filt, sat, k.F('highpass', 90, -3), fb, sum);
     k.chain(sat, wet);
     const lfo = k.lfo(0.3, 'triangle'), dep = k.G(0);
@@ -4527,9 +4544,9 @@ pedalDef({
     { key: 'stop', label: 'MOTOR', opts: ['RUN', 'STOP'], def: 0 }],
   build(c, k) {
     const input = k.G(1), starve = c.createWaveShaper(), sum = k.G(1), dl = k.delay(2, 0.38), lp = k.F('lowpass', 2500, -3), hp = k.F('highpass', 180, -3);
-    const fb = k.G(0.3), sp = k.G(1), stopG = k.G(1), wet = k.G(0);
+    const fb = k.G(0.3), sp = k.G(1), stopG = k.G(1), wet = k.G(0), RS = 3; // (RS: the curve's reach, below)
     starve.oversample = '2x';
-    k.chain(input, starve, sum, dl, lp, hp, sp, stopG, wet); k.chain(hp, fb, sum);
+    k.chain(input, k.G(1 / RS), starve, sum, dl, lp, hp, sp, stopG, wet); k.chain(hp, fb, sum);
     // the clock wandering: two slow waves at unrelated rates and a flutter
     const wob = k.G(0), fl = k.G(0);
     k.chain(k.lfo(0.13), wob); k.chain(k.lfo(0.71, 'triangle'), wob); k.chain(k.lfo(5.3), fl);
@@ -4539,10 +4556,12 @@ pedalDef({
     k.chain(k.lfo(6.7, [1, 0, 0.33, 0, 0.2]), pulse, sp.gain);
     k.chain(k.lfo(0.23), slowD, pulse.gain);
     let batt = -1, stopped = null;
+    // (drawn over ±RS behind a 1/RS gain, as kit.curve's reach does: tanh is flat by 3, where the plain curve's clamp at
+    // ±1 was a corner with 42% of its slope left; three times the points, no further apart)
     const starveCurve = (s) => {
-      const N = 2048, cv = new Float32Array(N), dz = 0.03 * s, top = 1 - 0.6 * s;
+      const N = 6141, cv = new Float32Array(N), dz = 0.03 * s, top = 1 - 0.6 * s;
       for (let i = 0; i < N; i++) {
-        const x = (i / (N - 1)) * 2 - 1, a = Math.max(0, Math.abs(x) - dz) / (1 - dz), y = Math.sign(x) * a;
+        const x = RS * ((i / (N - 1)) * 2 - 1), a = Math.max(0, Math.abs(x) - dz) / (1 - dz), y = Math.sign(x) * a;
         cv[i] = y > 0 ? top * Math.tanh(y / top) : Math.tanh(y);
       }
       return cv;

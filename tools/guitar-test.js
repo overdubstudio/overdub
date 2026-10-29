@@ -12,6 +12,8 @@
 //  5. the rigs: every preset (but the keys bank's) through its whole chain lands at -14 LUFS ±1.5 (leads up to -12),
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
 //  2b. automation: every pedal param that changes the sound before set()'s `at` is marked auto: false (no lane).
+//  2c. soft clippers: every WaveShaper a pedal builds that saturates has flattened by its clamp (at most ~1% of its
+//     slope at rest left there: devices/kit.js softReach), unless it's on HARD_CLAMP with why.
 //  6. live: stomping a few pedals on and off while a tone plays is click-free (the 10 ms crossfades).
 //  6b. live: a pedal and an amp built on and wired in a moment later (as a strip does) play through themselves from
 //     the first note, not their dry signal.
@@ -257,6 +259,51 @@ async function boot(page) {
   const inexact = det.filter(([, d]) => d > 0);
   if (inexact.length) t.note(`not bit-exact under load: ${inexact.map(([id, d]) => id.split('.')[1] + ' ' + d.toExponential(1)).join(', ')}`);
   t.ok(det.every(([, d]) => d <= 1e-4), `renders are deterministic (twice the same to -80 dB; ${det.length - inexact.length}/${det.length} sample for sample)`);
+
+  // 2c. soft clippers (devices/kit.js softReach, docs PEDALS.md "The kit"). A WaveShaperNode clamps its input to its
+  // curve: past the ends it holds the end value, so a soft clipper whose curve is still climbing there (tanh at a small
+  // drive, drawn only over ±1) turns into a hard clip the moment it's driven past them. Every WaveShaper every pedal
+  // builds, at its defaults: one that saturates (monotonic, and at least 5% shallower at both ends than at rest) must
+  // have no more than SOFT of its slope at rest left at its clamp (the slope one point in from each end against the
+  // slope across the middle; 5% over the rule for the sampling), unless HARD_CLAMP names it with why. Curves that don't
+  // saturate (a dead zone, a rectifier, a fold, a map that steepens, a straight line) aren't judged.
+  const HARD_CLAMP = {
+    quack: "a control map, not audio: the envelope soft-limited to 1, the top of the filter's sweep, where it's meant to stop",
+    pistolshrimp: "control maps, not audio: the pick's envelope to the clipper's gain, which stop at the top of SNAP's range",
+  };
+  const soft = await page.evaluate(async ({ only, hard }) => {
+    const { R } = window.__gt, { SOFT } = await import('/app/src/devices/kit.js');
+    const proto = BaseAudioContext.prototype, make = proto.createWaveShaper, made = [];
+    const out = { n: 0, curves: 0, judged: 0, bad: [], excused: [], worst: { id: '', r: 0 } };
+    proto.createWaveShaper = function () { const n = make.call(this); made.push(n); return n; };
+    try {
+      for (const d of R.listDevices().filter((q) => q.id.startsWith('pedal.') && (!only || only.includes(q.pedal)))) {
+        made.length = 0;
+        const c = new OfflineAudioContext(2, 128, 48000), inst = await R.instantiate(c, d.id, { uid: 'sc', params: {}, on: true, bpm: 120 });
+        await inst.ready;
+        out.n++;
+        made.forEach((n, j) => {
+          const cv = n.curve;
+          if (!cv || cv.length < 5) return;
+          out.curves++;
+          const N = cv.length, m = (N - 1) >> 1, s0 = N % 2 ? (cv[m + 1] - cv[m - 1]) / 2 : cv[m + 1] - cv[m], sg = Math.sign(s0);
+          const lo = (cv[1] - cv[0]) * sg, hi = (cv[N - 1] - cv[N - 2]) * sg, a0 = Math.abs(s0);
+          let mono = a0 > 0;
+          for (let i = 1; mono && i < N; i++) if ((cv[i] - cv[i - 1]) * sg < -1e-7) mono = false;
+          if (!mono || !(lo < 0.95 * a0 && hi < 0.95 * a0)) return;
+          out.judged++;
+          const r = Math.max(lo, hi) / a0, at = `${d.pedal}#${j} ${(r * 100).toFixed(1)}%`;
+          if (r > out.worst.r && !hard[d.pedal]) out.worst = { id: at, r };
+          if (r > SOFT * 1.05) (hard[d.pedal] ? out.excused : out.bad).push(at);
+        });
+        inst.dispose();
+      }
+    } finally { proto.createWaveShaper = make; }
+    return out;
+  }, { only: ONLY, hard: HARD_CLAMP });
+  t.ok(soft.n >= (ONLY ? 1 : 100) && !soft.bad.length, `${soft.judged} of the ${soft.curves} WaveShaper curves in ${soft.n} pedals saturate, and each has flattened by its clamp (≤ ~1% of its slope at rest left there; worst ${soft.worst.id || 'none'})${soft.bad.length ? "; still climbing at the clamp (a hard clip when driven past it: give it reach 'soft'): " + soft.bad.join(', ') : ''}`);
+  const stale = Object.keys(HARD_CLAMP).filter((id) => (!ONLY || ONLY.includes(id)) && !soft.excused.some((e) => e.startsWith(id + '#')));
+  t.ok(!stale.length, `HARD_CLAMP excuses only curves that need it: ${soft.excused.join(', ') || 'none'}${stale.length ? '; nothing to excuse in ' + stale.join(' ') : ''}`);
 
   // 3. bypass exact
   const byp = await page.evaluate(async () => {

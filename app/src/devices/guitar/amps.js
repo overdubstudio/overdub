@@ -1,15 +1,33 @@
 // @ts-check
 // Every amp in the guitar gear as an Overdub effect device, 'amp.<id>' (cat 'amp'). The sound is the gear's own
-// plugAmp (gear/code.js, its amps.js section): the same knobs give the same samples. Each amp also has its cab and mic
-// network (plugCabNet): any of the cabs, a mic of any type moved across the cone, back from the grille and off axis,
-// and a second mic blended in (phase flip and all). With the cab on 'Its own' and one mic where it was voiced, it's
-// the amp exactly as it was voiced (the network isn't in the path at all).
+// plugAmp (gear/code.js, its amps.js section): the same knobs give the same samples. Each amp has its cab: a measured
+// one (Half Stack's six impulse responses, each with the mic it was recorded with: every guitar amp's default, gear/
+// code.js PLUG_AMP_IR) or a designed one, with the mic network (plugCabNet): any of the designed cabs, a mic of any
+// type moved across the cone, back from the grille and off axis, and a second mic blended in (phase flip and all). On
+// a measured cab the mics are kept but not heard. With the cab on 'Its own' and one mic where it was voiced, it's the
+// amp exactly as it was voiced (the network isn't in the path at all).
+// CAB is an index into CAB_IDS, which only ever grows at the end (the measured six came after the designed seventeen),
+// and its default is the amp's own: a song or rig that never set it plays the amp's default cab. An index an older
+// reader doesn't know is 'own' there.
 import { defineDevice } from '../registry.js';
 import { failure } from '../lifecycle.js';
 import { gear, workletFiles } from './gear/index.js';
+import { CABS_HASH } from '../builtin/amp-lib.js';
 
-const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS } = gear;
-export const CAB_IDS = Object.keys(PLUG_CABS);              // 'own' first
+const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS, plugCabDefault } = gear;
+export const CAB_IDS = Object.keys(PLUG_CABS);              // 'own' first, the measured six last
+// an amp's default cab (a PLUG_CABS id) and its index (the CAB param's default)
+export const cabDefault = (id) => plugCabDefault(String(id || '').replace(/^amp\./, ''));
+export const cabDefaultIndex = (id) => Math.max(0, CAB_IDS.indexOf(cabDefault(id)));
+// is a CAB_IDS id a measured cab?
+export const isMeasured = (cab) => !!(PLUG_CABS[cab] && PLUG_CABS[cab].ir != null);
+// What the rack, the pickers and the room say while the measured cabs load, or aren't on this server (an amp whose
+// default is a measured one names the bank as its data: ui/rack.js dataLine, ui/kitload.js). It's never quiet
+// meanwhile: it plays its own designed cab.
+export const AMP_CAB_SAYS = {
+  loading: ['Loading cabs…', 'Loading the measured cabs: it plays its own designed cab until they’re in'],
+  missing: ['Cab file missing: playing its own cab', 'The measured cabs aren’t on this server, so it plays its own designed cab'],
+};
 export const MIC_IDS = Object.keys(PLUG_MICS);
 const TONE_LABEL = { clean: 'CLEAN AMP', crunch: 'CRUNCH AMP', high: 'HIGH-GAIN AMP', weird: 'WEIRD AMP', bass: 'BASS AMP' };
 
@@ -22,7 +40,7 @@ export const AMP_PARAMS = [
   knob('gain', 'GAIN', PLUG_DEFAULT.gain, 'drive'), knob('bass', 'BASS', PLUG_DEFAULT.bass, 'tone'), knob('mid', 'MIDDLE', PLUG_DEFAULT.mid, 'tone'),
   knob('treble', 'TREBLE', PLUG_DEFAULT.treble, 'tone'), knob('presence', 'PRESENCE', PLUG_DEFAULT.presence, 'tone'), knob('level', 'MASTER', PLUG_DEFAULT.level, 'level'),
   // the cab and the mics
-  { key: 'cab', label: 'CAB', opts: CAB_IDS.map((k) => PLUG_CABS[k].name), def: 0, group: 'cab', desc: 'the speaker cabinet' },
+  { key: 'cab', label: 'CAB', opts: CAB_IDS.map((k) => PLUG_CABS[k].name), def: 0, group: 'cab', desc: 'the speaker cabinet: a measured 4x12 (its mic is part of the measurement) or a designed cab (with the mics below)' },
   { key: 'mic', label: 'MIC', opts: MIC_IDS.map((k) => PLUG_MICS[k].name), def: Math.max(0, MIC_IDS.indexOf(PLUG_MIC_DEFAULT.type)), group: 'cab' },
   { key: 'micpos', label: 'POSITION', min: 0, max: 1.35, def: PLUG_MIC_DEFAULT.x, step: 0.01, group: 'cab', role: 'tone', desc: 'cone radii from the dustcap: brighter at the centre, darker toward the edge',
     fmt: (v) => `${(+v).toFixed(2)} ${where(v)}` },
@@ -36,13 +54,14 @@ export const AMP_PARAMS = [
   { key: 'flip', label: 'PHASE', opts: ['NORM', 'FLIP'], def: 0, group: 'cab', desc: "flip mic 2's polarity" },
 ];
 
-// Overdub params -> the gear's amp settings P ({ amp, gain, ..., cab?, mic?, mic2? }); the defaults left out, so
-// the amp at its own cab and one mic where it was voiced takes the straight wire, bit for bit.
+// Overdub params -> the gear's amp settings P ({ amp, gain, ..., cab?, mic?, mic2? }); the defaults left out (the cab
+// when it's the amp's default; 'own' is written for an amp whose default is a measured cab), so the amp at its own cab
+// and one mic where it was voiced takes the straight wire, bit for bit.
 export function ampSettings(id, v) {
   const P = { amp: id };
   for (const k of ['gain', 'bass', 'mid', 'treble', 'presence', 'level']) P[k] = v[k];
   const cab = CAB_IDS[Math.round(v.cab)] || 'own';
-  if (cab !== 'own') P.cab = cab;
+  if (cab !== plugCabDefault(id)) P.cab = cab;
   const m1 = { type: MIC_IDS[Math.round(v.mic)] || PLUG_MIC_DEFAULT.type, x: +v.micpos, y: 0, dist: +v.micdist, ang: +v.micang, s: 0 };
   if (Object.keys(PLUG_MIC_DEFAULT).some((k) => m1[k] !== PLUG_MIC_DEFAULT[k])) P.mic = m1;
   const t2 = Math.round(v.mic2);
@@ -53,7 +72,7 @@ export function ampSettings(id, v) {
 export function ampParams(S) {
   const v = {};
   for (const k of ['gain', 'bass', 'mid', 'treble', 'presence', 'level']) if (S[k] != null) v[k] = +S[k];
-  if (S.cab && S.cab !== 'own' && PLUG_CABS[S.cab]) v.cab = CAB_IDS.indexOf(S.cab);
+  if (S.cab && PLUG_CABS[S.cab]) v.cab = CAB_IDS.indexOf(S.cab); // ('own' too: 0, the amp's own designed cab)
   const pos = (m) => Math.round(Math.min(1.35, Math.hypot(+m.x || 0, +m.y || 0)) * 1000) / 1000;
   if (S.mic) { v.mic = Math.max(0, MIC_IDS.indexOf(S.mic.type)); v.micpos = pos(S.mic); v.micdist = +S.mic.dist; v.micang = +S.mic.ang; }
   if (S.mic2) { v.mic2 = 1 + Math.max(0, MIC_IDS.indexOf(S.mic2.type)); v.mic2pos = pos(S.mic2); v.mic2dist = +S.mic2.dist; v.mic2ang = +S.mic2.ang; v.blend = +S.mic2.blend; v.flip = S.mic2.flip ? 1 : 0; }
@@ -67,7 +86,9 @@ export function ampDevice(id) {
   return {
     id: 'amp.' + id, name: A.name, kind: 'effect', cat: 'amp', amp: id, kindLabel: TONE_LABEL[A.tone] || 'AMP', tone: A.tone, style: A.style,
     blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic', // (both ids: kept as they were)
-    params: AMP_PARAMS.map((p) => Object.assign({}, p)),
+    params: AMP_PARAMS.map((p) => Object.assign({}, p, p.key === 'cab' ? { def: cabDefaultIndex(id) } : null)),
+    // (an amp on a measured cab by default names the bank: an export waits for it, and the rack says while it loads)
+    ...(isMeasured(plugCabDefault(id)) ? { data: { cabs: CABS_HASH }, dataSays: AMP_CAB_SAYS } : {}),
     look: { amp: id, style: A.style },
     latency: 256 / 48000, // (the two 2x-oversampled stages: 128 samples each; the instance reports it at its own rate)
     worklets,
@@ -80,6 +101,8 @@ export function ampDevice(id) {
       }
       const amp = gear.plugAmp(c);
       if (A.sub && !amp.octave()) { amp.dispose(); throw failure('worklet', `${A.name}'s octave couldn't be made`); }
+      // (the measured cabs' bank: an amp whose default is one asks for it now; the others when one is picked)
+      if (isMeasured(plugCabDefault(id))) amp.ready();
       return {
         input: amp.input, output: amp.output, latency: amp.latency, amp,
         set(v, x) { amp.set(ampSettings(id, v), x && !x.first ? x.t : undefined); },

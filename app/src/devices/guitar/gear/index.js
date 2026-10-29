@@ -4,11 +4,16 @@
 //                            made live with opts.clock); a stopped free grid until then
 //   song.key                 the project's key (window.overdub.store), as a 0-11 major key (C = 0)
 //   ctx                      the live context
+//   CABS                     the measured cabs' bank: Half Stack's (devices/builtin/amp-lib.js CABS_HASH, kernel data
+//                            fetched by kernel/data.js: app/kits/<hex>.odk), which the amps play as their measured cabs
 // Its worklets: a gear def's worklets are { name: source }, and the studio loads worklet modules only from files on its
 // own origin (its policy refuses data: and blob: scripts), so each source is also a file of its own (worklets/,
 // WORKLETS) and workletFiles() gives an Overdub def those instead: { name: URL }.
 import { evaluate, WORKLETS } from './code.js';
 import { live, onLive } from '../../graph.js';
+import { loadData, peekData, dataState } from '../../../kernel/data.js';
+import { decodeOdk } from '../../../kernel/odk.js';
+import { CABS_HASH, cabResample } from '../../builtin/amp-lib.js';
 
 export { WORKLETS };
 // { name: source } (a pedal's worklets, or the amps') -> { name: the URL of its file in worklets/ }
@@ -50,8 +55,41 @@ const SONG = {
 // the project again).
 export function setSongKey(k) { keyOverride = k == null ? null : typeof k === 'number' ? ((k % 12) + 12) % 12 : majorKeyOf(k); }
 
+// The measured cabs (code.js PLUG_IRS): the bank decoded once, its taps as Half Stack's kernel scales them (x / 2^23 *
+// gain), and at another host rate resampled once per rate the way the kernel does it (amp-lib.js cabResample), so a 44.1
+// or 96 kHz interface hears the same cabs. Nothing is fetched until an amp asks (load()). In Node there's no fetch of
+// app/kits: useCabBank(decoded) hands one over (tools; engine/node/data.js dataFor decodes it); useCabBank(null) holds
+// it off (tests: an amp as it is when the bank isn't on the server), useCabBank() lets it be found again.
+let bank; // undefined: not looked for yet; null: not here (or held off)
+const atRate = new Map();
+function decoded() {
+  if (bank === undefined) {
+    const b = peekData(CABS_HASH);
+    if (!b) return null;
+    try { bank = decodeOdk(b); } catch (e) { console.error('guitar: the cab bank does not decode:', e.message); bank = null; }
+  }
+  return bank;
+}
+export function useCabBank(b) { bank = b === undefined ? undefined : b || null; atRate.clear(); }
+const CABS = {
+  load: () => (decoded() ? Promise.resolve(true) : bank === null ? Promise.resolve(false) : loadData(CABS_HASH).then(() => !!decoded())),
+  state: () => (decoded() ? 'ready' : dataState(CABS_HASH) || null),
+  native() {
+    const b = decoded();
+    if (!b) return null;
+    if (!atRate.has('native')) atRate.set('native', { sr: b.sr, taps: b.samples.map((s) => Float64Array.from(s.ch[0], (v) => v * ((+s.gain || 1) / 8388608))) });
+    return atRate.get('native');
+  },
+  taps(sr) {
+    const b = decoded();
+    if (!b) return null;
+    if (!atRate.has(sr)) atRate.set(sr, b.samples.map((s) => Float32Array.from(sr === b.sr ? Array.from(s.ch[0], (v) => v * ((+s.gain || 1) / 8388608)) : cabResample(s.ch[0], (+s.gain || 1) / 8388608, b.sr, sr))));
+    return atRate.get(sr);
+  },
+};
+
 let bind = {};
-export const gear = evaluate({ PLUG, bind: (b) => { bind = b; } });
+export const gear = evaluate({ PLUG, CABS, bind: (b) => { bind = b; } });
 bind.song && bind.song(SONG);
 onLive((l) => bind.ctx && bind.ctx(l.c));
 if (live.c && bind.ctx) bind.ctx(live.c);

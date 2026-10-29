@@ -278,27 +278,17 @@ function makeAmp(sr, dsp) {
 }
 `;
 
-// The cab: the bank's IRs through dsp.convolver (direct: 128, so no latency), or the designed Filter 4x12, or nothing.
-// A change of cab crossfades over 30 ms (two convolvers, the new one planned in place). Without the bank (loading, or
-// not on this server) every IR choice plays the filter cab, at the IR cabs' level.
-// the filter cab's level (dB) against the IR cabs': within 1 LU of the close dynamic on the chug, the chords and the
-// DI strum through Half Stack (measured: -0.4, -0.3 and +0.7 LU; tools/cab-test.js holds it)
-export const FILTER_TRIM = -0.7;
-export const CAB_LIB = String.raw`
-const CAB_N = 6, CAB_FILTER = ${CAB_FILTER}, CAB_OFF = ${CAB_OFF}, CAB_TAPS = 4096;
-// sin from + - * / and Math.round alone, the same doubles on every engine (the series sampler.js and kernel/convolve.js
-// carry too)
-function cabSin(x) {
+// The cab kernel's two helpers as plain functions: their own text is pasted into CAB_LIB (`${fn}`, so the kernel's
+// source is what it always was, byte for byte), and the guitar gear's amps resample the same bank with the same code
+// (devices/guitar/gear/index.js). cabSin: sin from + - * / and Math.round alone; cabResample(taps, gain, from, to):
+// band-limited interpolation from one rate to another (both described in the kernel text below).
+export function cabSin(x) {
   const k = Math.round(x / (2 * Math.PI)); x -= k * 2 * Math.PI;
   if (x > Math.PI / 2) x = Math.PI - x; else if (x < -Math.PI / 2) x = -Math.PI - x;
   const x2 = x * x; let term = x, s = x;
   for (let n = 1; n < 12; n++) { term *= -x2 / ((2 * n) * (2 * n + 1)); s += term; }
   return s;
-}
-// An IR recorded at FROM Hz, for a host at TO (an interface at 44.1 or 96 kHz): band-limited interpolation, a
-// Blackman-windowed sinc over 16 zero crossings cut at 0.92 of the lower Nyquist, scaled by FROM / TO so the cab's
-// frequency response is the same at every rate. The sines run by rotation from one series value per output sample.
-function cabResample(c, g, from, to) {
+}export function cabResample(c, g, from, to) {
   const r = from / to, fc = (to < from ? to / from : 1) * 0.92, HW = 16 / fc, N = c.length, n = Math.ceil(N / r);
   const out = new Float64Array(n), dl = Math.PI * fc, cd = cabSin(Math.PI / 2 - dl), sd = cabSin(dl);
   const dw = Math.PI / HW, cw = cabSin(Math.PI / 2 - dw), sw = cabSin(dw);
@@ -316,6 +306,21 @@ function cabResample(c, g, from, to) {
   }
   return out;
 }
+// The cab: the bank's IRs through dsp.convolver (direct: 128, so no latency), or the designed Filter 4x12, or nothing.
+// A change of cab crossfades over 30 ms (two convolvers, the new one planned in place). Without the bank (loading, or
+// not on this server) every IR choice plays the filter cab, at the IR cabs' level.
+// the filter cab's level (dB) against the IR cabs': within 1 LU of the close dynamic on the chug, the chords and the
+// DI strum through Half Stack (measured: -0.4, -0.3 and +0.7 LU; tools/cab-test.js holds it)
+export const FILTER_TRIM = -0.7;
+export const CAB_LIB = String.raw`
+const CAB_N = 6, CAB_FILTER = ${CAB_FILTER}, CAB_OFF = ${CAB_OFF}, CAB_TAPS = 4096;
+// sin from + - * / and Math.round alone, the same doubles on every engine (the series sampler.js and kernel/convolve.js
+// carry too)
+${cabSin}
+// An IR recorded at FROM Hz, for a host at TO (an interface at 44.1 or 96 kHz): band-limited interpolation, a
+// Blackman-windowed sinc over 16 zero crossings cut at 0.92 of the lower Nyquist, scaled by FROM / TO so the cab's
+// frequency response is the same at every rate. The sines run by rotation from one series value per output sample.
+${cabResample}
 function makeCab(sr, dsp, bank) {
   // the bank's taps (each x / 8388608 * gain). At the bank's own rate they are its integers scaled; at another host
   // rate each is resampled the first time it is chosen (a few ms, once), so a 44.1 or 96 kHz interface hears the same

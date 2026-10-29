@@ -20,6 +20,10 @@ export function evaluate(env = {}) {
   if (env.bind) env.bind({ song: (s) => { song = s; }, ctx: (c) => { ctx = c; } });
   // (plugin.js: the default amp settings, which presets.js reads)
   const PLUG_DEFAULT = { amp: 'punk', gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 };
+  // (Overdub's) the measured cabs' bank, Half Stack's, shared (gear/index.js): { load() (a promise, true once it's in),
+  // native() ({ sr, taps } at the bank's rate, or null), taps(sr) (Float32Arrays at sr, or null), state() }; or none:
+  // every amp plays its designed cab
+  const PLUG_IRS = env.CABS || null;
 
   // ---------------------------------------------------------------- pedals.js
 /* ================================================================ Claw'd-o-Matic: the pedal platform (plug in) */
@@ -548,7 +552,7 @@ function pedalRig(c, amp) {
     // the song's tempo moved (tempo-synced pedals follow it)
     tempo(b) { if (cur && b && b !== bpm) set(cur, b); },
     // resolves once every pedal on the board is built (worklets loaded)
-    async ready() { while (waiting.length) { const w = waiting; waiting = []; await Promise.all(w); } },
+    async ready() { while (waiting.length) { const w = waiting; waiting = []; await Promise.all(w); } if (amp && amp.ready) await amp.ready(); },
     // a pedal's build() result by uid (tests: its nodes)
     pedal: (uid) => (inst.get(uid) ? inst.get(uid).w.p : null),
     get latency() { let s = amp.latency || 0; for (const n of inst.values()) s += n.w.latency; return s; },
@@ -869,22 +873,34 @@ const PLUG_WORKLETS = `class ClawdOctave extends AudioWorkletProcessor {
 }
 registerProcessor('clawd-octave', ClawdOctave);`;
 
-/* ---- cabs and mics. Every amp's voicing above has its own cab baked in (A.cab: the speaker, the box and a 57-style
-   dynamic mic on the cap edge, an inch back). That stays the default, bit for bit: an amp at its own cab with the
-   default mic goes straight from A.cab to the level, as it always has. Pick another cab, or move the mic, and the
-   signal goes through the mic network instead:
+/* ---- cabs and mics. Two kinds of cab: measured and designed.
+   Measured (PLUG_CABS' six with an `ir`): the impulse responses Half Stack plays (devices/builtin/amp-lib.js CAB_IDS:
+   six closed 4x12s, each with the mic it was recorded with, from the cab bank, kernel data: env.CABS, gear/index.js).
+   The amp's signal leaves before A.cab and goes through one of them (a ConvolverNode, kit.convolver's crossfade) and a
+   trim to the level. They are every guitar amp's default (PLUG_AMP_IR); the mics below don't apply to them (the mic is
+   in the measurement). Until the bank is in, or when it isn't on this server, an amp on a measured cab plays its own
+   designed cab instead (the straight wire), and moves over, crossfaded, once the bank lands.
+   Designed (the rest): every amp's voicing above has its own cab baked in (A.cab: the speaker, the box and a 57-style
+   dynamic mic on the cap edge, an inch back). At its own cab ('own') with the default mic it goes straight from A.cab
+   to the level, bit for bit as it always has. Pick another designed cab, or move the mic, and the signal goes through
+   the mic network instead:
      A.cab's six filters (with the new cab's values) -> [per mic: its placement and type as seven filters, plus the
      room: a floor bounce, a far wall, an open back's rear wave, a stadium's slap, as delay taps beside the direct
      sound] -> blend (a second mic, maybe flipped, delayed by the difference in distance) -> trim -> the level
-   The trim level-matches: it's worked out from the responses (plugCabNet below) against the amp's own cab, weighted
-   like a distorted guitar heard through K-weighting, plus a measured nudge per cab (lv). tools/cab-check.js checks it.
+   The trims level-match: each is worked out from the responses (plugCabNet below) against the amp's own cab, weighted
+   like a distorted guitar heard through K-weighting, plus a measured nudge per cab (lv) or per amp on its measured cab
+   (PLUG_IR_LV). tools/guitar-test.js measures them (section 4c).
    The mic filters are all flat at the default mic, so moving it off and back never jumps.
-   Settings, on the amp's P (none of them written when they're the default):
-     P.cab: a PLUG_CABS id ('own', or missing: the amp's own)
+   Settings, on the amp's P (none of them written when they're the amp's default):
+     P.cab: a PLUG_CABS id. Missing: the amp's default (PLUG_AMP_IR's measured cab, or 'own' for the amps that keep
+       theirs). 'own': the amp's own designed cab, written when the amp's default is a measured one. (Before the
+       measured cabs, missing meant 'own': a saved rig without a cab now plays the measured one. A reader from before
+       them drops an id it doesn't know and plays 'own'.)
      P.mic: { type, x, y, dist, ang, s }: a PLUG_MICS id; where it points on the cone (x, y in cone radii from the
        dustcap's centre: the cap's edge is 0.3, the cone's edge 1); inches from the grille (0.5-24); degrees off axis
        (0-60); which speaker it's on (s: for the picture only; every cone in a cab sounds the same)
-     P.mic2: the same for a second mic, plus blend (0-10: 0 all the first mic, 10 all this one) and flip (its phase) */
+     P.mic2: the same for a second mic, plus blend (0-10: 0 all the first mic, 10 all this one) and flip (its phase)
+   (P.mic and P.mic2 are kept on a measured cab, unheard, so a designed cab picked again has its mics where they were.) */
 // A cab: name, blurb; n cones of size inches; back: open, closed or odd (for the rear wave and the picture); cab: the
 // six filters (as an amp's); lv: a measured nudge (dB) on top of the worked-out trim; slap: [ms, gain] a far echo.
 const PLUG_CABS = {
@@ -923,6 +939,15 @@ const PLUG_CABS = {
     cab: [38, [60, 1.2, 1.5], [400, 1, -0.5], [1200, 1, 1.5], [3200, 0.7], 4800], lv: 0 },
   m212: { name: '2x12 Modern Bass', blurb: 'Light neo 12s and a tweeter: deep, and hi-fi on top', n: 2, size: 12, back: 'closed',
     cab: [40, [80, 1.1, 1.5], [400, 1, -1.5], [3000, 1, 2], [7000, 0.7], 10000], lv: 0 },
+  // the measured cabs: Half Stack's six, in its CAB switch's order (ir: the bank's index; amp-lib.js CAB_IDS and
+  // CAB_NAMES, the same ids and names: tools/guitar-test.js holds them together). No filters: the IR is the cab and its
+  // mic. Drawn as the closed 4x12s they are.
+  'modern-close': { name: 'Modern 4x12, close dynamic', blurb: 'Measured: a dynamic right on the cone; tight lows, even mids, a dark top', n: 4, size: 12, back: 'closed', ir: 0 },
+  'modern-bright': { name: 'Modern 4x12, bright dynamic', blurb: 'Measured: another speaker in the same box; firmer lows, softer upper mids, a little air', n: 4, size: 12, back: 'closed', ir: 1 },
+  'modern-side': { name: 'Modern 4x12, side-address', blurb: 'Measured: a side-address mic on a warmer speaker; thick low mids', n: 4, size: 12, back: 'closed', ir: 2 },
+  'modern-two': { name: 'Modern 4x12, two mics', blurb: 'Measured: two mics on two speakers; wide, smooth mids', n: 4, size: 12, back: 'closed', ir: 3 },
+  'british-dynamic': { name: 'British 4x12, dynamic', blurb: 'Measured: the old British 4x12 and a dynamic; scooped low mids, the most top', n: 4, size: 12, back: 'closed', ir: 4 },
+  'british-side': { name: 'British 4x12, side-address', blurb: 'Measured: the old British 4x12, side-address; big lows, bright upper mids', n: 4, size: 12, back: 'closed', ir: 5 },
 };
 // The cab each amp was voiced with (for the picture, and where the mic's sweet spots are): [cones, size, back]
 const PLUG_AMP_BOX = { clean: [2, 12, 'open'], jangle: [2, 12, 'open'], crunch: [1, 12, 'open'], plexi: [4, 12, 'closed'], punk: [2, 12, 'closed'],
@@ -930,6 +955,30 @@ const PLUG_AMP_BOX = { clean: [2, 12, 'open'], jangle: [2, 12, 'open'], crunch: 
   dumble: [2, 12, 'open'], brown: [4, 12, 'closed'], slo: [4, 12, 'closed'], friedman: [4, 12, 'closed'], metal: [4, 12, 'closed'],
   orange: [4, 12, 'closed'], radio: [1, 4, 'odd'], bit: [1, 2, 'odd'], tape: [2, 4, 'odd'], abyss: [1, 15, 'closed'], di: [1, 12, 'closed'],
   whale: [8, 10, 'closed'], walrus: [1, 15, 'closed'], narwhal: [2, 12, 'closed'], sandbar: [1, 15, 'open'], urchin: [4, 10, 'closed'] };
+// Each guitar amp's measured cab, by what the amp is (the default when P.cab is missing). The closest to its designed
+// cab is the British dynamic on most of them (about 2.4 dB rms, 100 Hz-5 kHz, weighted by what the amp puts in; the
+// bright dynamic is the furthest, 4-5 dB), so it's the default unless the amp is something else:
+//   British 4x12, dynamic      the plexi, the brown sound, the 80s master-volume head and the cranked tweed are British
+//                              4x12 amps (that cab is theirs); the two chimey cleans and the solid-state clean get its
+//                              open top, the most of the six above 5 kHz: clean, jangle, crunch, plexi, punk, brown, jc
+//   British 4x12, side-address the big British clean: its lows and firm upper mids are the 100-watt 4x12's: hiwatt
+//   Modern 4x12, two mics      smooth, wide mids for the singing leads and the tweed 4x10 (the nearest to its own cab
+//                              of all six, 2.3 dB): lead, dumble, friedman, bassman
+//   Modern 4x12, close dynamic the American high-gain heads were voiced on this modern closed 4x12: recto, slo, metal
+//   Modern 4x12, side-address  the thickest low mids, for stoner and doom: orange
+// Not here, so they keep their own designed cab: the bass amps (whale, walrus, narwhal, sandbar, urchin) and Abyss,
+// whose sound is under 100 Hz, where every one of the six (guitar 4x12s, recorded close) has given up; and the ones
+// whose cab is the effect: Hermit's fizzy 1x8, Flotsam's torn pocket speaker, the 8-Bit Crab's 2-inch console speaker,
+// Beach Tape's cassette deck; and Straight In, which has no cab at all.
+const PLUG_AMP_IR = { clean: 'british-dynamic', jangle: 'british-dynamic', crunch: 'british-dynamic', plexi: 'british-dynamic',
+  punk: 'british-dynamic', brown: 'british-dynamic', jc: 'british-dynamic', hiwatt: 'british-side', lead: 'modern-two', dumble: 'modern-two',
+  friedman: 'modern-two', bassman: 'modern-two', recto: 'modern-close', slo: 'modern-close', metal: 'modern-close', orange: 'modern-side' };
+// an amp's cab when P doesn't name one
+const plugCabDefault = (id) => PLUG_AMP_IR[id] || 'own';
+// A measured nudge (dB) per amp, on any measured cab, on top of the worked-out trim. None is needed yet: every guitar
+// amp at its default knobs, the DI strum through its default measured cab, reads within 0.2 LU of its own designed cab
+// (BS.1770 and the band's loudness alike; tools/guitar-test.js section 4c renders each and holds it within 0.5 LU).
+const PLUG_IR_LV = {};
 // A mic: name, blurb; what it does against the 57 the amps were voiced with: lo (a 200 Hz shelf), body and pres
 // ([Hz, Q, dB] peaks), air (a 9 kHz shelf), hp and lp ([Hz, Q in dB]; 0 is none); prox: how much proximity effect
 // (bass up close) against the 57; room: how much of the room it hears.
@@ -942,10 +991,12 @@ const PLUG_MICS = {
 };
 const PLUG_MIC_DEFAULT = { type: 'dyn', x: 0.3, y: 0, dist: 1, ang: 0, s: 0 };
 const PLUG_MIC2_DEFAULT = { type: 'ribbon', x: 0.62, y: 0, dist: 1, ang: 0, s: 0, blend: 5, flip: false };
-// P's cab and mics, cleaned (anything off becomes the default; a default isn't kept): { cab?, mic?, mic2? }
-function plugCabClean(p) {
+// P's cab and mics, cleaned (anything off becomes the default; a default isn't kept): { cab?, mic?, mic2? }. The cab's
+// default is amp id's (P.amp unless given): 'own' is kept for an amp whose default is a measured cab.
+function plugCabClean(p, id) {
   const out = {}, num = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.max(lo, Math.min(hi, +v)) : d);
-  if (p && typeof p.cab === 'string' && PLUG_CABS[p.cab] && p.cab !== 'own') out.cab = p.cab;
+  const def = plugCabDefault(id != null ? id : p && p.amp);
+  if (p && typeof p.cab === 'string' && PLUG_CABS[p.cab] && p.cab !== def) out.cab = p.cab;
   const mic = (m, D, two) => {
     if (!m || typeof m !== 'object') return null;
     const r = { type: PLUG_MICS[m.type] ? m.type : D.type, x: num(m.x, -1.35, 1.35, D.x), y: num(m.y, -1.35, 1.35, D.y), dist: num(m.dist, 0.5, 24, D.dist),
@@ -962,13 +1013,16 @@ function plugCabClean(p) {
 }
 // Set P's cab fields to those of S (a cleaned set), removing what S doesn't have.
 function plugCabPut(P, S) { for (const k of ['cab', 'mic', 'mic2']) { if (S && S[k] != null) P[k] = S[k]; else delete P[k]; } }
-// The cab and mics as filters: for amp id with settings p at sample rate sr.
-//   { custom: false } when it's the amp's own cab and the default mic (the straight wire), else { custom: true, box, cab
-//   (six filter values), mics: [{ f: seven filters [type, Hz, Q, dB], taps: [[s, gain], ...], delay (s), gain }], trim (dB) }
+// The cab and mics as the amp plays them: for amp id with settings p at sample rate sr.
+//   { custom: false } when it's the amp's own cab and the default mic (the straight wire); { custom: false, ir, cab,
+//   trim } on a measured cab (the bank's IR ir, PLUG_CABS id cab, trim in dB: null while the bank isn't in, when the
+//   amp plays the straight wire); else { custom: true, box, cab (six filter values), mics: [{ f: seven filters [type,
+//   Hz, Q, dB], taps: [[s, gain], ...], delay (s), gain }], trim (dB) }
 function plugCabNet(id, p, sr) {
-  const A = PLUG_AMPS[id] || PLUG_AMPS.punk, S = plugCabClean(p);
-  if (!S.cab && !S.mic && !S.mic2) return { custom: false };
-  const C = PLUG_CABS[S.cab], own = PLUG_AMP_BOX[id] || [1, 12, 'closed'];
+  const A = PLUG_AMPS[id] || PLUG_AMPS.punk, S = plugCabClean(p, id), cabId = S.cab || plugCabDefault(id), C0 = PLUG_CABS[cabId];
+  if (C0 && C0.ir != null) return { custom: false, ir: C0.ir, cab: cabId, trim: plugIrTrim(id, C0.ir, sr) };
+  if (cabId === 'own' && !S.mic && !S.mic2) return { custom: false };
+  const C = cabId === 'own' ? null : C0, own = PLUG_AMP_BOX[id] || [1, 12, 'closed'];
   const box = C ? { n: C.n, size: C.size, back: C.back, slap: C.slap, lv: C.lv || 0 } : { n: own[0], size: own[1], back: own[2], lv: 0 };
   const cab = C ? C.cab : A.cab;
   const one = (m) => {
@@ -1094,6 +1148,33 @@ plugCabNet.resp = (() => {
   return { one, chain, cab };
 })();
 
+// A measured cab's trim for amp id (dB): its own designed cab against the IR, weighted as plugCabNet weighs a designed
+// one (what the amp puts in, through K-weighting), plus the amp's measured nudge (PLUG_IR_LV). null while the bank
+// isn't in. The IR's response is worked out once, at the bank's own rate, on plugCabNet.weights' frequencies.
+function plugIrTrim(id, i, sr) {
+  const B = PLUG_IRS && PLUG_IRS.native();
+  if (!B || !B.taps[i]) return null;
+  const R = plugIrTrim._r || (plugIrTrim._r = []), W = plugCabNet.weights(id, sr), A = PLUG_AMPS[id] || PLUG_AMPS.punk;
+  if (!R[i]) {
+    const h = B.taps[i], out = new Float64Array(W.f.length);
+    for (let j = 0; j < W.f.length; j++) {
+      // (the phasor by rotation, renormalised every 256 taps)
+      const w = (2 * Math.PI * W.f[j]) / B.sr, cw = Math.cos(w), sw = Math.sin(w);
+      let zr = 1, zi = 0, re = 0, im = 0;
+      for (let k = 0; k < h.length; k++) {
+        re += h[k] * zr; im += h[k] * zi;
+        const t = zr * cw + zi * sw; zi = zi * cw - zr * sw; zr = t;
+        if ((k & 255) === 255) { const m = 1 / Math.hypot(zr, zi); zr *= m; zi *= m; }
+      }
+      out[j] = re * re + im * im;
+    }
+    R[i] = out;
+  }
+  let e0 = 0, e1 = 0;
+  for (let j = 0; j < W.f.length; j++) { e0 += W.w[j] * plugCabNet.resp.cab(A.cab, W.f[j], sr); e1 += W.w[j] * R[i][j]; }
+  return Math.max(-12, Math.min(12, 10 * Math.log10(e0 / Math.max(e1, 1e-12)) + (PLUG_IR_LV[id] || 0)));
+}
+
 // An amp on any context (the live one, or an offline one for measuring).
 function plugAmp(c) {
   const dB = (d) => Math.pow(10, d / 20);
@@ -1136,6 +1217,35 @@ function plugAmp(c) {
   const level = G(1), mute = G(1), output = G(1), hush = G(1); // (mute, hush: the output and the input, for changing amps)
   const chain = [input, hush, hp, tight, bright, push, pre1, s1, lp1, hp1, pre2, s2, post2, bass, mid, treble, pl, pre3, s3, post3, presence, ...cab, level, mute, output];
   for (let i = 0; i + 1 < chain.length; i++) chain[i].connect(chain[i + 1]);
+  // The measured cab, beside the designed one: presence -> the IR (a convolver that crossfades a new IR in, the pedals'
+  // kit's) -> its trim (measured) -> the level, fed only while it's used; the designed cab's way out (the wire and the
+  // mics, below) goes through `designed`. One of the two is at 1 (or the trim) and the other at exactly 0, and they
+  // crossfade over 30 ms (a raised cosine) when a measured cab comes or goes, so nothing ducks for it. At a designed cab
+  // `designed` is 1, which changes nothing.
+  const kitOwn = { src: [], timers: [], fns: [], wk: [] }, conv = PFX.kit(c, kitOwn).convolver(null), irOut = G(0), designed = G(1);
+  conv.normalize = false; // (the bank's taps are its levels: Half Stack plays them as they are)
+  conv.connect(irOut); irOut.connect(level); designed.connect(level);
+  let irFed = false, irOffT = 0, irCur = -1, irWait = null;
+  const irFeed = (on) => {
+    clearTimeout(irOffT);
+    if (dead) return;
+    if (on && !irFed) { presence.connect(conv); irFed = true; }
+    else if (!on && irFed) irOffT = setTimeout(() => { if (irFed && !dead) { try { presence.disconnect(conv); } catch (e) { /* gone */ } irFed = false; } }, realtime ? 400 : 0);
+  };
+  // the bank's IRs as AudioBuffers at this context's rate (made once per context), or null while it isn't in
+  const irBufs = () => {
+    if (!PLUG_IRS) return null;
+    if (c.__plugIrs) return c.__plugIrs;
+    const t = PLUG_IRS.taps(c.sampleRate);
+    if (!t) return null;
+    return (c.__plugIrs = t.map((x) => { if (!x) return null; const b = c.createBuffer(1, x.length, c.sampleRate); b.copyToChannel(x, 0); return b; }));
+  };
+  // the bank, asked for once; when it lands, the amp moves onto its measured cab (live: crossfaded; offline: at once)
+  const irLoad = () => {
+    if (!PLUG_IRS) return Promise.resolve(false);
+    if (!irWait) irWait = Promise.resolve(PLUG_IRS.load()).then(() => { if (!dead && last && !pending && irBufs()) apply(last, !realtime); return !!irBufs(); }, () => false);
+    return irWait;
+  };
   // the side route for the odd ones (crush, wow): post2 -> quantiser -> wobbling delay -> side -> the tone stack, beside
   // the straight wire. An amp that uses it turns the wire (via) off and the side on; the rest keep side at exactly 0, so
   // what they sum into the tone stack is their own signal plus zero, bit for bit.
@@ -1170,7 +1280,7 @@ function plugAmp(c) {
   // mics, each seven filters and four room taps, blended and trimmed. The wire and micOut crossfade; the unused one sits
   // at exactly 0, and the wire's 1 changes nothing.
   const wire = G(1), micOut = G(0), mics = [];
-  cab[5].disconnect(level); cab[5].connect(wire); wire.connect(level); micOut.connect(level);
+  cab[5].disconnect(level); cab[5].connect(wire); wire.connect(designed); micOut.connect(designed);
   for (let m = 0; m < 2; m++) {
     const align = c.createDelay(0.01), f = [F('lowshelf', 200, 0, 0), F('peaking', 400, 0.9, 0), F('peaking', 4500, 1.2, 0), F('highshelf', 2500, 0, 0), F('highshelf', 9000, 0, 0), F('highpass', 0, 0), F('lowpass', c.sampleRate / 2, 0)];
     const sum = G(1), mix = G(0), taps = [];
@@ -1196,9 +1306,10 @@ function plugAmp(c) {
   // at (optional): the audio time the change lands at, a little ahead (pedalRig's set: scenes.js puts it on a bar line)
   function set(p, at) {
     last = p;
-    const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', cb = PLUG_CABS[p.cab] ? p.cab : 'own';
+    const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', cb = plays(id, p);
     if (pending) return;
-    if (cur != null && (id !== cur || cb !== curCab) && realtime) { // (a new cab ducks too: its filters jump)
+    // (a new designed cab ducks too: its filters jump. A measured cab coming or going doesn't: apply crossfades it)
+    if (cur != null && (id !== cur || (cb !== curCab && cb !== 'ir' && curCab !== 'ir')) && realtime) {
       const t = Math.max(c.currentTime, at || 0);
       pending = true;
       for (const m of [mute, hush]) { m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(m.gain.value, t); m.gain.linearRampToValueAtTime(0, t + 0.008); }
@@ -1216,7 +1327,14 @@ function plugAmp(c) {
       duckT = setTimeout(go, Math.max(30, (t - c.currentTime) * 1000 + 14));
       return;
     }
-    apply(p, cur == null || id !== cur || cb !== curCab, at);
+    apply(p, cur == null || id !== cur || (cb !== curCab && cb !== 'ir' && curCab !== 'ir'), at);
+  }
+  // what the cab plays for amp id at p: 'ir' (a measured cab, with the bank in), else the designed cab's PLUG_CABS id
+  // (an amp on a measured cab without the bank: 'own', what it plays meanwhile)
+  function plays(id, p) {
+    const S = plugCabClean(p, id), cb = S.cab || plugCabDefault(id), C = PLUG_CABS[cb];
+    if (C && C.ir != null) { const b = irBufs(); return b && b[C.ir] ? 'ir' : 'own'; }
+    return cb;
   }
   function apply(p, jump, at) {
     const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', A = PLUG_AMPS[id], t = jump ? c.currentTime : Math.max(c.currentTime, at || 0);
@@ -1247,7 +1365,14 @@ function plugAmp(c) {
     if (A.blend) { blendOn(); to(cln.g.gain, dB(A.blend[1])); to(cln.a.frequency, A.blend[0]); to(cln.b.frequency, A.blend[0]); } else if (cln) to(cln.g.gain, 0);
     to(presence.frequency, A.pres); to(presence.gain, k(p.presence, 5) * 1.6);
     const N = plugCabNet(id, p, c.sampleRate), cb = N.custom ? N.cab : A.cab;
-    curCab = PLUG_CABS[p.cab] ? p.cab : 'own';
+    // a measured cab plays once the bank is in (asked for here); till then the amp's own designed cab, the wire
+    const bufs = N.ir != null ? irBufs() : null, ir = !!(bufs && bufs[N.ir] && N.trim != null);
+    if (N.ir != null && !bufs) irLoad();
+    curCab = plays(id, p);
+    if (ir && irCur !== N.ir) { conv.buffer = bufs[N.ir]; irCur = N.ir; }
+    irFeed(ir);
+    const xf = (param, v) => { if (jump) { param.cancelScheduledValues(t); param.setValueAtTime(v, t); } else pfxGlide(c, param, v, 0.03, t); };
+    xf(designed.gain, ir ? 0 : 1); xf(irOut.gain, ir ? dB(N.trim) : 0);
     to(wire.gain, N.custom ? 0 : 1); to(micOut.gain, N.custom ? dB(N.trim) : 0);
     mics.forEach((M, m) => feed(M, !!(N.custom && N.mics[m])));
     if (N.custom) {
@@ -1274,13 +1399,19 @@ function plugAmp(c) {
     dead = true;
     clearTimeout(duckT); duckT = 0;
     for (const M of mics) clearTimeout(M.off);
+    clearTimeout(irOffT);
+    for (const x of kitOwn.timers) clearTimeout(x);
     try { wowLfo.stop(); } catch (e) { /* stopped */ }
     try { wowLfo.disconnect(); } catch (e) { /* gone */ }
     if (sub && sub.w && typeof pfxEnd === 'function') pfxEnd(sub.w);
   };
   // octave(): make the octave now (an amp with one: Abyss), true if it's there. Its build asks before it plays, so an
   // octave that can't be made is the device failing to build, not a quiet amp without it (devices/guitar/amps.js).
-  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
+  // ready(): a promise that's resolved once the measured cabs' bank is in or known not to be here (an offline render
+  // awaits it after set(), so a measured cab is in it from the first sample: pedalRig's ready() waits for it too).
+  // playing(): what the cab plays now ('ir' or a designed cab's id).
+  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, ready: () => irLoad().then(() => {}), playing: () => curCab,
+    net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
 }
 plugAmp.amps = PLUG_AMPS; // (tools/plug-level.js)
 
@@ -7022,7 +7153,7 @@ presetBank({ id: 'bass', name: 'Low End Theory', blurb: 'For a bass on the input
     PFX, PLUG_GATE, PFX_ENV, PFX_END, DELAY_NOTES, PEDAL_CATS, PEDAL_RANK, PEDAL_DEFS, PEDAL_LIST, pedalKnob, pfxGlide,
     boardClean, boardFromFx, boardDefault, boardEntry,
     // the amps, cabs and mics (amps.js)
-    PLUG_AMPS, PLUG_WORKLETS, PLUG_CABS, PLUG_AMP_BOX, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugAmp, plugCabNet, plugCabClean,
+    PLUG_AMPS, PLUG_WORKLETS, PLUG_CABS, PLUG_AMP_BOX, PLUG_AMP_IR, PLUG_IR_LV, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugAmp, plugCabNet, plugCabClean, plugCabDefault,
     // the presets (presets.js, presets/*.js)
     PLUG_PRESETS, PRESET_BANKS, PRESET_KNOBS, presetResolve, presetBanks, PLUG_DEFAULT,
   };

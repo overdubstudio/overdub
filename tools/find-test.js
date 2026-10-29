@@ -162,6 +162,11 @@ try {
   /* ---------------------------------------------------------------- one studio: a person's clean browser */
   await section('one studio', async () => {
     const P = await fresh({ init: hideWebdriver });
+    // a person's clean browser opens on the live room's door; the studio is the control room behind the glass
+    const door = await P.E(() => ({ open: window.overdub.liveRoom?.isOpen?.(), screen: window.overdub.ui.state.liveRoom?.screen }));
+    T.ok(door.open && door.screen === 'door', `a clean browser opens on the live room's door (${JSON.stringify(door)})`);
+    await P.E(() => window.overdub.liveRoom.close());
+    await sleep(400);
     const w = await P.E(wsBits);
     T.ok(w.view === 'full' && w.root === 'full', `a clean browser (no webdriver) opens the full studio (view ${w.view}, root .ws-${w.root})`);
     T.ok(!w.off.length && !w.sheet, `nothing is put away: no .ws-off-* class and no hiding stylesheet (${w.off.join(' ') || 'none'}; sheet ${w.sheet})`);
@@ -173,7 +178,13 @@ try {
     T.ok(st.ball, 'the beat lights are in the top bar');
     const tabs = await P.E(visTabs);
     T.ok(tabs.length >= 12 && ['mixer', 'pianoroll', 'drumgrid', 'history'].every((t) => tabs.includes(t)), `every tab is showing (${tabs.length}: ${tabs.join(', ')})`);
-    // a track header: its instrument (opens big), M, S and R (docs/INSTRUMENTS-UX.md 2.3)
+    // a track header: its instrument (opens big), M, S and R (docs/INSTRUMENTS-UX.md 2.3). Past the door the song is
+    // empty until something's played, so add a track the way a person would: Add a track, the first kind
+    if (!(await P.E(() => window.overdub.store.get().tracks.length))) {
+      await P.page.click('.ar-add');
+      await P.page.click('[role=menuitem]');
+      await sleep(400);
+    }
     const hd = await P.E(() => { const vis = (e) => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden'; const h = [...document.querySelectorAll('.ar-head')].find(vis); return h ? { inst: vis(h.querySelector('.ar-hinst')), m: vis(h.querySelector('.ar-hb-mute')), s: vis(h.querySelector('.ar-hb-solo')) } : null; });
     T.ok(hd && hd.inst && hd.m && hd.s, `a track header shows its instrument, M and S (${JSON.stringify(hd)})`);
     // B brings the Browser

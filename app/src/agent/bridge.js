@@ -56,7 +56,10 @@ export default function (app) {
     const by = join(ev.agent || 'Agent');
     let body;
     try {
-      const result = await app.tools.run(ev.tool, ev.input || {}, { by });
+      // export_take is a local MCP client's (server/mcp.js), never the studio's catalog: it writes a file over there
+      const result = ev.tool === 'export_take'
+        ? await (await import('./take-export.js')).exportTake(app, ev.input || {}, ev.id)
+        : await app.tools.run(ev.tool, ev.input || {}, { by });
       body = { id: ev.id, result };
     } catch (e) { body = { id: ev.id, error: String(e && e.message || e) }; }
     app.presence.status('', by);
@@ -111,5 +114,5 @@ export default function (app) {
 }
 
 function statusLine(tool) {
-  return ({ get_project: 'reading the song', get_selection: 'looking at your selection', apply_ops: 'editing the song', render_and_measure: 'listening (rendering)', define_device: 'building a device', adjust: 'adjusting a sound', propose_variations: 'waiting for your pick', ask_human: 'waiting for your answer', list_devices: 'browsing devices', play: 'playing it for you', highlight: 'pointing' })[tool] || 'working';
+  return ({ get_project: 'reading the song', get_selection: 'looking at your selection', apply_ops: 'editing the song', render_and_measure: 'listening (rendering)', define_device: 'building a device', adjust: 'adjusting a sound', propose_variations: 'waiting for your pick', ask_human: 'waiting for your answer', list_devices: 'browsing devices', play: 'playing it for you', highlight: 'pointing', export_take: 'exporting a take' })[tool] || 'working';
 }

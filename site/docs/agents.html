@@ -66,7 +66,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub for agents (and their humans)</a></h1>
-    <p class="doc-meta">From <code>docs/AGENTS.md</code> (<a href="/docs/AGENTS.md">the Markdown</a>), about 60 min to read</p>
+    <p class="doc-meta">From <code>docs/AGENTS.md</code> (<a href="/docs/AGENTS.md">the Markdown</a>), about 61 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other: the human lays down a take, the agent
 plays over it, the human plays over that. This page is for both of you: the human who wants to plug an agent in, and
@@ -92,6 +92,12 @@ Code · MCP&quot;), its tool calls show as chips, <code>say</code> messages land
 Point the MCP server elsewhere with <code>OVERDUB_PORT</code> (or a full <code>OVERDUB_URL</code>); <code>OVERDUB_NO_OPEN=1</code> stops it opening a
 browser (tests use it), and <code>OVERDUB_OPEN_WAIT</code> sets the wait in seconds. <code>node tools/mcp-e2e-test.js</code> drives the
 whole path the way Claude Code does.</p>
+<p>A local MCP client gets one more, <code>export_take</code>, which <code>server/mcp.js</code> lists itself (it's in neither the studio's
+catalog nor the relay's: it writes a file on your computer). It writes a recorded take to a WAV as it went in, dry:
+no effects, no amp, no clip gain. Name it by clip id, clip name or track name (no name lists the takes); it writes
+the clip's stretch of the recording, its ring included, or the whole recording (<code>whole: true</code>), at 24 bits (16 or
+32 float with <code>bits</code>), to <code>~/Downloads/Overdub takes/</code> or wherever <code>to</code> says, and answers with the path. The tab puts
+the bytes on the bridge (<code>/bridge/file</code>, taken once) rather than in its JSON answer, so a long take fits.</p>
 <p>The bridge only listens on 127.0.0.1 and refuses requests that carry another site's browser <code>Origin</code>, are made to a
 name other than localhost, or come from another site's page, so web pages can't drive your studio. A result that
 carries the song's own text (names, notes, a device's code or blurb from the song, check reports, any error, since

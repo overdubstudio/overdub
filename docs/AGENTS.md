@@ -31,6 +31,13 @@ Point the MCP server elsewhere with `OVERDUB_PORT` (or a full `OVERDUB_URL`); `O
 browser (tests use it), and `OVERDUB_OPEN_WAIT` sets the wait in seconds. `node tools/mcp-e2e-test.js` drives the
 whole path the way Claude Code does.
 
+A local MCP client gets one more, `export_take`, which `server/mcp.js` lists itself (it's in neither the studio's
+catalog nor the relay's: it writes a file on your computer). It writes a recorded take to a WAV as it went in, dry:
+no effects, no amp, no clip gain. Name it by clip id, clip name or track name (no name lists the takes); it writes
+the clip's stretch of the recording, its ring included, or the whole recording (`whole: true`), at 24 bits (16 or
+32 float with `bits`), to `~/Downloads/Overdub takes/` or wherever `to` says, and answers with the path. The tab puts
+the bytes on the bridge (`/bridge/file`, taken once) rather than in its JSON answer, so a long take fits.
+
 The bridge only listens on 127.0.0.1 and refuses requests that carry another site's browser `Origin`, are made to a
 name other than localhost, or come from another site's page, so web pages can't drive your studio. A result that
 carries the song's own text (names, notes, a device's code or blurb from the song, check reports, any error, since

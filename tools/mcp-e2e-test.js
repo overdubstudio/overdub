@@ -148,13 +148,14 @@ try {
   // studio's own agent has, including the ones page modules register at boot
   const PAGE_TOOLS = ['arrange_around', 'compare_to_reference', 'transform', 'share_link', 'provenance_report'];
   const { catalogSchemas } = await import('../app/src/agent/tools.js');
-  const fullNames = (await catalogSchemas()).map((x) => x.name);
+  const { TOOL: EXPORT_TAKE } = await import('../app/src/agent/take-export.js');
+  const fullNames = [...(await catalogSchemas()).map((x) => x.name), EXPORT_TAKE.name];
   t.ok(PAGE_TOOLS.every((n) => tools.some((x) => x.name === n)) && tools.length === fullNames.length && fullNames.length >= 25,
-    `no tab: tools/list has all ${fullNames.length} tools, the page-registered ones too (${tools.length} listed; missing: ${PAGE_TOOLS.filter((n) => !tools.some((x) => x.name === n)).join(', ') || 'none'})`);
+    `no tab: tools/list has all ${fullNames.length - 1} of the studio's tools, the page-registered ones too, and its own export_take (${tools.length} listed; missing: ${PAGE_TOOLS.filter((n) => !tools.some((x) => x.name === n)).join(', ') || 'none'})`);
   // every tool's MCP annotations, as the client gets them: a title (top level too, where the 2025-06-18 schema puts a
   // display name) and the four hints, the same as the studio's catalog (app/src/agent/tools.js says how each is decided)
   const HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'];
-  const catalogAnn = Object.fromEntries((await catalogSchemas()).map((x) => [x.name, JSON.stringify(x.annotations)]));
+  const catalogAnn = Object.fromEntries([...(await catalogSchemas()), EXPORT_TAKE].map((x) => [x.name, JSON.stringify(x.annotations)]));
   const unannotated = tools.filter((x) => !(x.annotations && typeof x.title === 'string' && x.title && x.annotations.title === x.title && HINTS.every((k) => typeof x.annotations[k] === 'boolean') && JSON.stringify(x.annotations) === catalogAnn[x.name]));
   const ro = tools.filter((x) => x.annotations?.readOnlyHint).map((x) => x.name), de = tools.filter((x) => x.annotations?.destructiveHint).map((x) => x.name);
   t.ok(!unannotated.length && ro.includes('get_project') && ro.includes('render_and_measure') && de.includes('apply_ops') && !de.includes('play') && !ro.includes('apply_ops'),
@@ -207,7 +208,8 @@ try {
   {
     // the tab's catalog and the no-tab one name the same tools (agent/extra-schemas.js stays in step with the page)
     const live = await (await fetch(BASE + '/bridge/tools')).json();
-    const a = live.tools.map((x) => x.name).sort().join(','), b = tools.map((x) => x.name).sort().join(',');
+    // (mcp.js adds its own export_take, which the studio's catalog never has)
+    const a = live.tools.map((x) => x.name).sort().join(','), b = tools.map((x) => x.name).filter((n) => n !== 'export_take').sort().join(',');
     t.ok(live.source === 'page' && a === b, `the tab's catalog matches the no-tab list (${live.tools.length} vs ${tools.length}${a === b ? '' : `; tab only: ${live.tools.map((x) => x.name).filter((n) => !tools.some((x) => x.name === n)).join(', ')}; list only: ${tools.map((x) => x.name).filter((n) => !live.tools.some((x) => x.name === n)).join(', ')}`})`);
     for (const n of PAGE_TOOLS) {
       const x = live.tools.find((y) => y.name === n), y = tools.find((z) => z.name === n);
@@ -325,6 +327,40 @@ try {
   t.ok(!un.isError, 'undo succeeds');
   t.ok(await page.evaluate((id) => window.overdub.store.get().tracks.find((x) => x.id === id).clips[0].notes.length, made.id) === 5, 'undo takes the picked take back out');
 
+  // 9b. export_take: a take as it was recorded, written to a file here (app/src/agent/take-export.js; the WAV crosses
+  // on /bridge/file, never in the JSON). A 2.5 s ramp recorded at 48 kHz, its clip the 1 s from 0.5 s in.
+  {
+    const SR = 48000, N = Math.round(2.5 * SR);
+    const tid = await page.evaluate(async ({ SR, N }) => {
+      const o = window.overdub, ch = new Float32Array(N);
+      for (let i = 0; i < N; i++) ch[i] = ((i % 4800) / 4800 - 0.5) * 0.8;
+      await o.engine.assets.put('a_e2etake', { sr: SR, channels: [ch] });
+      const id = o.store.dispatch({ type: 'track.add', ref: 'g', track: { name: 'DI Guitar', kind: 'audio' } }, { by: 'you' }).created.g;
+      const spb = 60 / o.store.get().tempo;
+      o.store.dispatch({ type: 'clip.add', track: id, clip: { kind: 'audio', start: 8, length: 1 / spb, asset: 'a_e2etake', offset: 0.5, name: 'Chug riff' } }, { by: 'you' });
+      return id;
+    }, { SR, N });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overdub-take-'));
+    const listed = await call('export_take', {});
+    const got = await call('export_take', { take: 'chug', to: dir });
+    const file = got.data?.path || '';
+    const wav = file && fs.existsSync(file) ? fs.readFileSync(file) : null;
+    const s24 = (b, i) => { const o = 44 + 3 * i, v = b[o] | (b[o + 1] << 8) | (b[o + 2] << 16); return (v & 0x800000 ? v - 0x1000000 : v) / 0x800000; };
+    const first = wav ? s24(wav, 0) : NaN, want = ((24000 % 4800) / 4800 - 0.5) * 0.8;
+    t.ok(listed.data?.takes?.some((x) => x.name === 'Chug riff' && x.track === 'DI Guitar') && wav && wav.toString('ascii', 0, 4) === 'RIFF' && wav.length === 44 + 3 * SR
+      && Math.abs(first - want) < 1e-5 && got.data.seconds === 1 && got.data.sample_rate === SR && got.data.bits === 24 && path.dirname(file) === dir && /Chug riff\.wav$/.test(file),
+      `export_take lists the takes, then writes "Chug riff" dry to ${path.basename(file)}: 24-bit, ${got.data?.seconds} s from 0.5 s into the recording, its first sample the recording's (${first.toFixed(4)})`);
+    const whole = await call('export_take', { take: 'Chug riff', to: path.join(dir, 'all.wav'), whole: true, bits: 32 });
+    const w2 = fs.existsSync(path.join(dir, 'all.wav')) ? fs.readFileSync(path.join(dir, 'all.wav')) : null;
+    const none = await call('export_take', { take: 'no such riff' });
+    const again = await fetch(BASE + '/bridge/file?id=whatever');
+    const foreign = (await fetch(BASE + '/bridge/file?id=x', { method: 'POST', headers: { origin: 'https://evil.example' }, body: 'x' })).status;
+    t.ok(w2 && w2.length === 44 + 4 * N && whole.data?.seconds === 2.5 && none.isError && none.data?.candidates?.length >= 1 && again.status === 404 && foreign === 403,
+      `whole: true writes the whole recording at 32 bits (${whole.data?.seconds} s); a name that matches nothing lists the takes; the bridge hands a file over once, and refuses another site (${foreign})`);
+    await page.evaluate((id) => window.overdub.store.dispatch({ type: 'track.remove', track: id }, { by: 'you' }), tid);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   // 10. FRESH-EYES-6: what an MCP agent reads. The about note leads only results that carry the song's text (it led 77
   // of 85, the groove library and built-in devices included); a second tab taking the calls is said, once; params are
   // range-checked and presets go by name over the wire too; tools/list is smaller.
@@ -362,7 +398,7 @@ try {
     await call('get_selection', {});
     const tl = (await rpc('tools/list')).result?.tools || [];
     const size = JSON.stringify({ tools: tl }).length;
-    t.ok(size < 72000 && tl.find((x) => x.name === 'apply_ops')?.description.length < 3000, `tools/list is ${size} characters (under 72,000 with suggest_sounds and find_community_device; 68,000 at 38 tools after the prompt diet; 70,000 before it; 73,165 before FRESH-EYES-6; apply_ops's description ${tl.find((x) => x.name === 'apply_ops')?.description.length}, it was 6,650)`);
+    t.ok(size < 73000 && tl.find((x) => x.name === 'apply_ops')?.description.length < 3000, `tools/list is ${size} characters (under 73,000 with mcp.js's own export_take; 72,000 with suggest_sounds and find_community_device; 68,000 at 38 tools after the prompt diet; 70,000 before it; 73,165 before FRESH-EYES-6; apply_ops's description ${tl.find((x) => x.name === 'apply_ops')?.description.length}, it was 6,650)`);
   }
 
   // 11. Claude Code behind the Agent panel (server/local-claude.js): the panel's own chat, answered by `claude -p` on

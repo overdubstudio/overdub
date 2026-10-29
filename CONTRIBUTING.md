@@ -42,7 +42,9 @@ npx playwright-core install chromium-headless-shell
 CI runs only the unit tests and the static checks on a pull request. The browser and render suites run on your
 machine: `node tools/run-all.js --post` on a clean, pushed commit posts its result to that commit as the status
 `suites` (success or failure, with the counts), so whoever merges can see they ran on exactly what's being merged.
-A run that named suites, or ran with uncommitted edits, posts nothing. Production gets them again either way: the
+A run that named suites, or ran with uncommitted edits, posts nothing. Or run them on the Mac mini instead of your
+machine: Actions › **e2e** › Run workflow with the branch (`gh workflow run e2e.yml -f ref=<branch>`) runs the whole
+suite there and posts the same `suites` status to the branch's commit. Production gets them again either way: the
 deploy-live workflow runs the whole suite on the Mac mini before it asks for approval.
 
 On macOS `tools/pw.js` finds that Chromium by itself. Elsewhere, point `CHROMIUM` at the binary it installed (under

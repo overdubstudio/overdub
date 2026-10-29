@@ -6,7 +6,7 @@
 # come from mise.toml, as they do locally.
 #
 # The integration suites (node tools/run-all.js: browsers, servers, renders) don't run here: run them locally before
-# merging.
+# merging, or on the Mac mini with the e2e workflow (e2e.yml, run by hand).
 #
 # The deploy job reaches AWS through GitHub's OIDC token: no keys are stored anywhere. The role it assumes can only
 # write the next.overdubstudio.com bucket and invalidate its distribution, and only a run on main may assume it

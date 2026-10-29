@@ -1,0 +1,124 @@
+# The whole end-to-end suite (node tools/run-all.js: the browsers, the renders, the real-time checks) on the Mac mini,
+# for a branch before it merges: Actions > e2e > Run workflow, or `gh workflow run e2e.yml -f ref=<branch>`. The result
+# lands on that commit as the status `suites`, the one `node tools/run-all.js --post` posts from a laptop, so the pull
+# request shows it either way.
+#
+# Run by hand only, never by a pull request: this repo is public, so a pull request from a fork would run its own code
+# on the self-hosted runner (test/unit/workflows.test.js fails any workflow that lets an outsider reach it). For the
+# same reason the ref must be a commit on one of this repository's branches: a fork's pull request head
+# (refs/pull/N/head) is refused. The Mac job holds no token that can write anything; the status is posted by a job on
+# GitHub's own runner afterwards. The steps are deploy-live.yml's e2e job's; keep them in step.
+# Actions are pinned to a commit; the comment names the release.
+name: e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The branch (or a commit on one) to run the suite on
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: e2e-${{ inputs.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: [self-hosted, macOS, ARM64, overdub-e2e]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+      state: ${{ steps.result.outputs.state }}
+      description: ${{ steps.result.outputs.description }}
+    env:
+      INPUT_REF: ${{ inputs.ref }}
+      OUTDIR: ${{ github.workspace }}/e2e-out
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The ref is a commit on one of this repository's branches
+        id: ref
+        run: |
+          case "$INPUT_REF" in refs/pull/*|pull/*) echo "::error::$INPUT_REF is a pull request's head: run a branch"; exit 1;; esac
+          want="$INPUT_REF"
+          git rev-parse --verify --quiet "origin/${want}^{commit}" >/dev/null && want="origin/$want"
+          if ! sha=$(git rev-parse --verify --quiet "${want}^{commit}"); then
+            echo "::error::$INPUT_REF is not a branch or commit in this repository"; exit 1
+          fi
+          if [ -z "$(git branch -r --contains "$sha")" ]; then
+            echo "::error::$INPUT_REF ($sha) is on none of this repository's branches"; exit 1
+          fi
+          git checkout --quiet --detach "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "### End-to-end suite on $INPUT_REF, $sha ($(hostname -s))" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: node
+
+      - name: Build the sampled kits this commit names
+        run: KITS_CACHE="$HOME/Library/Caches/overdub-kits" node tools/fetch-kits.js
+
+      - name: Install the browsers the suites drive
+        run: | # zizmor: ignore[adhoc-packages] (package.json has no dependencies by design; the version is pinned here)
+          npm install --no-save --no-package-lock --ignore-scripts playwright-core@1.62.0
+          npx --no-install playwright-core install chromium chromium-headless-shell webkit firefox
+
+      # one suite at a time, as deploy-live runs it: the real-time checks mean something only on a quiet machine
+      - name: The end-to-end suite
+        env:
+          PAR: '1'
+        run: node tools/run-all.js | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # the status's words, as tools/suite-status.js words a laptop's run
+      - name: The result
+        id: result
+        if: always() && steps.ref.outputs.sha
+        run: |
+          # shellcheck disable=SC2016 # the single quotes hold JavaScript, whose ${...} are its own
+          node --input-type=module -e '
+            import fs from "node:fs";
+            let r = null; try { r = JSON.parse(fs.readFileSync("tools/.out/run-all.json", "utf8")); } catch {}
+            const host = process.env.HOST;
+            const ok = r && r.sha === process.env.SHA && r.passed === r.suites && r.suites > 0;
+            const d = !r || r.sha !== process.env.SHA ? `the run stopped before the suites finished, on ${host}`
+              : ok ? `${r.suites}/${r.suites} suites, ${r.checks} checks on ${host}`
+              : `${r.suites - r.passed} of ${r.suites} suites failed on ${host}`;
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `state=${ok ? "success" : "failure"}\ndescription=${d.slice(0, 140)}\n`);'
+        env:
+          SHA: ${{ steps.ref.outputs.sha }}
+          HOST: ${{ runner.name }}
+
+      - name: Keep the screenshots and logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-out
+          path: e2e-out
+          retention-days: 14
+
+  status:
+    needs: [e2e]
+    if: always() && needs.e2e.outputs.sha
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Post the result to the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.e2e.outputs.sha }}
+          STATE: ${{ needs.e2e.outputs.state || 'failure' }}
+          DESCRIPTION: ${{ needs.e2e.outputs.description || 'the e2e run stopped before the suites finished' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state="$STATE" -f context=suites -f description="$DESCRIPTION" -f target_url="$RUN_URL"

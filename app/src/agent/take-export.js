@@ -7,9 +7,12 @@
 //   TOOL                                   the schema server/mcp.js lists (name, description, input_schema, annotations)
 //   audioTakes(p) -> [{ id, name, track, track_id, bars, seconds, asset, muted, take }]   every audio clip in the song
 //   pickTake(p, q) -> { take } | { error, candidates? }   by clip id, then name (exact, then contains), then track name
+//   stretchOf(p, clip, sr, len, whole?) -> [s0, s1]        the samples written: from the clip's offset, the floor of its
+//                                                          exact span (its beats through the song's tempo), never past len
 //   exportTake(app, input, callId) -> result              (input: { take?, whole?, bits? })
 //
-// The clip's own stretch of its recording (offset to offset + the clip's seconds, its ring included), or with whole:
+// The clip's own stretch of its recording (offset to offset + the clip's exact span, its ring included: sample-exact,
+// so a loop cut from it is the part's length to the sample, rounded down), or with whole:
 // true the recording from its first sample (the lead-in and everything past the part). 24-bit by default; 32 keeps
 // every sample exactly as the asset store has it.
 
@@ -62,6 +65,13 @@ export function pickTake(p, q) {
     || { error: `No take matches "${s}".`, candidates: list };
 }
 
+export function stretchOf(p, clip, sr, len, whole = false) {
+  if (whole) return [0, len];
+  const s0 = Math.max(0, Math.min(len, Math.round((+clip.offset || 0) * sr)));
+  const span = beatToSec(p, clip.start + clip.length) - beatToSec(p, clip.start);
+  return [s0, Math.max(s0, Math.min(len, s0 + Math.floor(span * sr + 1e-6)))];
+}
+
 export async function exportTake(app, input = {}, callId = '') {
   const p = app.store.get();
   if (!input.take) {
@@ -74,8 +84,7 @@ export async function exportTake(app, input = {}, callId = '') {
   const buf = await app.engine.assets.get(t.asset);
   if (!buf) return { error: `The recording behind "${t.name || t.id}" isn't in this browser.`, hint: 'it was recorded in another browser or on another address (each keeps its own); open the song where it was recorded' };
   const sr = buf.sampleRate, len = buf.length;
-  const s0 = input.whole ? 0 : Math.max(0, Math.min(len, Math.round((+clip.offset || 0) * sr)));
-  const s1 = input.whole ? len : Math.max(s0, Math.min(len, s0 + Math.round(t.seconds * sr)));
+  const [s0, s1] = stretchOf(p, clip, sr, len, input.whole);
   if (s1 <= s0) return { error: `"${t.name || t.id}" has no audio in its stretch of the recording.`, hint: 'try whole: true' };
   const channels = [];
   for (let ch = 0; ch < buf.numberOfChannels; ch++) channels.push(buf.getChannelData(ch).slice(s0, s1));
@@ -90,7 +99,7 @@ export async function exportTake(app, input = {}, callId = '') {
   return {
     take: { id: t.id, name: t.name, track: t.track, bars: t.bars },
     file: { id: callId, name: `${base}${input.whole ? ' (whole)' : ''}.wav`, bytes: wav.length },
-    seconds: round((s1 - s0) / sr, 3), sample_rate: sr, channels: channels.length, bits,
+    seconds: round((s1 - s0) / sr, 4), samples: s1 - s0, sample_rate: sr, channels: channels.length, bits,
     peak_dbfs: peak > 0 ? round(20 * Math.log10(peak), 1) : null,
     dry: true, ...(+clip.gain ? { clip_gain_db_not_applied: +clip.gain } : {}),
   };

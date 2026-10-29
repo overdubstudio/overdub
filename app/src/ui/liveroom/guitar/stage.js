@@ -210,6 +210,9 @@ export function mount(R) {
             onToggle: (on) => stomp(aSlot, on) });
           faces.set('amp', f);
           noSelects(f.el, aDef.name);
+          // the head stays its cab's width: many controls (the Half Stack's 18) wrap into rows of smaller knobs
+          f.el.classList.add('gr-r-headface');
+          if (f.el.querySelectorAll('.amp-knobs > *').length > 12) f.el.classList.add('gr-r-many');
           const wrap = h('div', { style: `width:${ST.headW}px;transform:scale(${ST.headZ});transform-origin:0 0` }, f.el);
           tmp.append(wrap);
           const nh = f.el.offsetHeight || 128, hw = ST.headW * ST.headZ, hh = nh * ST.headZ;

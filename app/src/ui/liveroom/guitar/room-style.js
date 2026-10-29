@@ -36,6 +36,16 @@ export const CSS = `
 
 /* the head, on its cab */
 .gr-r-head .ewf-ampface.ewf-compact .amp .kn-l { font-size: 7.8px; letter-spacing: .06em; }
+/* a head with many controls (the Half Stack has 18) takes rows of smaller knobs, never a wider head than its cab
+   (on the face itself, not under .gr-r-head: the stage measures the face before it's placed) */
+.ewf-ampface.ewf-compact.gr-r-headface .amp-knobs { flex-wrap: wrap; justify-content: center; min-width: 0; row-gap: 4px; }
+.ewf-ampface.ewf-compact.gr-r-headface .amp-knobs > * { flex: 0 0 auto; }
+.ewf-ampface.ewf-compact.gr-r-many .amp-knobs { gap: 4px 1px; }
+.ewf-ampface.ewf-compact.gr-r-many .amp .kn { --ks: 22px; width: 31px; }
+.ewf-ampface.ewf-compact.gr-r-many .amp .kn-l { font-size: 5.6px; letter-spacing: 0; white-space: nowrap; }
+.ewf-ampface.ewf-compact.gr-r-many .amp .ms { max-width: 58px; }
+.ewf-ampface .amp .gr-r-pick { color: #e8e0cc; }
+.ewf-ampface.ewf-compact.gr-r-many .gr-r-pick { box-sizing: border-box; max-width: 58px; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 7px; padding: 3px; }
 .gr-r-head.gr-r-fresh, .gr-r-slot.gr-r-fresh .gr-r-face { animation: gr-r-fresh 1.4s ease-out; }
 @keyframes gr-r-fresh { 0% { filter: drop-shadow(0 0 0 #ffc85a) brightness(1.4); } 30% { filter: drop-shadow(0 0 14px #ffc85a) brightness(1.15); } 100% { filter: none; } }
 .gr-r-cab { border-radius: 7px; background: radial-gradient(circle at 1px 1px, #ffffff0d .6px, transparent 1px) 0 0/3px 3px, linear-gradient(#1b1b1f, #0f0f12);

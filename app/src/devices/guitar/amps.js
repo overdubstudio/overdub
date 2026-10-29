@@ -13,8 +13,11 @@ import { defineDevice } from '../registry.js';
 import { failure } from '../lifecycle.js';
 import { gear, workletFiles } from './gear/index.js';
 import { CABS_HASH } from '../builtin/amp-lib.js';
+import { kernel } from '../builtin/lib.js';
+import { AMP_VOICED, AMP_CAB } from '../builtin/amp-voiced.js';
+import { AMP_VOICINGS, AMP_IR_ENERGY } from './voicings.js';
 
-const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS, plugCabDefault } = gear;
+const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_IR_LV, plugCabDefault } = gear;
 export const CAB_IDS = Object.keys(PLUG_CABS);              // 'own' first, the measured six last
 // an amp's default cab (a PLUG_CABS id) and its index (the CAB param's default)
 export const cabDefault = (id) => plugCabDefault(String(id || '').replace(/^amp\./, ''));
@@ -80,8 +83,73 @@ export function ampParams(S) {
   return v;
 }
 
-export function ampDevice(id) {
+// The cabs and mics as an amp's kernel reads them (amp-voiced.js ampCabNet): every CAB option in CAB_IDS' order (null
+// for 'own'), every mic in MIC_IDS' order, and the two default mics, by index. The same for every amp.
+export const cabTables = () => {
+  const mic = (m) => ({ type: MIC_IDS.indexOf(m.type), x: m.x, dist: m.dist, ang: m.ang, blend: m.blend });
+  return {
+    cabs: CAB_IDS.map((k) => {
+      if (k === 'own') return null;
+      const C = PLUG_CABS[k];
+      return C.ir != null ? { ir: C.ir } : { n: C.n, size: C.size, back: C.back, slap: C.slap || null, lv: C.lv || 0, cab: C.cab };
+    }),
+    mics: MIC_IDS.map((k) => { const M = PLUG_MICS[k]; return { lo: M.lo, body: M.body, pres: M.pres, air: M.air, hp: M.hp || null, lp: M.lp || null, prox: M.prox, room: M.room }; }),
+    md: mic(PLUG_MIC_DEFAULT), md2: mic(PLUG_MIC2_DEFAULT),
+  };
+};
+// An amp on the kernel engine: its voicing (voicings.js), its own designed cab, the box it was voiced in, what it puts
+// into a cab (the trims' weights) and its measured cabs' energies, then the engine (amp-voiced.js). The params are the
+// graph amps' (AMP_PARAMS), so a saved rig plays on. Its LEVEL: the graph amps' (dB, trim + (level - 5) * 3 - 3).
+// ampVoice(id, voicing?): the V its kernel reads (any amp's, with a voicing given: tools/amp-fit.js tries them)
+export function ampVoice(id, voicing = AMP_VOICINGS[id]) {
   const A = PLUG_AMPS[id];
+  return { ...voicing, cab: A.cab, box: PLUG_AMP_BOX[id] || [1, 12, 'closed'], spec: PLUG_AMP_SPEC[id] || PLUG_AMP_SPEC.punk, irE: AMP_IR_ENERGY[id], irLv: PLUG_IR_LV[id] || 0 };
+}
+export function ampKernel(id, voicing) {
+  const V = ampVoice(id, voicing);
+  return kernel(String.raw`
+${AMP_VOICED}
+${AMP_CAB}
+const V = ${JSON.stringify(V)};
+const T = ${JSON.stringify(cabTables())};
+return {
+  create({ sr, dsp, data }) {
+    const amp = makeVoiced(sr, dsp, V), cab = makeAmpCab(sr, dsp, data && data.cabs, V, T), lv = glide(20, sr, 1);
+    let buf = new Float64Array(128);
+    return {
+      latency: amp.latency,
+      process(L, R, n, P) {
+        amp.set(P);
+        cab.set(P);
+        const g = dbg(V.trim + (clamp(P.level, 0, 10) - 5) * 3 - 3);
+        if (buf.length < n) buf = new Float64Array(n);
+        for (let i = 0; i < n; i++) buf[i] = amp.tick(0.5 * (L[i] + R[i]));
+        cab.process(buf, n);
+        for (let i = 0; i < n; i++) { const y = buf[i] * lv.next(g); L[i] = y; R[i] = y; }
+      },
+    };
+  },
+};
+`);
+}
+
+// ampDevice(id, voicing?): an amp's def (on the kernel engine when it has a voicing, or one is given)
+export function ampDevice(id, voicing = AMP_VOICINGS[id]) {
+  const A = PLUG_AMPS[id];
+  if (voicing) {
+    const V = voicing;
+    return {
+      id: 'amp.' + id, name: A.name, kind: 'effect', cat: 'amp', amp: id, kindLabel: TONE_LABEL[A.tone] || 'AMP', tone: A.tone, style: A.style,
+      blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic', exportable: false, // (the gear's: not a device file)
+      params: AMP_PARAMS.map((p) => Object.assign({}, p, p.key === 'cab' ? { def: cabDefaultIndex(id) } : null)),
+      // (the measured cabs' bank, whichever cab is its default: any CAB can be a measured one)
+      data: { cabs: CABS_HASH }, dataSays: AMP_CAB_SAYS,
+      look: { amp: id, style: A.style },
+      latency: (V.os === 2 ? 23 : 28) / 48000, // (the oversampler's: dsp.oversample2x 23 samples, oversample4x 27.5)
+      tail: 0.25, // (the stadium horn's slap)
+      kernel: ampKernel(id, voicing),
+    };
+  }
   // (Abyss's octave divider: only the amps with one; plugin.js loads PLUG_WORKLETS as 'clawd-amps', from its file here)
   const worklets = A.sub ? workletFiles({ 'clawd-amps': PLUG_WORKLETS }, 'amp.' + id) : null;
   return {

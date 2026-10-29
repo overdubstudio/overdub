@@ -7164,7 +7164,7 @@ presetBank({ id: 'bass', name: 'Low End Theory', blurb: 'For a bass on the input
     PFX, PLUG_GATE, PFX_ENV, PFX_END, DELAY_NOTES, PEDAL_CATS, PEDAL_RANK, PEDAL_DEFS, PEDAL_LIST, pedalKnob, pfxGlide,
     boardClean, boardFromFx, boardDefault, boardEntry,
     // the amps, cabs and mics (amps.js)
-    PLUG_AMPS, PLUG_WORKLETS, PLUG_CABS, PLUG_AMP_BOX, PLUG_AMP_IR, PLUG_IR_LV, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugAmp, plugCabNet, plugCabClean, plugCabDefault,
+    PLUG_AMPS, PLUG_WORKLETS, PLUG_CABS, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_AMP_IR, PLUG_IR_LV, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugAmp, plugCabNet, plugCabClean, plugCabDefault,
     // the presets (presets.js, presets/*.js)
     PLUG_PRESETS, PRESET_BANKS, PRESET_KNOBS, presetResolve, presetBanks, PLUG_DEFAULT,
   };

@@ -6,6 +6,11 @@
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
 //  3. bypass is exact: a sample of insert and trails pedals, off, equals the dry input to -90 dB.
+//  2d. the reverbs (Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly, Frostbite Crab: the 'verb-tank' worklet) build
+//     no convolver; each rings its DECAY's T60 at 1 kHz (±12%) at both ends and its default; its wet is as loud as the
+//     convolver's was (±0.75 LU); renders are the same sample for sample (another seed isn't); each costs at most a
+//     quarter more than a 4.5 s convolver measured alongside (half of it with nothing ringing); Halo Jelly all at 10 dies; Frostbite's HOLD holds; live, DECAY swept
+//     and stomps are click-free.
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
 //     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
 //     plugAmp sample for sample (also with a cab and two mics).
@@ -317,7 +322,7 @@ async function boot(page) {
   const byp = await page.evaluate(async () => {
     const { R, render, input } = window.__gt, x = input('di', 2);
     const ins = ['pedal.gate', 'pedal.drive', 'pedal.fuzz', 'pedal.quack', 'pedal.chorus', 'pedal.whammerhead', 'pedal.bitreef', 'amp.punk'];
-    const tr = ['pedal.delay', 'pedal.verb', 'pedal.tapecrab', 'pedal.halojelly', 'pedal.iceberg', 'pedal.frostbite'].filter((id) => R.getDevice(id) && R.getDevice(id).trails);
+    const tr = ['pedal.delay', 'pedal.verb', 'pedal.lobsterplate', 'pedal.krakenhall', 'pedal.tapecrab', 'pedal.halojelly', 'pedal.iceberg', 'pedal.frostbite'].filter((id) => R.getDevice(id) && R.getDevice(id).trails);
     const out = [];
     for (const id of ins.concat(tr)) {
       const r = await render([{ device: id, on: false }], x);
@@ -327,6 +332,198 @@ async function boot(page) {
     return out;
   });
   t.ok(byp.every((b) => b.db <= -90), `bypass is exact (off = dry, worst ${Math.max(...byp.map((b) => b.db)).toFixed(0)} dB) for ${byp.filter((b) => !b.trails).length} insert and ${byp.filter((b) => b.trails).length} trails devices${byp.some((b) => b.db > -90) ? ': ' + byp.filter((b) => b.db > -90).map((b) => b.id + ' ' + b.db.toFixed(0)).join(' ') : ''}`);
+
+  // 2d. the reverbs (pedals/00-classic.js VERB_TANK: Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly, Frostbite
+  // Crab). They were convolvers on a generated noise tail; now each is the 'verb-tank' worklet, and each must ring as
+  // long as its DECAY says (the T60 the convolver's tail was drawn with), sit as loud as the convolver did, play the
+  // same every time, never click when DECAY moves or it's stomped, and cost no more than the convolver did.
+  // OLD: each one's wet loudness (clawd-o-matic's, the DI strum at its defaults and DECAY at 10, the pedal alone) as
+  // the convolver measured, the day it went. Undertow (a reverse or gated room under a second long, where a convolver
+  // is the cheapest exact way) and Plankton Cloud (a fixed room after the grains) keep theirs.
+  const REVERBS = {
+    verb: { decay: 'decay', T: [0.4, 0.36], old: [-34.71, -31.47] },
+    lobsterplate: { decay: 'decay', T: [0.6, 0.54], old: [-35.74, -31.96] },
+    krakenhall: { decay: 'size', T: [1.8, 0.62], old: [-32.71, -30.35] },
+    halojelly: { decay: 'decay', T: [1.5, 0.65], old: [-30.93, -26.65], at: { shim: 0 } },
+    frostbite: { decay: 'decay', T: [1, 0.7], old: [-32.85, -29.88] },
+  };
+  const rvIds = Object.keys(REVERBS).filter((id) => !ONLY || ONLY.includes(id));
+  if (rvIds.length) {
+    const rv = await page.evaluate(async ({ ids, spec }) => {
+      const { R, render, input, clawdLufs, SR } = window.__gt;
+      // RBJ band-pass, twice (the 1 kHz octave); T30 from the Schroeder curve of both channels (or T20, if the floor's
+      // too near)
+      const bandpass = (x, fc) => {
+        const w = (2 * Math.PI * fc) / SR, al = Math.sin(w) / (2 * 1.414), a0 = 1 + al, b0 = al / a0, a1 = (-2 * Math.cos(w)) / a0, a2 = (1 - al) / a0;
+        let y = Float64Array.from(x);
+        for (let pass = 0; pass < 2; pass++) { let x1 = 0, x2 = 0, y1 = 0, y2 = 0; const o = new Float64Array(y.length); for (let i = 0; i < y.length; i++) { const v = b0 * y[i] - b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = y[i]; y2 = y1; y1 = v; o[i] = v; } y = o; }
+        return y;
+      };
+      const t60 = (hs) => {
+        const n = hs[0].length, edc = new Float64Array(n); let s = 0;
+        for (let i = n - 1; i >= 0; i--) { s += hs[0][i] * hs[0][i] + hs[1][i] * hs[1][i]; edc[i] = s; }
+        const db = (i) => 10 * Math.log10(edc[i] / edc[0] + 1e-300);
+        const fit = (lo, hi) => {
+          let a = -1, b = -1;
+          for (let i = 0; i < n; i++) { const d = db(i); if (a < 0 && d <= lo) a = i; if (d <= hi) { b = i; break; } }
+          if (a < 0 || b < 0) return null;
+          let sx = 0, sy = 0, sxx = 0, sxy = 0, k = 0;
+          for (let i = a; i <= b; i += 4) { const t = i / SR, d = db(i); sx += t; sy += d; sxx += t * t; sxy += t * d; k++; }
+          return -60 / ((k * sxy - sx * sy) / (k * sxx - sx * sx));
+        };
+        return fit(-5, -35) || fit(-5, -25);
+      };
+      const out = { convolvers: {}, rt: [], level: [], det: [], cost: [], loud: [] };
+      // no convolver left in them (and the two that keep one)
+      const proto = BaseAudioContext.prototype, mk = proto.createConvolver, mkW = window.AudioWorkletNode;
+      let nc = 0, tanks = 0;
+      proto.createConvolver = function () { nc++; return mk.call(this); };
+      window.AudioWorkletNode = class extends mkW { constructor(c, name, o) { super(c, name, o); if (name === 'verb-tank') tanks++; } };
+      try {
+        for (const id of ids.concat(['undertow', 'planktoncloud'])) {
+          nc = 0; tanks = 0;
+          const c = new OfflineAudioContext(2, 128, SR), inst = await R.instantiate(c, 'pedal.' + id, { uid: 'cv', on: true });
+          await inst.ready; inst.dispose();
+          out.convolvers[id] = [nc, tanks];
+        }
+      } finally { proto.createConvolver = mk; window.AudioWorkletNode = mkW; }
+      // T60, in the 1 kHz octave, at DECAY's ends and its default (Halo Jelly with no shimmer; Kraken Hall a cathedral too)
+      for (const id of ids) {
+        const s = spec[id], d = R.getDevice('pedal.' + id), p = d.params.find((q) => q.key === s.decay);
+        const T = (v) => s.T[0] + s.T[1] * v, cases = [p.min, p.def, p.max].map((v) => [{ ...s.at, [s.decay]: v }, T(v)]);
+        if (id === 'krakenhall') cases.push([{ size: p.max, space: 1 }, T(p.max) * 1.6]);
+        for (const [params, want] of cases) {
+          const n = Math.round((want + 1.5) * SR), x = new Float32Array(n); x[2400] = 0.5;
+          const y = await render([{ device: 'pedal.' + id, params: { ...params, mix: 10 } }], x);
+          const hs = [0, 1].map((ch) => bandpass(y[ch].map((v, i) => (v - x[i]) / 0.5), 1000));
+          out.rt.push({ id, params, want, got: t60(hs) });
+        }
+      }
+      // loudness: the wet alone on the DI strum, at defaults and DECAY at 10, against the convolver's
+      const strum = input('di', 6);
+      for (const id of ids) {
+        const s = spec[id], d = R.getDevice('pedal.' + id), p = d.params.find((q) => q.key === s.decay);
+        for (const [k, params] of [{}, { [s.decay]: p.max }].entries()) {
+          const y = await render([{ device: 'pedal.' + id, params }], strum, { extra: 2 });
+          const wet = [0, 1].map((ch) => y[ch].map((v, i) => v - (strum[i] || 0)));
+          out.level.push({ id, at: k ? s.decay + ' 10' : 'defaults', got: clawdLufs(wet[0], wet[1]), was: s.old[k] });
+        }
+      }
+      // the same every time; and two copies (two seeds) aren't the same
+      const x2 = input('di', 2);
+      for (const id of ids) {
+        const a = await render([{ device: 'pedal.' + id }], x2), b = await render([{ device: 'pedal.' + id }], x2);
+        let dd = 0, ds = 0, e = 0;
+        for (let ch = 0; ch < 2; ch++) for (let i = 0; i < a[ch].length; i++) dd = Math.max(dd, Math.abs(a[ch][i] - b[ch][i]));
+        const c = new OfflineAudioContext(2, x2.length, SR), src = c.createBufferSource(), buf = c.createBuffer(1, x2.length, SR);
+        buf.copyToChannel(x2, 0); src.buffer = buf;
+        const other = await R.instantiate(c, 'pedal.' + id, { uid: 'another-' + id, on: true }); await other.ready;
+        src.connect(other.input); other.output.connect(c.destination); src.start(0);
+        const o = await c.startRendering(); other.dispose();
+        for (let i = 0; i < x2.length; i++) { const q = o.getChannelData(0)[i] - a[0][i]; ds += q * q; e += (a[0][i] - x2[i]) ** 2; }
+        out.det.push({ id, d: dd, seeds: 10 * Math.log10(ds / (e + 1e-30) + 1e-30) });
+      }
+      // what one costs, offline: 10 s of the strum through it, less a bare render (best of three); and on, with nothing
+      // coming in and nothing ringing. Against what they were, measured alongside (the machine may be busy): a
+      // ConvolverNode on a 4.5 s stereo room (kit.ir), Kraken Hall's at its defaults
+      const x10 = input('di', 10), z = new Float32Array(x10.length), blocks = x10.length / 128;
+      const time = async (chain, x) => { const t0 = performance.now(); await render(chain, x); return performance.now() - t0; };
+      const conv = async () => {
+        const t0 = performance.now(), c = new OfflineAudioContext(2, x10.length, SR), src = c.createBufferSource(), b = c.createBuffer(1, x10.length, SR);
+        b.copyToChannel(x10, 0); src.buffer = b;
+        const { makeKit } = await import('/app/src/devices/kit.js'), k = makeKit(c, { uid: 'ref' }), cv = k.convolver(k.ir({ secs: 4.5, pre: 0.03 }));
+        src.connect(cv); cv.connect(c.destination); src.start(0);
+        await c.startRendering(); k.release();
+        return performance.now() - t0;
+      };
+      let ref = Infinity;
+      for (const id of ids) {
+        let bare = Infinity, on = Infinity, idle = Infinity;
+        for (let k = 0; k < 3; k++) { bare = Math.min(bare, await time([], x10)); ref = Math.min(ref, ((await conv()) - bare) * 1000 / blocks); on = Math.min(on, await time([{ device: 'pedal.' + id }], x10)); idle = Math.min(idle, await time([{ device: 'pedal.' + id }], z)); }
+        out.cost.push({ id, us: ((on - bare) * 1000) / blocks, idle: ((idle - bare) * 1000) / blocks });
+      }
+      out.ref = ref;
+      // everything up: Halo Jelly's shimmer at 10 with DECAY and MIX at 10 (the convolver's ran away to +3 dBFS) blooms
+      // and dies; Frostbite's HOLD holds what was ringing
+      const tailDb = (y, a, b) => { let s = 0; for (let ch = 0; ch < 2; ch++) for (let i = Math.round(a * SR); i < Math.round(b * SR); i++) s += y[ch][i] * y[ch][i]; return 10 * Math.log10(s / ((b - a) * SR) + 1e-30); };
+      const x3 = input('di', 3);
+      if (ids.includes('halojelly')) {
+        for (const intv of [0, 1]) {
+          const y = await render([{ device: 'pedal.halojelly', params: { shim: 10, decay: 10, mix: 10, intv } }], x3, { extra: 22 });
+          let pk = 0, bad = 0; for (const ch of y) for (const v of ch) { if (!Number.isFinite(v)) bad++; else pk = Math.max(pk, Math.abs(v)); }
+          let top = -Infinity; for (let s = 0; s < 24; s++) top = Math.max(top, tailDb(y, s, s + 1));
+          out.loud.push({ id: 'halojelly ' + (intv ? '5TH' : 'OCT') + ' all at 10', peak: 20 * Math.log10(pk + 1e-12), bad, fall: top - tailDb(y, 24, 25) });
+        }
+      }
+      if (ids.includes('frostbite')) {
+        // (HOLD pressed 2.5 s in, while the strum rings, and kept down; or never)
+        const hold = async (h) => {
+          const c = new OfflineAudioContext(2, 12 * SR, SR), src = c.createBufferSource(), b = c.createBuffer(1, x3.length, SR);
+          b.copyToChannel(x3, 0); src.buffer = b;
+          const inst = await R.instantiate(c, 'pedal.frostbite', { uid: 'hold', on: true, params: { decay: 0 } }); await inst.ready;
+          src.connect(inst.input); inst.output.connect(c.destination); src.start(0);
+          const v = R.paramValues(R.getDevice('pedal.frostbite'), { decay: 0 });
+          inst.set({ ...v, hold: h }, { at: 2.5 });
+          const o = await c.startRendering(); inst.dispose();
+          return [o.getChannelData(0), o.getChannelData(1)];
+        };
+        const held = await hold(1), free = await hold(0);
+        out.freeze = { held: tailDb(held, 11, 12) - tailDb(held, 5, 6), free: tailDb(free, 11, 12) - tailDb(held, 5, 6) };
+      }
+      return out;
+    }, { ids: rvIds, spec: REVERBS }).catch((e) => ({ err: String(e) }));
+    if (rv.err) t.ok(false, 'the reverbs: ' + rv.err);
+    else {
+      const cv = Object.entries(rv.convolvers);
+      t.ok(rvIds.every((id) => rv.convolvers[id][0] === 0 && rv.convolvers[id][1] === 1), `${rvIds.length} reverbs build no convolver, one 'verb-tank' each: ${rvIds.join(' ')}; ${cv.filter(([id]) => !rvIds.includes(id)).map(([id, [n]]) => `${id} keeps ${n}`).join(', ')}`);
+      for (const r of rv.rt) {
+        t.ok(r.got != null && Math.abs(r.got / r.want - 1) <= 0.12, `${('pedal.' + r.id).padEnd(18)} ${JSON.stringify(r.params).padEnd(22)} rings ${r.got != null ? r.got.toFixed(2) : '?'} s at 1 kHz (T60 ${r.want.toFixed(2)} s ±12%)`);
+      }
+      for (const l of rv.level) t.ok(Math.abs(l.got - l.was) <= 0.75, `${('pedal.' + l.id).padEnd(18)} wet at ${l.at}: ${l.got.toFixed(1)} LUFS, the convolver's ${l.was.toFixed(1)} (±0.75 LU)`);
+      t.ok(rv.det.every((d) => d.d === 0 && d.seeds > -40), `the reverbs play the same every time, sample for sample, and two copies don't move in lockstep (another seed differs by about as much as the wet itself: ${rv.det.map((d) => d.id + ' ' + d.seeds.toFixed(0) + ' dB').join(', ')})${rv.det.some((d) => d.d) ? '; not exact: ' + rv.det.filter((d) => d.d).map((d) => d.id + ' ' + d.d.toExponential(1)).join(' ') : ''}`);
+      // (a block is 2667 µs of sound at 48 kHz; on a quiet machine the convolvers cost 15 to 31 µs, the tanks 12 to 18)
+      t.ok(rv.cost.every((c) => c.us <= 1.25 * rv.ref && c.idle <= 0.5 * rv.ref), `each reverb costs at most a quarter more than a convolver on a 4.5 s room (${rv.ref.toFixed(1)} µs a 128-frame block offline, measured alongside), and at most half of it with nothing ringing: ${rv.cost.map((c) => `${c.id} ${c.us.toFixed(1)} (${c.idle.toFixed(1)})`).join(', ')}`);
+      for (const l of rv.loud) t.ok(!l.bad && l.peak < -1 && l.fall >= 30, `${l.id}: peaks at ${l.peak.toFixed(1)} dBFS and dies (${l.fall.toFixed(0)} dB down 21 s after the strum)`);
+      if (rv.freeze) t.ok(Math.abs(rv.freeze.held) < 3 && rv.freeze.free < -40, `Frostbite's HOLD, pressed while a chord rings, holds it (from 6 s to 12 s, ${rv.freeze.held >= 0 ? '+' : ''}${rv.freeze.held.toFixed(1)} dB; never pressed, it's gone by then: ${Math.max(-120, rv.freeze.free).toFixed(0)} dB)`);
+    }
+
+    // live: DECAY swept (and Kraken's SPACE flipped) under a tone, and the pedal stomped, click-free
+    const rvLive = await page.evaluate(async (ids) => {
+      const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+      await c.resume();
+      const REC = `class GtRec4 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
+        process(i) { const a = i[0] && i[0][0], b = i[0] && i[0][1]; if (a && this.on) this.port.postMessage([a.slice(0), (b || a).slice(0)]); return this.on; } } registerProcessor('gt-rec4', GtRec4);`;
+      await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const res = [];
+      for (const id of ids) {
+        const d = R.getDevice('pedal.' + id), key = id === 'krakenhall' ? 'size' : 'decay';
+        const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
+        const inst = await R.instantiate(c, d.id, { uid: 'rvlive-' + id, on: true, params: { mix: 8 } }); await inst.ready;
+        const rec = new AudioWorkletNode(c, 'gt-rec4', { channelCount: 2, channelCountMode: 'explicit' }), blocks = [];
+        rec.port.onmessage = (e) => blocks.push(e.data);
+        g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
+        const t0 = c.currentTime, marks = [];
+        await sleep(700);
+        const moves = [10, 0, 7, 2, 10, 0, 5].map((v) => ({ [key]: v, mix: 8 }));
+        if (id === 'krakenhall') moves.push({ space: 1, mix: 8 }, { space: 0, mix: 8 });
+        for (const m of moves) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.set(m, { at }); await sleep(220); }
+        for (let k = 0; k < 4; k++) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.setOn(k % 2 === 1, at); await sleep(260); }
+        rec.port.postMessage('stop'); o.stop(); await sleep(60);
+        inst.dispose(); g.disconnect(); rec.disconnect();
+        const n = blocks.reduce((s, b) => s + b[0].length, 0), ys = [new Float32Array(n), new Float32Array(n)]; let p = 0;
+        for (const b of blocks) { ys[0].set(b[0], p); ys[1].set(b[1], p); p += b[0].length; }
+        const sr = c.sampleRate, near = new Uint8Array(n);
+        for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.06) * sr)); i++) near[i] = 1;
+        let steady = 0, at = 0;
+        for (const y of ys) for (let i = Math.round(0.4 * sr); i < n - 256; i++) { const d2 = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]); if (near[i]) at = Math.max(at, d2); else steady = Math.max(steady, d2); }
+        res.push({ id, ratio: at / Math.max(steady, 1e-9), moves: moves.length, secs: n / sr });
+      }
+      await c.close();
+      return res;
+    }, rvIds);
+    for (const l of rvLive) t.ok(l.ratio < 1.6 && l.secs > 3, `live, ${('pedal.' + l.id).padEnd(18)} with its ${l.id === 'krakenhall' ? 'SIZE (and SPACE)' : 'DECAY'} moved ${l.moves} times under a tone and stomped 4 times is click-free (second difference at the moves ${l.ratio.toFixed(2)}× the steady sound's)`);
+  }
 
   // 4. the amps
   const amps = await page.evaluate(async () => {

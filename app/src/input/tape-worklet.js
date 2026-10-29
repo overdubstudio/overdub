@@ -2,7 +2,8 @@
 // GUITAR-ROOM.md §4.3): the picked input, always, into a ring of 16-bit samples as long as the tape (a minute by
 // default, up to five). Sample i of the ring is the audio-clock frame f with f % N === i, so the ring is its own
 // clock: nothing is copied, posted or allocated as it rolls. A quantum the processor wasn't run for (the input
-// unplugged, a stall) is written as silence, so the tape never holds stale audio at a frame it didn't hear.
+// unplugged, a stall) is written as silence, so the tape never holds stale audio at a frame it didn't hear. A frame
+// behind the one expected (Chromium's currentFrame, now and then, for one quantum) is the one expected.
 // Every BIN frames the loudest sample in them is a peak bin; every POST bins the new ones go to the page for the
 // waveform ({ t: 'pk', b (the first bin's index: frame b * BIN), pk: Float32Array (0..1), head (the next frame), start
 // (the first frame it wrote) }),
@@ -75,7 +76,12 @@ class EwTape extends AudioWorkletProcessor {
   }
   process(ins) {
     if (!this.on) return false;
-    const r = this.ring, N = this.N, ch = ins[0] && ins[0][0], f = currentFrame, n = ch ? ch.length : 128;
+    const r = this.ring, N = this.N, ch = ins[0] && ins[0][0], n = ch ? ch.length : 128;
+    // (Chromium now and then hands a quantum the frame it handed the one before, and the next one the frame after the
+    // one it skipped: the audio itself isn't repeated, its clock is. The clock can't run backwards, so a frame behind
+    // the one expected is the one expected; without this the quantum went on tape a quantum early, over the one before)
+    let f = currentFrame;
+    if (this.start >= 0 && f < this.w) f = this.w;
     if (this.start < 0) { this.start = f; this.w = f; this.bi = Math.floor(f / BIN); }
     // (frames it wasn't run for: silence, at most the ring)
     if (f > this.w) for (let g = Math.max(this.w, f - N); g < f; g++) r[g % N] = 0;

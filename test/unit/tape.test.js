@@ -57,6 +57,7 @@ function rolling(frames, sr = SR) {
   return {
     p,
     posts,
+    scope: w.scope,
     run(n, signal, { skip = null } = {}) {
       for (let k = 0; k < n; k++) {
         const f = w.scope.currentFrame;
@@ -120,6 +121,30 @@ describe('the ring', () => {
     assert.ok(Math.abs(bins.get(0) - 0.5) < 1e-4 && Math.abs(bins.get(3) - 0.5) < 1e-4);
     assert.ok(!bins.get(4) && !bins.get(7), 'the skipped bins hold nothing');
     assert.ok(!bins.get(Math.floor(r.p.w / BIN) - 1), 'nor the unplugged ones');
+  });
+
+  test('a quantum handed the frame before it (Chromium, now and then) goes where it belongs, not a quantum early', () => {
+    // the audio clock as the processor reads it: one frame handed twice, the next one never; the audio itself in order
+    const r = rolling(BIN * 64),
+      sig = (f) => Math.fround((((f * 7919) % 65535) - 32767) / 32767);
+    r.run(10, sig);
+    const at = r.p.w,
+      q = new Float32Array(128);
+    const feed = (clock, real) => {
+      r.scope.currentFrame = clock;
+      for (let i = 0; i < 128; i++) q[i] = sig(real + i);
+      r.p.process([[q]]);
+    };
+    feed(at, at);
+    feed(at, at + 128);
+    feed(at + 256, at + 256);
+    r.scope.currentFrame = at + 384;
+    r.run(6, sig);
+    const got = r.get(0, r.p.w);
+    let bad = 0;
+    for (let i = 0; i < got.d.length; i++) if (got.d[i] !== pcm16(sig(i))) bad++;
+    assert.equal(r.p.w, at + 384 + 6 * 128);
+    assert.equal(bad, 0, `${bad} samples off their frames`);
   });
 
   test('a new length keeps the newest audio', () => {

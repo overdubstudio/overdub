@@ -1051,11 +1051,30 @@ const boot = async (opts = {}) => {
         cab: document.querySelector('.jm-cab-btn')?.textContent || '', sel: document.querySelector('#jm-view-rig').getAttribute('aria-selected'), saved: JSON.parse(localStorage.getItem('overdub:jam')).view };
     });
     T.ok(a.full && a.w >= 560 && a.dial >= 38 && a.n >= 5 && a.sel === 'true' && a.saved === 'rig', `the Rig tab draws the amp at its full face, ${a.w} px wide in a ${a.room} px room, its ${a.n} knobs ${a.dial} px across (on the board they were drawn at 0.62)`);
-    T.ok(!a.stage && !a.neck && a.mini === a.now && /^Cab & mics.+cab.+mic/.test(a.cab), `the stage and the neck step aside for it, the chord now stays in the tabs' row ("${a.mini}"), and the amp's cab and mics are named under it ("${a.cab.slice(0, 64)}")`);
+    T.ok(!a.stage && !a.neck && a.mini === a.now && /^Cab & mics.+(, measured|cab.+mic)/.test(a.cab), `the stage and the neck step aside for it, the chord now stays in the tabs' row ("${a.mini}"), and the amp's cab and mics are named under it ("${a.cab.slice(0, 64)}")`);
     await page.click('.jm-cab-btn'); await sleep(200);
     const c = await E(() => ({ open: document.querySelector('.jm-cab-btn').getAttribute('aria-expanded'), n: [...document.querySelectorAll('#jm-cab .kn-dial, #jm-cab select')].filter((x) => x.getClientRects().length).length, under: document.querySelector('#jm-cab').getBoundingClientRect().top >= document.querySelector('.jm-amp-face .amp').getBoundingClientRect().bottom - 1 }));
+    // a measured cab (a guitar amp's default): the CAB menu and the line that says the mic is in the measurement, no
+    // mic control to turn; a designed cab picked there brings the mics back, one step by you; undone, they step aside
+    const strip = () => E(() => {
+      const st = document.querySelector('#jm-cab'), shown = (x) => !!x.getClientRects().length;
+      const sel = [...st.querySelectorAll('select')].find((x) => [...x.options].some((o) => o.text === '4x12 Modern'));
+      return { measured: st.classList.contains('measured'), controls: [...st.querySelectorAll('.kn-dial, select')].filter(shown).length, note: shown(st.querySelector('.ewf-cabstrip-note') || st) && !!st.querySelector('.ewf-cabstrip-note:not([hidden])'),
+        cab: sel ? sel.options[sel.selectedIndex].text : '', line: document.querySelector('.jm-cab-sum').textContent };
+    });
+    const m0 = await strip();
+    await page.locator('.jm-amp-face').screenshot({ path: path.join(OUTDIR, 'jam-cab-measured.png') });
+    await E(() => { const sel = [...document.querySelectorAll('#jm-cab select')].find((x) => [...x.options].some((o) => o.text === '4x12 Modern')); sel.value = String([...sel.options].findIndex((o) => o.text === '4x12 Modern')); sel.dispatchEvent(new Event('change')); });
+    await sleep(250);
+    const m1 = await strip(), h1 = await hist();
+    await page.locator('.jm-amp-face').screenshot({ path: path.join(OUTDIR, 'jam-cab-designed.png') });
+    await E(() => window.overdub.store.undo());
+    await sleep(250);
+    const m2 = await strip();
     await page.click('.jm-cab-btn'); await sleep(150);
-    T.ok(c.open === 'true' && c.n >= 4 && c.under, `Adjust opens the cab and mics strip under the amp (${c.n} controls); again, it folds back to its line`);
+    T.ok(c.open === 'true' && c.n >= 1 && c.under, `Adjust opens the cab and mics strip under the amp (${c.n} controls); again, it folds back to its line`);
+    T.ok(m0.measured && m0.controls === 1 && m0.note && /, measured$/.test(m0.line) && !m1.measured && m1.controls >= 5 && !m1.note && m1.cab === '4x12 Modern' && h1.by === 'you' && m2.measured && m2.controls === 1 && m2.note,
+      `on a measured cab (${m0.cab}) the strip has the CAB menu and the line about the mic, no dead mic control (${m0.controls} control); on the designed 4x12 Modern the mics are back (${m1.controls} controls, one step by you: ${h1.label}); undone, they step aside again (${m2.controls})`);
   });
 
   const fit = async (w, hh) => {

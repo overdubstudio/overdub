@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { halfOct, thirds, thd, alias, share, clawdLufs, sine, shape, lagOf, KNOB_BAND, SR } from './amp-measure.js';
+import { halfOct, thirds, thd, alias, share, clawdLufs, sine, shape, KNOB_BAND, SR } from './amp-measure.js';
 import { lufs } from '../app/src/audio/measure.js';
 import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
 
@@ -113,29 +113,31 @@ async function fixture() {
   console.log('wrote', path.relative(process.cwd(), FIXTURE), Object.keys(out.amps).length, 'amps');
 }
 
-// The kernel amps against the fixture (Node, the worklet's KernelCore)
+// The kernel amps against the fixture (Node, the worklet's KernelCore): per amp { lufs, spectrum, thd, alias, travel,
+// latency, usPerBlock }, each old against new
 export async function report(ids) {
   const { run } = await import('./amp-scenes.js');
   const { getDevice } = await import('../app/src/devices/registry.js');
-  await import('../app/src/devices/guitar/index.js').then((m) => m.registerGuitar && m.registerGuitar());
+  await import('../app/src/devices/guitar/index.js');
   const { AMP_VOICINGS } = await import('../app/src/devices/guitar/voicings.js');
   const { CAB_IDS } = await import('../app/src/devices/guitar/amps.js');
   const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
-  const rows = {};
+  const own = CAB_IDS.indexOf('own'), rows = {};
   for (const id of ids || Object.keys(AMP_VOICINGS)) {
-    const def = getDevice('amp.' + id), old = fx.amps[id], own = CAB_IDS.indexOf('own');
+    const def = getDevice('amp.' + id), old = fx.amps[id];
     const render = async (p, x) => { const q = { ...p }; if (q.cab === 'own') q.cab = own; else delete q.cab; return run(def, q, x)[0]; };
-    const t0 = performance.now(); const y = run(def, { cab: own }, diStrum(8, SR))[0]; const ms = performance.now() - t0;
-    const nv = await voiceOf(render, { bass: old.signal === 'bass' });
-    const nc = run(def, { cab: CAB_IDS.indexOf('own'), gain: 10 }, sine(1000, -12, 2.5))[0];
+    const nv = await voiceOf(render, { bass: old.signal === 'bass' }), x2 = diStrum(2, SR), us = [];
+    for (let k = 0; k < 3; k++) { const t0 = performance.now(); run(def, { cab: own }, x2); us.push(((performance.now() - t0) * 1000) / (x2.length / 128)); }
+    const sp = shape(nv.own.half, old.own.half), spd = shape(nv.def.half, old.def.half);
     rows[id] = {
-      lufs: { old: old.own.lufs, new: nv.own.lufs, oldDef: old.def.lufs, newDef: nv.def.lufs },
-      spectrum: { own: shape(nv.own.half, old.own.half), def: shape(nv.def.half, old.def.half) },
-      thd: { old: old.thd, new: nv.thd },
-      alias: Object.fromEntries(ALIAS_F.map((f) => [f, { old: old.alias[f], new: nv.alias[f] }])),
+      name: def.name, os: AMP_VOICINGS[id].os,
+      lufs: { own: [old.own.lufs, nv.own.lufs], def: [old.def.lufs, nv.def.lufs], clawdDef: [old.def.clawd, nv.def.clawd] },
+      spectrum: { own: { rms: r2(sp.rms), max: r2(sp.max), d: sp.d }, def: { rms: r2(spd.rms), max: r2(spd.max), d: spd.d } },
+      thd: [old.thd, nv.thd],
+      alias: Object.fromEntries(ALIAS_F.map((f) => [f, { to16k: [old.alias[f].to16k, nv.alias[f].to16k], full: [old.alias[f].full, nv.alias[f].full] }])),
       travel: { old: travelOf(old), new: travelOf(nv) },
-      latency: { old: old.latency, new: Math.round((def.latency || 0) * SR), lag: lagOf(y, render ? y : y, 1) },
-      usPerBlock: r2((ms * 1000) / (y.length / 128)), noCab1k: r2(alias(nc, 1000, 16000)),
+      latency: [old.latency, Math.round((def.latency || 0) * SR)],
+      usPerBlock: r2(Math.min(...us)),
     };
   }
   return rows;

@@ -53,10 +53,13 @@ export async function run(T, ctx) {
   const { CLUB_STACK } = await import('../../app/src/core/liveroom/guitar/setup.js');
   const amp = CLUB_STACK.chain.find((l) => l.device === 'amp.recto');
   const club = rr.cabOf(amp), own = rr.cabOf({ device: 'amp.recto', params: { cab: 0 } }), fridge = rr.cabOf({ device: 'amp.recto', params: { cab: 9 } });
+  const modern = rr.cabOf({ device: 'amp.recto', params: { cab: 7 } }), bass = rr.cabOf({ device: 'amp.whale', params: {} }), stack = rr.cabOf({ device: 'core.stack', params: { cab: 4 } });
   const mics = rr.micsOf({ mic: 0, micpos: 0.3, micdist: 1 }), two = rr.micsOf({ mic: 1, mic2: 3, mic2pos: 0.9 });
-  T.ok(club.name === '4x12 Modern' && club.n === 4 && club.box.w === 496 && own.n === 4 && /its own/.test(own.name) && fridge.odd === 'fridge'
-    && mics.length === 1 && mics[0].type === 'dyn' && two.length === 2 && two[0].type === 'ribbon' && two[1].type === 'cond' && two[1].pos === 0.9,
-  `the cab under the amp: the club's ${club.name}, the amp's own (${own.name}), the fridge; the mics from the amp's params (${two.map((m) => m.name).join(' + ')})`);
+  const none = rr.micsOf({ mic: 0, micpos: 0.3, micdist: 1 }, 'amp.recto'), placed = rr.micsOf({ cab: 7, mic: 0, micpos: 0.3, micdist: 1 }, 'amp.recto');
+  T.ok(club.name === 'Modern 4x12, close dynamic' && club.measured && club.n === 4 && club.box.w === 496 && own.n === 4 && /its own/.test(own.name) && !own.measured && fridge.odd === 'fridge'
+    && modern.name === '4x12 Modern' && !modern.measured && /its own/.test(bass.name) && stack.measured && stack.name === 'British 4x12, dynamic'
+    && mics.length === 1 && mics[0].type === 'dyn' && two.length === 2 && two[0].type === 'ribbon' && two[1].type === 'cond' && two[1].pos === 0.9 && !none.length && placed.length === 1,
+  `the cab under the amp: the club's ${club.name} (measured: no mic to move), the amp's own (${own.name}), the designed ${modern.name}, the fridge; a bass amp on its own (${bass.name}); the Half Stack's ${stack.name}; the mics from the amp's params on a designed cab (${two.map((m) => m.name).join(' + ')})`);
 
   if (!ctx.pages) return;
   /* ---------------------------------------------------------------------------------------- muted Chromium */
@@ -320,9 +323,15 @@ async function checks(T, s, ctx) {
   await page.waitForTimeout(400);
   T.ok(hotTape.includes('tape') && kitCam === 'kit' && door === 'shop' && add.world === 'shop' && add.cam === 'case', `the hotspots: the tape machine presses tape (${hotTape.join(', ')}), the kit opens the book (${kitCam}), the door is the shop (${door}); + Pedal goes to the shop's case (${add.world} ${add.cam})`);
 
-  // 8. a mic dragged across the grille, close up at the cab
+  // 8. a mic dragged across the grille, close up at the cab (the club's Kraken stands on a measured cab, its mic part of
+  // the measurement: the cab zoom's builder puts it on the designed 4x12 Modern first, which takes mics)
   await E(() => window.overdub.liveRoom.press('cam:cab'));
   await page.waitForTimeout(800);
+  const measuredMics = await E(() => document.querySelectorAll('.gr-r-mic:not([hidden])').length);
+  await E(() => [...document.querySelectorAll('.gr-panel[data-target=cab] .grs-cablist:not(.measured) .grs-chip')].find((b) => b.textContent === '4x12 Modern')?.click());
+  await page.waitForTimeout(500);
+  const designedMics = await E(() => document.querySelectorAll('.gr-r-mic:not([hidden])').length);
+  T.ok(measuredMics === 0 && designedMics >= 1, `at the cab: no mic stands in front of the measured cab (${measuredMics}); on the designed 4x12 Modern, ${designedMics} to move`);
   const mic = await center('.gr-r-mic-body'), cone = await E(() => { const c = document.querySelectorAll('.gr-r-cone')[3].getBoundingClientRect(); return { x: c.left + c.width * 0.97, y: c.top + c.height * 0.5 }; });
   await oneStep('the mic dragged out to the fourth cone’s edge', async () => {
     await page.mouse.move(mic.x, mic.y); await page.mouse.down();

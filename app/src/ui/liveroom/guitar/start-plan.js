@@ -207,7 +207,7 @@ export function allWords() {
   out.push({ id: 'tunerSays.flat', text: tunerSays(reading({})) }, { id: 'tunerSays.in', text: tunerSays(reading({ inTune: true, shown: 0 })) },
     { id: 'tunerSays.far', text: tunerSays(reading({ string: { name: 'Low C', number: 6, cents: 140 }, shown: 40 })) },
     { id: 'tunerSays.held', text: tunerSays(reading({ live: false, held: true })) }, { id: 'tunerSays.all', text: tunerSays(null, { n: 6, of: 6, tuning: 'drop C' }) });
-  out.push({ id: 'soundSays', text: soundSays({ stack: 'the club’s stack', amp: 'Kraken', cab: '4x12 Modern', pedals: ['a noise gate', 'a treble booster'] }) });
+  out.push({ id: 'soundSays', text: soundSays({ stack: 'the club’s stack', amp: 'Kraken', cab: 'Modern 4x12, close dynamic', pedals: ['a noise gate', 'a treble booster'] }) });
   out.push({ id: 'plugSays', text: plugSays({ open: true, label: 'Scarlett Solo USB', input: 2, channels: 2 }) });
   out.push({ id: 'plugSays.on', text: plugSays({ open: true, label: 'Scarlett Solo USB', input: 2, channels: 2, monitoring: true }) });
   out.push({ id: 'plugSays.off', text: plugSays({ open: true, label: 'Scarlett Solo USB', input: 2, channels: 2, monitoring: false }) });

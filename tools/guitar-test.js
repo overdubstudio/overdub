@@ -9,6 +9,14 @@
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
 //     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
 //     plugAmp sample for sample (also with a cab and two mics).
+//  4c. the measured cabs (gear/code.js PLUG_AMP_IR): the gear's six are Half Stack's (ids and names); every guitar amp
+//     defaults to one and the bass amps, Abyss, Hermit, Flotsam, the 8-Bit Crab, Beach Tape and Straight In to their own
+//     designed cab (sample for sample as before); each guitar amp's default sound at its default knobs reads as it did
+//     on its own cab within 0.5 LU (the band's loudness and BS.1770; the half-octave change is noted), in time with it,
+//     true peak under -1 dBTP; a saved rig without a cab plays the measured one and an explicit 'own' the designed one;
+//     with the bank held off the amp plays its own cab exactly and the rack's words say so; live, an amp built before
+//     the bank is in plays its own cab and moves onto the measured one click-free, and switching cabs among measured
+//     and designed ones is click-free with no dip.
 //  5. the rigs: every preset (but the keys bank's) through its whole chain lands at -14 LUFS ±1.5 (leads up to -12),
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
 //  2b. automation: every pedal param that changes the sound before set()'s `at` is marked auto: false (no lane).
@@ -295,7 +303,7 @@ async function boot(page) {
         const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
         b.copyToChannel(x, 0); s.buffer = b;
         if (G.gear.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
-        const amp = G.gear.plugAmp(c); amp.set(Q);
+        const amp = G.gear.plugAmp(c); amp.set(Q); await amp.ready();
         s.connect(amp.input); amp.output.connect(c.destination); s.start(0);
         const o = await c.startRendering();
         let d = 0; for (let ch = 0; ch < 2; ch++) { const y = o.getChannelData(ch); for (let i = 0; i < y.length; i++) d = Math.max(d, Math.abs(a[ch][i] - y[i])); }
@@ -313,6 +321,124 @@ async function boot(page) {
   t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are the gear's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
   const worstPreset = Math.max(...amps.same.map((s) => s.dPreset));
   t.ok(worstPreset < 1e-3, `a preset's amp settings come across within ${(20 * Math.log10(worstPreset + 1e-12)).toFixed(0)} dBFS (a mic's x, y on the cone become one radius, as the sound only hears the radius; plugCabClean rounds x and y)`);
+
+  // 4c. the measured cabs
+  const irs = await page.evaluate(async () => {
+    const { G, R, render, input, clawdLufs, tp, check, M, SR } = window.__gt;
+    const AL = await import('/app/src/devices/builtin/amp-lib.js');
+    const GI = await import('/app/src/devices/guitar/gear/index.js');
+    const A = await import('/app/src/devices/guitar/amps.js');
+    const g = G.gear, own = G.CAB_IDS.indexOf('own');
+    const measured = G.CAB_IDS.filter(A.isMeasured);
+    const ids = { same: JSON.stringify(measured) === JSON.stringify(AL.CAB_IDS) && measured.every((id, i) => g.PLUG_CABS[id].name === AL.CAB_NAMES[i] && g.PLUG_CABS[id].ir === i),
+      first: G.CAB_IDS.indexOf(measured[0]), designed: G.CAB_IDS.length - measured.length };
+    // half-octave bands, 63 Hz to 11.3 kHz: averaged Hann periodograms (8192 points) of the left channel, dB
+    const bands = []; for (let f = 63; f < 12000; f *= Math.SQRT2) bands.push(f);
+    const spec = (x) => {
+      const N = 8192, w = new Float64Array(N); for (let i = 0; i < N; i++) w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+      const P = new Float64Array(N / 2); let fr = 0;
+      for (let st = SR; st + N <= x.length; st += N / 2) {
+        const re = new Float64Array(N), im = new Float64Array(N); for (let i = 0; i < N; i++) re[i] = x[st + i] * w[i];
+        for (let i = 1, j = 0; i < N; i++) { let b = N >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; } }
+        for (let len = 2; len <= N; len <<= 1) { const a = (-2 * Math.PI) / len, wr = Math.cos(a), wi = Math.sin(a); for (let i = 0; i < N; i += len) { let cr = 1, ci = 0; for (let k = 0; k < len / 2; k++) { const u = i + k, v = u + len / 2, vr = re[v] * cr - im[v] * ci, vi = re[v] * ci + im[v] * cr; re[v] = re[u] - vr; im[v] = im[u] - vi; re[u] += vr; im[u] += vi; const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t; } } }
+        for (let k = 0; k < N / 2; k++) P[k] += re[k] * re[k] + im[k] * im[k];
+        fr++;
+      }
+      return bands.map((fc) => { let e = 0; for (let k = Math.round((fc * Math.pow(2, -0.25) * N) / SR); k < Math.round((fc * Math.pow(2, 0.25) * N) / SR); k++) e += P[k]; return 10 * Math.log10(e / fr + 1e-20); });
+    };
+    // the lag (samples) that best lines b up with a, within ±64
+    const lag = (a, b) => { let best = 0, bv = -Infinity; for (let L = -64; L <= 64; L++) { let s = 0; for (let i = SR; i < SR * 3; i++) s += a[i] * b[i + L]; if (s > bv) { bv = s; best = L; } } return best; };
+    const rows = [];
+    for (const d of R.listDevices({ cat: 'amp' }).filter((x) => x.id.startsWith('amp.'))) {
+      const id = d.id.slice(4), def = d.params.find((p) => p.key === 'cab').def, bass = d.tone === 'bass';
+      const row = { id: d.id, cab: G.CAB_IDS[def], want: g.PLUG_AMP_IR[id] || 'own', data: !!d.data };
+      if (row.cab === 'own') {
+        // the amps that keep their own: the default is the designed cab, sample for sample
+        const x = input(bass ? 'bass' : 'di', 2), a = await render([{ device: d.id }], x), b = await render([{ device: d.id, params: { cab: own } }], x);
+        let dd = 0; for (let i = 0; i < a[0].length; i++) dd = Math.max(dd, Math.abs(a[0][i] - b[0][i]));
+        rows.push({ ...row, exact: dd === 0 });
+        continue;
+      }
+      const x = input(bass ? 'bass' : 'di', 8);
+      const nb = await render([{ device: d.id }], x, { band: true }), ob = await render([{ device: d.id, params: { cab: own } }], x, { band: true });
+      const n = await render([{ device: d.id }], x), o = await render([{ device: d.id, params: { cab: own } }], x);
+      const buf = (r) => ({ sampleRate: SR, numberOfChannels: 2, length: r[0].length, getChannelData: (i) => r[i] });
+      const sn = spec(n[0]), so = spec(o[0]), dl = M.lufs(buf(n)) - M.lufs(buf(o));
+      rows.push({ ...row, clawd: clawdLufs(nb[0], nb[1]) - clawdLufs(ob[0], ob[1]), bs: dl, tp: tp(n), tpOwn: tp(o), lag: lag(o[0], n[0]), bad: check(n).bad,
+        sp: sn.map((v, i) => Math.round(v - so[i] - dl)) });
+    }
+    // a saved rig: no cab is the amp's default (measured); 'own' written is its own designed cab, and comes back as it
+    const rec = G.ampParams({ amp: 'recto', gain: 6 }), ownP = G.ampParams({ amp: 'recto', cab: 'own' });
+    const saved = { none: !('cab' in rec), ownIdx: ownP.cab === own, back: G.ampSettings('recto', R.paramValues(R.getDevice('amp.recto'), ownP)).cab === 'own',
+      dflt: !('cab' in G.ampSettings('recto', R.paramValues(R.getDevice('amp.recto'), {}))), clean: JSON.stringify(g.plugCabClean({ amp: 'recto', cab: 'own' })) === '{"cab":"own"}' && JSON.stringify(g.plugCabClean({ amp: 'whale', cab: 'own' })) === '{}',
+      older: !g.PLUG_CABS['not-a-cab'] && JSON.stringify(g.plugCabClean({ amp: 'recto', cab: 'not-a-cab' })) === '{}' };
+    // the bank held off (as on a server without it): the amp plays its own designed cab, exactly; the rack's words
+    GI.useCabBank(null);
+    const x2 = input('di', 2);
+    const held = await render([{ device: 'amp.recto' }], x2), heldOwn = await render([{ device: 'amp.recto', params: { cab: own } }], x2);
+    GI.useCabBank();
+    let hd = 0; for (let i = 0; i < held[0].length; i++) hd = Math.max(hd, Math.abs(held[0][i] - heldOwn[0][i]));
+    const back = await render([{ device: 'amp.recto' }], x2);
+    let bd = 0; for (let i = 0; i < back[0].length; i++) bd = Math.max(bd, Math.abs(back[0][i] - heldOwn[0][i]));
+    const says = R.getDevice('amp.recto').dataSays;
+    return { ids, rows, saved, fallback: { exact: hd === 0, back: bd > 1e-3, says: says && says.missing[0] + ' / ' + says.loading[0] } };
+  });
+  t.ok(irs.ids.same && irs.ids.first === irs.ids.designed, `the gear's measured cabs are Half Stack's six, ids and names, after the ${irs.ids.designed} designed ones (every CAB index before them unchanged)`);
+  const wantOk = irs.rows.every((r) => r.cab === r.want && r.data === (r.want !== 'own'));
+  t.ok(wantOk, `every amp's CAB default is its PLUG_AMP_IR cab, and the measured ones name the bank as data: ${irs.rows.filter((r) => r.cab !== 'own').map((r) => r.id.slice(4) + ' ' + r.cab).join(', ')}`);
+  const keep = irs.rows.filter((r) => r.cab === 'own');
+  t.ok(keep.length === 11 && keep.every((r) => r.exact), `${keep.length} amps keep their own designed cab, sample for sample as before: ${keep.map((r) => r.id.slice(4)).join(' ')}`);
+  for (const r of irs.rows.filter((x) => x.cab !== 'own')) {
+    t.ok(!r.bad && Math.abs(r.clawd) <= 0.5 && Math.abs(r.bs) <= 0.5 && r.tp <= -1 && Math.abs(r.lag) <= 16,
+      `${r.id.padEnd(12)} on ${r.cab.padEnd(15)} as loud as on its own cab: ${r.clawd >= 0 ? '+' : ''}${r.clawd.toFixed(2)} LU (BS.1770 ${r.bs >= 0 ? '+' : ''}${r.bs.toFixed(2)}), TP ${r.tpOwn.toFixed(1)} -> ${r.tp.toFixed(1)} dBTP, ${r.lag} samples apart`);
+  }
+  t.note(`the change, measured cab against its own (half-octave bands from 63 Hz to 11.3 kHz, dB, loudness matched):\n${irs.rows.filter((r) => r.sp).map((r) => '    ' + r.id.slice(4).padEnd(9) + r.sp.map((v) => String(v).padStart(4)).join('')).join('\n')}`);
+  const sv = irs.saved;
+  t.ok(sv.none && sv.ownIdx && sv.back && sv.dflt && sv.clean && sv.older, `a saved rig without a cab plays the amp's default (measured); 'own' saved is CAB 0 and comes back as 'own' (designed); a cab id from later is dropped, the amp's default`);
+  t.ok(irs.fallback.exact && irs.fallback.back, `with the bank held off, an amp on a measured cab plays its own designed cab, exactly; with it back, the measured one ("${irs.fallback.says}")`);
+
+  // 4c, live: built before the bank is in, then moving onto it; switching cabs
+  const irLive = await page.evaluate(async () => {
+    const { R, G } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+    const GI = await import('/app/src/devices/guitar/gear/index.js');
+    await c.resume();
+    const REC = `class GtRec3 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
+      process(i) { const x = i[0] && i[0][0]; if (x && this.on) this.port.postMessage(x.slice(0)); return this.on; } } registerProcessor('gt-rec3', GtRec3);`;
+    await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const ix = (id) => G.CAB_IDS.indexOf(id);
+    GI.useCabBank(null); // (not in yet)
+    const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
+    const inst = await R.instantiate(c, 'amp.recto', { uid: 'ir-live', on: true }); await inst.ready;
+    const amp = inst.device.amp;
+    const rec = new AudioWorkletNode(c, 'gt-rec3'), blocks = [];
+    rec.port.onmessage = (e) => blocks.push(e.data);
+    g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
+    const t0 = c.currentTime, marks = [];
+    await sleep(400);
+    const before = amp.playing();
+    GI.useCabBank(); marks.push(c.currentTime - t0); await amp.ready(); // (it lands)
+    await sleep(500);
+    const after = amp.playing();
+    // measured -> measured -> designed own -> measured -> designed 4x12 British (and its mics) -> the default
+    const seq = [ix('british-dynamic'), ix('own'), ix('modern-two'), ix('g412'), ix('modern-close')], plays = [];
+    for (const cab of seq) { marks.push(c.currentTime + 0.01 - t0); inst.set({ cab }); await sleep(450); plays.push(amp.playing()); }
+    rec.port.postMessage('stop'); o.stop(); await sleep(60);
+    inst.dispose(); g.disconnect(); rec.disconnect(); await c.close();
+    const n = blocks.reduce((s, b) => s + b.length, 0), y = new Float32Array(n); let p = 0; for (const b of blocks) { y.set(b, p); p += b.length; }
+    const sr = 48000, d2 = new Float32Array(n); for (let i = 2; i < n; i++) d2[i] = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]);
+    const near = new Uint8Array(n);
+    for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.12) * sr)); i++) near[i] = 1;
+    let steady = 0, at = 0;
+    for (let i = Math.round(0.15 * sr); i < n - 256; i++) { if (near[i]) at = Math.max(at, d2[i]); else steady = Math.max(steady, d2[i]); }
+    // no dip: the quietest 5 ms around a switch against the steady sound's (a duck would be -40 dB or so)
+    const W = 240, rms = (a) => { let s = 0; for (let i = a; i < a + W; i++) s += y[i] * y[i]; return Math.sqrt(s / W); };
+    let lo = Infinity, ref = 0, k = 0;
+    for (let a = Math.round(0.15 * sr); a + W < n - 256; a += W) { const r = rms(a); if (near[a]) lo = Math.min(lo, r); else { ref += r; k++; } }
+    return { before, after, plays, ratio: at / Math.max(steady, 1e-9), dip: 20 * Math.log10(lo / (ref / Math.max(1, k)) + 1e-12), secs: n / sr };
+  });
+  t.ok(irLive.before === 'own' && irLive.after === 'ir' && irLive.ratio < 1.6 && irLive.secs > 2, `live, an amp built before the bank is in plays its own designed cab (${irLive.before}) and moves onto the measured one when it lands (${irLive.after}), click-free`);
+  t.ok(irLive.plays.join() === 'ir,own,ir,g412,ir' && irLive.ratio < 1.6 && irLive.dip > -12, `live, switching cabs (measured, its own, measured, a designed 4x12 with its mic, measured) is click-free (second difference at the switches ${irLive.ratio.toFixed(2)}× the steady sound's) and never dips (quietest 5 ms ${irLive.dip.toFixed(1)} dB): ${irLive.plays.join(' → ')}`);
 
   // 5. the rigs, end to end
   if (!FAST) {

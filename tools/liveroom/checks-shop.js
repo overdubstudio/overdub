@@ -44,15 +44,19 @@ export async function run(T, ctx) {
     T.ok(!lost.length && inCase.length === pedals.length, `the pedal case holds every pedal once, in its drawer (${cats.map((c) => `${c.word} ${c.pedals.length}`).join(', ')}; ${inCase.length} of ${pedals.length})${lost.length ? ': not in a drawer ' + lost.join(' ') : ''}`);
     const club = CLUB_STACK.chain.find((l) => l.device === 'amp.recto');
     const meg = D.carriedAmp('amp.metal', club);
-    const keep = ['cab', 'mic', 'micpos', 'micdist', 'micang'].every((k) => meg.params[k] === club.params[k]);
+    const yours = { device: 'amp.recto', params: { cab: 7, mic: 1, micpos: 0.5, micdist: 3, micang: 0 } }, meg2 = D.carriedAmp('amp.metal', yours);
+    const keep = ['cab', 'mic', 'micpos', 'micdist', 'micang'].every((k) => meg2.params[k] === yours.params[k]) && !('cab' in meg.params) && !('mic' in meg.params);
     const lv = D.carryLevel('amp.metal');
     const hs = D.carriedAmp('core.stack', club);
     T.ok(keep && meg.params.level === lv.value && meg.on && !('gain' in meg.params) && !('cab' in hs.params) && hs.params.level === D.carryLevel('core.stack').value,
-      `a carried amp keeps your cab and mics and comes in at its measured level, its own knobs at their defaults (Megalodon: MASTER ${lv.value}, on cab ${meg.params.cab}; the Half Stack: LEVEL ${hs.params.level} dB)`);
+      `a carried amp keeps the cab and mics you chose (Megalodon from a Kraken on cab ${yours.params.cab}: cab ${meg2.params.cab}), comes onto its own default off the club's (${D.cabOf(meg).cabName}) and in at its measured level, its own knobs at their defaults (MASTER ${lv.value}; the Half Stack: LEVEL ${hs.params.level} dB)`);
     const said = D.describeStack(CLUB_STACK.chain);
-    T.ok(/^Kraken on a 4x12 Modern, a noise gate and a treble booster in front$/.test(said), `a stack in a phrase: "${said}"`);
-    const cab = D.cabOf(club);
-    T.ok(cab.kind === 'clawd' && cab.cab === 'v412' && cab.mic1.type === 'dyn' && cab.mic1.pos === 0.3 && cab.mic2 === null && D.cabOf({ device: 'core.stack', params: {} }).kind === 'stack', `the cab builder reads the amp's own params (Kraken: ${cab.cabName}, ${D.MICS[cab.mic1.type].name} ${D.onCone(cab.mic1.pos)}, ${D.inches(cab.mic1.dist)})`);
+    T.ok(/^Kraken on a Modern 4x12, close dynamic, a noise gate and a treble booster in front$/.test(said), `a stack in a phrase: "${said}"`);
+    const cab = D.cabOf(club), des = D.cabOf(yours), bass = D.cabOf({ device: 'amp.whale', params: {} });
+    T.ok(cab.kind === 'clawd' && cab.cab === 'modern-close' && cab.measured && cab.def === 'modern-close' && cab.mic1 === null && cab.mic2 === null
+      && des.cab === 'v412' && !des.measured && des.mic1.type === 'ribbon' && des.mic1.pos === 0.5 && bass.cab === 'own' && bass.def === 'own' && !bass.measured && bass.mic1.type === 'dyn'
+      && D.MEASURED_CABS.length === 6 && D.cabOf({ device: 'core.stack', params: {} }).kind === 'stack',
+    `the cab builder reads the amp's own params, its default when none is set (Kraken: ${cab.cabName}, measured, no mic to place; on cab 7: ${des.cabName}, ${D.MICS[des.mic1.type].name} ${D.onCone(des.mic1.pos)}, ${D.inches(des.mic1.dist)}; Blue Whale: ${bass.cabName})`);
     // the shop's own words keep the talkback's rules
     const { SAY, SAMPLE } = await import('../../app/src/ui/liveroom/guitar/shop-say.js');
     const { NEVER, sentences } = await import('./checks-copy.js');
@@ -167,8 +171,8 @@ export async function run(T, ctx) {
     await wait(150);
     const carried = await rig(), h1 = await history(page);
     const lv = D.carryLevel('amp.metal');
-    T.ok(carried.amp.device === 'amp.metal' && carried.same && carried.amp.params.level === lv.value && carried.amp.params.cab === 7 && h1.length === h0 + 1 && h1.at(-1).by === 'you',
-      `a click carries Megalodon to your stack: one step by you, both guitars, at its measured level (MASTER ${lv.value}) on your 4x12 (${h1.at(-1)?.label})`);
+    T.ok(carried.amp.device === 'amp.metal' && carried.same && carried.amp.params.level === lv.value && carried.amp.params.cab == null && h1.length === h0 + 1 && h1.at(-1).by === 'you',
+      `a click carries Megalodon to your stack: one step by you, both guitars, at its measured level (MASTER ${lv.value}) on its own measured cab (${h1.at(-1)?.label})`);
     // refused during a take
     const refused = await E(() => {
       const o = window.overdub, L = o.ui.state.liveRoom, R = document.querySelector('.gr').__gr, was = L.run, n = o.store.history.length;
@@ -308,7 +312,18 @@ export async function run(T, ctx) {
     await press(page, 'KeyC');
     await wait(450);
     const cb0 = await rig(), hc0 = (await history(page)).length;
-    await page.click('.gr-panel[data-target=tryout-cab] .grs-cablist .grs-chip:nth-child(3)');
+    // on its measured cab: the six measured cabs first (its default marked and picked), the designed ones after, and no
+    // mic to place
+    const meas = await E(() => {
+      const p = document.querySelector('.gr-panel[data-target=tryout-cab]'), q = (sel) => [...p.querySelectorAll(sel)];
+      return { measured: q('.grs-cablist.measured .grs-chip').map((b) => b.textContent), on: q('.grs-cablist.measured .grs-chip[aria-checked=true]').map((b) => b.textContent),
+        designed: q('.grs-cablist:not(.measured) .grs-chip').length, faders: q('.grs-fader').length, mics: document.querySelectorAll('.gr .grs-cab.open .grs-mic').length,
+        note: p.textContent.includes('no mic to move'), plate: document.querySelector('.gr .grs-cab.open')?.classList.contains('ir') };
+    });
+    await s.shot('liveroom/gr-shop-cab-measured');
+    T.ok(meas.measured.length === 6 && meas.on.length === 1 && /· default$/.test(meas.on[0]) && meas.designed > 8 && !meas.faders && !meas.mics && meas.note && meas.plate,
+      `the cab builder on a measured cab: the six measured cabs (${meas.on[0]} picked), ${meas.designed} designed ones after; no mic to move, and it says so`);
+    await page.click('.gr-panel[data-target=tryout-cab] .grs-cablist:not(.measured) .grs-chip:nth-child(3)');
     await wait(100);
     const cb1 = await rig();
     await E(() => document.querySelector('.gr-panel[data-target=tryout-cab] .grs-fader[aria-label^="Mic 1: distance"]')?.focus());

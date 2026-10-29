@@ -975,10 +975,13 @@ const PLUG_AMP_IR = { clean: 'british-dynamic', jangle: 'british-dynamic', crunc
   friedman: 'modern-two', bassman: 'modern-two', recto: 'modern-close', slo: 'modern-close', metal: 'modern-close', orange: 'modern-side' };
 // an amp's cab when P doesn't name one
 const plugCabDefault = (id) => PLUG_AMP_IR[id] || 'own';
-// A measured nudge (dB) per amp, on any measured cab, on top of the worked-out trim. None is needed yet: every guitar
-// amp at its default knobs, the DI strum through its default measured cab, reads within 0.2 LU of its own designed cab
-// (BS.1770 and the band's loudness alike; tools/guitar-test.js section 4c renders each and holds it within 0.5 LU).
-const PLUG_IR_LV = {};
+// A measured nudge (dB) per amp, on any measured cab, on top of the worked-out trim. Every guitar amp at its default
+// knobs, the DI strum through its default measured cab, reads within 0.2 LU of its own designed cab (BS.1770 and the
+// band's loudness alike; tools/guitar-test.js section 4c renders each and holds it within 0.5 LU). Through the presets'
+// whole chains (pedals in front, the band's tail) the 112 that leave the cab to the amp move -0.6 to +1.2 LU, a mean
+// of +0.1; the SLO's three come up most (+0.65 on average, its boosted lead +1.0), so it gives back a quarter dB, half
+// way between the amp alone and its presets.
+const PLUG_IR_LV = { slo: -0.25 };
 // A mic: name, blurb; what it does against the 57 the amps were voiced with: lo (a 200 Hz shelf), body and pres
 // ([Hz, Q, dB] peaks), air (a 9 kHz shelf), hp and lp ([Hz, Q in dB]; 0 is none); prox: how much proximity effect
 // (bass up close) against the 57; room: how much of the room it hears.
@@ -1225,7 +1228,7 @@ function plugAmp(c) {
   const kitOwn = { src: [], timers: [], fns: [], wk: [] }, conv = PFX.kit(c, kitOwn).convolver(null), irOut = G(0), designed = G(1);
   conv.normalize = false; // (the bank's taps are its levels: Half Stack plays them as they are)
   conv.connect(irOut); irOut.connect(level); designed.connect(level);
-  let irFed = false, irOffT = 0, irCur = -1, irWait = null;
+  let irFed = false, irOffT = 0, irCur = -1, irWait = null, irFailed = false;
   const irFeed = (on) => {
     clearTimeout(irOffT);
     if (dead) return;
@@ -1240,10 +1243,18 @@ function plugAmp(c) {
     if (!t) return null;
     return (c.__plugIrs = t.map((x) => { if (!x) return null; const b = c.createBuffer(1, x.length, c.sampleRate); b.copyToChannel(x, 0); return b; }));
   };
-  // the bank, asked for once; when it lands, the amp moves onto its measured cab (live: crossfaded; offline: at once)
-  const irLoad = () => {
+  // the bank, asked for once (again only by ready(), if it wasn't here: a knob turned doesn't ask the server again); when
+  // it lands, the amp moves onto its measured cab (live: crossfaded; offline: at once)
+  const irLoad = (retry) => {
     if (!PLUG_IRS) return Promise.resolve(false);
-    if (!irWait) irWait = Promise.resolve(PLUG_IRS.load()).then(() => { if (!dead && last && !pending && irBufs()) apply(last, !realtime); return !!irBufs(); }, () => false);
+    if (retry && irFailed) { irWait = null; irFailed = false; }
+    if (!irWait) {
+      irWait = Promise.resolve(PLUG_IRS.load()).then((ok) => {
+        if (!ok || !irBufs()) { irFailed = true; return false; }
+        if (!dead && last && !pending) apply(last, !realtime);
+        return true;
+      }, () => { irFailed = true; return false; });
+    }
     return irWait;
   };
   // the side route for the odd ones (crush, wow): post2 -> quantiser -> wobbling delay -> side -> the tone stack, beside
@@ -1410,7 +1421,7 @@ function plugAmp(c) {
   // ready(): a promise that's resolved once the measured cabs' bank is in or known not to be here (an offline render
   // awaits it after set(), so a measured cab is in it from the first sample: pedalRig's ready() waits for it too).
   // playing(): what the cab plays now ('ir' or a designed cab's id).
-  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, ready: () => irLoad().then(() => {}), playing: () => curCab,
+  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, ready: () => irLoad(true).then(() => {}), playing: () => curCab,
     net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
 }
 plugAmp.amps = PLUG_AMPS; // (tools/plug-level.js)

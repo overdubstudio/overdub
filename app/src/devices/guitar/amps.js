@@ -40,7 +40,8 @@ export const AMP_PARAMS = [
   knob('gain', 'GAIN', PLUG_DEFAULT.gain, 'drive'), knob('bass', 'BASS', PLUG_DEFAULT.bass, 'tone'), knob('mid', 'MIDDLE', PLUG_DEFAULT.mid, 'tone'),
   knob('treble', 'TREBLE', PLUG_DEFAULT.treble, 'tone'), knob('presence', 'PRESENCE', PLUG_DEFAULT.presence, 'tone'), knob('level', 'MASTER', PLUG_DEFAULT.level, 'level'),
   // the cab and the mics
-  { key: 'cab', label: 'CAB', opts: CAB_IDS.map((k) => PLUG_CABS[k].name), def: 0, group: 'cab', desc: 'the speaker cabinet: a measured 4x12 (its mic is part of the measurement) or a designed cab (with the mics below)' },
+  { key: 'cab', label: 'CAB', opts: CAB_IDS.map((k) => PLUG_CABS[k].name), def: 0, group: 'cab', desc: 'the speaker cabinet: a measured 4x12 (its mic is part of the measurement) or a designed cab (with the mics below)',
+    measured: CAB_IDS.flatMap((k, i) => (isMeasured(k) ? [i] : [])) }, // (the opts that are measured: the Cab & mics line says so, not the mics)
   { key: 'mic', label: 'MIC', opts: MIC_IDS.map((k) => PLUG_MICS[k].name), def: Math.max(0, MIC_IDS.indexOf(PLUG_MIC_DEFAULT.type)), group: 'cab' },
   { key: 'micpos', label: 'POSITION', min: 0, max: 1.35, def: PLUG_MIC_DEFAULT.x, step: 0.01, group: 'cab', role: 'tone', desc: 'cone radii from the dustcap: brighter at the centre, darker toward the edge',
     fmt: (v) => `${(+v).toFixed(2)} ${where(v)}` },

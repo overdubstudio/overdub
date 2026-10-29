@@ -2,10 +2,12 @@
 // drawCables, design/mock/guitar-room-2/app.js, carried into the app on the real devices). Pure DOM builders: the room
 // (./stage.js) places them and wires them to the rig (./bind.js); nothing here reads the song or changes it.
 //
-//   cabOf(amp) -> { id, name, n, size, back, odd, box: { w, h } }   the cab under an amp slot (core/liveroom/guitar/
-//       rig.js Slot): its CAB param (devices/guitar/amps.js CAB_IDS; 'own' is the cab the amp was voiced with, from
-//       Claw'd-o-Matic's PLUG_AMP_BOX), and how big it stands on the stage, in world units
-//   micsOf(values) -> [{ type, name, pos, dist, ang }]  the amp's mics (MIC, POSITION, DISTANCE, ANGLE; MIC 2 when on)
+//   cabOf(amp) -> { id, name, n, size, back, odd, measured, box: { w, h } }   the cab under an amp slot (core/liveroom/
+//       guitar/rig.js Slot): its CAB param, or the amp's default when it has none (devices/guitar/amps.js CAB_IDS; 'own'
+//       is the cab the amp was voiced with, from Claw'd-o-Matic's PLUG_AMP_BOX; measured: one of the six measured
+//       4x12s, the Half Stack's too), and how big it stands on the stage, in world units
+//   micsOf(values, device?) -> [{ type, name, pos, dist, ang }]  the amp's mics (MIC, POSITION, DISTANCE, ANGLE; MIC 2
+//       when on); none on a measured cab (its mic is part of the measurement) or on the Half Stack
 //   buildCab(cab, w, h) -> el (el._cones: [{ x, y, r }] in the cab's own units)   the box, its grille, its speakers
 //   buildMic(i) -> el                                  a mic on its stand (placed by placeMic)
 //   placeMic(el, mic, at, cab)                          at: { cone, ang } (where on the grille it's drawn: not a param)
@@ -20,7 +22,8 @@
 
 import { h } from '../../dom.js';
 import { gear } from '../../../devices/guitar/gear/index.js';
-import { CAB_IDS, MIC_IDS } from '../../../devices/guitar/amps.js';
+import { CAB_IDS, MIC_IDS, cabDefaultIndex, isMeasured } from '../../../devices/guitar/amps.js';
+import { CAB_IDS as STACK_CABS } from '../../../devices/builtin/amp-lib.js';
 
 const { PLUG_CABS, PLUG_AMP_BOX, PLUG_MICS } = gear;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -42,23 +45,30 @@ function boxOf(c) {
   return { w: s >= 15 ? 340 : s >= 12 ? 320 : 260, h: s >= 15 ? 340 : s >= 12 ? 270 : 220 };
 }
 
+// the CAB_IDS id an amp slot plays: its CAB, else its default; the Half Stack's CAB is its own switch (its six measured
+// cabs, the same as ours, then its filter 4x12 and off: drawn as a closed 4x12)
+function cabIdOf(amp) {
+  const params = amp?.params || {}, v = Number.isFinite(+params.cab) && params.cab !== '' && params.cab != null ? Math.round(+params.cab) : null;
+  if (amp?.device === 'core.stack') return STACK_CABS[v ?? 0] || 'own';
+  return CAB_IDS[v ?? cabDefaultIndex(amp?.device)] || 'own';
+}
 export function cabOf(amp) {
-  const params = amp?.params || {};
-  const id = CAB_IDS[Math.round(+params.cab || 0)] || 'own';
+  const id = cabIdOf(amp);
   if (id !== 'own' && PLUG_CABS[id]) {
     const c = PLUG_CABS[id];
-    return { id, name: c.name, n: c.n || 1, size: c.size || 12, back: c.back || 'closed', odd: c.odd || null, box: boxOf(c) };
+    return { id, name: c.name, n: c.n || 1, size: c.size || 12, back: c.back || 'closed', odd: c.odd || null, measured: isMeasured(id), box: boxOf(c) };
   }
   // the cab the amp was voiced with ([speakers, size, back]); the Half Stack and an amp without one: a closed 4x12
   const short = String(amp?.device || '').replace(/^amp\./, '');
   const [n, size, back] = PLUG_AMP_BOX?.[short] || [4, 12, 'closed'];
   // (the radio, the bitcrusher, the tape: an odd little box, drawn as the phone's)
   const odd = back === 'odd' ? 'phone' : null;
-  return { id: 'own', name: `${n}x${size}, its own`, n, size, back, odd, box: boxOf({ n, size, odd }) };
+  return { id: 'own', name: `${n}x${size}, its own`, n, size, back, odd, measured: false, box: boxOf({ n, size, odd }) };
 }
 
-export function micsOf(v = {}) {
+export function micsOf(v = {}, device = null) {
   const out = [];
+  if (device === 'core.stack' || (device && isMeasured(cabIdOf({ device, params: v })))) return out;
   const t1 = MIC_IDS[clamp(Math.round(+v.mic || 0), 0, MIC_IDS.length - 1)] || 'dyn';
   out.push({ type: t1, name: MIC_WORD[t1], pos: Number.isFinite(+v.micpos) ? +v.micpos : 0.3, dist: Number.isFinite(+v.micdist) ? +v.micdist : 1, ang: +v.micang || 0 });
   const m2 = Math.round(+v.mic2 || 0);

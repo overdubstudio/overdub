@@ -74,7 +74,10 @@ is one step by you on both sides of the stack, and `⌘Z` takes it back. Edits g
 nothing goes to the rack unless you say so.
 
 The camera goes closer: `H` the head (every knob), `C` the cab (which cab, the mics on the cones, their distance and
-angle, a second mic), `K` the kit and the drummer's book, `B` the board, `U` the tuner, `G` the tape. `Esc` steps back
+angle, a second mic). Every guitar amp stands on a measured 4x12 to start with, a real cab recorded with its mic, so
+there's no mic to move on it; pick a designed cab under **Designed cabs** to place your own. The bass amps and the
+character amps (Hermit, Flotsam, the 8-Bit Crab, Beach Tape) keep the cab they were voiced with. The measured cabs load
+when an amp first asks for them; until they're in, the amp plays its own designed cab and the rack says so. `K` the kit and the drummer's book, `B` the board, `U` the tuner, `G` the tape. `Esc` steps back
 one at a time, and never further than the stage.
 
 The lamp by the first pedal's jack, **MON**, is monitoring: lit while you're heard through the rig, dark when it's off,
@@ -637,7 +640,8 @@ and pedalboard), then your guitar and practice, then ideas. The song plays on wh
     step. The words under it pick a bank. A rig whose pedals you've changed says *edited*.
   - **The amp** is drawn at full size: turn its knobs by dragging up and down, the scroll wheel or the arrow keys; its
     power switch takes it out of the chain. **Cab & mics** under it names the cabinet and the mic, and **Adjust**
-    opens their controls.
+    opens their controls. A guitar amp starts on a measured 4x12 (its mic is part of the measurement, so the mic
+    controls apply when you pick a designed cab).
   - **The pedalboard** runs in signal order, left to right: your guitar's jack, the pedals, the amp's place in the
     chain, then any pedals after the amp, out to the mixer. Stomp a pedal's footswitch to bypass it. Drag a pedal by
     the tape under it to move it (or focus the tape and use the arrow keys); its **×** takes it off. **Add a pedal**,

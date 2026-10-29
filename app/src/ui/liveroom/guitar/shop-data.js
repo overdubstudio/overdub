@@ -10,12 +10,14 @@
 //   PEDAL_CATS, pedalsByCat() -> [{ cat, word, line, pedals: [def] }]       the pedal case's drawers, top to bottom
 //   toneWord(tone), CAT_WORD, typeWord(def), inLoop(def), ordinal(n)
 //   isAmp(id), ampKind(id) -> 'clawd' | 'stack' | null
-//   CABS, MICS, CAB_IDS, MIC_IDS, GUITAR_CABS (the cabs a guitarist puts under a head, by id), cabIndex(id), cabAt(index)
+//   CABS, MICS, CAB_IDS, MIC_IDS, MEASURED_CABS (the six measured 4x12s, by id), GUITAR_CABS (the designed cabs a
+//   guitarist puts under a head), BASS_CABS, cabIndex(id), cabAt(index), isMeasured(id), cabDefault(ampId)
 //   cabBox(cabId) -> { w, h }      how big a cab stands, in world units, from its speakers
 //   whereOnCone(r), onCone(r), inches(d)                                     a mic's place in words
-//   cabOf(link) -> CabView | null  the cab and mics of an amp link, read from its params (amp.*: the cab network; the
-//       Half Stack: its measured cabs): { kind, cab, cabName, cabBlurb, mic1: { type, pos, dist, ang }, mic2: {...,
-//       blend, flip} | null, opts? }
+//   cabOf(link) -> CabView | null  the cab and mics of an amp link, read from its params, an unset CAB being the amp's
+//       default (amp.*: a measured cab or the cab network; the Half Stack: its measured cabs): { kind, cab, measured,
+//       def (the amp's default cab), cabName, cabBlurb, mic1: { type, pos, dist, ang } | null (none on a measured cab:
+//       its mic is in the measurement), mic2: {..., blend, flip} | null, opts? }
 //   STACK_CABS                     the Half Stack's measured cabs, as its CAB param lists them
 //   AMP_TRIM { [deviceId]: dB }    MEASURED: how much louder (+) or quieter (-) each amp, carried onto the club's stack at
 //       its own default knobs and the club's cab, needs to be to read as the club's stack does (the metal DI fixtures,
@@ -23,11 +25,12 @@
 //   carryLevel(id) -> { key, value } | null     the level knob a carried amp comes in at (MASTER on a Claw'd-o-Matic amp:
 //       3 dB a step; LEVEL on the Half Stack: dB), so it lands as loud as the club's stack
 //   carriedAmp(id, prev) -> Link   the amp as it's carried onto your stack: its own default knobs at carryLevel, on your
-//       cab with your mics where they were (when both are Claw'd-o-Matic amps)
+//       cab with your mics where they were when you chose them (both Claw'd-o-Matic amps), else on its own default cab
 //   describeStack(chain) -> string   a stack in a phrase ("Kraken on a 4x12 Modern, a gate and a treble booster in front")
 
 import '../../../devices/guitar/index.js';
 import { CAB_IDS, MIC_IDS, gear } from '../../../devices/guitar/index.js';
+import { isMeasured, cabDefault } from '../../../devices/guitar/amps.js';
 import { getDevice, listDevices, paramValues } from '../../../devices/registry.js';
 
 /* ------------------------------------------------------------------------------------------------ the amp wall */
@@ -80,8 +83,10 @@ export const ordinal = (n) => ['first', 'second', 'third', 'fourth', 'fifth', 's
 /* ------------------------------------------------------------------------------------------------ cabs and mics */
 export const CABS = gear.PLUG_CABS;
 export const MICS = gear.PLUG_MICS;
-export { CAB_IDS, MIC_IDS };
-// the cabs a guitarist would put under a head (the bass cabs stay with the bass amps, but any amp can have any cab)
+export { CAB_IDS, MIC_IDS, isMeasured, cabDefault };
+// the measured 4x12s (each with the mic it was recorded with), in the Half Stack's order; then the designed cabs a
+// guitarist would put under a head (the bass cabs stay with the bass amps, but any amp can have any cab)
+export const MEASURED_CABS = Object.freeze(CAB_IDS.filter(isMeasured));
 export const GUITAR_CABS = Object.freeze(['own', 'v412', 'g412', 'b212', 'a12', 't210', 'b410', 'j15', 'p8', 'fridge', 'box', 'phone', 'horn']);
 export const BASS_CABS = Object.freeze(['b810', 'c410', 'b115', 'm212']);
 export const cabIndex = (id) => Math.max(0, CAB_IDS.indexOf(id));
@@ -127,33 +132,32 @@ export function cabOf(link) {
     const opts = stackCabs(), i = Math.round(+v.cab || 0);
     return { kind, amp: d.name, cab: 'stack', index: i, cabName: opts[i] || 'Its cab', cabBlurb: 'A measured 4x12, its mics where the engineer put them.', opts, mic1: null, mic2: null };
   }
-  const cab = cabAt(v.cab);
+  const cab = cabAt(v.cab), measured = isMeasured(cab);
   const shown = cab === 'own' ? ownCab(link.device) : cab;
   const t2 = Math.round(+v.mic2 || 0);
   return {
-    kind, amp: d.name, cab, shown, index: Math.round(+v.cab || 0),
+    kind, amp: d.name, cab, shown, measured, def: cabDefault(link.device), index: Math.round(+v.cab || 0),
     cabName: cab === 'own' ? `${d.name}’s own cab` : CABS[cab].name,
     cabBlurb: CABS[cab]?.blurb || '',
-    mic1: { type: MIC_IDS[Math.round(+v.mic || 0)] || 'dyn', pos: +v.micpos, dist: +v.micdist, ang: +v.micang },
-    mic2: t2 > 0 ? { type: MIC_IDS[t2 - 1] || 'ribbon', pos: +v.mic2pos, dist: +v.mic2dist, ang: +v.mic2ang, blend: +v.blend, flip: Math.round(+v.flip) === 1 } : null,
+    mic1: measured ? null : { type: MIC_IDS[Math.round(+v.mic || 0)] || 'dyn', pos: +v.micpos, dist: +v.micdist, ang: +v.micang },
+    mic2: !measured && t2 > 0 ? { type: MIC_IDS[t2 - 1] || 'ribbon', pos: +v.mic2pos, dist: +v.mic2dist, ang: +v.mic2ang, blend: +v.blend, flip: Math.round(+v.flip) === 1 } : null,
   };
 }
 
 /* ------------------------------------------------------------------------------------------------ levels, measured */
 // Each amp carried onto the club's stack (the gate and the treble booster in front; the amp at its own default knobs on
-// the club's 4x12 Modern with a dynamic on the cap edge, an inch back; the Half Stack at its own defaults), against the
-// club's stack as it is: the dB it's off by, on the mean of the two metal DI fixtures (chug and chords: tools/
-// fixtures/metal-di/), rendered offline in muted Chromium and read with BS.1770 (app/src/audio/measure.js lufs).
-// The club's stack reads -20.4 LUFS that way. tools/liveroom/checks-shop.js renders every one again and holds a carried
-// amp to the club's stack within 1 LU (SHOP_PRINT=1 prints the table it measured).
+// its own default cab: a measured 4x12 for a guitar amp, its own designed cab for the others; the Half Stack at its own
+// defaults), against the club's stack as it is (Kraken on its measured modern 4x12): the dB it's off by, on the mean of
+// the two metal DI fixtures (chug and chords: tools/fixtures/metal-di/), rendered offline in muted Chromium and read
+// with BS.1770 (app/src/audio/measure.js lufs). The club's stack reads -20.6 LUFS that way. tools/liveroom/checks-shop.js
+// renders every one again and holds a carried amp to the club's stack within 1 LU (SHOP_PRINT=1 prints the table it
+// measured).
 export const AMP_TRIM = Object.freeze({
-  'amp.clean': -3.5, 'amp.jangle': -3.3, 'amp.crunch': -1.1, 'amp.plexi': 0.8, 'amp.punk': 0.3, 'amp.lead': 0.6, 'amp.recto': 1.3,
-  'amp.tiny': -0.6, 'amp.jc': -3.5, 'amp.hiwatt': -3.2, 'amp.bassman': -2.4, 'amp.dumble': -0.2, 'amp.brown': 1.4, 'amp.slo': 1,
-  'amp.friedman': 1.1, 'amp.metal': 0.9, 'amp.orange': 1.2, 'amp.radio': 0.6, 'amp.bit': 1.3, 'amp.tape': -2.4, 'amp.abyss': 0,
-  'amp.di': -3.6, 'amp.whale': -4.2, 'amp.walrus': -2.2, 'amp.narwhal': -6.3, 'amp.sandbar': -2.4, 'amp.urchin': -4.6, 'core.stack': 2.2,
+  'amp.clean': -3.8, 'amp.jangle': -3.6, 'amp.crunch': -1.6, 'amp.plexi': 0.2, 'amp.punk': -0.2, 'amp.lead': -0.2, 'amp.recto': 1.3,
+  'amp.tiny': -2.1, 'amp.jc': -3.7, 'amp.hiwatt': -3.8, 'amp.bassman': -3.3, 'amp.dumble': -1.9, 'amp.brown': 1, 'amp.slo': 0.8,
+  'amp.friedman': 0.2, 'amp.metal': 0.8, 'amp.orange': 0, 'amp.radio': 0.7, 'amp.bit': 1.2, 'amp.tape': -2.7, 'amp.abyss': -0.4,
+  'amp.di': -3.8, 'amp.whale': -4.8, 'amp.walrus': -1.1, 'amp.narwhal': -6.6, 'amp.sandbar': -2.5, 'amp.urchin': -5, 'core.stack': 2.1,
 });
-// the club's cab under a carried Claw'd-o-Matic amp, when the amp it replaces has none to hand on
-export const CLUB_CAB = Object.freeze({ cab: 7, mic: 0, micpos: 0.3, micdist: 1, micang: 0 });
 const CAB_KEYS = ['cab', 'mic', 'micpos', 'micdist', 'micang', 'mic2', 'mic2pos', 'mic2dist', 'mic2ang', 'blend', 'flip'];
 const round1 = (x) => Math.round(x * 10) / 10;
 export function carryLevel(id) {
@@ -169,8 +173,10 @@ export function carriedAmp(id, prev = null) {
   const params = {};
   const lv = carryLevel(id);
   if (lv) params[lv.key] = lv.value;
-  if (ampKind(id) === 'clawd') {
-    const from = prev && ampKind(prev.device) === 'clawd' ? prev.params || {} : CLUB_CAB;
+  // (the cab and mics you chose come along; one you never chose is the new amp's own default, a measured cab for a
+  // guitar amp, so nothing is written for it)
+  if (ampKind(id) === 'clawd' && prev && ampKind(prev.device) === 'clawd') {
+    const from = prev.params || {};
     for (const k of CAB_KEYS) if (from[k] != null) params[k] = from[k];
   }
   return { device: id, params, on: true };

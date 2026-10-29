@@ -1708,6 +1708,7 @@ export default function (app) {
 function cabWords(def, vals = {}) {
   const P = Object.fromEntries((def.params || []).map((x) => [x.key, x]));
   const v = (k) => (P[k] && faces ? faces.valueText(P[k], vals[k] ?? P[k].def) : '');
+  if (P.cab && P.mic && P.cab.measured?.includes(Math.round(+(vals.cab ?? P.cab.def)))) return `${v('cab')}, measured`;
   if (P.cab && P.mic) return `${v('cab')} cab, ${v('mic')} mic${P.micpos ? ` at ${v('micpos')}` : ''}${P.micdist ? `, ${v('micdist')}` : ''}${P.mic2 && Math.round(+vals.mic2 || 0) > 0 ? `, and ${v('mic2')} as a second mic` : ''}`;
   return (def.params || []).filter((x) => x.group === 'cab').slice(0, 3).map((x) => `${String(x.label || x.key).toLowerCase()} ${v(x.key)}`).join(', ');
 }

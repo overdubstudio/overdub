@@ -35,7 +35,7 @@
 //   meter({ label, read() -> { peak, rms } (dBFS), orient: 'h' | 'v', floor = -60 }) -> { el, destroy() }
 //   keys({ lo, hi, label, onNote(p, v, on) }) -> { el, setRange(lo, hi), light(p, on), clear(), destroy() }
 //        a piano strip: click or drag to play (each pointer its own note, so a touch screen plays chords), the
-//        height you press at is the velocity; arrow keys walk it, Enter or Space plays the focused key.
+//        height you press at is the velocity; arrow keys walk it, Enter plays the focused key (Space is the transport's).
 //   menuOn(target, open(anchor, event), onLong?)   a control's menu: right-click, a long press, the menu key
 //                                     (the window's ctx.menu(key, anchor) is the rack's controlMenu, to open from it)
 //   pump(now)                         the host's once-a-frame call: canvases that are on screen and dirty (or
@@ -377,7 +377,7 @@ export function tap(p0, { value = 0, onInput = null, name = '' } = {}) {
     const gap = (taps[taps.length - 1] - taps[0]) / (taps.length - 1);
     v = clamp(Math.round(600000 / gap) / 10, 40, 300); draw(); onInput && onInput(v, { commit: true });
   });
-  b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } });
+  b.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); b.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } });
   r.addEventListener('click', () => { if (v < 40) return; v = 0; taps = []; draw(); onInput && onInput(0, { commit: true }); });
   draw();
   return { el, menuTarget: b, get: () => v, set(x) { v = +x || 0; draw(); }, mark() {}, destroy() { el.remove(); } };
@@ -594,16 +594,16 @@ export function keys({ lo = 48, hi = 84, label = 'Keyboard', onNote = null } = {
   });
   const up = (e) => off(e.pointerId);
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up); el.addEventListener('lostpointercapture', up);
-  // the keyboard: arrows walk the keys, Enter or Space plays the focused one for as long as it is held
+  // the keyboard: arrows walk the keys, Enter plays the focused one for as long as it is held (Space is the transport's)
   el.addEventListener('keydown', (e) => {
     const k = e.target.closest?.('.pk-key');
     if (!k) return;
     const p = +k.dataset.p;
     const d = { ArrowRight: 1, ArrowLeft: -1, ArrowUp: 12, ArrowDown: -12 }[e.key];
     if (d != null) { e.preventDefault(); e.stopPropagation(); const n = keyEl(clamp(p + d, range.lo, range.hi)); if (n) { setFocus(+n.dataset.p); n.focus(); } return; }
-    if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); on('kb:' + p, p, 0.8); }
+    if (e.key === 'Enter' && !e.repeat) { e.preventDefault(); on('kb:' + p, p, 0.8); }
   });
-  el.addEventListener('keyup', (e) => { const k = e.target.closest?.('.pk-key'); if (k && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); off('kb:' + k.dataset.p); } });
+  el.addEventListener('keyup', (e) => { const k = e.target.closest?.('.pk-key'); if (k && e.key === 'Enter') { e.preventDefault(); off('kb:' + k.dataset.p); } });
   el.addEventListener('focusout', (e) => { if (!el.contains(e.relatedTarget)) for (const who of [...held.keys()]) if (String(who).startsWith('kb:')) off(who); });
   const setFocus = (p) => { focusP = p; for (const k of el.querySelectorAll('.pk-key')) k.tabIndex = +k.dataset.p === p ? 0 : -1; };
   const range = { lo, hi };

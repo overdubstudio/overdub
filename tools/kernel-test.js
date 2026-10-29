@@ -380,7 +380,7 @@ try {
   const fw = await page.evaluate(async () => {
     const { host } = window.K, SR = window.H.SR;
     const kit = await import('../app/src/devices/kit.js');
-    const { WORKLETS } = await import('../app/src/devices/guitar/clawd.gen.js');
+    const { WORKLETS } = await import('../app/src/devices/guitar/gear/code.js');
     const mods = { ...WORKLETS, 'pfx-env': new URL('../app/src/devices/worklets/env.js', location.href).href, 'ew-cap': new URL('../app/src/input/cap-worklet.js', location.href).href };
     const N = 4096;
     async function run(url, names, frozen) {

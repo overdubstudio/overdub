@@ -458,8 +458,8 @@ MIT-0 · devices/example-author/back-seat at 249eac3 · Read the code · Keep it
 - **One preview plays at a time.** Starting the song's transport stops it, and starting a preview while the song plays
   pauses the song. The button reads *Stop* while it plays. No AudioContext and no worklet are involved, and the device
   file isn't fetched.
-- **Keyboard.** ↑ ↓ move between rows. The row's ▶ is a button, reachable by Tab, and Space or Enter on it plays. Space
-  on a row itself stays the transport's key, as everywhere else in the studio (`shell.js`).
+- **Keyboard.** ↑ ↓ move between rows. The row's ▶ is a button, reachable by Tab, and Enter on it plays. Space stays
+  the transport's key, on the row and on its ▶, as everywhere else in the studio outside a text field (`shell.js`).
 
 ### What an index may claim
 
@@ -991,8 +991,8 @@ track folded into the prompt; real phone assertions; Simple-view tests.
 - **One dispatch, not two, for the agent's card.** Security 3 asks for the define by `'you'` and the placement by the
   agent. `device.define` already keeps a payload's `by` (`ops.js`: `by: d.by || ctx.by`), so one dispatch
   `{ by: <agent>, kept: true }` with `device.by: 'you'` gets that and keeps Undo to one step.
-- **Space on a row doesn't preview.** Space is the transport's key everywhere (`shell.js`), and a control keeps it only
-  with keyboard focus. The row's ▶ is a button: Tab to it, then Space or Enter. Arrow keys move between rows as before.
+- **Space on a row doesn't preview.** Space is the transport's key everywhere outside a text field (`shell.js`), on a
+  focused control too. The row's ▶ is a button: Tab to it, then Enter. Arrow keys move between rows as before.
 - **Revocation reaches browsers only through the bundled copy.** That follows from "mirror, don't widen". A deny list
   read from another origin could revoke anything, so it is ignored.
 - **A sung vocal input is left for later.** It's a new `inputs` key when it comes, which the format already allows.

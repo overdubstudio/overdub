@@ -48,6 +48,51 @@ describe('tunings', () => {
       assert.equal(T.notes.split(' ').length, 6, id);
     }
   });
+  test('the down-tuned five: their low strings, names and spellings', () => {
+    const want = {
+      'd-standard': [38, 'D G C F A D'],
+      'drop-c': [36, 'C G C F A D'],
+      'c-standard': [36, 'C F Bb Eb G C'],
+      'b-standard': [35, 'B E A D F# B'],
+      'drop-b': [35, 'B F# B E G# C#'],
+    };
+    assert.equal(TUNING_IDS.length, 10);
+    for (const [id, [low, notes]] of Object.entries(want)) {
+      assert.equal(TUNINGS[id].strings[0], low, id);
+      assert.equal(TUNINGS[id].notes, notes, id);
+      // each string's note is its open pitch's
+      const names = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B'];
+      TUNINGS[id].notes
+        .split(' ')
+        .forEach((n, s) => assert.equal(names[TUNINGS[id].strings[s] % 12], n, `${id} string ${s}`));
+    }
+    assert.equal(tuningOf('Drop C'), TUNINGS['drop-c']);
+    assert.equal(tuningOf('dropb'), TUNINGS['drop-b']);
+    assert.equal(tuningOf('D standard'), TUNINGS['d-standard']);
+    assert.equal(tuningOf('whole step down'), TUNINGS['d-standard']);
+  });
+  test('the down-tuned five read back from tab, by their words and by their labels alone', () => {
+    for (const id of ['d-standard', 'drop-c', 'c-standard', 'b-standard', 'drop-b']) {
+      const lo = TUNINGS[id].strings[0];
+      const placed = placeNotes(
+        [0, 3, 5, 7, 10].map((k, i) => ({ p: lo + k, t: i * 0.5, d: 0.5 })),
+        { tuning: id },
+      );
+      const text = tabText(placed.notes, { tuning: id });
+      assert.equal(parseTab(text).tuning, id, text);
+      // without the title line: the labels spell it
+      const bare = text.split('\n').slice(1).join('\n');
+      const back = parseTab(bare);
+      assert.equal(back.tuning, id, bare);
+      assert.deepEqual(
+        back.notes.map((n) => n.p),
+        placed.notes.map((n) => n.p),
+        id,
+      );
+    }
+    assert.equal(parseTab('Tuning: drop B\ne|---|\nB|---|\nG|---|\nD|---|\nA|---|\nE|-0-|').tuning, 'drop-b');
+    assert.equal(parseTab('Eb standard\ne|---|\nB|---|\nG|---|\nD|---|\nA|---|\nE|-0-|').tuning, 'half-down');
+  });
   test('string numbers: 6 is the low E, 1 the high e', () => {
     assert.equal(stringNumber(0), 6);
     assert.equal(stringNumber(5), 1);

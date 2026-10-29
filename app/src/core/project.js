@@ -8,12 +8,16 @@
 //   songEnd(p)            -> beats (end of the last clip, or 16)
 //   LIMITS, songSize(p), sizeError(after, before?)   how far edits can grow a song
 //   summarize(p)          -> the compact text view agents read
+// The live room's two fields, room and sheet (docs/research/LIVE-ROOM-MODE.md §9), are core/liveroom/model.js's:
+// cleanProject cleans them there, and the caps on them are LIMITS too.
 // Automation lanes (core/automation.js) ride on what they move: track.auto, instrument.auto, insert.auto, master.auto.
 // The normalisers keep them (canonical: sorted, clamped where the range is known, empty lanes dropped), so a load, an
 // undo of a removal and cleanProject never drop a lane.
 
 import { formatNotes, keyLabel, beatsPerBar, noteName, validMeter, isPlace, checkAnchors, mapNominal, mapStats, MAP_ANCHORS } from './music.js';
 import { normAuto, lanesOf, formatPoints, specFor } from './automation.js';
+import { TUNINGS } from './fretboard.js';
+import { cleanRoom, cleanSheet, ROOM_LIMITS, NAMES } from './liveroom/model.js';
 
 export const FORMAT = 'overdub/0';
 // The house author: demo and built-in content, drawn neutral (neither warm nor cool).
@@ -211,10 +215,30 @@ export function normKey(k) {
 // A take group: the clips one recording stacked on the same span ('tk_' + base36). The playing take is the unmuted one.
 export const isTakeId = (v) => typeof v === 'string' && /^tk_[0-9a-z]{4,16}$/.test(v);
 
+// A take's tail (docs/ARCHITECTURE.md "Overlapping takes"): an audio clip's `tail` is how many beats at the end of its
+// window are its ring past the bars it was recorded for (its part). The clip plays all of its window, tail and all, as
+// every clip does; what changes is what the tail claims: nothing. The clip's body, [start, start + length - tail), is
+// what a take folder covers and what a new take, a drop or the arrangement's cuts reckon with, so the tail rings on
+// under the next part's take on the same track and is never muted, cut or folded by it (a muted take is silent, tail
+// and all). A notes clip has none (its notes carry their own length). 0 < tail < length; an older reader drops the
+// field and plays the clip as it is.
+//   clipTail(clip) -> beats (0: none)     clipBodyEnd(clip) -> the body's end, a song beat (start + length without a tail)
+//   clipLengthPatch(clip, length) -> the clip.set patch for a new length that keeps the body (below)
+export const clipTail = (c) => (c && c.kind === 'audio' && typeof c.tail === 'number' && c.tail > 0 && c.tail < c.length ? c.tail : 0);
+export const clipBodyEnd = (c) => c.start + c.length - clipTail(c);
+// The clip.set patch that gives a clip a new length (the Inspector's Length): with a tail, the length moves the out-point,
+// so the tail shortens or grows and the body stays; a length into the body takes the tail off. Without one, { length }.
+export function clipLengthPatch(c, length) {
+  const tl = clipTail(c);
+  if (!tl) return { length };
+  const body = c.length - tl;
+  return { length, tail: length > body + 1e-6 ? Math.round((length - body) * 1e4) / 1e4 : null };
+}
+
 // A clip as a song holds it (normClip): notes clips carry notes, audio clips asset, offset and gain.
 /**
  * @typedef {{ id: string, kind: string, start: number, length: number, by: string, name?: string, color?: string,
- *   mute?: boolean, notes?: object[], asset?: string, offset?: number, gain?: number, [k: string]: any }} Clip
+ *   mute?: boolean, notes?: object[], asset?: string, offset?: number, gain?: number, tail?: number, [k: string]: any }} Clip
  */
 /** @returns {Clip} */
 export function normClip(c) {
@@ -231,7 +255,13 @@ export function normClip(c) {
   if (isColor(c.color)) base.color = c.color;
   if (c.mute === true) base.mute = true;   // a muted clip stays in the song and plays nowhere (older songs: none)
   if (isTakeId(c.take)) base.take = c.take; // the take group a recorded clip belongs to (older songs: none)
-  if (kind === 'audio') return { ...base, asset: textName(c.asset, undefined), offset: finite(c.offset), gain: finite(c.gain) };
+  if (kind === 'audio') {
+    /** @type {Clip} */
+    const a = { ...base, asset: textName(c.asset, undefined), offset: finite(c.offset), gain: finite(c.gain) };
+    // (its ring past its part: clipTail above; older songs: none)
+    if (finite(c.tail) > 0 && finite(c.tail) < a.length) a.tail = finite(c.tail);
+    return a;
+  }
   // tab (core/fretboard.js): the tuning a guitar part is written for (an id: a newer studio's tuning is kept, and
   // read as standard here) and a capo's fret (older songs: none, and no capo)
   if (isTuningId(c.tuning)) base.tuning = c.tuning;
@@ -279,10 +309,16 @@ export function songEnd(p) {
 // the tab keeps up. A song that already holds more (an old file) still opens and can be edited; it just can't grow.
 // Automation: lanePoints in one lane, songPoints in all of them (a point is ~20 bytes; recordings are thinned).
 // anchors: the most a tempo map holds (one per bar of a 3-minute song is about 100; music.js MAP_ANCHORS).
-export const LIMITS = { clipNotes: 20000, songNotes: 50000, clips: 4096, beats: 8192, lanePoints: 10000, songPoints: 50000, anchors: MAP_ANCHORS };
+// The live room's (core/liveroom/model.js ROOM_LIMITS): the sheet's sections, lines and characters (its lines, its
+// sections' names and its notes), the room's parts, and the room as JSON. A share link can't carry a novel.
+export const LIMITS = {
+  clipNotes: 20000, songNotes: 50000, clips: 4096, beats: 8192, lanePoints: 10000, songPoints: 50000, anchors: MAP_ANCHORS,
+  sheetSections: ROOM_LIMITS.sheetSections, sheetLines: ROOM_LIMITS.sheetLines, sheetChars: ROOM_LIMITS.sheetChars, roomParts: ROOM_LIMITS.roomParts, roomBytes: ROOM_LIMITS.roomBytes,
+};
 const count = (n) => Number(n).toLocaleString('en-US');
 // What a song holds: { clips, notes, clipNotes (the most in one clip), end (the last beat a clip or section reaches),
-// points (automation points in all lanes), lanePoints (the most in one lane) }. Lanes don't extend the end.
+// points (automation points in all lanes), lanePoints (the most in one lane) }, and with a sheet { sheetSections,
+// sheetLines, sheetChars }, with a room { roomParts, roomBytes (the room as JSON) }. Lanes don't extend the end.
 export function songSize(p) {
   let clips = 0, notes = 0, clipNotes = 0, end = 0, points = 0, lanePoints = 0;
   for (const { lane } of lanesOf(p)) { points += lane.points.length; if (lane.points.length > lanePoints) lanePoints = lane.points.length; }
@@ -293,13 +329,25 @@ export function songSize(p) {
     end = Math.max(end, c.start + c.length);
   }
   for (const s of p.sections || []) end = Math.max(end, s.start + s.length);
-  return { clips, notes, clipNotes, end, points, lanePoints };
+  const out = { clips, notes, clipNotes, end, points, lanePoints };
+  if (isObj(p.sheet)) {
+    let sheetSections = 0, sheetLines = 0, sheetChars = typeof p.sheet.notes === 'string' ? p.sheet.notes.length : 0;
+    for (const sec of objs(p.sheet.sections)) {
+      sheetSections++;
+      if (typeof sec.name === 'string') sheetChars += sec.name.length;
+      for (const l of objs(sec.lines)) { sheetLines++; if (typeof l.text === 'string') sheetChars += l.text.length; }
+    }
+    Object.assign(out, { sheetSections, sheetLines, sheetChars });
+  }
+  if (isObj(p.room)) Object.assign(out, { roomParts: isObj(p.room.parts) ? Object.keys(p.room.parts).length : 0, roomBytes: JSON.stringify(p.room).length });
+  return out;
 }
 // The first limit `after` (a songSize) is past and grew past, from `before` if given -> a sentence, or null.
 // loaded: the song came in already past it (a share link, core/share.js), so it says what the song holds, not what it
 // would.
 export function sizeError(after, before = null, { loaded = false } = {}) {
-  const over = (k, lim) => after[k] > lim + 1e-6 && !(before && after[k] <= before[k] + 1e-6);
+  // (a count a song without a room or a sheet doesn't have is none)
+  const over = (k, lim) => (after[k] || 0) > lim + 1e-6 && !(before && (after[k] || 0) <= (before[k] || 0) + 1e-6);
   const holds = loaded ? 'holds' : 'would hold';
   if (over('clipNotes', LIMITS.clipNotes)) return `a clip ${holds} ${count(after.clipNotes)} notes; a clip holds up to ${count(LIMITS.clipNotes)}`;
   if (over('notes', LIMITS.songNotes)) return `the song ${holds} ${count(after.notes)} notes; a song holds up to ${count(LIMITS.songNotes)}`;
@@ -307,6 +355,11 @@ export function sizeError(after, before = null, { loaded = false } = {}) {
   if (over('lanePoints', LIMITS.lanePoints)) return `a lane ${holds} ${count(after.lanePoints)} points; a lane holds up to ${count(LIMITS.lanePoints)}${loaded ? '' : ' (thin it, or write fewer)'}`;
   if (over('points', LIMITS.songPoints)) return `the song's lanes ${holds} ${count(after.points)} points; a song holds up to ${count(LIMITS.songPoints)}`;
   if (over('end', LIMITS.beats)) return `the song ${loaded ? 'runs' : 'would run'} to beat ${count(Math.round(after.end * 100) / 100)}; a song runs up to beat ${count(LIMITS.beats)}`;
+  if (over('sheetSections', LIMITS.sheetSections)) return `the sheet ${holds} ${count(after.sheetSections)} sections; a sheet holds up to ${count(LIMITS.sheetSections)}`;
+  if (over('sheetLines', LIMITS.sheetLines)) return `the sheet ${holds} ${count(after.sheetLines)} lines; a sheet holds up to ${count(LIMITS.sheetLines)}`;
+  if (over('sheetChars', LIMITS.sheetChars)) return `the sheet ${holds} ${count(after.sheetChars)} characters; a sheet holds up to ${count(LIMITS.sheetChars)}`;
+  if (over('roomParts', LIMITS.roomParts)) return `the room ${holds} ${count(after.roomParts)} parts; a room holds up to ${count(LIMITS.roomParts)}`;
+  if (over('roomBytes', LIMITS.roomBytes)) return `the room ${loaded ? 'is' : 'would be'} ${count(Math.ceil(after.roomBytes / 1024))} KB as JSON; a room holds up to ${count(LIMITS.roomBytes / 1024)} KB`;
   return null;
 }
 
@@ -383,6 +436,9 @@ export function cleanProject(p, { warn = null } = {}) {
   out.master = withAuto({ gain: finite(m.gain), inserts: objs(m.inserts).map(normInsert), ...(m.clip === 'clean' ? { clip: 'clean' } : {}) }, isObj(m.auto) && { gain: m.auto.gain }, true);
   out.meta = cleanMeta(p.meta, base.meta);
   if ('reference' in out && !isValidReference(out.reference)) delete out.reference;
+  // the live room's (core/liveroom/model.js): its roles naming the song's tracks, its parts the song's sections
+  if ('room' in out) { const room = cleanRoom(p.room, { tracks: out.tracks, sections: out.sections, warn }); if (room) out.room = room; else delete out.room; }
+  if ('sheet' in out) { const sheet = cleanSheet(p.sheet, { warn }); if (sheet) out.sheet = sheet; else delete out.sheet; }
   if (LEGACY_NAME !== HOUSE) {
     rehouse(out.tracks); rehouse(out.master); rehouse(out.sections);
     for (const [id, d] of Object.entries(out.devices)) out.devices[id] = rehouse(JSON.parse(JSON.stringify(d)));
@@ -470,6 +526,74 @@ function laneLine(p, { track, insert, param, lane, device }, devices, bpb) {
   return `auto: ${name} ${body}${flags ? ` (${flags})` : ''}, by ${lane.by}`;
 }
 
+// The live room's (docs/research/LIVE-ROOM-MODE.md §9.5), one line each: "room: the metal club, Modern rig, drop C,
+// Tight. Parts: Intro 4 (Build, left only), Verse ×2 8 (Your chugs, both sides) ...". A part's bars count its own
+// length; its sides are whose takes are in it (Guitar L's and Guitar R's).
+// A tuning as a sentence says it: "drop C", "standard", "DADGAD" (an id this version doesn't know, from its words).
+function tuningWords(id) {
+  const t = TUNINGS[id];
+  if (t) return /^[A-Z][a-z]/.test(t.name) ? t.name[0].toLowerCase() + t.name.slice(1) : t.name;
+  return String(id).split('-').map((w) => (/^[a-g](b|#)?$/.test(w) ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
+}
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+function roomLine(p, bpb) {
+  const r = isObj(p.room) ? p.room : null;
+  if (!r) return null;
+  const named = (table, id) => (id == null ? null : table[id] || id);
+  const head = [named(NAMES.place, r.place) || 'no place yet', r.rig && `${named(NAMES.rig, r.rig)} rig`, r.tuning && tuningWords(r.tuning), r.finish && named(NAMES.finish, r.finish), r.mic && (r.mic === 'two' ? 'a mic and a pickup' : 'one mic')].filter(Boolean).join(', ');
+  const roles = isObj(r.tracks) ? r.tracks : {};
+  const trackOf = (id) => p.tracks.find((t) => t.id === id) || null;
+  // (a take's clip runs 30 ms into the part before it: a part's own takes overlap it by more than that)
+  const inPart = (t, s) => !!t && t.clips.some((c) => Math.min(c.start + c.length, s.start + s.length) - Math.max(c.start, s.start) > 0.25);
+  const parts = isObj(r.parts) ? r.parts : {};
+  const cards = p.sections.filter((s) => isObj(parts[s.id])).map((s) => {
+    const e = parts[s.id];
+    const bits = [];
+    if (e.feel) bits.push(named(NAMES.feel, e.feel));
+    if (e.busy) bits.push(e.busy > 0 ? 'busier' : 'simpler');
+    if (e.loud) bits.push(e.loud > 0 ? 'louder' : 'softer');
+    const L = trackOf(roles.guitarL), R = trackOf(roles.guitarR);
+    if (L || R) bits.push(inPart(R, s) ? (inPart(L, s) ? 'both sides' : 'right only') : inPart(L, s) ? (e.oneSide ? 'one side, on purpose' : 'left only') : 'no take yet');
+    if (e.drop) bits.push('the drop into it');
+    if (e.learned) bits.push(e.learned.thin ? 'the band learned it from a thin take' : 'the band learned it');
+    const sheet = e.sheet && isObj(p.sheet) && Array.isArray(p.sheet.sections) ? p.sheet.sections.find((x) => x && x.id === e.sheet) : null;
+    if (sheet) bits.push(`plays ${sheet.name}`);
+    const bars = Math.round((s.length / bpb) * 100) / 100;
+    return `${s.name}${e.reps > 1 ? ` ×${e.reps}` : ''} ${bars}${bits.length ? ` (${bits.join(', ')})` : ''}`;
+  });
+  let line = `room: ${head}.`;
+  if (cards.length) line += ` Parts: ${cards.join(', ')}.`;
+  const roleList = Object.entries(roles).map(([role, id]) => { const t = trackOf(id); return t ? `${role} "${t.name}" (${t.id})` : `${role} ${id} (gone)`; });
+  if (roleList.length) line += ` Tracks: ${roleList.join(', ')}.`;
+  if (r.master) {
+    let clip = null;
+    for (const t of p.tracks) for (const c of t.clips) if (c.id === r.master) clip = c;
+    line += ` The band follows ${clip ? `${clip.name ? `"${clip.name}" ` : ''}(${clip.id})` : `${r.master} (gone)`}.`;
+  }
+  if (isObj(r.takes) && Object.keys(r.takes).length) {
+    const ts = Object.entries(r.takes).map(([id, e]) => `${id}${[e.capo && `capo ${e.capo}`, e.bpm && `${e.bpm} bpm`, e.onMaster && 'on the master'].filter(Boolean).map((x) => ` ${x}`).join(',')}`);
+    line += ` Takes: ${ts.slice(0, 12).join('; ')}${ts.length > 12 ? `; ${ts.length - 12} more` : ''}.`;
+  }
+  if (isObj(r.managed) && Object.keys(r.managed).length) line += ` The house set the levels of ${Object.keys(r.managed).map((id) => (id === 'master' ? 'the master' : trackOf(id)?.name || id)).join(', ')}.`;
+  return line;
+}
+// "sheet: capo 3 (sounds in Bb major), 3/4; Verse 1 (ss_…), 4 lines: G Em C D; ..." and, in full, each line with its id and
+// author. A line is the song's text, written by whoever made it.
+function sheetLines(p, detail) {
+  const sh = isObj(p.sheet) ? p.sheet : null;
+  if (!sh) return [];
+  const head = [sh.capo && `capo ${sh.capo}${p.key ? ` (sounds in ${keyLabel(p.key)})` : ''}`, Array.isArray(sh.time) && sh.time.join('/'), typeof sh.notes === 'string' && sh.notes && `notes ${plural(sh.notes.length, 'character')}`].filter(Boolean).join(', ');
+  const secs = objs(sh.sections);
+  const chordsOf = (sec) => { const out = []; for (const l of objs(sec.lines)) for (const m of String(l.text || '').matchAll(/\[([^\]]{1,16})\]/g)) if (!out.includes(m[1])) out.push(m[1]); return out; };
+  const cards = secs.map((sec) => { const ch = chordsOf(sec); return `${sec.name} (${sec.id}), ${plural(objs(sec.lines).length, 'line')}${ch.length ? `: ${ch.slice(0, 8).join(' ')}${ch.length > 8 ? ' …' : ''}` : ''}`; });
+  const out = [`sheet: ${head || 'no capo'}; ${cards.length ? cards.join('; ') : 'no sections yet'}`];
+  if (detail === 'full') {
+    for (const sec of secs) for (const l of objs(sec.lines)) out.push(`  line ${l.id} in ${sec.name}: ${JSON.stringify(String(l.text || ''))} by ${l.by}`);
+    if (typeof sh.notes === 'string' && sh.notes) out.push(`  notes: ${JSON.stringify(sh.notes)}`);
+  }
+  return out;
+}
+
 // The compact, readable view of a song an agent gets from get_project. detail: 'summary' (no notes) | 'full'.
 // held(id): a song device this browser holds (devices/trust.js: its code hasn't been allowed to run here), or null
 // A tempo map in one line (spec 0014 R31): "Grid follows Original: 68.4 BPM nominal, 66.9–70.2, 2 free spans; key D
@@ -495,6 +619,9 @@ export function summarize(p, { detail = 'full', track = null, devices = null, he
   if (grid) lines.push(grid);
   if (p.loop?.on) lines.push(`loop: beats ${p.loop.start}–${p.loop.end}`);
   if (p.sections?.length) lines.push('sections: ' + p.sections.map((s) => `${s.name} [${s.start}–${s.start + s.length}] (${s.id})${s.key ? ` key ${s.key}` : ''}`).join(', '));
+  const room = roomLine(p, bpb);
+  if (room) lines.push(room);
+  lines.push(...sheetLines(p, detail));
   const isHeld = (id) => !!(held && held(id));
   const dname = (id) => {
     if (isHeld(id)) return `${held(id).name} (${id}, held: kept off, ${held(id).kind === 'instrument' ? 'silent' : 'bypassed'})`;
@@ -521,7 +648,9 @@ export function summarize(p, { detail = 'full', track = null, devices = null, he
     for (const c of t.clips) {
       const tab = c.tuning || c.capo ? ` (tab: ${c.tuning || 'standard'} tuning${c.capo ? `, capo ${c.capo}` : ''}; tab_for reads it)` : '';
       const head = `  clip ${c.id}${c.name ? ' "' + c.name + '"' : ''} ${c.kind} beats ${c.start}–${c.start + c.length}${takeNote(t, c)}${c.mute ? ' (muted)' : ''}${tab} by ${c.by}`;
-      if (c.kind === 'audio') { lines.push(`${head} asset ${c.asset} offset ${c.offset}s`); continue; }
+      // (a take's tail: where its part ends and the ring past it starts, so "cut that ring back" names a beat: clip.trim)
+      const ring = clipTail(c) ? ` (its part ends at beat ${Math.round(clipBodyEnd(c) * 1e4) / 1e4}; the rest is its ring, tail ${c.tail})` : '';
+      if (c.kind === 'audio') { lines.push(`${head}${ring} asset ${c.asset} offset ${c.offset}s`); continue; }
       if (detail === 'summary') {
         const ps = c.notes.map((n) => n.p);
         lines.push(`${head}: ${c.notes.length} notes${ps.length ? `, ${noteName(Math.min(...ps))}–${noteName(Math.max(...ps))}` : ''}`);

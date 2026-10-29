@@ -267,7 +267,9 @@ export function paramValues(def, stored = {}) {
   return v;
 }
 
-// A live instance. opts: { uid, seed, clock, params, on } (see docs/ARCHITECTURE.md, "Instance").
+// A live instance. opts: { uid, seed, clock, params, on } (see docs/ARCHITECTURE.md, "Instance"). Await its `ready`
+// before wiring it: a graph device's rejects with a lifecycle failure ('threw' | 'no-output' | 'worklet',
+// devices/lifecycle.js) when it can't be what it says; engine/strip.js stands in for it and builds it again.
 export async function instantiate(c, id, opts = {}) {
   const def = typeof id === 'string' ? getDevice(id) : id;
   if (!def) throw new Error(`instantiate: no device "${id}"`);

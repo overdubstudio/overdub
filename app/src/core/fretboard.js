@@ -6,7 +6,8 @@
 // For people (and tab): the guitarist's number, 6 (the low E) to 1 (the high e): stringNumber(s) = 6 - s. Frets are
 // 0 (open) to MAX_FRET, counted from the nut; with a capo, tab's numbers count from the capo (f - capo).
 //
-//   TUNINGS                 { standard, 'drop-d', 'half-down', dadgad, 'open-g' } -> { id, name, notes, strings }
+//   TUNINGS                 { standard, 'drop-d', 'half-down', dadgad, 'open-g', 'd-standard', 'drop-c', 'c-standard',
+//                           'b-standard', 'drop-b' } -> { id, name, notes, strings }
 //   tuningOf(id | { strings }) -> a tuning (an unknown id is standard)
 //   noteAt(tuning, s, f)    -> MIDI pitch           stringNumber(s) / stringIndex(n)
 //   positionsOf(p, tuning, { from, to })      -> [{ s, f }]  every place the pitch can be played, low string first
@@ -46,6 +47,13 @@ export const TUNINGS = {
   'half-down': { id: 'half-down', name: 'Half-step down', notes: 'Eb Ab Db Gb Bb Eb', strings: [39, 44, 49, 54, 58, 63] },
   dadgad: { id: 'dadgad', name: 'DADGAD', notes: 'D A D G A D', strings: [38, 45, 50, 55, 57, 62] },
   'open-g': { id: 'open-g', name: 'Open G', notes: 'D G D G B D', strings: [38, 43, 50, 55, 59, 62] },
+  // down-tuned, for heavy music (the live room's metal club reads them off the low string): a whole step down, drop C
+  // (D standard with the low string a step lower), and on down to B
+  'd-standard': { id: 'd-standard', name: 'D standard', notes: 'D G C F A D', strings: [38, 43, 48, 53, 57, 62] },
+  'drop-c': { id: 'drop-c', name: 'Drop C', notes: 'C G C F A D', strings: [36, 43, 48, 53, 57, 62] },
+  'c-standard': { id: 'c-standard', name: 'C standard', notes: 'C F Bb Eb G C', strings: [36, 41, 46, 51, 55, 60] },
+  'b-standard': { id: 'b-standard', name: 'B standard', notes: 'B E A D F# B', strings: [35, 40, 45, 50, 54, 59] },
+  'drop-b': { id: 'drop-b', name: 'Drop B', notes: 'B F# B E G# C#', strings: [35, 42, 47, 52, 56, 61] },
 };
 export const TUNING_IDS = Object.keys(TUNINGS);
 
@@ -53,7 +61,7 @@ export function tuningOf(t) {
   if (t && typeof t === 'object' && Array.isArray(t.strings) && t.strings.length) return t;
   const k = String(t || '').toLowerCase().replace(/[\s_]+/g, '-');
   if (TUNINGS[k]) return TUNINGS[k];
-  const alias = { std: 'standard', 'e-standard': 'standard', dropd: 'drop-d', 'drop-d-tuning': 'drop-d', 'eb': 'half-down', 'e-flat': 'half-down', 'half-step-down': 'half-down', 'half-step': 'half-down', 'open-g-tuning': 'open-g', openg: 'open-g' };
+  const alias = { std: 'standard', 'e-standard': 'standard', dropd: 'drop-d', 'drop-d-tuning': 'drop-d', 'eb': 'half-down', 'e-flat': 'half-down', 'half-step-down': 'half-down', 'half-step': 'half-down', 'open-g-tuning': 'open-g', openg: 'open-g', dropc: 'drop-c', 'drop-c-tuning': 'drop-c', dropb: 'drop-b', 'drop-b-tuning': 'drop-b', 'whole-step-down': 'd-standard', 'whole-step': 'd-standard' };
   return TUNINGS[alias[k]] || TUNINGS.standard;
 }
 
@@ -463,6 +471,11 @@ function kindOf(line) {
 // A tuning named in words around a tab ("Tuning: Drop D", "DADGAD", "half-step down"), or null.
 function tuningInWords(text) {
   if (/\bdrop[\s-]?d\b/i.test(text)) return 'drop-d';
+  if (/\bdrop[\s-]?c\b/i.test(text)) return 'drop-c';
+  if (/\bdrop[\s-]?b\b/i.test(text)) return 'drop-b';
+  if (/\bd standard\b|\bwhole[\s-]?(step|tone) down\b/i.test(text)) return 'd-standard';
+  if (/\bc standard\b/i.test(text)) return 'c-standard';
+  if (/\bb standard\b/i.test(text)) return 'b-standard';
   if (/\bdadgad\b/i.test(text)) return 'dadgad';
   if (/\bopen[\s-]?g\b/i.test(text)) return 'open-g';
   if (/\bhalf[\s-]?(step|tone)\b|\be[\s-]?flat\b|\beb standard\b/i.test(text)) return 'half-down';

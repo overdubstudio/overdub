@@ -95,9 +95,53 @@ const trials = [
   { type: 'clip.repeat', track: tr.id, clip: cl.id, times: 3 },
   { type: 'clip.repeat', track: tr.id, clip: cl.id, times: 2, mode: 'loop' },
   { type: 'clip.split', track: tr.id, clip: cl.id, at: cl.start + 2.5 },
+  { type: 'clip.trim', track: tr.id, clip: cl.id, end: cl.start + cl.length - 0.6, snap: 'beat' },
   // automation (core/automation.js; tools/automation-test.js has the fuzz)
   { type: 'auto.write', track: tr.id, param: 'gain', points: '0:-60 16:-6~0.5 32:-6' },
+  // the live room (core/liveroom/; tools/liveroom/checks-model.js has the rest): each makes its field when the song has none
+  { type: 'room.set', patch: { place: 'metal', tuning: 'drop-c', finish: 'tight', tracks: { drums: s2.get().tracks[0].id, guitarL: tr.id } } },
+  { type: 'room.part.set', section: s2.get().sections[0].id, patch: { feel: 'build', reps: 2, oneSide: true } },
+  { type: 'sheet.set', patch: { capo: 2, time: [3, 4], notes: 'Slow.' } },
+  { type: 'sheet.section.add', section: { name: 'Verse 1', lines: [{ text: 'Somewhere a [G]paper [Em]moon' }] } },
+  { type: 'section.move', section: s2.get().sections[1].id, before: s2.get().sections[0].id },
 ];
+{
+  // the room's and the sheet's other ops need them there first: each undoes back to the song with them, exactly
+  const made = s2.dispatch([
+    { type: 'room.set', patch: { place: 'basement', rig: 'crunch', tracks: { drums: s2.get().tracks[0].id }, managed: { master: { gain: -1 } } } },
+    { type: 'room.part.set', section: s2.get().sections[0].id, patch: { feel: 'straight', busy: 1 } },
+    { type: 'sheet.section.add', ref: 'ss', section: { name: 'Verse 1', lines: [{ text: 'one [G]line' }, { text: 'two [C]lines' }] } },
+  ], { by: 'you' });
+  t.ok(made.ok, 'a room and a sheet to work on ' + (made.error || ''));
+  const withRoom = JSON.stringify(s2.get());
+  const ss = made.created.ss, line = s2.get().sheet.sections[0].lines[1].id;
+  const ops = [
+    { type: 'room.set', patch: { finish: 'raw', tracks: null } },
+    { type: 'room.set', clear: true },
+    { type: 'room.part.set', section: s2.get().sections[0].id, patch: { busy: null, feel: null } },
+    { type: 'room.part.set', section: s2.get().sections[0].id, remove: true },
+    { type: 'sheet.set', clear: true },
+    { type: 'sheet.section.set', section: ss, patch: { name: 'First verse' } },
+    { type: 'sheet.section.remove', section: ss },
+    { type: 'sheet.line.add', section: ss, line: { text: 'three [D]lines' }, index: 1 },
+    { type: 'sheet.line.set', section: ss, line, patch: { text: 'two [Am]lines' } },
+    { type: 'sheet.line.remove', section: ss, line },
+    { type: 'section.duplicate', section: s2.get().sections[0].id },
+  ];
+  for (const op of ops) {
+    const res = s2.dispatch(op, { by: 'claude' });
+    const done = JSON.stringify(s2.get());
+    s2.undo();
+    const back = canon({ ...s2.get(), meta: null }) === canon({ ...JSON.parse(withRoom), meta: null });
+    const rr = s2.redo();
+    const again = rr.ok && canon({ ...s2.get(), meta: null }) === canon({ ...JSON.parse(done), meta: null });
+    s2.undo();
+    t.ok(res.ok && back && again, `${op.type}${op.clear ? ' clear' : op.remove ? ' remove' : ''} undoes and redoes exactly${res.ok ? '' : ': ' + res.error}`);
+    if (res.ok && op.type !== 'section.duplicate') trials.push({ type: op.type, _skip: true });
+  }
+  s2.undo();
+  t.ok(canon({ ...s2.get(), meta: null }) === canon({ ...JSON.parse(pristine), meta: null }), '…and the room and the sheet undo to none at all');
+}
 {
   // auto.clear and auto.set need a lane to work on: each undoes back to the song with the lane, exactly
   s2.dispatch({ type: 'auto.write', track: tr.id, param: 'pan', points: '0:-1 8:1' }, { by: 'you' });

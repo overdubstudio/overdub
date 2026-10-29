@@ -14,8 +14,41 @@ const song = (p) => {
   return JSON.stringify(s);
 };
 
-// A small song with something of every kind in it, built through the store as the studio would.
-function fixture() {
+// The live room's two fields (core/liveroom/), for the rows that need a room or a sheet already in the song. The
+// sheet's ids are given, so a row can name them.
+const ROOM = [
+  {
+    type: 'room.set',
+    patch: {
+      place: 'metal',
+      rig: 'modern',
+      tuning: 'drop-c',
+      finish: 'tight',
+      tracks: { guitarL: '$keys', drums: '$drums' },
+    },
+  },
+  { type: 'room.part.set', section: '$verse', patch: { feel: 'chugs' } },
+  { type: 'sheet.set', patch: { capo: 2 } },
+  {
+    type: 'sheet.section.add',
+    section: {
+      id: 'ss_verse1',
+      name: 'Verse 1',
+      lines: [
+        { id: 'sl_line01', text: 'Somewhere a [G]paper [Em]moon' },
+        { id: 'sl_line02', text: 'over a [C]cardboard [D]sea' },
+      ],
+    },
+  },
+  {
+    type: 'sheet.section.add',
+    section: { id: 'ss_chorus', name: 'Chorus', lines: [{ id: 'sl_line03', text: '[G]Oh' }] },
+  },
+];
+
+// A small song with something of every kind in it, built through the store as the studio would. room: with the live
+// room's room and sheet (ROOM) too.
+function fixture({ room = false } = {}) {
   const store = createStore();
   const r = store.dispatch(
     [
@@ -68,6 +101,7 @@ function fixture() {
           kernel: 'process(l, r) { return [l, r]; }',
         },
       },
+      ...(room ? ROOM : []),
     ],
     { by: 'you' },
   );
@@ -86,7 +120,7 @@ const REFERENCE = {
   profile: { lufs: -9, bands: [] },
 };
 
-// [label, (ids) => op]. Every OP_TYPES entry must appear at least once (checked below).
+// [label, (ids) => op, fixture options?]. Every OP_TYPES entry must appear at least once (checked below).
 const CASES = [
   ['project.set title/tempo', () => ({ type: 'project.set', patch: { title: 'New name', tempo: 96 } })],
   [
@@ -220,12 +254,144 @@ const CASES = [
   ['section.remove', (i) => ({ type: 'section.remove', section: i.chorus })],
   ['section.duplicate', (i) => ({ type: 'section.duplicate', section: i.verse })],
   ['section.duplicate push', (i) => ({ type: 'section.duplicate', section: i.verse, to: 8, push: true })],
+  ['section.duplicate with its part', (i) => ({ type: 'section.duplicate', section: i.verse }), { room: true }],
+  ['section.move', (i) => ({ type: 'section.move', section: i.chorus, before: i.verse })],
+  ['section.move to the end', (i) => ({ type: 'section.move', section: i.verse, before: null }), { room: true }],
+  ['section.move by name', () => ({ type: 'section.move', section: 'Chorus', before: 'Verse' }), { room: true }],
+  [
+    'room.set makes the room',
+    (i) => ({
+      type: 'room.set',
+      patch: { place: 'metal', tuning: 'drop-c', tracks: { guitarL: i.keys, drums: 'Drums' } },
+    }),
+  ],
+  [
+    'room.set patch',
+    (i) => ({
+      type: 'room.set',
+      patch: {
+        place: 'kitchen',
+        rig: null,
+        finish: 'warm',
+        mic: 'two',
+        master: i.ac,
+        tracks: { take: i.vox, chords: i.keys },
+        takes: { [i.ac]: { capo: 2, bpm: 96, onMaster: true } },
+        managed: { [i.keys]: { gain: -3, pan: 0.25, chain: 'h_1f2e' }, master: { gain: -1 } },
+      },
+    }),
+    { room: true },
+  ],
+  ['room.set a key null', () => ({ type: 'room.set', patch: { tracks: null, tuning: null } }), { room: true }],
+  ['room.set clear', () => ({ type: 'room.set', clear: true }), { room: true }],
+  [
+    'room.part.set a new part',
+    (i) => ({
+      type: 'room.part.set',
+      section: i.chorus,
+      patch: {
+        feel: 'open',
+        busy: 1,
+        loud: -1,
+        reps: 2,
+        oneSide: true,
+        drop: true,
+        sheet: 'ss_chorus',
+        learned: { from: i.c2, thin: true },
+      },
+    }),
+    { room: true },
+  ],
+  [
+    'room.part.set merges',
+    () => ({ type: 'room.part.set', section: 'Verse', patch: { reps: 3, feel: 'gallop' } }),
+    { room: true },
+  ],
+  ['room.part.set makes the room', (i) => ({ type: 'room.part.set', section: i.verse, patch: { feel: 'chugs' } })],
+  [
+    'room.part.set emptied',
+    (i) => ({ type: 'room.part.set', section: i.verse, patch: { feel: null } }),
+    { room: true },
+  ],
+  ['room.part.set remove', (i) => ({ type: 'room.part.set', section: i.verse, remove: true }), { room: true }],
+  [
+    "room.set the guitar room's beat, cards and stack",
+    () => ({
+      type: 'room.set',
+      patch: {
+        beat: 'pin:p2',
+        pins: [
+          { id: 'p1', groove: 'house/guide', name: 'Guide' },
+          {
+            id: 'p2',
+            groove: 'modernmetal/double-kick-gallop',
+            hits: [
+              { t: 0, row: 'kick', v: 1 },
+              { t: 1, row: 'snare', v: 0.9 },
+            ],
+          },
+        ],
+        stack: { id: 'house.metal.club', name: 'The club' },
+      },
+    }),
+    { room: true },
+  ],
+  [
+    "room.part.set a part's beat",
+    (i) => ({ type: 'room.part.set', section: i.verse, patch: { beat: 'house/guide' } }),
+    { room: true },
+  ],
+  [
+    'sheet.set makes the sheet',
+    () => ({ type: 'sheet.set', patch: { capo: 3, time: [3, 4], notes: 'Slow.\nThen fast.' } }),
+  ],
+  [
+    'sheet.set patch',
+    () => ({ type: 'sheet.set', patch: { capo: 0, time: [6, 8], notes: 'Let it ring' } }),
+    { room: true },
+  ],
+  ['sheet.set clear', () => ({ type: 'sheet.set', clear: true }), { room: true }],
+  [
+    'sheet.section.add',
+    () => ({
+      type: 'sheet.section.add',
+      index: 1,
+      section: { name: 'Bridge', lines: [{ text: 'and [Am]then' }, { text: '' }] },
+    }),
+    { room: true },
+  ],
+  ['sheet.section.add makes the sheet', () => ({ type: 'sheet.section.add', section: { name: 'Verse 1' } })],
+  [
+    'sheet.section.set',
+    () => ({ type: 'sheet.section.set', section: 'ss_verse1', patch: { name: 'First verse' } }),
+    { room: true },
+  ],
+  ['sheet.section.remove', () => ({ type: 'sheet.section.remove', section: 'Verse 1' }), { room: true }],
+  [
+    'sheet.line.add',
+    () => ({ type: 'sheet.line.add', section: 'ss_verse1', index: 0, line: { text: 'a new [Am]line' } }),
+    { room: true },
+  ],
+  [
+    'sheet.line.set',
+    () => ({
+      type: 'sheet.line.set',
+      section: 'ss_verse1',
+      line: 'sl_line01',
+      patch: { text: 'Somewhere a [G]paper [C]moon' },
+    }),
+    { room: true },
+  ],
+  ['sheet.line.remove', () => ({ type: 'sheet.line.remove', section: 'ss_verse1', line: 'sl_line02' }), { room: true }],
   ['time.insert', () => ({ type: 'time.insert', at: 4, length: 4 })],
   ['time.remove', () => ({ type: 'time.remove', at: 2, length: 4 })],
   ['clip.repeat copies', (i) => ({ type: 'clip.repeat', track: i.keys, clip: i.c2, times: 3 })],
   ['clip.repeat loop', (i) => ({ type: 'clip.repeat', track: i.drums, clip: i.beat, times: 4, mode: 'loop' })],
   ['clip.split', (i) => ({ type: 'clip.split', track: i.keys, clip: i.c1, at: 1.5 })],
   ['clip.split audio', (i) => ({ type: 'clip.split', track: i.vox, clip: i.ac, at: 6 })],
+  ['clip.trim end', (i) => ({ type: 'clip.trim', track: i.keys, clip: i.c1, end: 6 })],
+  ['clip.trim audio on the beat', (i) => ({ type: 'clip.trim', track: i.vox, clip: i.ac, end: 9.3, snap: 'beat' })],
+  ['clip.set audio tail', (i) => ({ type: 'clip.set', track: i.vox, clip: i.ac, patch: { length: 10, tail: 2 } })],
   ['master.set', () => ({ type: 'master.set', patch: { gain: -4, clip: 'clean' } })],
   ['auto.write new lane', (i) => ({ type: 'auto.write', track: i.keys, param: 'pan', points: '0:-1 4:1~0.5 8:0' })],
   [
@@ -303,9 +469,9 @@ test('the table covers every op in OP_TYPES', () => {
 });
 
 describe('applyOp: each op applies and its inverse restores the song exactly', () => {
-  for (const [label, mk] of CASES) {
+  for (const [label, mk, opts] of CASES) {
     test(label, () => {
-      const { p, ids } = fixture();
+      const { p, ids } = fixture(opts);
       const before = JSON.stringify(p);
       const ctx = { by: 'claude', refs: {}, getDevice: null, doc: p, restore: false, noteSeq: new Map() };
       const r = applyOp(p, mk(ids), ctx);
@@ -319,9 +485,9 @@ describe('applyOp: each op applies and its inverse restores the song exactly', (
 });
 
 describe('store: dispatch, undo and redo of each op', () => {
-  for (const [label, mk] of CASES) {
+  for (const [label, mk, opts] of CASES) {
     test(label, () => {
-      const { p, ids } = fixture();
+      const { p, ids } = fixture(opts);
       const store = createStore(clone(p));
       const before = song(store.get());
       const r = store.dispatch(mk(ids), { by: 'claude' });
@@ -365,6 +531,18 @@ describe('ops refuse bad input and say why', () => {
     ['negative start', (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { start: -1 } }), /start/],
     ['capo out of range', (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { capo: 13 } }), /capo/],
     [
+      'tail on a notes clip',
+      (i) => ({ type: 'clip.set', track: i.keys, clip: i.c1, patch: { tail: 1 } }),
+      /notes clip/,
+    ],
+    ['tail as long as the clip', (i) => ({ type: 'clip.set', track: i.vox, clip: i.ac, patch: { tail: 8 } }), /tail/],
+    ['tail not a number', (i) => ({ type: 'clip.set', track: i.vox, clip: i.ac, patch: { tail: 'long' } }), /tail/],
+    [
+      'trim snap that is no grid',
+      (i) => ({ type: 'clip.trim', track: i.vox, clip: i.ac, end: 9, snap: 'bars' }),
+      /snap/,
+    ],
+    [
       'move notes clip onto audio track',
       (i) => ({ type: 'clip.move', track: i.keys, clip: i.c1, toTrack: i.vox }),
       /can't move/,
@@ -396,10 +574,79 @@ describe('ops refuse bad input and say why', () => {
     ['bad device id', () => ({ type: 'device.define', device: { id: 'A B', kernel: 'x' } }), /bad device id/],
     ['reference without a profile', () => ({ type: 'reference.set', reference: { name: 'x' } }), /reference/],
     ['remove a missing asset', () => ({ type: 'asset.remove', id: 'a_none' }), /no asset/],
+    ['a place the room has no id for', () => ({ type: 'room.set', patch: { place: 'moon' } }), /place is one of/],
+    ['a role naming no track', () => ({ type: 'room.set', patch: { tracks: { drums: 't_none' } } }), /names no track/],
+    ['a role that is not one', (i) => ({ type: 'room.set', patch: { tracks: { cowbell: i.keys } } }), /isn't a role/],
+    ['a master that is not a clip', () => ({ type: 'room.set', patch: { master: 'c_none' } }), /names no clip/],
+    ['a room key that is not one', () => ({ type: 'room.set', patch: { colour: 'red' } }), /can't change "colour"/],
+    ['clearing no room', () => ({ type: 'room.set', clear: true }), /no room/],
+    [
+      'a chain a reload would change',
+      (i) => ({ type: 'room.set', patch: { managed: { [i.keys]: { chain: 'h_1f\u202e2e' } } } }),
+      /managed chain is a short hash/,
+    ],
+    [
+      'a part for no section',
+      () => ({ type: 'room.part.set', section: 's_none', patch: { feel: 'open' } }),
+      /no section/,
+    ],
+    [
+      'a feel that is not one',
+      (i) => ({ type: 'room.part.set', section: i.verse, patch: { feel: 'polka' } }),
+      /feel is one of/,
+    ],
+    ['reps past 4', (i) => ({ type: 'room.part.set', section: i.verse, patch: { reps: 5 } }), /reps/],
+    ['busy past 1', (i) => ({ type: 'room.part.set', section: i.verse, patch: { busy: 2 } }), /busy is -1, 0 or 1/],
+    [
+      'a part naming no sheet section',
+      (i) => ({ type: 'room.part.set', section: i.verse, patch: { sheet: 'ss_none' } }),
+      /sheet names no section/,
+    ],
+    [
+      'removing no part',
+      (i) => ({ type: 'room.part.set', section: i.chorus, remove: true }),
+      /no part/,
+      { room: true },
+    ],
+    ['a capo past 11', () => ({ type: 'sheet.set', patch: { capo: 12 } }), /capo/],
+    ['a time that is not a meter', () => ({ type: 'sheet.set', patch: { time: [4, 3] } }), /meter/],
+    [
+      'notes past 2,000 characters',
+      () => ({ type: 'sheet.set', patch: { notes: 'x'.repeat(2001) } }),
+      /2,000 characters/,
+    ],
+    [
+      'a line past 200 characters',
+      () => ({ type: 'sheet.line.add', section: 'ss_verse1', line: { text: 'x'.repeat(201) } }),
+      /200 characters/,
+      { room: true },
+    ],
+    [
+      'a line in no section',
+      () => ({ type: 'sheet.line.add', section: 'ss_none', line: { text: 'x' } }),
+      /no section/,
+      { room: true },
+    ],
+    [
+      'a sheet id used twice',
+      () => ({ type: 'sheet.section.add', section: { id: 'ss_verse1', name: 'Again' } }),
+      /used on the sheet/,
+      { room: true },
+    ],
+    [
+      'a line that is not there',
+      () => ({ type: 'sheet.line.remove', section: 'ss_verse1', line: 'sl_none' }),
+      /no line/,
+      { room: true },
+    ],
+    ['a sheet section on no sheet', () => ({ type: 'sheet.section.remove', section: 'Verse 1' }), /no section/],
+    ['a move to where it is', (i) => ({ type: 'section.move', section: i.verse, before: i.chorus }), /there already/],
+    ['a move before itself', (i) => ({ type: 'section.move', section: i.chorus, before: i.chorus }), /there already/],
+    ['a move of no section', () => ({ type: 'section.move', section: 's_none', before: null }), /section/],
   ];
-  for (const [label, mk, re] of bad) {
+  for (const [label, mk, re, opts] of bad) {
     test(label, () => {
-      const { p, ids } = fixture();
+      const { p, ids } = fixture(opts);
       const store = createStore(clone(p));
       const before = song(store.get());
       const r = store.dispatch(mk(ids), { by: 'claude' });
@@ -535,5 +782,129 @@ describe('ops: details of what they write', () => {
     const r3 = store.dispatch({ type: 'insert.add', track: r2.created.t, insert: { device: 'core.poly' } });
     assert.equal(r3.ok, false);
     assert.match(r3.error, /not an effect/);
+  });
+});
+
+describe('the live room: what its ops write', () => {
+  test('a sheet line is signed by whoever wrote it, and undo gives it back its author', () => {
+    const { p } = fixture({ room: true });
+    const store = createStore(clone(p));
+    const line = () => store.get().sheet.sections[0].lines[0];
+    assert.equal(line().by, 'you');
+    store.dispatch(
+      { type: 'sheet.line.set', section: 'Verse 1', line: 'sl_line01', patch: { text: 'Somewhere a [G]moon' } },
+      { by: 'claude' },
+    );
+    assert.equal(line().by, 'claude');
+    assert.equal(line().text, 'Somewhere a [G]moon');
+    store.undo();
+    assert.equal(line().by, 'you');
+    assert.equal(line().text, 'Somewhere a [G]paper [Em]moon');
+    const r = store.dispatch(
+      { type: 'sheet.line.add', section: 'ss_chorus', ref: 'l', line: { text: '[C]Oh, [G]oh' } },
+      { by: 'mcp:cursor' },
+    );
+    assert.ok(r.ok, r.error);
+    assert.equal(store.get().sheet.sections[1].lines.find((l) => l.id === r.created.l).by, 'mcp:cursor');
+  });
+
+  test('a line is plain text: control and bidi characters are dropped', () => {
+    const { p } = fixture({ room: true });
+    const store = createStore(clone(p));
+    const r = store.dispatch({
+      type: 'sheet.line.add',
+      section: 'ss_verse1',
+      ref: 'l',
+      line: { text: 'a\u0007 [G]li\u202ene' },
+    });
+    assert.ok(r.ok, r.error);
+    assert.equal(store.get().sheet.sections[0].lines.at(-1).text, 'a [G]line');
+  });
+
+  test('the room keeps its keys in one order, whatever order a patch names them in', () => {
+    const store = createStore();
+    store.dispatch({ type: 'room.set', patch: { finish: 'raw', place: 'basement' } });
+    store.dispatch({ type: 'room.set', patch: { mic: 'one', tuning: 'standard', rig: 'crunch' } });
+    assert.deepEqual(Object.keys(store.get().room), ['v', 'place', 'rig', 'tuning', 'finish', 'mic']);
+    store.undo();
+    assert.deepEqual(Object.keys(store.get().room), ['v', 'place', 'finish']);
+  });
+
+  test('false flags and capo 0 are no key at all', () => {
+    const { p, ids } = fixture({ room: true });
+    const store = createStore(clone(p));
+    store.dispatch({ type: 'room.part.set', section: ids.verse, patch: { oneSide: true, drop: true } });
+    store.dispatch({ type: 'room.part.set', section: ids.verse, patch: { oneSide: false, drop: false } });
+    assert.deepEqual(store.get().room.parts[ids.verse], { feel: 'chugs' });
+    store.dispatch({ type: 'sheet.set', patch: { capo: 0 } });
+    assert.equal('capo' in store.get().sheet, false);
+    store.dispatch({ type: 'room.set', patch: { takes: { [ids.ac]: { capo: 0, onMaster: false, bpm: 90 } } } });
+    assert.deepEqual(store.get().room.takes, { [ids.ac]: { bpm: 90 } });
+  });
+
+  test('picking a place makes its tracks and names their roles in one step ($refs)', () => {
+    const store = createStore();
+    const r = store.dispatch(
+      [
+        { type: 'track.add', ref: 'gl', track: { name: 'Guitar L', kind: 'audio' } },
+        { type: 'track.add', ref: 'dr', track: { name: 'Drums', instrument: { device: 'core.drums' } } },
+        { type: 'room.set', patch: { place: 'metal', tracks: { guitarL: '$gl', drums: '$dr' } } },
+      ],
+      { by: 'you' },
+    );
+    assert.ok(r.ok, r.error);
+    assert.deepEqual(store.get().room.tracks, { guitarL: r.created.gl, drums: r.created.dr });
+    assert.equal(store.history.length, 1);
+  });
+
+  test("section.duplicate copies the section's part; section.move keeps its id, its part and its clips' ids", () => {
+    const { p, ids } = fixture({ room: true });
+    const store = createStore(clone(p));
+    const r = store.dispatch({ type: 'section.duplicate', section: ids.verse, ref: 'copy' });
+    assert.ok(r.ok, r.error);
+    assert.deepEqual(store.get().room.parts[r.created.copy], { feel: 'chugs' });
+    store.undo();
+    assert.deepEqual(Object.keys(store.get().room.parts), [ids.verse]);
+    const clips = store
+      .get()
+      .tracks.flatMap((t) => t.clips.map((c) => c.id))
+      .sort();
+    const m = store.dispatch({ type: 'section.move', section: ids.chorus, before: ids.verse }, { by: 'claude' });
+    assert.ok(m.ok, m.error);
+    const sec = store.get().sections;
+    assert.deepEqual(
+      sec.map((x) => [x.id, x.start]),
+      [
+        [ids.chorus, 0],
+        [ids.verse, 8],
+      ],
+    );
+    assert.deepEqual(store.get().room.parts[ids.verse], { feel: 'chugs' });
+    const after = store
+      .get()
+      .tracks.flatMap((t) => t.clips.map((c) => c.id))
+      .sort();
+    assert.deepEqual(
+      after.filter((id) => clips.includes(id)),
+      clips,
+      'every clip keeps its id (any split adds a clip)',
+    );
+    assert.equal(store.history.at(-1).label, 'move section');
+  });
+
+  test('a redo keeps why a step was made, and that it was an audition', () => {
+    const store = createStore();
+    store.dispatch(
+      { type: 'room.set', patch: { place: 'metal' } },
+      { by: 'overdub', reason: 'room:place', label: 'The metal club' },
+    );
+    store.undo();
+    store.redo();
+    assert.equal(store.history.at(-1).reason, 'room:place');
+    store.dispatch({ type: 'room.set', patch: { finish: 'loud' } }, { by: 'you', audition: true });
+    assert.equal(store.history.at(-1).audition, true);
+    store.undo();
+    store.redo();
+    assert.equal(store.history.at(-1).audition, true);
   });
 });

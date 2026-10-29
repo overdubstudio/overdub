@@ -7,18 +7,24 @@
 // at a time: a chord comes out as its onset and its pitches as best it can, all the play-along judges a chord by.
 // Pure (no DOM, no audio graph): tools/tabs-test.js feeds it plucked strings and checks where and what it hears.
 //
-//   createNoteFinder({ sr, lo, hi, floorDb }) -> finder
-//     finder.push(samples, frame0) -> [{ f (the onset's frame on the audio clock), p (MIDI), ps (the candidates, best
-//         first), hz, conf, legato }]
+//   createNoteFinder({ sr, lo, hi, floorDb, win, unpitched }) -> finder
+//     win: YIN's window in samples (default 43 ms; it reads pitches down to about two periods in it: 4096 at 48 kHz
+//         reaches a power chord's own low note, its root an octave down, at the cost of reading each pitch 43 ms later)
+//     unpitched: an attack whose pitch can't be read is still a note, with p null (the live room's chugs and chords:
+//         its rhythm counts); off, it's dropped (the play-along judges what it can name)
+//     pitch: false: the attacks alone, each at once with p null, no pitch read and no legato notes (the rolling tape's
+//         default selection reads a minute of them in about a tenth of a second, in slices: input/tape.js)
+//     finder.push(samples, frame0) -> [{ f (the onset's frame on the audio clock), p (MIDI, or null), ps (the
+//         candidates, best first), hz, conf, legato }]
 //         blocks as audio.listen gives them (input/audioin.js: { f, d: [Float32Array] }); a block that doesn't follow
 //         the last one starts afresh
 //     finder.reset()
 
 import { yin, ftom } from './pitch.js';
 
-export function createNoteFinder({ sr = 48000, lo = 70, hi = 1300, floorDb = -52 } = {}) {
+export function createNoteFinder({ sr = 48000, lo = 70, hi = 1300, floorDb = -52, win: winLen = null, unpitched = false, pitch = true } = {}) {
   const H = Math.max(32, Math.round(sr * 0.004));          // a hop: 4 ms
-  const WIN = 2048 * Math.max(1, Math.round(sr / 48000));   // the YIN window (43 ms at 48 kHz: two periods of a low D)
+  const WIN = winLen || 2048 * Math.max(1, Math.round(sr / 48000));   // the YIN window (43 ms at 48 kHz: two periods of a low D)
   const SETTLE = Math.round(sr * 0.022);                    // past the pick's click before the pitch is read
   const REFRACT = Math.round(sr * 0.05);                    // two attacks closer than this are one
   const RN = 1 << 15;                                       // the ring: the last 0.68 s at 48 kHz
@@ -64,6 +70,7 @@ export function createNoteFinder({ sr = 48000, lo = 70, hi = 1300, floorDb = -52
       const at = fr - H + 1;
       if (lvl > floor && e > base * 6 + 1e-9 && at - lastOn >= REFRACT) {
         lastOn = at;
+        if (!pitch) { out.push({ f: at, p: null, ps: [], hz: 0, conf: 0, legato: false }); continue; }
         pending.push({ f: at, at: at + SETTLE + WIN, tries: 0 });
         leg = { q: null, f: 0, n: 0 };
       }
@@ -73,12 +80,13 @@ export function createNoteFinder({ sr = 48000, lo = 70, hi = 1300, floorDb = -52
         const got = read(pd.at);
         if (got) { out.push({ f: pd.f, p: got.p, ps: got.ps, hz: got.hz, conf: got.conf, legato: false }); lastP = got.p; lastPs = got.ps; pending.shift(); continue; }
         if (pd.tries++ < 1) { pd.at += Math.round(sr * 0.02); break; }
+        if (unpitched) { out.push({ f: pd.f, p: null, ps: [], hz: 0, conf: 0, legato: false }); lastP = null; lastPs = []; }
         pending.shift();
       }
       // a new pitch with no attack (a hammer-on, a pull-off, a slide: a few frets along the string), read every 20 ms
       // while the string sounds and no attack is pending, and believed after three reads agree (two strings ringing
       // make a third pitch, their common one, that a single read can take for a note)
-      if (!pending.length && lvl > floor && fr - lastOn > SETTLE + WIN && fr - legAt >= Math.round(sr * 0.02)) {
+      if (pitch && !pending.length && lvl > floor && fr - lastOn > SETTLE + WIN && fr - legAt >= Math.round(sr * 0.02)) {
         legAt = fr;
         const got = read(fr + 1);
         const step = got && lastP != null ? Math.abs(got.p - lastP) : 0;

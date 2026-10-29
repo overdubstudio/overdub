@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guitar room mock</title>
+<meta name="description" content="A clickable mock of Overdub's guitar room (docs/research/GUITAR-ROOM.md §5). It makes no sound and asks for no mic: everything on it is fake state.">
+<link rel="icon" href="/app/assets/favicon.svg">
+<link rel="stylesheet" href="/app/style/tokens.css">
+<link rel="stylesheet" href="./mock.css">
+</head>
+<body>
+<div class="gr" id="app">
+  <header class="gr-top">
+    <span class="gr-brand disp-s">Overdub</span>
+    <span class="gr-where" id="where">The live room · The metal club</span>
+    <span class="gr-gap"></span>
+    <span class="gr-presence" id="presence"></span>
+    <button class="gr-link" type="button" data-act="shop">The shop <kbd>S</kbd></button>
+    <button class="gr-link" type="button" data-act="lib">Riffs <kbd>L</kbd></button>
+    <button class="gr-link" type="button" data-act="control">Control room</button>
+    <nav class="screens" id="screens" aria-label="The mock’s screens"></nav>
+  </header>
+  <main class="gr-stage" id="stage">
+    <section class="gr-scenebox" id="scenebox" aria-label="The stage">
+      <canvas class="gr-scene" id="scene" width="256" height="144" aria-hidden="true"></canvas>
+      <div class="gr-over" id="over"></div>
+    </section>
+    <aside class="gr-side" id="side"></aside>
+    <div class="gr-tb" id="tb"></div>
+    <section class="gr-bottom" id="bottom"></section>
+  </main>
+  <section class="shop" id="shop" hidden></section>
+  <section class="lib" id="lib" hidden></section>
+  <div id="sheet"></div>
+  <div id="rec"></div>
+  <div id="floating"></div>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

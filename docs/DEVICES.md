@@ -277,6 +277,60 @@ track is gone. A def without `key` never sees `t.key` and behaves exactly as bef
 - The key is the source's place on the master timeline after delay compensation; inserts after the keyed device that
   add latency make the key that much late (reported in the latency, not corrected).
 
+## Graph devices in a live chain
+
+The pedals, the amps and the studio's other `build(c, kit)` devices run on `app/src/devices/graph.js`, which wraps a
+build in the Instance contract, and `app/src/devices/kit.js`, the kit a build gets. In a live chain each one follows
+the lifecycle in `app/src/devices/lifecycle.js`, the contract between them and the engine:
+
+| stage | what happens |
+|---|---|
+| build | `build(c, kit)` makes the nodes; the first `set(v, x)` and the bypass follow. On a live context the bypass gains are set by `.value`, with nothing scheduled. |
+| ready | `inst.ready` resolves once that's done. It **rejects** with `lifecycle.failure(code, message)` when `build` threw (`'threw'`), returned no `output`, or an effect no `input` (`'no-output'`), or a worklet the def declares didn't load (`'worklet'`). What a failed build started is let go. The engine plays its own stand-in (an effect passes its input through), reports an `'error'` and builds the device again later (`engine/strip.js` `BUILD`). A device never stands in for itself. |
+| bypass | `setOn(on, at?)` moves the dry and wet gains along a 10 ms raised cosine, from **one** read of the audio clock, as 23 linear ramps through the cosine's points (`kit.js` `glide`, `cosineRamp`). |
+| health | `inst.health()` returns `{ ok, failed, on, settled, dry, wet, want: { dry, wet } }`: the bypass gains as they are and as they should be. A switch is `settled` once the audio clock is past its fade, or 100 ms after it by the wall clock. |
+| assure | `inst.assure()` snaps the bypass gains to their targets by `.value` (and feeds an insert that's on but isn't fed), and returns true if it had to. A footswitch fade still running is left alone (snapped halfway it would click). The engine calls it after it wires a device, and when the health check finds one wrong. |
+| dispose | Idempotent. The kit stops what it started and clears its timers, the device's own `dispose()` runs, and the wrapper disconnects. |
+
+Why, measured on AJ's Chrome 156 and the harness's Chromium 151 (`docs/research/AMP-PATH.md` §1):
+
+- **No value curve on a live context.** Chrome 155 and 156 drop a `setValueCurveAtTime` that ends before its node
+  first renders, and leave the param where it was. Every freshly built device is such a node, because the strip builds
+  it before it wires it. That left an amp passing dry plus wet, or a pedal silent, until it was stomped. Linear ramps,
+  `setTargetAtTime` and `setValueAtTime` land on every browser. The only curves left in `app/src` are offline
+  branches, each behind `isOffline(c)`, which keep renders bit-identical.
+- **One read of the clock.** Chrome's `currentTime` moves in 5.8 ms steps (256 frames), even inside one task, so a
+  second read can be later than the first. Read it once (`const now = c.currentTime`), hold at `now`, and schedule
+  everything from that read.
+- **Linear ramps through the cosine, not `setTargetAtTime`, for a footswitch.** Web Audio draws a value curve as
+  straight lines between its points, so 23 ramps through the same 24 points are the trajectory the curve had. The live
+  stomp check measures the same click as before (tools/guitar-test.js 6). On a 196 Hz crossfade the third difference
+  at the switch is 1.0x the steady tone's for the ramps, 2.7x for one 10 ms ramp and 8.6x for `setTargetAtTime` at
+  2.5 ms, whose start is a corner. Knob moves (`x.to`) stay `setTargetAtTime`, which is right for a knob.
+- **A worklet that failed is asked for again.** `kit.loadWorklet` doesn't keep a failure for the page's life. The
+  next request tries again, `WORKLET_RETRY` (1 s) after the failure at the soonest. `workletsReady` names what didn't
+  load.
+
+When you write a graph device's `build` and `set`:
+
+- In `build`, set node params by `.value`. In `set`, use `x.to(param, value)`: it's `setValueAtTime` at `x.t` on the
+  first call and a 15 ms `setTargetAtTime` after that. Don't schedule a ramp, glide or curve while the device is being
+  built.
+- Never call `setValueCurveAtTime` on a live context. If a sound needs a shaped move (a tape stopping), schedule linear
+  ramps through its points live, as Low-Batt Limpet's motor does, and keep any curve behind `isOffline(c)`.
+- Read `c.currentTime` once per move, or use `x.t` (graph.js read it once for that `set`).
+- Start sources through the kit (`kit.lfo`, `kit.constant`, `kit.noiseSource`, or `kit.own(node)` for your own), set
+  timers with `kit.later`, and stop anything else in your `dispose()`. An amp's wow oscillator outlived every amp a
+  swap threw away until `plugAmp`'s `dispose` stopped it.
+- A device that can't be what it says should fail its build: throw, or throw `lifecycle.failure('worklet', ...)` (Abyss
+  without its octave does). Don't pass the signal through quietly.
+
+The checks: `test/unit/kit.test.js` and `test/unit/graph.test.js` (a glide on a clock that moves between reads, the
+offline events held to what they always were, ready's failures, health and assure), and `tools/guitar-test.js` 6c.
+In 6c, every pedal and amp is built live on a clock that reads 11.6 ms stale every other time and stomped before and
+after it's wired, and it must report itself at its targets. 6c also covers a build that throws (through the engine),
+a worklet that fails once, a sabotaged dry gain and 50 amp swaps.
+
 ## Under the hood
 
 - **One processor for every kernel.** `ensureKernelWorklet(c)` loads `app/src/kernel/processor.js` (the processor and

@@ -11,6 +11,8 @@
 //   sidechain   a bass and a pad ducking under kicks through Dim Switch's key (one key a muted ghost kick), both renderers
 //   master-clean  the same mix through Red Line at -1 dBTP on the master and a clean ceiling (master.clip 'clean')
 //   flip:tempo-map  a drum part on a song whose tempo map follows a recording drifting 92 -> 96 BPM (our own signal)
+//   takes:overlap  overlapping takes on one guitar track (docs/ARCHITECTURE.md "Overlapping takes"): the verse's take
+//               rings 2 beats past its part (clip.tail) under the chorus's take, both sounding; a muted take under it
 //   demo:<id>   a song from the demo shelf (only those listed in SHELF_SCENES), whole, as demoById builds it (its ids
 //               are stable already), its timestamps pinned. Each scene is pinned on purpose, not the whole shelf.
 //   inst:core.wavetable:akwf   Light Table on two of its AKWF tables (the bank in app/src/devices/builtin/akwf.js),
@@ -21,6 +23,9 @@
 //   inst:core.metalkit#<12 hex>:trigger   Rusty Sticks with its trigger up and its room off: the synthesized layers
 //   fx:core.stack, fx:core.cab, fx:core.bassrig   the amps (tools/amp-scenes.js builds them): Half Stack on its filter
 //               cab, and each on the cab bank as fx:<id>[:cab]#<12 hex>, only when the bank has been fetched
+//   room:metal  the live room's metal club, one verse as the room makes it (tools/liveroom/band-scene.js): the chug
+//               fixture on both sides, the house band learned from the left's read, Tight on the master; only when the
+//               kits it plays have been fetched
 //   fx:core.rooms#<12 hex>, fx:core.rooms:<room>#<12 hex>   Echo Chamber at its defaults (AULA) and on each other room
 //               (aula-far, lecture, stairs, office, meeting), the hex the aachen bank's: only when the bank has been
 //               fetched. `exact: true`: Node and Chromium must agree bit for bit, not within -90 dB (spec 0006 R34)
@@ -33,6 +38,7 @@ import { SHOWCASE } from '../app/src/devices/showcase.js';
 import { demoProject, demoById } from '../app/src/core/demo.js';
 import { createProject } from '../app/src/core/project.js';
 import { ampScenes } from './amp-scenes.js';
+import { roomSong } from './liveroom/band-scene.js';
 import { ROOMS_HASH, ROOM_LABELS } from '../app/src/devices/builtin/rooms-lib.js';
 import { phrase, drumPhrase, diStrum, PHRASE_BPM, PHRASE_BEATS, DRUM_PHRASE_BEATS } from '../app/src/audio/testsignals.js';
 
@@ -181,6 +187,31 @@ export function tempoMapScene() {
   };
 }
 
+// takes:overlap: two parts on one audio track, Verse [0, 8) and Chorus [8, 16), each a take folder of the DI strum. The
+// verse's playing take (Take 2) runs 2 beats past its part as its tail, ringing under the chorus's take (its own ring a
+// beat past the chorus); the verse's Take 1, muted, rings nowhere. Both renderers play what the format says: each
+// clip's whole window, summed on the track
+function takesOverlapScene() {
+  if (!STRUM) STRUM = diStrum(8);
+  const take = (id, start, length, offset, take, name, extra = {}) => ({ id, kind: 'audio', start, length, asset: 'a_distrm', offset, gain: 0, name, take, by: 'you', ...extra });
+  return {
+    name: 'takes:overlap', browser: true, opts: { from: 0, to: 16, tail: 2 },
+    assets: { a_distrm: { sr: 48000, channels: [STRUM] } },
+    project: project({
+      title: 'takes: overlap', tempo: 120,
+      assets: { a_distrm: { kind: 'audio', name: 'DI strum', sr: 48000, channels: 1, duration: 8 } },
+      sections: [{ id: 's_gverse', name: 'Verse', start: 0, length: 8 }, { id: 's_gchorus', name: 'Chorus', start: 8, length: 8 }],
+      tracks: [{ id: 't_golden', name: 'Left Rhythm', kind: 'audio', instrument: null, inserts: [],
+        clips: [
+          take('c_verse1', 0, 10, 1, 'tk_gverse', 'Take 1', { tail: 2, mute: true }),
+          take('c_verse2', 0, 10, 0, 'tk_gverse', 'Take 2', { tail: 2 }),
+          take('c_chorus', 8, 9, 3, 'tk_gchorus', 'Take 1', { tail: 1 }),
+        ],
+        gain: -3, pan: 0, mute: false, solo: false, arm: false, by: 'you' }],
+    }),
+  };
+}
+
 // the shelf songs pinned as scenes (kernel devices only; tools/demos-test.js renders them in the browser)
 const SHELF_SCENES = ['sodium', 'red-eye', 'late-checkout', 'wake-up-call', 'lobby-bar', 'room-service', 'turndown', 'ice-machine', 'vacancy', 'service-lift', 'boiler-room'];
 
@@ -245,7 +276,23 @@ function shelfScenes() {
     return [{ name: 'demo:' + id, browser: false, opts: { from: 0, to: p.loop.end, tail: 2 }, assets: {}, project: p }, hashes.every((h) => fs.existsSync(dataPath(h)))];
   });
 }
-export const missingScenes = () => [...sampledScenes(), ...ampHere(), ...roomScenes(), ...shelfScenes()].filter(([, here]) => !here).map(([s]) => s.name);
+// the live room's scene (docs/research/LIVE-ROOM-MODE.md §11.2): the metal club's verse as the room makes it, the
+// chug fixture on both sides (two seeded performances) with the house band learned from the left's read and Tight on
+// the master (tools/liveroom/band-scene.js). Only when the kits it plays are here; built only when it renders.
+const LIVE_DEVICES = ['core.guitar', 'core.stack', 'core.eq8', 'core.metalkit', 'core.drumbus', 'core.ebass', 'core.bassrig', 'core.width', 'core.clipper', 'core.limiter'];
+function liveScenes() {
+  const hashes = LIVE_DEVICES.flatMap((d) => Object.values([...SAMPLED, ...EFFECTS, ...INSTRUMENTS].find((x) => x.id === d)?.data || {}));
+  // (built when it's first read: a read of the DIs and the band's learning is a few seconds the other scenes' users
+  // needn't wait for)
+  let built = null;
+  const build = () => (built ||= roomSong('metal', { parts: 1 }));
+  const scene = { name: 'room:metal', browser: false };
+  Object.defineProperty(scene, 'project', { enumerable: true, get: () => build().p });
+  Object.defineProperty(scene, 'assets', { enumerable: true, get: () => build().assets });
+  Object.defineProperty(scene, 'opts', { enumerable: true, get: () => ({ from: 0, to: build().beats, tail: 2 }) });
+  return [[scene, hashes.every((h) => fs.existsSync(dataPath(h)))]];
+}
+export const missingScenes = () => [...sampledScenes(), ...ampHere(), ...roomScenes(), ...shelfScenes(), ...liveScenes()].filter(([, here]) => !here).map(([s]) => s.name);
 
 export function scenes() {
   const out = [];
@@ -277,6 +324,8 @@ export function scenes() {
   out.push(sidechainScene());
   out.push(masterCleanScene());
   out.push(tempoMapScene());
+  out.push(takesOverlapScene());
   for (const [s, here] of shelfScenes()) if (here) out.push(s);
+  for (const [s, here] of liveScenes()) if (here) out.push(s);
   return out;
 }

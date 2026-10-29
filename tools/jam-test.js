@@ -110,7 +110,7 @@ function fakeGuitar(file, level = 0.6) {
 {
   // every tuning's open strings are its places at fret 0, and a few notes known by heart
   const open = FB.TUNING_IDS.every((id) => FB.TUNINGS[id].strings.every((p, s) => FB.positionsOf(p, id).some((x) => x.s === s && x.f === 0)));
-  T.ok(open && FB.TUNING_IDS.length === 5, `5 tunings, each open string found at fret 0 (${FB.TUNING_IDS.join(', ')})`);
+  T.ok(open && FB.TUNING_IDS.length === 10, `10 tunings, each open string found at fret 0 (${FB.TUNING_IDS.join(', ')})`);
   const cases = [
     ['standard', 'A4', [[5, 5], [4, 10], [3, 14], [2, 19]]],
     ['standard', 'E2', [[0, 0]]],
@@ -719,9 +719,13 @@ const boot = async (opts = {}) => {
 
   // ---- the agents: set_tone by name, with its reason; make_jam_track's word on the song it replaced; get_jam's bars
   await step('the tools', async () => {
-    const st = await run('set_tone', { rig: 'gr-clucky', track: 'guitar', reason: 'cluckier for the verse' });
-    const last = await E(() => { const o = window.overdub, l = o.store.history[o.store.history.length - 1]; return { reason: l.reason, by: l.by }; });
-    T.ok(st.ok && st.track?.name === 'Guitar' && last.reason === 'cluckier for the verse' && last.by === 'mcp:test', `set_tone finds a track by its name, any case ("guitar": ${st.track?.name}), and History keeps the reason ("${last.reason}")`);
+    // (the funk track's Guitar already has Get Clucky: asking for it again changes nothing and says so)
+    const same = await run('set_tone', { rig: 'gr-clucky', track: 'guitar', reason: 'cluckier for the verse' });
+    const n0 = await E(() => window.overdub.store.history.length);
+    T.ok(same.ok && /^Guitar already had Get Clucky: nothing changed$/.test(same.unchanged || ''), `set_tone to the tone a track already has is no step, and says so ("${same.unchanged}")`);
+    const st = await run('set_tone', { rig: 'gr-shakedown', track: 'guitar', reason: 'more quack for the verse' });
+    const last = await E(() => { const o = window.overdub, l = o.store.history[o.store.history.length - 1]; return { reason: l?.reason, by: l?.by, n: o.store.history.length }; });
+    T.ok(st.ok && !st.unchanged && st.track?.name === 'Guitar' && last.n === n0 + 1 && last.reason === 'more quack for the verse' && last.by === 'mcp:test', `set_tone finds a track by its name, any case ("guitar": ${st.track?.name}), and History keeps the reason ("${last.reason}")`);
     const mk = await run('make_jam_track', { style: 'rock' });
     T.ok(mk.ok && /Only the person can bring it back: the Song menu's Recent songs, or the toast's Undo for a few seconds/.test(mk.replaced), `make_jam_track says only the person can bring the old song back ("${mk.replaced}")`);
     const back = [await run('undo', {}), await run('revert_my_changes', {})];

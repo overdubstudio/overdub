@@ -1,12 +1,13 @@
 // The Guitar Studio in Overdub (devices/guitar, devices/graph.js + kit.js, ui/faces.js, gallery.html):
-//  1. registry: every clawd-o-matic pedal and amp is registered (ids kept: pedal.<id>, amp.<id>), none refused, and
-//     every rig's devices exist; rigOps dispatch through the real store. Every worklet the vendored code builds is a
-//     file on the studio's origin with that source byte for byte, and the pedals and amps load theirs from those files.
+//  1. registry: every pedal and amp in the gear (devices/guitar/gear/) is registered (ids kept: pedal.<id>, amp.<id>),
+//     none refused, and every rig's devices exist; rigOps dispatch through the real store. Every worklet the gear's code
+//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals and amps
+//     load theirs from those files.
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
 //  3. bypass is exact: a sample of insert and trails pedals, off, equals the dry input to -90 dB.
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
-//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is clawd-o-matic's
+//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
 //     plugAmp sample for sample (also with a cab and two mics).
 //  5. the rigs: every preset (but the keys bank's) through its whole chain lands at -14 LUFS ±1.5 (leads up to -12),
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
@@ -14,6 +15,12 @@
 //  6. live: stomping a few pedals on and off while a tone plays is click-free (the 10 ms crossfades).
 //  6b. live: a pedal and an amp built on and wired in a moment later (as a strip does) play through themselves from
 //     the first note, not their dry signal.
+//  6c. live, the lifecycle (docs/DEVICES.md, "Graph devices in a live chain"; devices/lifecycle.js): every pedal and amp
+//     built on a context whose clock moves 11.6 ms between reads, stomped before and after it's wired 25 ms later, says
+//     health().ok with its bypass gains at their targets, and nothing calls setValueCurveAtTime live; a device whose
+//     build throws rejects ready with 'threw' and plays the engine's stand-in with an 'error' report; a worklet module
+//     that fails once loads on the next build; assure() snaps a sabotaged dry gain; 50 amp swaps leave no wow
+//     oscillator running.
 //  7. faces: gallery.html renders a face for every device with no page errors; knobs turn (keys, double-click reset),
 //     switches flip, footswitches stomp; screenshots at 1440 and 390 wide (tools/.out/gallery-*.png).
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
@@ -95,45 +102,45 @@ async function boot(page) {
     const pedals = R.listDevices().filter((d) => d.id.startsWith('pedal.')), amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.'));
     const missing = [];
     for (const r of G.RIGS) for (const s of r.chain) if (!R.getDevice(s.device)) missing.push(r.id + ':' + s.device);
-    const ids = G.clawd.PEDAL_LIST.map((d) => d.id).filter((id) => !R.getDevice('pedal.' + id));
+    const ids = G.gear.PEDAL_LIST.map((d) => d.id).filter((id) => !R.getDevice('pedal.' + id));
     const badParams = [];
     for (const d of pedals.concat(amps)) for (const p of d.params) { if (!(p.def >= Math.min(p.min, p.max) && p.def <= Math.max(p.min, p.max))) badParams.push(d.id + '.' + p.key); if (p.fmt) { try { if (typeof p.fmt(p.def) !== 'string') badParams.push(d.id + '.' + p.key + ' fmt'); } catch { badParams.push(d.id + '.' + p.key + ' fmt throws'); } } }
     const roles = pedals.reduce((n, d) => n + d.params.filter((p) => p.role).length, 0), units = pedals.reduce((n, d) => n + d.params.filter((p) => p.unit).length, 0);
     const knobs = pedals.reduce((n, d) => n + d.params.length, 0);
-    return { pedals: pedals.length, clawdPedals: G.clawd.PEDAL_LIST.length, refused: G.clawd.PFX.refused, amps: amps.length, clawdAmps: Object.keys(G.clawd.PLUG_AMPS).length,
-      rigs: G.RIGS.length, presets: G.clawd.PLUG_PRESETS.length, banks: G.RIG_BANKS.length, missing, ids, badParams, roles, units, knobs,
+    return { pedals: pedals.length, clawdPedals: G.gear.PEDAL_LIST.length, refused: G.gear.PFX.refused, amps: amps.length, clawdAmps: Object.keys(G.gear.PLUG_AMPS).length,
+      rigs: G.RIGS.length, presets: G.gear.PLUG_PRESETS.length, banks: G.RIG_BANKS.length, missing, ids, badParams, roles, units, knobs,
       trails: pedals.filter((d) => d.trails).length, cats: [...new Set(pedals.map((d) => d.cat))].join(' ') };
   });
-  t.ok(reg.pedals === reg.clawdPedals && reg.pedals >= 100 && !reg.ids.length, `${reg.pedals} pedals registered (clawd-o-matic has ${reg.clawdPedals}) as pedal.<id>${reg.ids.length ? '; missing ' + reg.ids.join(' ') : ''}`);
+  t.ok(reg.pedals === reg.clawdPedals && reg.pedals >= 100 && !reg.ids.length, `${reg.pedals} pedals registered (the gear has ${reg.clawdPedals}) as pedal.<id>${reg.ids.length ? '; missing ' + reg.ids.join(' ') : ''}`);
   t.ok(!reg.refused.length, `no pedal refused by its pedalDef${reg.refused.length ? ': ' + JSON.stringify(reg.refused) : ''}`);
-  t.ok(reg.amps === reg.clawdAmps && reg.amps >= 27, `${reg.amps} amps registered as amp.<id> (clawd-o-matic has ${reg.clawdAmps})`);
+  t.ok(reg.amps === reg.clawdAmps && reg.amps >= 27, `${reg.amps} amps registered as amp.<id> (the gear has ${reg.clawdAmps})`);
   t.ok(reg.rigs === reg.presets && reg.rigs > 100, `${reg.rigs} rigs from ${reg.banks} banks (every preset)`);
   t.ok(!reg.missing.length, `every rig's devices are registered${reg.missing.length ? ': ' + reg.missing.slice(0, 5).join(' ') : ''}`);
   t.ok(!reg.badParams.length, `every param's default is in range and its fmt returns a string${reg.badParams.length ? ': ' + reg.badParams.slice(0, 5).join(' ') : ''}`);
   t.note(`${reg.knobs} pedal params: ${reg.roles} with a role, ${reg.units} with a unit; ${reg.trails} trails pedals; cats: ${reg.cats}`);
 
   // the worklets: the studio loads worklet modules only from files on its own origin (its policy refuses data: and
-  // blob: scripts), so tools/vendor-clawd.js wrote every processor source the vendored code builds to a file of its own
-  // (app/vendor/clawd/worklets/). Each file is that source byte for byte (after its one line saying so), and every
+  // blob: scripts), so every processor source the gear's code builds is also a file of its own
+  // (devices/guitar/gear/worklets/). Each file is that source byte for byte (after its one line saying so), and every
   // pedal and amp device names those files for its worklets.
   const wl = await page.evaluate(async () => {
     const { G, R } = window.__gt;
-    const { WORKLETS } = await import('/app/src/devices/guitar/clawd.js');
-    const src = { 'clawd-amps': G.clawd.PLUG_WORKLETS };
-    for (const [n, w] of Object.entries(G.clawd.PFX.worklets)) src[n] = w.src;
+    const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
+    const src = { 'clawd-amps': G.gear.PLUG_WORKLETS };
+    for (const [n, w] of Object.entries(G.gear.PFX.worklets)) src[n] = w.src;
     const diff = [], files = Object.values(WORKLETS);
     for (const [n, s] of Object.entries(src)) {
       if (!WORKLETS[n]) { diff.push(n + ': no file'); continue; }
       const u = new URL(WORKLETS[n]);
       const text = await (await fetch(u)).text();
-      if (u.origin !== location.origin || !u.pathname.startsWith('/app/vendor/clawd/worklets/')) diff.push(n + ': ' + u.href);
+      if (u.origin !== location.origin || !u.pathname.startsWith('/app/src/devices/guitar/gear/worklets/')) diff.push(n + ': ' + u.href);
       else if (text.slice(text.indexOf('\n') + 1) !== s) diff.push(n + ': not its source');
     }
     const devs = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id) && d.worklets);
     const named = devs.flatMap((d) => Object.entries(d.worklets).filter(([n, u]) => u !== WORKLETS[n] || !files.includes(u)).map(([n]) => d.id + ':' + n));
     return { n: Object.keys(src).length, files: files.length, diff, devs: devs.length, named };
   });
-  t.ok(wl.n >= 40 && wl.files === wl.n && !wl.diff.length, `${wl.n} worklets the vendored code builds, each a file of its own on the studio's origin with its source byte for byte (app/vendor/clawd/worklets/)${wl.diff.length ? ': ' + wl.diff.slice(0, 5).join(', ') : ''}`);
+  t.ok(wl.n >= 40 && wl.files === wl.n && !wl.diff.length, `${wl.n} worklets the gear's code builds, each a file of its own on the studio's origin with its source byte for byte (gear/worklets/)${wl.diff.length ? ': ' + wl.diff.slice(0, 5).join(', ') : ''}`);
   t.ok(wl.devs >= 30 && !wl.named.length, `the ${wl.devs} pedals and amps with worklets load them from those files${wl.named.length ? '; not: ' + wl.named.slice(0, 5).join(' ') : ''}`);
   // the kit's own envelope follower (PFX.ENV, for a graph device of Overdub's that calls kit.envelope(); no built-in
   // does yet): its file loads behind END and it follows a tone
@@ -244,7 +251,7 @@ async function boot(page) {
     }
     return out;
   });
-  // Kernels are bit-exact. A few vendored pedals drive their modulation from main-thread timers (they predate the
+  // Kernels are bit-exact. A few of the gear's pedals drive their modulation from main-thread timers (they predate the
   // clock), so under heavy CPU load two renders can differ by a render quantum's worth of wobble: allowed up to
   // -80 dB, and named here so it stays visible.
   const inexact = det.filter(([, d]) => d > 0);
@@ -275,20 +282,20 @@ async function boot(page) {
       const buf = { sampleRate: SR, numberOfChannels: 2, length: r[0].length, getChannelData: (i) => r[i] };
       out.push({ id: d.id, name: d.name, bass, lufs: clawdLufs(r[0], r[1]), bs1770: M.lufs(buf), tp: tp(r), ...check(r) });
     }
-    // the same as clawd-o-matic's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
+    // the same as the gear's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
     const same = [];
-    const studio = G.clawd.presetResolve(G.clawd.PLUG_PRESETS.find((p) => p.id === 'studio'));
+    const studio = G.gear.presetResolve(G.gear.PLUG_PRESETS.find((p) => p.id === 'studio'));
     for (const [id, S] of [['punk', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['abyss', { gain: 7, bass: 4, mid: 6, treble: 5, presence: 6, level: 5 }], ['punk', studio], ['jangle', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
       const x = input('di', 2), P = Object.assign({}, S, { amp: id }); delete P.board;
       const a = await render([{ device: 'amp.' + id, params: G.ampParams(P) }], x);
       const { loadWorklet } = await import('/app/src/devices/kit.js');
-      const { WORKLETS } = await import('/app/src/devices/guitar/clawd.js');
+      const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
       // (exact: the settings the device hands plugAmp; the preset's own: within its mic position's rounding)
       const run = async (Q) => {
         const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
         b.copyToChannel(x, 0); s.buffer = b;
-        if (G.clawd.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
-        const amp = G.clawd.plugAmp(c); amp.set(Q);
+        if (G.gear.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
+        const amp = G.gear.plugAmp(c); amp.set(Q);
         s.connect(amp.input); amp.output.connect(c.destination); s.start(0);
         const o = await c.startRendering();
         let d = 0; for (let ch = 0; ch < 2; ch++) { const y = o.getChannelData(ch); for (let i = 0; i < y.length; i++) d = Math.max(d, Math.abs(a[ch][i] - y[i])); }
@@ -303,7 +310,7 @@ async function boot(page) {
     const okLevel = Math.abs(a.lufs + 14) <= 0.75;
     t.ok(!a.bad && okLevel && a.tp <= -1, `${a.id.padEnd(12)} ${a.name.padEnd(13)} ${a.lufs.toFixed(1)} LUFS (BS.1770 ${a.bs1770.toFixed(1)}), TP ${a.tp.toFixed(1)} dBTP${a.bass ? ' (bass DI)' : ''}${a.bad ? ' NaN!' : ''}`);
   }
-  t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are clawd-o-matic's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
+  t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are the gear's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
   const worstPreset = Math.max(...amps.same.map((s) => s.dPreset));
   t.ok(worstPreset < 1e-3, `a preset's amp settings come across within ${(20 * Math.log10(worstPreset + 1e-12)).toFixed(0)} dBFS (a mic's x, y on the cone become one radius, as the sound only hears the radius; plugCabClean rounds x and y)`);
 
@@ -368,9 +375,10 @@ async function boot(page) {
   for (const l of live) t.ok(l.ratio < 1.6 && l.secs > 1, `live stomps on ${l.id} are click-free (second difference at the stomps ${l.ratio.toFixed(2)}× the steady sound's, ${l.secs.toFixed(1)} s captured)`);
 
   // 6b. live: built on and wired in a moment later, as a strip wires a device in after its dip, it plays through itself
-  // from the first note. Chrome 155 drops a curve that is over before its node first renders, so the footswitch's 10 ms
-  // switch to on was lost and every pedal and amp passed its dry signal until it was stomped off and on (kit.js endAt).
-  // (Chromium 151, the one tools/pw.js finds, lands the curve: CHROMIUM=<a Chrome 155 or later> makes this one bite.)
+  // from the first note. Chrome 155 and 156 drop a value curve that is over before its node first renders, so a
+  // footswitch curve at build left every pedal and amp passing its dry signal until it was stomped off and on. Now a
+  // device is built with its bypass set by .value and switches with linear ramps (kit.js glide, graph.js).
+  // (Chromium 151, the one tools/pw.js finds, landed the curve: CHROMIUM=<a Chrome 155 or later> makes this one bite.)
   const late = await page.evaluate(async () => {
     const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
     await c.resume();
@@ -398,6 +406,121 @@ async function boot(page) {
     return res;
   });
   for (const l of late) t.ok(l.db > -20 && l.n > 50, `${l.id} built on and wired in 80 ms later plays through itself from the first note, not its dry signal (${Number.isFinite(l.db) ? l.db.toFixed(1) + ' dB' : '-inf'} from the dry)`);
+
+  // 6c. live, the lifecycle. Chrome's audio clock steps 5.8 ms (256 frames) at a time, even inside one task, and Chrome
+  // 155 and 156 drop a value curve that's over before its node first renders: a footswitch that read the clock twice
+  // left an amp dry plus wet, or a pedal silent, until it was stomped (docs/research/AMP-PATH.md §1). Here the clock
+  // reads 11.6 ms stale every other time, every device is stomped off and on before it's wired (unrendered) and again
+  // after, and each must say it's where it was asked to be.
+  const life = await page.evaluate(async () => {
+    const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+    await c.resume();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const real = Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'currentTime').get;
+    let reads = 0;
+    Object.defineProperty(c, 'currentTime', { configurable: true, get() { const t = real.call(c); return reads++ % 2 ? t : Math.max(0, t - 0.0116); } });
+    const P = AudioParam.prototype, curve = P.setValueCurveAtTime;
+    let curves = 0;
+    P.setValueCurveAtTime = function (...a) { curves++; return curve.apply(this, a); };
+    const ids = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id)).map((d) => d.id), bad = [];
+    const src = c.createOscillator(), g = c.createGain(), sink = c.createGain();
+    src.frequency.value = 196; g.gain.value = 0.25; sink.gain.value = 0; src.connect(g); sink.connect(c.destination); src.start();
+    for (let k = 0; k < ids.length; k += 16) {
+      await Promise.all(ids.slice(k, k + 16).map(async (id) => {
+        let inst;
+        try { inst = await R.instantiate(c, id, { uid: 'life-' + id, on: true, bpm: 120 }); await inst.ready; } catch (e) { bad.push(id + ' ' + (e.code || '') + ' ' + e.message); return; }
+        inst.setOn(false); inst.setOn(true); // (stomped while nothing has rendered)
+        await sleep(25);
+        g.connect(inst.input); inst.output.connect(sink);
+        await sleep(150);
+        let h = inst.health();
+        const near = (x, y) => Math.abs(x - y) <= 1e-3 * Math.max(1, Math.abs(y));
+        if (!h.ok || !near(h.dry, h.want.dry) || !near(h.wet, h.want.wet)) bad.push(`${id} unwired-stomp ${JSON.stringify(h)}`);
+        inst.setOn(false); await sleep(60); inst.setOn(true); // (and once it's playing)
+        await sleep(150);
+        h = inst.health();
+        if (!h.ok || !near(h.dry, h.want.dry) || !near(h.wet, h.want.wet)) bad.push(`${id} wired-stomp ${JSON.stringify(h)}`);
+        try { g.disconnect(inst.input); } catch { /* gone */ }
+        inst.dispose(); inst.dispose();
+      }));
+    }
+    src.stop(); delete c.currentTime;
+    P.setValueCurveAtTime = curve;
+    // assure(): the dry gain put back to 1 under an amp that's on (what Chrome 156 left) is seen, and snapped
+    const gains = [], mk = c.createGain;
+    c.createGain = function () { const n = mk.call(c); gains.push(n); return n; };
+    const amp = await R.instantiate(c, 'amp.recto', { uid: 'sabotage', on: true }); await amp.ready;
+    c.createGain = mk;
+    const dry = gains[2]; // (graph.js: in, out, dry, wet)
+    await sleep(30);
+    dry.gain.cancelScheduledValues(0); dry.gain.value = 1;
+    const before = amp.health(), snapped = amp.assure(), after = amp.health(), again = amp.assure();
+    amp.dispose();
+    await c.close();
+    return { n: ids.length, bad, curves, before, snapped, after, again };
+  });
+  t.ok(life.n >= 128 && !life.bad.length, `all ${life.n} pedals and amps, built live with the clock moving 11.6 ms between reads and stomped before and after they're wired, say they're where they were asked to be (health ok, dry and wet at target)${life.bad.length ? ': ' + life.bad.slice(0, 4).join(' | ') : ''}`);
+  t.ok(life.curves === 0, `nothing called setValueCurveAtTime on the live context (${life.curves})`);
+  t.ok(!life.before.ok && life.before.dry === 1 && life.snapped === true && life.after.ok && life.after.dry === 0 && life.again === false, `assure() sees an amp's dry gain put back to 1 (health ok ${life.before.ok}), snaps it (${life.snapped}: dry ${life.after.dry}, ok ${life.after.ok}) and has nothing to do after (${life.again})`);
+
+  // a build that throws, through the engine; a worklet that fails once; 50 amp swaps
+  const fail = await page.evaluate(async () => {
+    const { R } = window.__gt;
+    const { failureCode } = await import('/app/src/devices/lifecycle.js');
+    const E = await import('/app/src/engine/engine.js'), S = await import('/app/src/core/store.js');
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const warn = console.warn; console.warn = () => {};
+    const out = {};
+    try {
+      R.defineDevice({ id: 'test.throws', name: 'Throws', kind: 'effect', cat: 'utility', params: [], look: {}, build() { throw new Error('a test build that throws'); } }, { replace: true });
+      const c0 = new AudioContext();
+      const i0 = await R.instantiate(c0, 'test.throws', { uid: 't0' });
+      out.code = await i0.ready.then(() => 'resolved', (e) => failureCode(e));
+      i0.dispose(); await c0.close();
+      const store = S.createStore();
+      let r = store.dispatch({ type: 'track.add', track: { name: 'Guitar', kind: 'audio' }, ref: 'g' }, { by: 'you' });
+      const tid = r.created.g;
+      r = store.dispatch({ type: 'insert.add', track: tid, insert: { device: 'test.throws' }, ref: 'fx' }, { by: 'you' });
+      const fxId = r.created.fx;
+      const engine = E.createEngine(store), errs = [];
+      engine.on('error', (e) => errs.push(e.message));
+      await engine.start(); await engine.settled();
+      const inst = engine.instance(tid, fxId);
+      out.standIn = !!(inst && inst.fallback);
+      out.reported = errs.filter((m) => /test\.throws/.test(m) && /a test build that throws/.test(m));
+      await engine.ctx.close();
+      // the gate's worklet module failing once: a 'worklet' failure, then the next build loads it
+      const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
+      const c = new AudioContext(), add = c.audioWorklet.addModule.bind(c.audioWorklet);
+      let failed = 0;
+      c.audioWorklet.addModule = (u, o) => (String(u) === WORKLETS['clawd-gate'] && !failed++ ? Promise.reject(new Error('a blip')) : add(u, o));
+      const a = await R.instantiate(c, 'pedal.gate', { uid: 'wk1' });
+      out.first = await a.ready.then(() => 'resolved', (e) => failureCode(e));
+      a.dispose();
+      const b = await R.instantiate(c, 'pedal.gate', { uid: 'wk2' });
+      out.second = await b.ready.then(() => 'resolved', (e) => failureCode(e));
+      out.gateNode = !!(b.device && b.device.node);
+      b.dispose();
+      // 50 amp swaps: each one's wow oscillator stops with it
+      const running = new Set(), mkOsc = c.createOscillator;
+      c.createOscillator = function () { const o = mkOsc.call(c), st = o.start, sp = o.stop; o.start = (...x) => { running.add(o); return st.apply(o, x); }; o.stop = (...x) => { running.delete(o); return sp.apply(o, x); }; return o; };
+      const amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.')).map((d) => d.id);
+      let cur = null;
+      for (let k = 0; k < 50; k++) {
+        const next = await R.instantiate(c, amps[k % amps.length], { uid: 'swap' + k }); await next.ready;
+        if (cur) cur.dispose();
+        cur = next;
+      }
+      out.whileOne = running.size;
+      cur.dispose();
+      out.after = running.size;
+      await sleep(10); await c.close();
+    } finally { console.warn = warn; }
+    return out;
+  });
+  t.ok(fail.code === 'threw' && fail.standIn && fail.reported.length > 0, `a device whose build throws rejects ready with 'threw' (${fail.code}), and the engine plays its stand-in (${fail.standIn}) and says so (${fail.reported[0] || 'no error report'})`);
+  t.ok(fail.first === 'worklet' && fail.second === 'resolved' && fail.gateNode, `the Snapper with its worklet failing to load once is a 'worklet' failure (${fail.first}), and the next build loads it (${fail.second}, gate ${fail.gateNode ? 'in' : 'missing'})`);
+  t.ok(fail.whileOne === 1 && fail.after === 0, `50 amp swaps leave only the playing amp's wow oscillator running (${fail.whileOne}), and none once it's gone (${fail.after})`);
 
   t.ok(!errors.length, `no page errors in the audio checks${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await close();

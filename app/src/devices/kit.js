@@ -1,18 +1,27 @@
-// The graph DSP kit: what a graph device's build(c, kit) gets. A port of clawd-o-matic's PFX (web/pedals.js, the pedal
-// platform of AJ's Guitar Studio: app/vendor/clawd/pedals.js is the original), so the hundred-odd pedals ported from
-// there run unchanged, and Overdub's own graph devices get the same tools.
+// The graph DSP kit: what a graph device's build(c, kit) gets. A port of the guitar gear's PFX (the pedal platform:
+// devices/guitar/gear/code.js, its pedals.js section, is the original), so the hundred-odd pedals in the gear run
+// unchanged, and Overdub's own graph devices get the same tools.
 //
 //   PFX                         the context-free helpers: dB, toDb, clamp, rng, noteSec, noteFmt, NOTES, ENV, END
 //   makeKit(c, { uid, seed, clock })   -> kit (below) plus kit.release() (stops what it started: devices/graph.js calls it)
 //   loadWorklet(c, name, url)   load an AudioWorkletProcessor's module (a file on this origin) once per context, behind
-//                               END: Promise<boolean>
-//   workletsReady(c, worklets)  true if every { name: url } is in (build now), else a Promise of their loading
-//   workletLoaded(c, name)      true / false / undefined (not asked for yet)
+//                               END: Promise<boolean>. A module that failed is asked for again by the next request, at
+//                               least WORKLET_RETRY ms after it failed (never cached as failed for the page's life)
+//   workletsReady(c, worklets)  true if every { name: url } is in (build now), else a Promise of the names that did
+//                               not load ([] when they all did)
+//   workletLoaded(c, name)      true / false (it failed last time) / undefined (not asked for yet, or loading)
 //   endWorklet(node)            tell a processor loaded by loadWorklet to stop (it returns false from then on)
-//   glide(c, param, v, dur, at) move an AudioParam along a raised cosine (no click at either end)
+//   glide(c, param, v, dur, at) move an AudioParam along a raised cosine (no click at either end): live, linear ramps
+//                               from one read of the clock; offline, a value curve scheduled ahead (as it always was)
+//   cosineRamp(param, from, to, now, t, dur)   that raised cosine as linear ramps, held at `from` from `now` until `t`
 //   isOffline(c)
 //
-// The kit (k.G, k.F, ...): the same names and meanings as clawd-o-matic's (docs/PEDALS.md there, "The kit"):
+// The live rules (docs/DEVICES.md, "Graph devices in a live chain"; devices/lifecycle.js): nothing here schedules a
+// setValueCurveAtTime on a live context (Chrome 155 and 156 drop a curve that is over before its node first renders,
+// and leave the param where it was), and every live move reads the audio clock once (Chrome's currentTime steps 5.8 ms
+// at a time, even inside one task: a second read can be later than the first).
+//
+// The kit (k.G, k.F, ...): the same names and meanings as the gear's (devices/guitar/gear/docs/PEDALS.md, "The kit"):
 //   G(v) F(type, f, Q?, gain?) chain(...nodes) curve(fn, over, n) shaper(k, bias, over) delay(max, t) lfo(rate, shape)
 //   constant(v) noise({ secs, seed, color, channels }) noiseSource(opts) ir({ secs, pre, seed, tail, damp, darken,
 //   width, channels }) convolver(buffer?) merge(L, R) pan(v) envelope({ attack, release }) worklet(name, opts)
@@ -50,55 +59,81 @@ export const isOffline = (c) => typeof OfflineAudioContext !== 'undefined' && c 
 /* ---- worklets: a def's worklets map each processor name to its module's URL, a file on the page's own origin (the
    pages' policy refuses data: and blob: scripts, so a worklet can't be made from a string). Each is loaded once per
    context, behind END (once per context, first). A processor name is one per context, so the first module to load
-   under a name keeps it. */
-const BOX = new WeakMap(); // context -> { end: Promise<bool>, p: { name: Promise<bool> }, ok: { name: bool } }
-const box = (c) => { let b = BOX.get(c); if (!b) BOX.set(c, (b = { end: null, p: {}, ok: {} })); return b; };
+   under a name keeps it. A load that failed (a network blip, a busy machine) is not the answer for the page's life: the
+   next request asks again, WORKLET_RETRY ms after the failure at the soonest. */
+export const WORKLET_RETRY = 1000;
+const BOX = new WeakMap(); // context -> { end: load, w: { name: load } }; load: { p: Promise<bool>, ok: true | false | undefined, at, bad }
+const box = (c) => { let b = BOX.get(c); if (!b) BOX.set(c, (b = { end: null, w: {} })); return b; };
+const addModule = (c, url) => (c.state === 'closed' ? Promise.resolve(false) : Promise.resolve().then(() => c.audioWorklet.addModule(url)).then(() => true, () => false));
+const after = (ms) => new Promise((r) => setTimeout(r, ms));
+// one load, retried WORKLET_RETRY after a failure: prev is the load it replaces (or null)
+function attempt(prev, run) {
+  const wait = prev && prev.ok === false ? Math.max(0, prev.at + WORKLET_RETRY - Date.now()) : 0;
+  const l = { p: null, ok: undefined, at: 0, bad: false };
+  l.p = (wait ? after(wait) : Promise.resolve()).then(run).then((ok) => { l.ok = !!ok; if (!ok) l.at = Date.now(); return l.ok; });
+  return l;
+}
+// END, once per context (again after a failure)
+function endLoaded(c, b) {
+  if (!b.end || (b.end.ok === false && !b.end.bad)) b.end = attempt(b.end, () => addModule(c, END));
+  return b.end.p;
+}
 export function loadWorklet(c, name, url) {
   if (!c || !c.audioWorklet) return Promise.resolve(false);
-  const b = box(c);
-  if (!b.p[name]) {
-    const add = (u) => c.audioWorklet.addModule(u).then(() => true, () => false);
-    if (typeof url !== 'string' || !url || /\s/.test(url)) {
-      console.error(`worklet "${name}": a def's worklets give its module's URL (a .js file on this origin), not its source`);
-      b.p[name] = Promise.resolve((b.ok[name] = false));
-    } else {
-      if (!b.end) b.end = add(END);
-      b.p[name] = b.end.then((ok) => ok && add(url)).then((ok) => (b.ok[name] = ok));
-    }
+  const b = box(c), cur = b.w[name];
+  if (cur && (cur.ok !== false || cur.bad)) return cur.p; // in, on its way, or a def that can never load
+  if (typeof url !== 'string' || !url || /\s/.test(url)) {
+    console.error(`worklet "${name}": a def's worklets give its module's URL (a .js file on this origin), not its source`);
+    b.w[name] = { p: Promise.resolve(false), ok: false, at: 0, bad: true };
+    return b.w[name].p;
   }
-  return b.p[name];
+  b.w[name] = attempt(cur, () => endLoaded(c, b).then((ok) => ok && addModule(c, url)));
+  return b.w[name].p;
 }
-export const workletLoaded = (c, name) => box(c).ok[name];
+export const workletLoaded = (c, name) => { const l = box(c).w[name]; return l ? l.ok : undefined; };
 export function workletsReady(c, worklets) {
   const names = Object.keys(worklets || {});
-  const b = box(c);
-  if (names.every((n) => n in b.ok)) return true;
-  return Promise.all(names.map((n) => loadWorklet(c, n, worklets[n]))).then(() => true);
+  if (names.every((n) => workletLoaded(c, n) === true)) return true;
+  return Promise.all(names.map((n) => loadWorklet(c, n, worklets[n]))).then((oks) => names.filter((n, i) => !oks[i]));
 }
 export function endWorklet(n) { try { if (n && n.port) n.port.postMessage({ __pfxEnd: true }); } catch { /* gone */ } }
 
 // Move an AudioParam to v along a raised cosine over dur seconds, from audio time `at` (or now). Live it starts from
-// where the param is; offline (scheduled ahead) from `from` if given.
+// where the param is (or `from`), from ONE read of the clock: held there from now, then linear ramps through the
+// cosine's 24 points from `at` (at least 3 ms ahead), the trajectory a 24-point value curve gave (Web Audio draws a
+// curve as straight lines between its points) without the curve: linear ramps land on a node that hasn't rendered, on
+// every browser. Offline (scheduled ahead from time 0) it is the value curve it always was, so renders stay
+// bit-identical.
+export const LEAD = 0.003;
 export function glide(c, param, v, dur, at, from) {
-  const live = !isOffline(c);
-  const t = live ? Math.max(c.currentTime + 0.003, at || 0) : Math.max(c.currentTime, at || 0);
+  if (!isOffline(c)) {
+    const now = c.currentTime;
+    cosineRamp(param, from != null ? from : param.value, v, now, Math.max(now + LEAD, at || 0), dur);
+    return;
+  }
+  // offline: exactly as before (the curve, and its last value set again where it ends)
+  const t = Math.max(c.currentTime, at || 0);
   const f0 = from != null ? from : param.value, n = 24, cv = new Float32Array(n);
   if (Math.abs(f0 - v) < 1e-9) { param.cancelScheduledValues(t); param.setValueAtTime(v, t); return; }
   for (let i = 0; i < n; i++) cv[i] = f0 + (v - f0) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (n - 1)));
-  if (live) { param.cancelScheduledValues(0); param.setValueAtTime(f0, c.currentTime); } else { param.cancelScheduledValues(t); param.setValueAtTime(f0, t); }
-  try { param.setValueCurveAtTime(cv, t, dur); } catch { param.setTargetAtTime(v, t, dur / 4); return; }
-  endAt(param, v, t + dur);
+  param.cancelScheduledValues(t); param.setValueAtTime(f0, t);
+  try { param.setValueCurveAtTime(cv, t, dur); } catch { param.setTargetAtTime(v, t, dur / 4); return; } // (offline only: isOffline above)
+  try { param.setValueAtTime(v, t + dur); } catch { /* the curve stands */ }
 }
-// A curve's last value, set again where the curve ends. Chrome 155 drops a curve that is over before its node is first
-// rendered and leaves the param where it was: graph.js's footswitch runs when a device is built, and its strip wires
-// it in after a dip, so every pedal and amp came up passing its dry signal until it was switched off and on (Chromium
-// 151 lands the curve). A browser that counts the end as inside the curve throws, and the curve stands.
-function endAt(param, v, t) { try { param.setValueAtTime(v, t); } catch { /* the curve stands */ } }
+// The raised cosine from `from` to `to` as linear ramps: everything scheduled on param is dropped, it holds `from`
+// from `now` (the one clock read) until t, then moves over dur and lands on `to` exactly. n points (24: the curve's).
+export function cosineRamp(param, from, to, now, t, dur, n = 24) {
+  param.cancelScheduledValues(0);
+  if (Math.abs(from - to) < 1e-9) { param.setValueAtTime(to, now); return; }
+  param.setValueAtTime(from, now);
+  if (t > now) param.setValueAtTime(from, t);
+  for (let i = 1; i < n; i++) param.linearRampToValueAtTime(i === n - 1 ? to : from + (to - from) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (n - 1))), t + (dur * i) / (n - 1));
+}
 
 const NOISE = new WeakMap();
 // The kit for one device instance on context c. own: what it started (stopped by release()).
 export function makeKit(c, { uid = 'device', seed = 1, clock = null } = {}) {
-  const own = { src: [], timers: [], fns: [], wk: [] };
+  const own = { src: [], timers: new Set(), fns: [], wk: [] }; // (timers: the pending ones, each gone once it fires)
   const G = (v = 1) => { const n = c.createGain(); n.gain.value = v; return n; };
   const F = (type, f, q, g) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q != null) n.Q.value = q; if (g != null) n.gain.value = g; return n; };
   const chain = (...ns) => { for (let i = 0; i + 1 < ns.length; i++) ns[i].connect(ns[i + 1]); return ns[ns.length - 1]; };
@@ -159,20 +194,22 @@ export function makeKit(c, { uid = 'device', seed = 1, clock = null } = {}) {
     return b;
   };
   // A convolver whose IR can change under a ringing tail: live, a new .buffer fades in a new ConvolverNode over 50 ms
-  // while the old one fades out over 300 ms (a plain ConvolverNode drops its tail: a click). Offline: one node.
-  const later = (fn, ms) => { const id = setTimeout(fn, ms); own.timers.push(id); return id; };
+  // while the old one fades out over 300 ms (a plain ConvolverNode drops its tail: a click). The new branch is made
+  // first (setting a ConvolverNode's buffer takes a while), its gain set to 0 by .value, and then the clock is read
+  // once for both fades (linear ramps: kit.js glide). Offline, and for the first IR: one node.
+  const later = (fn, ms) => { const id = setTimeout(() => { own.timers.delete(id); fn(); }, ms); own.timers.add(id); return id; };
   const convolver = (buffer) => {
     const live = !isOffline(c);
     const inp = G(1), out = G(1), link = (a, b) => AudioNode.prototype.connect.call(a, b), unlink = (a, b) => { try { AudioNode.prototype.disconnect.call(a, b); } catch { /* gone */ } };
     let norm = true;
-    const add = (b) => { const n = c.createConvolver(), g = G(1); n.normalize = norm; if (b) n.buffer = b; link(inp, n); n.connect(g); g.connect(out); return { n, g }; };
+    const add = (b, g0 = 1) => { const n = c.createConvolver(), g = G(g0); n.normalize = norm; if (b) n.buffer = b; link(inp, n); n.connect(g); g.connect(out); return { n, g }; };
     let cur = add(buffer);
-    const fade = (param, from, to, t, dur) => { const k = 24, cv = new Float32Array(k); for (let i = 0; i < k; i++) cv[i] = from + (to - from) * (0.5 - 0.5 * Math.cos((Math.PI * i) / (k - 1))); param.cancelScheduledValues(0); param.setValueAtTime(from, c.currentTime); param.setValueCurveAtTime(cv, t, dur); endAt(param, to, t + dur); };
     Object.defineProperty(inp, 'buffer', { configurable: true, get: () => cur.n.buffer, set(b) {
       if (!live || !cur.n.buffer) { cur.n.buffer = b; return; }
-      const old = cur, t = c.currentTime + 0.003;
-      cur = add(b);
-      fade(cur.g.gain, 0, 1, t, 0.05); fade(old.g.gain, old.g.gain.value, 0, t, 0.3);
+      const old = cur;
+      cur = add(b, 0);
+      const now = c.currentTime, t = now + LEAD;
+      cosineRamp(cur.g.gain, 0, 1, now, t, 0.05); cosineRamp(old.g.gain, old.g.gain.value, 0, now, t, 0.3);
       later(() => { unlink(inp, old.n); old.n.disconnect(); old.g.disconnect(); }, 400);
     } });
     Object.defineProperty(inp, 'normalize', { configurable: true, get: () => norm, set(v) { norm = !!v; cur.n.normalize = norm; } });
@@ -199,7 +236,7 @@ export function makeKit(c, { uid = 'device', seed = 1, clock = null } = {}) {
     for (const s of own.src) { try { s.stop(); } catch { /* not started */ } try { s.disconnect(); } catch { /* gone */ } }
     for (const fn of own.fns) { try { fn(); } catch { /* its business */ } }
     for (const n of own.wk) endWorklet(n);
-    own.src = []; own.timers = []; own.fns = []; own.wk = [];
+    own.src = []; own.timers.clear(); own.fns = []; own.wk = [];
   } });
   return kit;
 }

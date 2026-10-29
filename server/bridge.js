@@ -13,6 +13,10 @@
 //   any   -> GET  /bridge/tools  -> { tools, source: 'page' | 'catalog' }   tools: [{ name, description, input_schema,
 //                                                               annotations }], the tab's or (no tab) catalogSchemas()
 //   any   -> GET  /bridge/status -> { pages, agents, root, url }
+//   page  -> POST /bridge/file?id=<call>  (raw bytes)        export_take's WAV (app/src/agent/take-export.js), put here for
+//                                                              the call it answers, before the answer: a long take never
+//                                                              rides in the JSON (the 8 MB above); only while that call waits
+//   agent -> GET  /bridge/file?id=<call>  -> the bytes, once  server/mcp.js writes the file; gone after 10 minutes either way
 //
 // Safety: the server only listens on 127.0.0.1, any request carrying a browser Origin from another site is refused, and
 // so is any request whose Host isn't a loopback name (a DNS-rebound site has an Origin that matches its own Host), so a
@@ -30,6 +34,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pages = new Map();     // page id -> { res, tools, title, at, connected }
 const pending = new Map();   // call id -> { resolve, timer, page }
 const agents = new Map();    // agent name -> { at, calls }
+const files = new Map();     // call id -> { buf, timer }: export_take's bytes, until the agent takes them
+const FILE_MAX = 1024 * 1024 * 1024;   // a 20-minute stereo take at 96 kHz in 32-bit float is about 0.9 GB
 let seq = 0;
 let catalog = null;
 
@@ -53,6 +59,14 @@ function readBody(req, limit = 8 * 1024 * 1024) {
     let size = 0; const parts = [];
     req.on('data', (c) => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else parts.push(c); });
     req.on('end', () => { try { const s = Buffer.concat(parts).toString('utf8'); resolve(s ? JSON.parse(s) : {}); } catch { reject(new Error('body is not JSON')); } });
+    req.on('error', reject);
+  });
+}
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const parts = [];
+    req.on('data', (c) => { size += c.length; if (size > limit) { reject(new Error('body too large')); req.destroy(); } else parts.push(c); });
+    req.on('end', () => resolve(Buffer.concat(parts)));
     req.on('error', reject);
   });
 }
@@ -157,6 +171,25 @@ export function register({ addRoute }) {
         clearTimeout(c.timer); pending.delete(b.id);
         c.resolve(b.error ? { error: String(b.error), hint: b.hint } : { result: b.result });
         return json(res, 200, { ok: true });
+      }
+
+      if (route === 'file') {
+        const id = String(url.searchParams.get('id') || '');
+        if (req.method === 'POST') {
+          if (!pending.has(id)) return json(res, 404, { error: 'no such call (it timed out?)' });
+          const buf = await readRaw(req, FILE_MAX);
+          const was = files.get(id); if (was) clearTimeout(was.timer);
+          files.set(id, { buf, timer: setTimeout(() => files.delete(id), 10 * 60 * 1000) });
+          return json(res, 200, { ok: true, bytes: buf.length });
+        }
+        if (req.method === 'GET') {
+          const f = files.get(id);
+          if (!f) return json(res, 404, { error: 'no such file (taken already, or over 10 minutes old)' });
+          clearTimeout(f.timer); files.delete(id);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': f.buf.length, 'cache-control': 'no-store' });
+          res.end(f.buf);
+          return true;
+        }
       }
 
       if (route === 'agent' && req.method === 'POST') {

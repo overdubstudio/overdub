@@ -89,8 +89,15 @@ export default function (app) {
   const playedText = ({ hits, notes }) => [hits ? plural(hits, 'hit') : '', notes ? plural(notes, 'note') : ''].filter(Boolean).join(' and ') || 'nothing yet';
 
   /* ---------------------------------------------------------------- starting and stopping */
+  // (the live room covers the studio: the tour waits for it to close, then starts as asked, ui/liveroom/index.js)
+  let waiting = null, waitOff = null;
   function start({ force = false, restart = false } = {}) {
     if (!force && navigator.webdriver) return false;
+    if (!force && app.liveRoom?.isOpen?.()) {
+      waiting = { restart };
+      if (!waitOff && app.liveRoom.on) waitOff = app.liveRoom.on('close', () => { const w = waiting; waiting = null; if (w) start(w); });
+      return false;
+    }
     paused = false;
     const was = ls.get();
     if (!force && was && (was.state === 'done' || was.state === 'dismissed')) return false;
@@ -745,7 +752,7 @@ export default function (app) {
   // it runs from Tap a beat (the first minute), Song → Take one, and ?coach. (A tour left half-way waits there too.)
   const simple = ui.workspace?.view?.() === 'simple';
   if (forced) start({ force: true, restart: true });
-  else if (simple) { /* not by itself */ }
+  else if (simple || params.has('room')) { /* not by itself (?room: the live room is its own first run) */ }
   else if (!navigator.webdriver && elsewhere() && ((was && was.state === 'on') || (!was && firstVisit))) paused = true;
   else if (!navigator.webdriver && !elsewhere() && ((was && was.state === 'on') || (!was && firstVisit && !welcomeUp()))) start();
   // a tour that stepped aside for a link picks up when a song of yours is on screen again; not when the link's song is

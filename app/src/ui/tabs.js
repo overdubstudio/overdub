@@ -561,8 +561,8 @@ export function installTabs(app, room) {
             window.addEventListener('pointercancel', up, true);
           };
           holdBtn.addEventListener('pointerdown', start);
-          holdBtn.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); hold(i, true); } });
-          holdBtn.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') stop(); });
+          holdBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.repeat) { e.preventDefault(); hold(i, true); } });
+          holdBtn.addEventListener('keyup', (e) => { if (e.key === 'Enter') stop(); });
           return h('li.tb-take', { dataset: { i: String(i), from: TK.from }, class: sel ? 'sel' : null },
             h('button.tb-take-pick', { type: 'button', 'aria-pressed': String(sel), class: sel ? 'sel-print' : null, title: it.text, onclick: () => select(i) }, h('span.num.tb-letter', it.letter), h('b.tb-take-label', it.label)),
             h('span.tb-take-acts', holdBtn, sel ? h('button.btn.btn-go.tb-keep', { type: 'button', onclick: () => keep(i) }, 'Keep') : null));

@@ -107,6 +107,15 @@ export function createStore(project, { getDevice = null } = {}) {
     if (by && authors[by] && !doc.meta.authors[by]) doc.meta.authors[by] = { ...authors[by] };
   }
 
+  // A step put back by a redo: the same step, with the inverse that undoes it now. It keeps why it was made (reason) and
+  // that it was an audition, so History and the agents read a redone step as they read the step itself.
+  function redone(txn, inverse) {
+    const back = /** @type {Txn} */ ({ id: txn.id, at: Date.now(), by: txn.by, label: txn.label, ops: txn.ops, inverse });
+    if (txn.reason) back.reason = txn.reason;
+    if (txn.audition) back.audition = true;
+    return back;
+  }
+
   // Redo a revert (revertAuthor's one redo step): its changes go back in, oldest first, each one its own History line
   // again. All or nothing: if one can't go back, the ones before it are taken out again and the song is as it was.
   function redoRevert(entry) {
@@ -114,7 +123,7 @@ export function createStore(project, { getDevice = null } = {}) {
     try {
       for (const x of entry.revert) {
         const r = run(x.forward, x.by, { restore: true });
-        back.push({ id: x.id, at: Date.now(), by: x.by, label: x.label, ops: x.ops, inverse: r.inverse });
+        back.push(redone(x, r.inverse));
       }
     } catch (e) {
       for (const b of back.slice().reverse()) { try { run(b.inverse, b.by, { restore: true }); } catch (e2) { console.error('store: redo of a revert, rolling back', e2); } }
@@ -273,7 +282,7 @@ export function createStore(project, { getDevice = null } = {}) {
       if (txn.revert) return redoRevert(txn);
       let r;
       try { r = run(txn.forward, txn.by, { restore: true }); } catch (e) { undone = []; return { ok: false, error: 'could not redo: ' + e.message }; }
-      const back = { id: txn.id, at: Date.now(), by: txn.by, label: txn.label, ops: txn.ops, inverse: r.inverse };
+      const back = redone(txn, r.inverse);
       done.push(back);
       touch(txn.by);
       emit('change', { txn: back, ops: txn.forward, by: txn.by, kind: 'redo' });
@@ -322,6 +331,17 @@ export function describe(ops) {
       case 'instrument.set': return o.device ? `instrument ${o.device}` : 'tweak instrument';
       case 'project.set': return Object.keys(o.patch || {}).join(', ');
       case 'device.define': return `write device ${o.device?.name || o.device?.id || ''}`.trim();
+      // the live room's (core/liveroom/room-ops.js, sheet-ops.js) and its move (core/arrangement.js)
+      case 'room.set': return o.clear ? 'clear the room' : 'room ' + Object.keys(o.patch || {}).join(', ');
+      case 'room.part.set': return o.remove ? 'clear a part' : 'part ' + Object.keys(o.patch || {}).join(', ');
+      case 'sheet.set': return o.clear ? 'clear the sheet' : 'sheet ' + Object.keys(o.patch || {}).join(', ');
+      case 'sheet.section.add': return `add ${o.section?.name || 'a section'} to the sheet`;
+      case 'sheet.section.set': return 'rename a section of the sheet';
+      case 'sheet.section.remove': return 'remove a section of the sheet';
+      case 'sheet.line.add': return 'add a line';
+      case 'sheet.line.set': return 'edit a line';
+      case 'sheet.line.remove': return 'delete a line';
+      case 'section.move': return 'move section';
       default: return o.type;
     }
   }

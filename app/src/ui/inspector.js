@@ -6,7 +6,7 @@
 import { h, css, icon, fmtDb, byline } from './dom.js';
 import { authorKind, authorName, authorVar } from './rack.js';
 import { MOD } from './arrange-kit.js';
-import { TRACK_COLORS } from '../core/project.js';
+import { TRACK_COLORS, clipLengthPatch } from '../core/project.js';
 import { runTransform } from '../core/transforms.js';
 
 export default function (app) {
@@ -122,7 +122,7 @@ export default function (app) {
         const kids = [
           text('Name', () => clip.name || '', (v) => dispatch({ type: 'clip.set', track: t.id, clip: clip.id, patch: { name: v || null } }, 'rename clip')),
           num('Start', () => +store.clip(t.id, clip.id)?.start.toFixed(3), (v) => dispatch({ type: 'clip.move', track: t.id, clip: clip.id, start: Math.max(0, v) }, 'move clip'), { step: 0.25, min: 0, unit: 'beats' }),
-          num('Length', () => +store.clip(t.id, clip.id)?.length.toFixed(3), (v) => dispatch({ type: 'clip.set', track: t.id, clip: clip.id, patch: { length: Math.max(0.25, v) } }, 'clip length'), { step: 0.25, min: 0.25, unit: 'beats' }),
+          num('Length', () => +store.clip(t.id, clip.id)?.length.toFixed(3), (v) => dispatch({ type: 'clip.set', track: t.id, clip: clip.id, patch: clipLengthPatch(store.clip(t.id, clip.id) || clip, Math.max(0.25, v)) }, 'clip length'), { step: 0.25, min: 0.25, unit: 'beats' }),
         ];
         const facts = [fact('At', music.posLabel(clip.start, meter)), fact('Bars', String(+(clip.length / bpb).toFixed(2))), fact('Made by', badge(clip.by))];
         if (clip.kind === 'notes') {

@@ -10,6 +10,10 @@
 
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { TOOL as EXPORT_TAKE } from '../app/src/agent/take-export.js';
 
 const BASE = (process.env.OVERDUB_URL || `http://localhost:${process.env.OVERDUB_PORT || 3279}`).replace(/\/$/, '');
 const STUDIO = BASE + '/app/';
@@ -172,6 +176,33 @@ async function waitForStudio() {
   return { ok: false, note };
 }
 
+// export_take (app/src/agent/take-export.js) is this server's own: it writes a file on this machine, so it is listed
+// here and in neither the studio's catalog nor the relay's. The tab finds the take and leaves its WAV on the bridge
+// (GET /bridge/file, once); this writes it where `to` says and answers with the path.
+export function takePath(to, name, home = os.homedir()) {
+  const t = String(to || '').trim().replace(/^~(?=$|\/)/, home);
+  if (/\.wav$/i.test(t)) return path.resolve(t);
+  return path.join(t ? path.resolve(t) : path.join(home, 'Downloads', 'Overdub takes'), name);
+}
+async function exportTake(args) {
+  const r = await callTool(EXPORT_TAKE.name, args);
+  let res; try { res = JSON.parse(r.content[r.content.length - 1].text); } catch { return r; }
+  if (r.isError || !res?.file?.id) return r;
+  const f = res.file;
+  try {
+    const got = await fetch(`${BASE}/bridge/file?id=${encodeURIComponent(f.id)}`);
+    if (!got.ok) throw new Error(`the bridge said HTTP ${got.status}`);
+    const bytes = Buffer.from(await got.arrayBuffer());
+    const file = takePath(args?.to, f.name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, bytes);
+    const { file: _, ...rest } = res;
+    return { content: [{ type: 'text', text: JSON.stringify({ path: file, bytes: bytes.length, ...rest }, null, 1) }], isError: false };
+  } catch (e) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: `could not write the take: ${e.message}` }) }], isError: true };
+  }
+}
+
 async function callTool(name, args) {
   if (!(await ensureServer())) return { content: [{ type: 'text', text: JSON.stringify({ error: `Overdub is not running at ${BASE}`, hint: 'start it with: node server/serve.js' }) }], isError: true };
   let note = '';
@@ -214,11 +245,11 @@ async function handle(msg) {
       case 'tools/list': {
         const tools = await listTools();
         listed = namesOf(tools);
-        reply(id, { tools: tools.map(toMcpTool) });
+        reply(id, { tools: [...tools, EXPORT_TAKE].map(toMcpTool) });
         return;
       }
       case 'tools/call': {
-        const r = await callTool(params.name, params.arguments);
+        const r = params.name === EXPORT_TAKE.name ? await exportTake(params.arguments) : await callTool(params.name, params.arguments);
         reply(id, r);
         return;
       }

@@ -93,9 +93,9 @@ runs; and text in a song written to steer an agent.
   the growth limits and to 64 levels of nesting, and numbers from a file are made finite.
 - **The page.** The studio, the device library and the gallery carry a Content Security Policy (a `<meta>` tag, first
   in the head; `app/index.html` says why each allowance is there). Scripts come from the site itself, worklet modules
-  included: each is a file there (`kernel/processor.js`, `devices/worklets/`, `vendor/clawd/worklets/`,
-  `input/cap-worklet.js`), so no script comes from a `data:` or `blob:` URL (`blob:` stays in `worker-src` for the
-  engine's timer Worker). Connections go to the site and the relay (and loopback, for local work; a deploy that switches
+  included: each is a file there (`kernel/processor.js`, `devices/worklets/`, `devices/guitar/gear/worklets/`,
+  `input/cap-worklet.js`, `input/tape-worklet.js`), so no script comes from a `data:` or `blob:` URL (`blob:` stays in
+  `worker-src` for the engine's timer Worker). Connections go to the site and the relay (and loopback, for local work; a deploy that switches
   on the hosted agent adds its service; signing in to it is a popup on the service's own origin, not a frame), images to
   the site, `data:` and `blob:`, media to the site and `blob:`, and fonts and stylesheets to the site alone: the faces
   are files there (`app/style/fonts.css`, each family beside its licence), so no other host's CSS is on the studio's
@@ -216,7 +216,7 @@ file on the site, and an `<iframe srcdoc>` with a `data:` script, or a worklet f
 refused; the studio, library, gallery and landing page ask no host but the site for anything, and no policy names a
 font or style host), `brand-test` (each family loads from `/app/style/fonts/`, beside its licence), `pages-test` (the
 docs and press pages ask no other host), `provenance-test` (the report's fonts are the studio's own, inside it when
-saved), `guitar-test` (each vendored worklet file is the source the pedals build, byte for byte), `relay-test`
+saved), `guitar-test` (each guitar-gear worklet file is the source the pedals build, byte for byte), `relay-test`
 (`?relay=`; the tab secret: the connector URL alone can't open the tab side, take its stream or answer a call, and the
 secret travels in a header, never a URL; `tools/list` is the catalog whatever a tab registers, and other names are
 refused; `relay-catalog.js --check`; errors that don't echo input, bounded batches and nesting; the caps and the rate

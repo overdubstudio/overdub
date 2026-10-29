@@ -80,6 +80,8 @@ import { installTools } from '../agent/tools.js';
 import { JAM_SCHEMA, JAM_TRACK_SCHEMA, TONE_SCHEMA, FRETBOARD_SCHEMA, capText } from '../agent/extra-schemas.js';
 import { installTabs } from './tabs.js';
 import { Strip, trackSpec } from '../engine/strip.js';
+import { planStacks, sameChain } from '../core/stacks.js';
+import { roomOf } from '../core/liveroom/model.js';
 
 let faces = null;
 const facesReady = import('./faces.js').then((m) => { faces = m; return m; }).catch(() => null);
@@ -202,7 +204,9 @@ export default function (app) {
 
   /* ------------------------------------------------------------------------------------------- the Guitar track */
   function guitars(p = store.get()) {
-    const ins = p.tracks.filter((t) => t.kind === 'instrument' && !isDrums(t));
+    // (not the live room's Riff (as heard): a muted DI Box holding the read's notes, never a guitar you play)
+    const heard = roomOf(p)?.tracks?.heard || null;
+    const ins = p.tracks.filter((t) => t.kind === 'instrument' && !isDrums(t) && t.id !== heard);
     const keys = ins.find(isKeysGuitar) || ins.find(guitarName) || null;
     const aud = p.tracks.filter((t) => t.kind === 'audio');
     const audio = aud.find((t) => t.arm && guitarName(t)) || aud.find(guitarName) || null;
@@ -372,6 +376,9 @@ export default function (app) {
   // in order, are the track's)
   function toneOf(t) {
     if (!t || !G) return null;
+    // (the rig the chain is exactly, settings and all, first: several rigs share one line of devices)
+    const exact = G.RIGS.find((r) => r.chain.length === t.inserts.length && sameChain(t.inserts, r));
+    if (exact) return exact;
     const devs = t.inserts.map((x) => x.device).join('>');
     const mine = J.tones[t.id] && G.rigById(J.tones[t.id]);
     if (mine && mine.chain.map((s) => s.device).join('>') === devs) return mine;
@@ -406,7 +413,8 @@ export default function (app) {
     const free = targets.filter((t) => !busy.includes(t.id));
     if (!free.length) return { error: 'recording', hint: `${targets[0].name} is recording: set the tone when the take stops` };
     const gt = guitarTrack(), main = free.find((t) => t.id === gt?.id) || free[0];
-    const ops = free.flatMap((t) => G.rigOps(t.id, r, { replace: t.inserts.map((x) => x.id) }));
+    // (core/stacks.js: the devices the old chain and the rig share stay built and glide to the rig's settings)
+    const ops = planStacks(store.get(), free.map((t) => ({ track: t.id, stack: r }))).ops;
     const who = free.map((t) => t.name).join(' and ');
     const res = store.dispatch(ops, { by, label: `${who}: ${r.name}`, reason: reason || '' });
     if (!res.ok) { if (toast) ui.toast(res.error, { kind: 'bad' }); return { error: res.error }; }
@@ -885,6 +893,7 @@ export default function (app) {
       ok: true, tone: { id: r.id, name: r.name, bank: r.bank.name, for: r.blurb }, track: { id: res.track.id, name: res.track.name },
       ...(res.tracks.length > 1 ? { tracks: res.tracks.map((t) => ({ id: t.id, name: t.name })) } : {}), ...(res.recording ? { left_out: `${res.recording.join(' and ')}: recording` } : {}),
       chain: res.track.inserts.map((x) => `${app.devices.getDevice(x.device)?.name || x.device}${x.on ? '' : ' (off)'}`), replaced: res.replaced,
+      ...(res.txn ? {} : { unchanged: `${res.tracks.map((t) => t.name).join(' and ')} already had ${r.name}: nothing changed` }),
     };
   }
   // Pointing is drawing on the neck; play sounds it on the room's voice, which isn't a track: nothing in the song changes,
@@ -1546,11 +1555,14 @@ export default function (app) {
     async function toggleInput() {
       const a = app.input?.audio;
       if (!a) return;
-      if (a.state.open) { a.monitor(false); a.close(); view.input(); view.tones(); return; }
+      // (closing is only closing: the input's monitoring is as it was when it opens again, input/audioin.js)
+      if (a.state.open) { a.close(); view.input(); view.tones(); return; }
       try {
         ensureAudioGuitar();
         // monitored from the start when it's an interface or a line input you picked (the input decides: 'auto')
-        await a.open({ device: devSel.value || a.state.deviceId || '', channel: chSel.value || '1', monitor: 'auto' });
+        // ('Default input': the device chosen for you, input/livepath.js chooseInput, as Sketch and the rooms do)
+        if (devSel.value) await a.open({ device: devSel.value, channel: chSel.value || '1', monitor: 'auto' });
+        else { const c = await a.choose(); await a.open({ device: c.device, channel: chSel.value || c.channel || '1', monitor: 'auto' }); }
         await fillDevices();
         // the first time it opens: Live guitar's level is a guess, so Match the band is offered
         if (a.state.open && !J.offered) { J.offered = true; if (!J.match) J.match = { phase: 'offer' }; }
@@ -1800,7 +1812,7 @@ function createNeck(app, J, { timeline, where, describe, onPlay, fitHeight = nul
   });
   scroller.addEventListener('pointercancel', () => { disarm(); if (held) { onPlay(held.p, false); held = null; } });
   scroller.addEventListener('pointerleave', () => { if (J.hover) { J.hover = null; dirty = true; } });
-  // keys on the focused neck: arrows walk a cursor over the places, Enter or Space plays it
+  // keys on the focused neck: arrows walk a cursor over the places, Enter plays it (Space is the transport's)
   scroller.addEventListener('keydown', (e) => {
     const c = J.hover || { s: 0, f: 5 };
     let s = c.s, f = c.f;
@@ -1808,7 +1820,7 @@ function createNeck(app, J, { timeline, where, describe, onPlay, fitHeight = nul
     else if (e.key === 'ArrowRight') f = Math.min(MAX_FRET, f + (J.lefty ? -1 : 1));
     else if (e.key === 'ArrowUp') s = Math.min(G.n - 1, s + 1);
     else if (e.key === 'ArrowDown') s = Math.max(0, s - 1);
-    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); const p = G.T.strings[s] + f; onPlay(p, true); setTimeout(() => onPlay(p, false), 300); return; }
+    else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); const p = G.T.strings[s] + f; onPlay(p, true); setTimeout(() => onPlay(p, false), 300); return; }
     else return;
     e.preventDefault(); e.stopPropagation();
     J.hover = { s, f, p: G.T.strings[s] + f }; dirty = true; reveal([f, f]);

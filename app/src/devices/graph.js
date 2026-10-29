@@ -1,7 +1,7 @@
 // @ts-check
 // Graph devices: a def whose build(c, kit) makes a Web Audio node graph (the ported pedals and amps, Overdub's own
 // trusted built-ins). graphInstance(c, def, opts) wraps one in the Instance contract (docs/ARCHITECTURE.md, "Devices"),
-// with clawd-o-matic's pedalRig manners (app/vendor/clawd/pedals.js): click-free bypass, gliding knobs, the bar clock.
+// with the guitar gear's pedalRig manners (devices/guitar/gear/code.js, pedals.js): click-free bypass, gliding knobs, the bar clock.
 //
 // build(c, kit) returns:
 //   { input (effects), output, set(v, x), sync?(x), dispose?(), latency?, noteOn?/noteOff?/allOff? (instruments) }
@@ -20,8 +20,26 @@
 //   trails (def.trails): in -> out at unity always, in -> send (on/off) -> device -> dB(trim) -> out: its output is
 //     WET ONLY and its tail rings on after it's switched off. Params changed while it's off wait till it's back on
 //     (moving a delay's time under its ringing tail warps it).
-import { makeKit, workletsReady, glide, dB, noteSec, isOffline } from './kit.js';
+//
+// The lifecycle in a live chain (devices/lifecycle.js; docs/DEVICES.md, "Graph devices in a live chain"):
+//   build    the device's own build(c, kit) and its first set() and bypass: on a live context the bypass gains are set
+//            by .value, nothing scheduled (a node that hasn't rendered yet may drop a value curve: Chrome 155, 156).
+//   ready    resolves once built; REJECTS with lifecycle.failure(code) when build() threw ('threw'), returned no
+//            output or an effect no input ('no-output'), or a worklet the def declares didn't load ('worklet'). The
+//            wrapper never stands in for the device: the engine plays its own stand-in, says so and builds it again.
+//   setOn    a 10 ms raised cosine from one read of the clock, as linear ramps (kit.js glide); offline as it always was.
+//   health() { ok, failed, on, settled, dry, wet, want: { dry, wet } }: the bypass gains as they are and should be.
+//   assure() snaps the bypass gains (and the feed) to their targets at once; true if it had to.
+//   dispose  idempotent: stops what the kit started, the device's own dispose(), disconnects.
+import { makeKit, workletsReady, glide, cosineRamp, LEAD, dB, noteSec, isOffline } from './kit.js';
 import { paramValues, seedOf } from './registry.js';
+import { failure, failureCode } from './lifecycle.js';
+
+// A switch has settled once the audio clock is past its fade's end, or (a stalled or suspended clock) this long after it
+// by the wall clock (lifecycle.js: health().settled within the live path's HEALTH.settle, 150 ms, of the last setOn).
+const SETTLE_MS = 100;
+// how near a gain must be to its target to count as there
+const near = (v, want) => Math.abs(v - want) <= 1e-3 * Math.max(1, Math.abs(want));
 
 /* ---- the live clock: the engine's (engine.clock) on the live context, for code that asks for it globally (the ported
    packs' PLUG.clock: devices/guitar/index.js). Set whenever a graph device is made live with opts.clock. */
@@ -104,24 +122,38 @@ export function graphInstance(c, def, opts = {}) {
     if (yes && !fed) { i.connect(p.input); fed = true; }
     else if (!yes && fed) { try { i.disconnect(p.input); } catch { /* gone */ } fed = false; }
   };
-  // a footswitch move: straight there before anything has played, else a 10 ms raised cosine from `at`
-  const sw = (param, v, at) => {
+  // A footswitch move. Live: at build (`first`), straight there by .value with nothing scheduled; after, a 10 ms raised
+  // cosine as linear ramps (kit.js cosineRamp) from `now`, the switch's one read of the clock (both gains move from the
+  // same read: Chrome's clock can step 5.8 ms between two). Offline, exactly as it always was: straight there before
+  // anything has played, else the glide scheduled ahead from the gain's last target.
+  let swEnd = 0, swWall = 0; // (the last switch's fade: where it ends on the audio clock, and when by the wall clock)
+  // no switch fade still running: the audio clock past its end, or (a stalled or suspended clock) the wall's
+  const settledNow = () => offline || c.state !== 'running' || c.currentTime >= swEnd || performance.now() >= swWall;
+  const sw = (param, v, at, first, now) => {
+    if (!offline) {
+      if (first) { param.cancelScheduledValues(0); param.value = v; return; }
+      const t = Math.max(now + LEAD, at || 0);
+      swEnd = Math.max(swEnd, t + 0.01); swWall = Math.max(swWall, performance.now() + (t + 0.01 - now) * 1000 + SETTLE_MS);
+      cosineRamp(param, param.value, v, now, t, 0.01);
+      return;
+    }
     if (c.currentTime === 0 && !(at > 0)) { param.cancelScheduledValues(0); param.setValueAtTime(v, 0); return; }
-    glide(c, param, v, 0.01, at, offline ? param.__to : undefined);
+    glide(c, param, v, 0.01, at, param.__to);
   };
   const track = (param, v) => { param.__to = v; return v; };
-  function applyOn(at) {
+  function applyOn(at, first = false) {
     if (!fx) return;
-    if (!p) { sw(dry.gain, track(dry.gain, 1), at); return; } // (not built yet: dry)
-    if (trails) { sw(wet.gain, track(wet.gain, on ? 1 : 0), at); return; }
+    const now = offline ? 0 : c.currentTime; // (live: the one read)
+    if (!p) { sw(dry.gain, track(dry.gain, 1), at, first, now); return; } // (not built yet: dry)
+    if (trails) { sw(wet.gain, track(wet.gain, on ? 1 : 0), at, first, now); return; }
     clearTimeout(offT);
     if (on) feed(true);
-    sw(dry.gain, track(dry.gain, on ? 0 : 1), at); sw(wet.gain, track(wet.gain, on ? trim : 0), at);
+    sw(dry.gain, track(dry.gain, on ? 0 : 1), at, first, now); sw(wet.gain, track(wet.gain, on ? trim : 0), at, first, now);
     if (!on) {
-      if (c.currentTime === 0 && !(at > 0)) feed(false);
+      if (offline ? c.currentTime === 0 && !(at > 0) : first || (now === 0 && !(at > 0))) feed(false);
       else if (!offline) {
         // stops being fed once it's been off a moment (by the audio clock: a starved thread mustn't cut it early)
-        const quiet = Math.max(c.currentTime, at || 0) + 0.02;
+        const quiet = Math.max(now, at || 0) + 0.02;
         const off = () => { if (on || dead) return; if (c.currentTime < quiet && c.state === 'running') offT = setTimeout(off, 10); else feed(false); };
         offT = setTimeout(off, 80);
       }
@@ -143,16 +175,29 @@ export function graphInstance(c, def, opts = {}) {
     firstSet = false; lastKey = JSON.stringify(v);
     if (first && p.sync) { syncOne('build'); if (!offline) watch(c, inst); }
   }
+  // Build the device (throws a lifecycle failure: ready rejects with it). What a failed build started is let go.
+  let failed = '';
+  function fail(code, message, cause) {
+    const e = cause && failureCode(cause) ? cause : failure(code, message, cause);
+    failed = e.message;
+    /** @type {any} */ (e).device = def.id;
+    kit.release();
+    return e;
+  }
   function build() {
-    if (dead || p) return;
+    if (dead) throw fail('threw', `${def.name || def.id} was taken down before it was built`);
+    if (p) return;
     let q = null;
-    try { q = def.build(c, kit); } catch (e) { console.error('device ' + def.id + ':', e); }
-    if (!q || !q.output || (fx && !q.input)) { const n = G(1); q = { input: fx ? n : null, output: n, set() {} }; if (!fx) n.gain.value = 0; }
+    try { q = def.build(c, kit); } catch (e) { throw fail('threw', `${def.name || def.id} didn't build: ${(e && e.message) || e}`, e); }
+    if (!q || !q.output || (fx && !q.input)) {
+      if (q && typeof q.dispose === 'function') { try { q.dispose(); } catch { /* its business */ } }
+      throw fail('no-output', `${def.name || def.id} built with no ${!q || !q.output ? 'output' : 'input'}`);
+    }
     p = q;
     if (trails) { i.connect(wet); wet.connect(p.input); p.output.connect(post); post.connect(o); }
     else if (fx) { p.output.connect(wet); wet.connect(o); } else p.output.connect(o);
     callSet(values);
-    applyOn();
+    applyOn(undefined, true);
   }
 
   const inst = {
@@ -206,6 +251,31 @@ export function graphInstance(c, def, opts = {}) {
       grid = g;
       if (why) syncOne(why);
     },
+    // What the device says about itself (lifecycle.js): built or why not, the bypass gains as they are and should be.
+    health() {
+      const why = failed || (dead ? 'disposed' : p ? '' : 'building');
+      if (!fx) return { ok: !why, failed: why, on: true, settled: true, dry: null, wet: null, want: null };
+      const settled = settledNow();
+      const want = { dry: dry.gain.__to ?? 1, wet: wet.gain.__to ?? 0 }, dv = dry.gain.value, wv = wet.gain.value;
+      const fedOk = trails || !on || fed || !p;
+      return { ok: !why && settled && near(dv, want.dry) && near(wv, want.wet) && fedOk, failed: why, on, settled, dry: dv, wet: wv, want };
+    },
+    // Snap the bypass gains to their targets at once (cancel what's scheduled, set .value), and feed an insert that's
+    // on and isn't fed: true if anything had to move. (The engine calls it once a wired device's fades are over.) A
+    // footswitch fade still running is left alone: snapped halfway it would jump, a click; once it's over, a fade the
+    // browser dropped is snapped like any other.
+    assure() {
+      if (!fx || !p || dead || !settledNow()) return false;
+      let moved = false;
+      for (const g of [dry.gain, wet.gain]) {
+        const want = g.__to;
+        if (want == null || near(g.value, want)) continue;
+        g.cancelScheduledValues(0); g.value = want; moved = true;
+      }
+      if (on && !trails && !fed) { clearTimeout(offT); feed(true); moved = true; }
+      if (moved) { swEnd = 0; swWall = 0; }
+      return moved;
+    },
     dispose() {
       if (dead) return;
       dead = true;
@@ -216,9 +286,19 @@ export function graphInstance(c, def, opts = {}) {
     },
   };
   inst._syncErr = false;
-  if (fx) { dry.gain.value = 1; wet.gain.value = 0; }
+  if (fx) { track(dry.gain, 1); dry.gain.value = 1; wet.gain.value = 0; }
+  // ready: built, or a lifecycle failure (a declared worklet that didn't load is one: the device isn't what it says)
   const r = workletsReady(c, def.worklets);
-  if (r === true) { build(); inst.ready = Promise.resolve(inst); }
-  else inst.ready = r.then(() => { build(); return inst; }, (e) => { console.error('device ' + def.id + ' worklets:', e); build(); return inst; });
+  if (r === true) {
+    try { build(); inst.ready = Promise.resolve(inst); } catch (e) { inst.ready = Promise.reject(e); }
+  } else {
+    inst.ready = r.then((missing) => {
+      if (missing.length) throw fail('worklet', `${def.name || def.id}: its worklet${missing.length > 1 ? 's' : ''} ${missing.join(', ')} didn't load`);
+      build();
+      return inst;
+    });
+  }
+  // (a caller that never asks still sees the failure here, as a warning; the engine reports it and stands in)
+  inst.ready.catch((e) => console.warn('device ' + def.id + ': ' + ((e && e.message) || e)));
   return inst;
 }

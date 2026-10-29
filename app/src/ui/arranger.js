@@ -71,6 +71,7 @@ import { DEVICE_CATS } from '../devices/registry.js';
 import * as rackKit from './rack.js';
 import { kitHashes, kitState, kitLine } from './kitload.js';
 import { newPartFor } from '../core/sounds.js';
+import { clipTail } from '../core/project.js';
 import {
   LANE_H, LANE_H_PHONE, laneState, trackLanes, shownLanes, laneParams, laneInfo, staticValue, fmtValue, drawLaneRow, laneHead,
   laneEditor, laneKeysOn, SHAPES, laneHeight, setLaneHeight, heightsSig, masterTrack, tipHide, laneSigners,
@@ -222,6 +223,9 @@ function mountArranger(el, app) {
     const KEY = 'overdub:welcomed';
     // (never in the simple view: its first screen is the blank sheet, and Night Shift is one link on it. Marked as
     // seen all the same: a song switched to the full studio later isn't introduced as if it were the demo)
+    // (nor under the live room, whose first run is its own: a first visit to the room isn't the control room's, and the
+    // welcome waits, unmarked, for the first time the control room opens on a song by itself)
+    if (app.ui.covered === 'liveroom' || document.documentElement.dataset.room != null) return;
     try { if (localStorage.getItem(KEY) === '1') return; localStorage.setItem(KEY, '1'); } catch { return; }
     if (app.ui.workspace?.view?.() === 'simple') return;
     const pr = app.store.get();
@@ -1915,7 +1919,7 @@ function mountArranger(el, app) {
       // dropped clip takes those beats, as in Live, so nothing under it plays along
       let trim = null;
       try {
-        trim = planDropTrim(P(), d.items.map((it) => { const s = Math.max(0, it.start + d.dBeat); return { track: tracks()[it.row + d.dRow].id, start: s, end: s + it.c.length }; }), { keep: d.copy ? [] : d.items.map((it) => it.c.id) });
+        trim = planDropTrim(P(), d.items.map((it) => { const s = Math.max(0, it.start + d.dBeat); return { track: tracks()[it.row + d.dRow].id, start: s, end: s + it.c.length - clipTail(it.c) }; }), { keep: d.copy ? [] : d.items.map((it) => it.c.id) });
       } catch (err) { console.warn('drop trim', err); trim = null; }
       if (trim?.ops.length) ops = ops.concat(trim.ops);
       // the clip a tempo map follows, moved by whole bars: the grid goes with it, in the same undo step (spec 0014 R8);

@@ -7,9 +7,9 @@
        stays on their local server: server/local-claude.js), but it holds the person's songs and devices and drives
        their agents, so a script that isn't ours is still the worst case: scripts load from this origin only, and the
        page talks to this origin and the relay. Worklet modules are scripts too, and every one is a file here
-       (src/kernel/processor.js, src/devices/worklets/, vendor/clawd/worklets/, src/input/cap-worklet.js), so
-       script-src needs neither data: nor blob: (with data:, markup slipped into the page could run script on this
-       origin through an <iframe srcdoc>; tools/compat-test.js tries it in each browser). Stylesheets and fonts are files
+       (src/kernel/processor.js, src/devices/worklets/, src/devices/guitar/gear/worklets/, src/input/cap-worklet.js and
+       tape-worklet.js), so script-src needs neither data: nor blob: (with data:, markup slipped into the page could
+       run script on this origin through an <iframe srcdoc>; tools/compat-test.js tries it in each browser). Stylesheets and fonts are files
        here too (style/fonts.css), so no other host's CSS is on this page and a visitor's address goes to no font host.
        What it allows beyond that:
        - script-src 'unsafe-eval': kernels compile with new Function in the AudioWorklet, which runs under this page's

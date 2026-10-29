@@ -16,7 +16,17 @@
 // the renderers compensate for it by when they play each track (see engine.js, "Plugin delay compensation").
 //
 // The dips are how rewires stay click-free: both ramp to 0 over 8 ms, the chain is rewired once the audio clock has
-// passed the ramp, then both ramp back. Devices are instantiated through the registry (instantiate / paramValues);
+// passed the ramp, then both ramp back. A live chain swapped for one that shares no built device with it (a guitar's
+// whole chain for another's: core/stacks.js) crossfades instead, with no gap: the new chain is wired beside the old one
+// from preDip to postDip, each behind its own tail gain, and the new one's ramps up linearly over XFADE while the old
+// one's falls from wherever it is (setTargetAtTime; never a value curve: Chrome 155 drops a curve that ends before its
+// node first renders), then the old path is undone. A rewire that throws is reported and the dips still come back up.
+//
+// Renew (the killswitch, the polite stop, a repair: engine.rebuild) is a fresh build under the job lock: hush() takes
+// the tail and the instrument down at once, every device is built anew (nothing reused, so a renew racing a build never
+// wires a disposed device), and once the hush is all the way down the new chain is wired and crossfaded in: a slow build
+// is silence, never the dry input. After any wiring, once the fades are over, each newly wired device is assured
+// (devices/lifecycle.js assure: a bypass a browser dropped is snapped to its target). Each path ends in its tail gain: preDip -> inserts... -> tail -> postDip. Devices are instantiated through the registry (instantiate / paramValues);
 // a missing device or one whose build throws becomes a FALLBACK (fallback.js) plus an 'error' report. A held device
 // (a song's, whose code this browser hasn't allowed: devices/trust.js) is silence for an instrument and a pass-through
 // for an effect, with no report; nothing of it is compiled or run, live or in any render.
@@ -26,9 +36,18 @@ import { fallbackSynth, passThrough, silentInstrument } from './fallback.js';
 import { dbToGain, ramp, setNow, afterAudio, isOffline, within, sig, soon } from './util.js';
 import { laneValue, FADER, PAN } from './schedule.js';
 import { loadData } from '../kernel/data.js';
+import { assure, failureCode } from '../devices/lifecycle.js';
+import { HEALTH } from '../input/livepath.js';
 
-const READY_MS = 8000;   // a device that isn't ready by then is treated as broken
 const DIP = 0.008;       // seconds to dip a strip out (and back in) around a rewire
+const XFADE = 0.03;      // seconds a whole chain swapped live crossfades over
+// Building a device: a device that isn't ready in `ready` ms is treated as broken. One that exists but failed to build
+// (it threw, or wasn't ready in time: a busy machine compiling a kernel or loading a worklet) plays its stand-in (an
+// effect passes its input through: a guitar amp that failed is the dry signal) and is built again `retry` ms later,
+// up to `tries` more times, on its own (the strip syncs itself then) or at the next change to the strip, live only. A
+// missing device isn't retried: defining it changes what it's built as (wantKey). Exported for the checks
+// (tools/liveroom/checks-rig.js shortens them).
+export const BUILD = { ready: 8000, retry: 10000, tries: 3 };
 
 // What a device id should be built as right now: 'id@version', 'held:id:hash' or 'missing:id'. (Held first: a song's
 // device that shadows a shelf id and is held plays as held, not as the shelf's.)
@@ -48,22 +67,23 @@ export async function makeInstance(c, kind, deviceId, { uid, params, on = true, 
     return { inst, key, failed: false, held: true };
   }
   const def = getDevice(deviceId);
-  const fallback = (why) => {
-    report && report({ kind: 'device', device: deviceId, uid, message: why });
+  const fallback = (why, retry = false, code = '') => {
+    report && report({ kind: 'device', device: deviceId, uid, message: why, ...(code ? { code } : {}) });
     const inst = kind === 'instrument' ? fallbackSynth(c, { uid, missing: deviceId }) : passThrough(c, { uid, missing: deviceId });
-    return { inst, key, failed: true };
+    return { inst, key, failed: true, retry };
   };
   if (!def) return fallback(`no device "${deviceId}" (playing a stand-in until it is defined)`);
   if (def.kind !== kind) return fallback(`device "${deviceId}" is an ${def.kind}, not an ${kind}`);
-  let inst = null;
+  let inst = null, made = null;
   try {
     const values = paramValues(def, params || {});
-    // kernel data (a sampled kit): an export waits for the files before READY_MS starts counting, since 23 MB on a slow
+    // kernel data (a sampled kit): an export waits for the files before BUILD.ready starts counting, since 23 MB on a slow
     // line can take longer than that, and a stand-in synth must never play in an export for want of a download. (Live,
     // the instance starts at once and plays nothing until they land: kernel/host.js.)
     if (def.data && isOffline(c)) await Promise.all(Object.values(def.data).map((h) => loadData(h)));
-    inst = await within(instantiate(c, def, { uid, seed: seedOf(uid), clock, params: values, on }), READY_MS, deviceId);
-    await within(inst.ready, READY_MS, deviceId);
+    made = instantiate(c, def, { uid, seed: seedOf(uid), clock, params: values, on });
+    inst = await within(made, BUILD.ready, deviceId);
+    await within(inst.ready, BUILD.ready, deviceId);
     if (!inst.output) throw new Error('instance has no output');
     if (kind === 'effect' && !inst.input) throw new Error('effect instance has no input');
     try { inst.set(values, { bpm, first: true }); } catch (e) { report && report({ kind: 'device', device: deviceId, uid, message: 'set: ' + e.message }); }
@@ -79,7 +99,12 @@ export async function makeInstance(c, kind, deviceId, { uid, params, on = true, 
     return { inst, key, failed: false };
   } catch (e) {
     if (inst) { try { inst.dispose(); } catch { /* gone */ } }
-    return fallback(`device "${deviceId}" failed to build: ${e && e.message || e}`);
+    // (one that turns up after its time ran out is let go when it does: nobody else holds it, and a kernel's processor
+    // would run on for the page's life, one more on every retry)
+    else if (made) made.then((late) => { try { late && late.dispose(); } catch { /* gone */ } }, () => {});
+    // (a device's ready rejects with a code, devices/lifecycle.js failure(): 'threw', 'no-output' or 'worklet')
+    const code = failureCode(e);
+    return fallback(`device "${deviceId}" failed to build${code ? ` (${code})` : ''}: ${e && e.message || e}`, true, code || 'threw');
   }
 }
 
@@ -191,6 +216,8 @@ export class Strip {
     this.mix = null;
     this.disposed = false;
     this.dips = 0;                  // dips in flight (preDip / postDip come back up when the last one ends)
+    this.fresh = false;             // the next build makes every device anew (renew: the killswitch, a repair)
+    this.monitored = false;         // live input plays through this strip now (engine.monitored): the polite stop leaves it be
     if (this.master && opts.monitor) {
       // what the speakers get: the same safety soft clip over the mix plus the metronome, so a click on a hot mix
       // never goes over 0 dBFS, while the tap (and every render) stays the mix alone
@@ -240,8 +267,9 @@ export class Strip {
   // ---- devices
   // spec: { instrument: { device, params } | null, inserts: [{ id, device, on, params }] }. Returns a promise that
   // resolves when the strip matches the latest spec it has been given.
-  sync(spec) {
+  sync(spec, { fresh = false } = {}) {
     this.spec = spec;
+    if (fresh) this.fresh = true;
     // fast path: params and bypass on what is already built
     const bpm = this.o.bpm();
     if (this.instr && spec.instrument && this.instr.device === spec.instrument.device) applyParams(this.instr.inst, this.instr.device, spec.instrument.params, bpm, null, this.o.report);
@@ -260,13 +288,14 @@ export class Strip {
   }
 
   needsBuild(spec) {
+    if (this.fresh) return true;
     const wi = spec.instrument ? spec.instrument.device : null;
     if ((this.instr ? this.instr.device : null) !== wi) return true;
-    if (this.instr && wi && !sameKey(this.instr.key, wantKey(wi))) return true;
+    if (this.instr && wi && (!sameKey(this.instr.key, wantKey(wi)) || due(this.instr))) return true;
     if (this.fx.length !== spec.inserts.length) return true;
     for (let i = 0; i < spec.inserts.length; i++) {
       const f = this.fx[i], s = spec.inserts[i];
-      if (f.id !== s.id || f.device !== s.device || !sameKey(f.key, wantKey(s.device))) return true;
+      if (f.id !== s.id || f.device !== s.device || !sameKey(f.key, wantKey(s.device)) || due(f)) return true;
     }
     return false;
   }
@@ -274,27 +303,40 @@ export class Strip {
   async build(spec) {
     const c = this.c, bpm = this.o.bpm(), report = this.o.report, clock = this.o.clock;
     const tasks = [];
+    // a fresh build (renew): nothing built is reused, and what plays now goes quiet at once (its tail and its instrument
+    // to 0 over a dip), so a slow build is silence for this strip, never a bare wire or a half-built chain
+    const fresh = this.fresh;
+    this.fresh = false;
+    if (fresh) this.hush();
     // the instrument
     let newInstr = null;
     const wi = spec.instrument && spec.instrument.device;
-    if (wi && (!this.instr || this.instr.device !== wi || !sameKey(this.instr.key, wantKey(wi)))) {
+    if (wi && (fresh || !this.instr || this.instr.device !== wi || !sameKey(this.instr.key, wantKey(wi)) || due(this.instr))) {
+      const tries = this.instr && this.instr.device === wi && due(this.instr) ? this.instr.tries : 0;
       tasks.push(makeInstance(c, 'instrument', wi, { uid: `${this.id}:instrument`, params: spec.instrument.params, clock, bpm, report })
-        .then((r) => { newInstr = { device: wi, ...r }; }));
+        .then((r) => { newInstr = { device: wi, ...r, ...(this.live ? retryOf(r, tries) : {}) }; }));
     }
     // inserts: reuse what is built (wired or pooled) when its device and version still match
     const have = new Map();
-    for (const f of this.fx) have.set(f.id, f);
-    for (const [id, f] of this.pool) if (!have.has(id)) have.set(id, f);
+    if (!fresh) {
+      for (const f of this.fx) have.set(f.id, f);
+      for (const [id, f] of this.pool) if (!have.has(id)) have.set(id, f);
+    }
     const next = spec.inserts.map((s) => {
       const h = have.get(s.id);
-      if (h && h.device === s.device && sameKey(h.key, wantKey(s.device))) return h;
+      if (h && h.device === s.device && sameKey(h.key, wantKey(s.device)) && !due(h)) return h;
+      const tries = h && h.device === s.device && due(h) ? h.tries : 0;
       const slot = { id: s.id, device: s.device, key: null, inst: null };
       tasks.push(makeInstance(c, 'effect', s.device, { uid: s.id, params: s.params, on: s.on, clock, bpm, report })
-        .then((r) => { slot.key = r.key; slot.inst = r.inst; slot.failed = r.failed; }));
+        .then((r) => { slot.key = r.key; slot.inst = r.inst; slot.failed = r.failed; if (this.live) Object.assign(slot, retryOf(r, tries)); }));
       return slot;
     });
     await Promise.all(tasks);
+    // (a fresh build: the old instrument all the way down before the new chain hears what comes in)
+    if (fresh && this.live && this.hushEnd > c.currentTime) await new Promise((res) => afterAudio(c, this.hushEnd, res));
     if (this.disposed) { for (const s of next) if (!have.has(s.id) || have.get(s.id) !== s) safeDispose(s.inst); if (newInstr) safeDispose(newInstr.inst); return; }
+    // (renewed while this one built: what it made is thrown away and the next pass builds anew)
+    if (this.fresh && !fresh) { for (const s of next) if (!have.has(s.id) || have.get(s.id) !== s) safeDispose(s.inst); if (newInstr) safeDispose(newInstr.inst); this.dirty = true; return; }
     // the latest params (they may have moved while we were building)
     const latest = this.spec;
     for (const s of next) {
@@ -313,19 +355,26 @@ export class Strip {
       if (old) this.retireInstrument(old);
       this.o.onGraph && this.o.onGraph({ kind: 'instrument', track: this.id, device: wi || null });
     }
-    // rewire the inserts if the chain changed
-    const changed = next.length !== this.fx.length || next.some((s, i) => s !== this.fx[i]);
+    // rewire the inserts if the chain changed (a fresh build always: its tail is down)
+    const changed = fresh || next.length !== this.fx.length || next.some((s, i) => s !== this.fx[i]);
     if (changed) {
       const gone = this.fx.filter((f) => !next.includes(f));
       // pooled instances not in `next` are no longer wanted either
       for (const [, f] of this.pool) if (!next.includes(f) && !gone.includes(f)) gone.push(f);
       this.pool.clear();
-      await this.rewire(next);
+      const wired = next.filter((f) => !this.fx.includes(f));
+      const fade = await this.rewire(next, { fresh });
       for (const f of gone) {
         // a removed insert that is still in the spec under a moved position is in `next`; the rest go
         if (!next.includes(f)) safeDispose(f.inst);
       }
-      this.o.onGraph && this.o.onGraph({ kind: 'inserts', track: this.id, inserts: next.map((s) => s.id) });
+      this.settle(wired, fade);
+      this.o.onGraph && this.o.onGraph({ kind: 'inserts', track: this.id, inserts: next.map((s) => s.id), fresh });
+    }
+    // a failed build waiting for another try: the strip syncs itself when it's due
+    const waits = [this.instr, ...this.fx].filter((f) => f && f.retryAt).map((f) => f.retryAt);
+    if (waits.length && !this.retryT) {
+      this.retryT = setTimeout(() => { this.retryT = 0; if (!this.disposed && this.spec) this.sync(this.spec); }, Math.max(0, Math.min(...waits) - Date.now()) + 20);
     }
   }
 
@@ -342,16 +391,35 @@ export class Strip {
   }
 
   // Fresh instances of every device on the strip (the killswitch, engine.silence(), with the speakers already at
-  // zero): held voices and reverb and delay tails go with the old ones. Resolves when the strip is rebuilt.
+  // zero; the polite stop, faded; a repair, engine.rebuild): held voices and reverb and delay tails go with the old
+  // ones. A build like any other, under the job lock (sync with fresh): the old chain's tail goes to 0 at once, every
+  // device is built anew, and the new chain comes up behind its own tail once all of it is ready. A slow build is
+  // silence for this strip, never the dry input; nothing disposed is ever wired. Resolves when the strip is rebuilt.
   async renew() {
     if (this.disposed) return;
-    if (this.job) { try { await this.job; } catch { /* rebuilt below */ } }
-    const old = [this.instr, ...this.fx, ...this.pool.values()].filter(Boolean);
-    if (this.instr) { try { this.instr.inst.output.disconnect(this.instr.gain); } catch { /* ok */ } try { this.instr.gain.disconnect(); } catch { /* ok */ } }
-    this.instr = null; this.fx = []; this.pool.clear();
-    this.wire();
-    for (const f of old) safeDispose(f.inst);
-    if (this.spec) await this.sync(this.spec);
+    this.hush();
+    if (!this.spec) return;
+    await this.sync(this.spec, { fresh: true });
+  }
+  // what plays now, down at once (over a dip): the chain's tail and the instrument's gain. The next wiring brings it up
+  // (this.hushEnd: the audio time it's all the way down, -70 dB: a fresh chain isn't wired before then, or it would take
+  // the old instrument's last moment into a new reverb's tail)
+  hush() {
+    if (!this.live) return;
+    const c = this.c, run = c.state === 'running';
+    if (this.tail) { if (run) ramp(c, this.tail.gain, 0, DIP); else setNow(c, this.tail.gain, 0); }
+    if (this.instr) { try { this.instr.inst.allOff(soon(c)); } catch { /* ok */ } if (run) ramp(c, this.instr.gain.gain, 0, DIP); else setNow(c, this.instr.gain.gain, 0); }
+    this.hushEnd = Math.max(this.hushEnd || 0, run ? soon(c) + 2 * DIP : 0);
+  }
+  // After a chain is wired and its fades are over (`fade`: the audio time they end), each device newly wired is asked
+  // to be where it was asked to be (devices/lifecycle.js assure): a bypass a browser dropped is snapped to its target.
+  settle(wired, fade) {
+    if (!this.live || !wired.length) return;
+    const c = this.c, at = (Number.isFinite(fade) ? fade : c.currentTime) + HEALTH.settle / 1000;
+    afterAudio(c, at, () => {
+      if (this.disposed) return;
+      for (const f of wired) if (this.fx.includes(f) && f.inst && !f.inst.fallback) assure(f.inst);
+    });
   }
 
   // The polite stop (engine.js): what the strip sends fades from t over dur (an exponential approach, -52 dB at dur,
@@ -382,41 +450,79 @@ export class Strip {
   }
 
   // Change the chain under the strip: live and sounding, dip out, run fn, dip back in (overlapping dips share one).
+  // Whatever fn does, the dips come back up and the promise resolves (a throw is reported, never a strip left at 0 with
+  // its build job hung). Resolves to the audio time the dip back in ends.
   dipped(fn) {
     const c = this.c;
-    if (!this.live || c.state !== 'running') { fn(); return Promise.resolve(); }
+    if (!this.live || c.state !== 'running') { this.guard(fn); return Promise.resolve(c.currentTime); }
     return new Promise((resolve) => {
       const t = soon(c);
       this.dips++;
       ramp(c, this.preDip.gain, 0, DIP);
       ramp(c, this.postDip.gain, 0, DIP);
       afterAudio(c, t + 2 * DIP, () => {
-        this.dips--;
-        if (!this.disposed) {
-          fn();
-          if (this.dips === 0) {
-            ramp(this.c, this.preDip.gain, 1, DIP);
+        let end = c.currentTime;
+        try {
+          this.dips--;
+          if (!this.disposed) this.guard(fn);
+        } finally {
+          if (!this.disposed && this.dips === 0) {
+            end = ramp(this.c, this.preDip.gain, 1, DIP) ?? end;
             ramp(this.c, this.postDip.gain, 1, DIP);
           }
+          resolve(end);
         }
-        resolve();
       });
     });
   }
+  // run a rewire; a throw is reported (the strip carries on with what it could wire)
+  guard(fn) {
+    try { fn(); } catch (e) {
+      console.warn('overdub engine: rewire', e);
+      this.o.report && this.o.report({ kind: 'graph', track: this.id, message: 'rewire: ' + ((e && e.message) || e) });
+    }
+  }
 
-  // Wire preDip -> chain -> postDip. Live and sounding: dip out, rewire, dip in.
-  rewire(next) {
+  // Wire preDip -> chain -> postDip. Live and sounding: a chain that shares no built device with the one playing
+  // crossfades in; else dip out, rewire, dip in.
+  // Resolves to the audio time the fades end. fresh: the old chain's tail is already down (hush), so the new one comes
+  // up beside it from 0 whatever it shares (it shares nothing: a fresh build reuses no device).
+  rewire(next, { fresh = false } = {}) {
+    const c = this.c;
+    if (this.live && c.state === 'running' && this.tail && (fresh || (this.fx.length + next.length > 0 && !next.some((f) => this.fx.includes(f))))) return this.crossfade(next);
     return this.dipped(() => { this.fx = next; this.wire(); });
   }
 
-  // (only the connections the strip made are undone: a device may hang its own taps off its output)
-  wire() {
-    for (const [a, b] of this.links || []) { try { a.disconnect(b); } catch { /* ok */ } }
-    this.links = [];
+  crossfade(next) {
+    const c = this.c, old = { links: this.links, tail: this.tail };
+    const nu = this.path(next, 0);
+    this.fx = next; this.links = nu.links; this.tail = nu.tail;
+    const t = soon(c), end = t + XFADE;
+    // (the old tail from wherever it is at t: only what's scheduled after t is cancelled, never the events before it, so
+    // a tail a renew hushed stays down, not back at its intrinsic 1, while the new chain comes up; setTargetAtTime starts
+    // from where the param is: util.js ramp)
+    try { const g = old.tail.gain; g.cancelScheduledValues(t); g.setTargetAtTime(0, t, XFADE / 6); g.setValueAtTime(0, end + 0.001); } catch { /* closed */ }
+    try { const g = nu.tail.gain; g.setValueAtTime(0, t); g.linearRampToValueAtTime(1, end); g.setValueAtTime(1, end + 0.001); } catch { /* closed */ }
+    return new Promise((resolve) => afterAudio(c, end + 0.01, () => { unpath(old.links); resolve(end); }));
+  }
+
+  // preDip -> each insert -> a tail gain at `level` -> postDip: { links, tail }. (Only the connections the strip made
+  // are undone later: a device may hang its own taps off its output.)
+  path(fx, level) {
+    const tail = this.c.createGain();
+    tail.gain.value = level;
+    const links = [];
     let at = this.preDip;
-    for (const f of this.fx) { at.connect(f.inst.input); this.links.push([at, f.inst.input]); at = f.inst.output; }
-    at.connect(this.postDip);
-    this.links.push([at, this.postDip]);
+    for (const f of fx) { at.connect(f.inst.input); links.push([at, f.inst.input]); at = f.inst.output; }
+    at.connect(tail); links.push([at, tail]);
+    tail.connect(this.postDip); links.push([tail, this.postDip]);
+    return { links, tail };
+  }
+
+  wire() {
+    unpath(this.links);
+    const p = this.path(this.fx, 1);
+    this.links = p.links; this.tail = p.tail;
   }
 
   // What a key hears from this strip (keyPlan above): its sound after its inserts, before its fader, mute and pan.
@@ -456,10 +562,11 @@ export class Strip {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.retryT) { clearTimeout(this.retryT); this.retryT = 0; }
     const c = this.c;
     const end = () => {
       for (const [a, b] of this.links || []) { try { a.disconnect(b); } catch { /* ok */ } }
-      for (const n of [this.head, this.input, this.inTap, this.preDip, this.postDip, this.calm, this.fader, this.mute, this.split, this.panL, this.panR, this.merge, this.out, this.msplit, ...(this.an || []), ...(this.clip ? this.clip.nodes : []), ...(this.mon ? this.mon.nodes : [])]) {
+      for (const n of [this.head, this.input, this.inTap, this.preDip, this.tail, this.postDip, this.calm, this.fader, this.mute, this.split, this.panL, this.panR, this.merge, this.out, this.msplit, ...(this.an || []), ...(this.clip ? this.clip.nodes : []), ...(this.mon ? this.mon.nodes : [])]) {
         if (n) { try { n.disconnect(); } catch { /* ok */ } }
       }
       if (this.instr) { try { this.instr.gain.disconnect(); } catch { /* ok */ } safeDispose(this.instr.inst); }
@@ -471,9 +578,17 @@ export class Strip {
   }
 }
 
-// 'failed' and 'missing' builds keep their key; a failed build of a version is not retried until the version moves.
+// 'failed' and 'missing' builds keep their key; a failed build is built again when it's due (BUILD), at most BUILD.tries
+// more times, and a missing one when its definition moves the key.
 function sameKey(have, want) { return have === want; }
+// a slot whose failed build is due another try
+function due(f) { return !!(f && f.retryAt && Date.now() >= f.retryAt); }
+// a build's retry state: { retryAt, tries } while it failed and has tries left, else none
+function retryOf(r, tries) {
+  return r.failed && r.retry && tries < BUILD.tries ? { retryAt: Date.now() + BUILD.retry, tries: tries + 1 } : { retryAt: 0, tries };
+}
 
+function unpath(links) { for (const [a, b] of links || []) { try { a.disconnect(b); } catch { /* ok */ } } }
 function safeDispose(inst) { if (inst) { try { inst.dispose(); } catch (e) { console.warn('engine: dispose', e); } } }
 
 // The spec a strip builds from a track (or the master). With `at` (a song beat), each automated param (a lane that

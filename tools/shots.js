@@ -3,7 +3,9 @@
 //   rack.webp     the rack close up, ending on Claude's Tidal Cathedral (an agent-built device face)
 //   sketch.webp   the Sketch panel after a (fake-mic) hum of A3 C4 E4: the spiral and the notes it wrote
 //   history.webp  the History panel after a few edits by you and by Claude: warm is you, cool is the agent
+//   liveroom.webp the live room: the metal club's stage (the guitar room), walked into from the door (?room)
 // Each is written at 1440 and 960 wide (name.webp, name-960.webp) into site/assets/, and kept under ~400 KB.
+// ONLY=liveroom (or studio, sketch: comma-separated) shoots just those.
 // Needs ffmpeg or cwebp on PATH. Raw PNGs land in tools/.out/shots/.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -67,8 +69,10 @@ async function boot(opts = {}, layout = null) {
 const shot = async (page, name, clip) => { const f = path.join(RAW, name + '.png'); await page.screenshot({ path: f, clip }); return f; };
 
 const errs = [];
+const ONLY = (process.env.ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
+const want = (k) => !ONLY.length || ONLY.includes(k);
 // ---- (a) the whole studio, (b) the rack, (d) history
-{
+if (want('studio')) {
   const { page, browser, url, errors, close } = await boot({}, { leftW: 236, rightW: 400, bottomH: 330, open: { left: false, right: true, bottom: true }, tabs: {} });
   // The demo agent (scripted, real tools) takes a turn so the agent panel shows real work. Optional: skip if it stalls.
   const said = await page.evaluate(async () => {
@@ -133,7 +137,7 @@ const errs = [];
   await close();
 }
 // ---- (c) Sketch, after a hum through the fake mic
-{
+if (want('sketch')) {
   const wav = path.join(RAW, 'hum.wav');
   const secs = humWav(wav);
   const { page, errors, close } = await boot({ fakeAudio: wav }, { leftW: 236, rightW: 380, bottomH: 470, open: { left: false, right: true, bottom: true }, tabs: {} });
@@ -146,6 +150,20 @@ const errs = [];
   // silence): later, the next pass's A3 starts a fourth note the caption doesn't mention
   await page.waitForTimeout(Math.ceil((secs - 0.75) * 1000));
   encode('sketch', await shot(page, 'sketch', await page.evaluate(() => { const r = document.querySelector('.ew-region-bottom').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })));
+  errs.push(...errors);
+  await close();
+}
+// ---- (e) the live room: through the door (?room opens it on a new song, under webdriver too) into the metal club,
+// the stage as it stands (Getting started comes up by itself only in a visitor's browser, never under webdriver)
+if (want('liveroom')) {
+  const { page, errors, close } = await open('/app/', { width: 1440, height: 900, query: 'room' });
+  await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+  await page.waitForFunction(() => window.overdub?.liveRoom?.isOpen?.() && document.querySelector('.lrd-crop'), null, { timeout: 20000 });
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Digit1');
+  await page.waitForFunction(() => window.overdub.ui.state.liveRoom.screen === 'guitar' && document.querySelector('.gr-r-head'), null, { timeout: 20000 });
+  await page.waitForTimeout(1500);
+  encode('liveroom', await shot(page, 'liveroom'));
   errs.push(...errors);
   await close();
 }

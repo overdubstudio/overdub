@@ -5,8 +5,9 @@
 import { createStore } from '../app/src/core/store.js';
 import { createProject, LIMITS, songSize } from '../app/src/core/project.js';
 import { OP_TYPES } from '../app/src/core/ops.js';
-import { planSectionDuplicate, planTimeInsert, planTimeRemove, planClipRepeat, planClipSplit, nextName, planTakeFolder, takeFolders, planTakeComp, planTakeLaneDelete, planTakesFlatten, planClipTrim, retake, barBeat, barBeatSpan, planDropTrim } from '../app/src/core/arrangement.js';
+import { planSectionDuplicate, planSectionMove, planTimeInsert, planTimeRemove, planClipRepeat, planClipSplit, nextName, planTakeFolder, takeFolders, planTakeComp, planTakeLaneDelete, planTakesFlatten, planClipTrim, retake, barBeat, barBeatSpan, planDropTrim } from '../app/src/core/arrangement.js';
 import { formatNotes } from '../app/src/core/music.js';
+import { valueAt } from '../app/src/core/automation.js';
 import { demoProject } from '../app/src/core/demo.js';
 import { open, tally } from './pw.js';
 
@@ -76,7 +77,7 @@ function sounding(clips, { onsetsOnly = false } = {}) {
   return JSON.stringify(out);
 }
 
-T.ok(['section.duplicate', 'time.insert', 'time.remove', 'clip.repeat', 'clip.split'].every((x) => OP_TYPES.includes(x)), 'the five arrangement ops are in the op catalog');
+T.ok(['section.duplicate', 'section.move', 'time.insert', 'time.remove', 'clip.repeat', 'clip.split'].every((x) => OP_TYPES.includes(x)), 'the six arrangement ops are in the op catalog');
 
 /* ------------------------------------------------------------------ clip.split */
 {
@@ -228,6 +229,108 @@ T.ok(['section.duplicate', 'time.insert', 'time.remove', 'clip.repeat', 'clip.sp
   const sx = createStore(createProject({ sections: [{ id: 's_x', name: 5, start: 0, length: 16 }, { id: 's_y', name: {}, start: 16, length: 4 }], tracks: [{ name: 7, clips: [] }] }));
   const rx = sx.dispatch([{ type: 'section.duplicate', section: '5' }, { type: 'clip.add', track: '7', clip: { start: 0, notes: 'C4@0:1' } }], { by: 'you' });
   T.ok(rx.ok && sx.get().sections.map((x) => x.name).sort().join() === '5,5 2,Section' && sx.get().tracks[0].name === '7', `a section or track name that isn't text loads as text (${sx.get().sections.map((x) => x.name).join(', ')}${rx.ok ? '' : ': ' + rx.error})`);
+}
+
+/* ------------------------------------------------------------------ section.move */
+// What sounds in [a, b) of a song, moved to start at 0: per track, the notes' onsets and ends, and each audio clip's
+// place and offset, so two stretches of two songs can be compared.
+function stretch(p, a, b) {
+  const out = {};
+  for (const t of p.tracks) {
+    const notes = [], audio = [];
+    for (const c of t.clips) {
+      if (c.start >= b - 1e-6 || c.start + c.length <= a + 1e-6) continue;
+      if (c.kind === 'audio') { audio.push([+(c.start - a).toFixed(4), c.length, c.offset, c.asset]); continue; }
+      for (const n of c.notes) { const x = c.start + n.t; if (x >= a - 1e-6 && x < b - 1e-6 && x < c.start + c.length - 1e-6) notes.push(`${n.p}@${+(x - a).toFixed(4)}:${+Math.min(n.d, c.start + c.length - x).toFixed(4)}`); }
+    }
+    out[t.name] = { notes: notes.sort().join(' '), audio: JSON.stringify(audio.sort()) };
+  }
+  return JSON.stringify(out);
+}
+{
+  // the Chorus (16-32) before the Verse (0-16): the two swap; the Outro stays; the song keeps its length
+  const { s, ids, T: tr, C } = song();
+  const p0 = JSON.parse(JSON.stringify(s.get()));
+  const sid = Object.fromEntries(p0.sections.map((x) => [x.name, x.id]));
+  const r = roundTrip(s, { type: 'section.move', section: 'Chorus', before: 'Verse' }, 'claude', 'move the Chorus before the Verse');
+  const p = s.get();
+  const sec = Object.fromEntries(p.sections.map((x) => [x.name, [x.start, x.length, x.id]]));
+  T.ok(JSON.stringify(sec) === JSON.stringify({ Chorus: [0, 16, sid.Chorus], Verse: [16, 16, sid.Verse], Outro: [32, 8, sid.Outro] }), `the Chorus is first and the Verse after it, each keeping its id; the Outro stays (${JSON.stringify(sec)})`);
+  T.ok(stretch(p, 0, 16) === stretch(p0, 16, 32) && stretch(p, 16, 32) === stretch(p0, 0, 16) && stretch(p, 32, 40) === stretch(p0, 32, 40), 'every track sounds in the Chorus\'s new bars as it did in its old ones, and the Verse\'s too');
+  T.ok(C(ids.ba).start === 0 && C(ids.kb).start === 4 && C(ids.ka).start === 16 && C(ids.va).start === 20 && near(C(ids.va).offset, 0.5), 'the clips inside each keep their ids and move with it (the audio take its offset)');
+  const beat = tr('Drums').clips;
+  T.ok(beat.length === 2 && beat.some((c) => c.id === ids.da) && beat.every((c) => c.length === 16), `the Beat across the Verse's end is split there first, each half going with its part (${beat.map((c) => `${c.start}+${c.length}`).join(', ')})`);
+  T.ok(p.loop.start === 0 && p.loop.end === 16 && p.loop.on, `the loop over the Chorus goes with it (${p.loop.start}-${p.loop.end})`);
+  T.ok(r.ok && s.history.at(-1).by === 'claude' && C(ids.ba).by === 'claude' && C(ids.ka).by === 'you', 'one step, by whoever moved it; every clip keeps its author');
+  // the Verse to the end: the Chorus and the Outro close up behind it
+  const { s: s2, ids: i2, C: C2 } = song();
+  const q0 = JSON.parse(JSON.stringify(s2.get()));
+  roundTrip(s2, { type: 'section.move', section: 'Verse', before: null }, 'you', 'move the Verse to the end');
+  const q = s2.get();
+  const sec2 = Object.fromEntries(q.sections.map((x) => [x.name, [x.start, x.length]]));
+  T.ok(JSON.stringify(sec2) === JSON.stringify({ Chorus: [0, 16], Outro: [16, 8], Verse: [24, 16] }), `the Verse goes last (${JSON.stringify(sec2)})`);
+  T.ok(stretch(q, 0, 24) === stretch(q0, 16, 40) && stretch(q, 24, 40) === stretch(q0, 0, 16) && C2(i2.ka).start === 24, 'what came after it sounds as it did, 16 beats earlier, and the Verse sounds as it did at the end');
+  T.ok(q.loop.start === 0 && q.loop.end === 16, 'the loop over the Chorus moves with the bars it is in');
+  // an automation lane goes with its bars, and holds its values at every edge
+  const { s: s3 } = song();
+  s3.dispatch({ type: 'auto.write', track: 'Keys', param: 'gain', points: '0:-12 16:0 32:-6 40:-6' }, { by: 'you' });
+  const lane0 = JSON.parse(JSON.stringify(s3.get().tracks.find((t) => t.name === 'Keys').auto.gain));
+  roundTrip(s3, { type: 'section.move', section: 'Chorus', before: 'Verse' }, 'you', 'move the Chorus with a gain lane under it');
+  const lane = s3.get().tracks.find((t) => t.name === 'Keys').auto.gain;
+  const at = (l, b) => +valueAt(l.points, b).toFixed(3);
+  T.ok([0, 4, 8, 12].every((b) => at(lane, b) === at(lane0, b + 16)) && [16, 20, 24, 28].every((b) => at(lane, b) === at(lane0, b - 16)) && at(lane, 36) === at(lane0, 36), `the lane over the Chorus goes with it, and the Verse's after it (${lane.points.map((x) => `${x.t}:${x.v}`).join(' ')})`);
+  // a part's room entry is keyed by the section's id, so it stays the part's
+  const { s: s4 } = song();
+  const chorus = s4.get().sections.find((x) => x.name === 'Chorus').id;
+  s4.dispatch({ type: 'room.part.set', section: chorus, patch: { feel: 'open', busy: 1 } }, { by: 'you' });
+  roundTrip(s4, { type: 'section.move', section: chorus, before: null }, 'you', 'move the Chorus, with its part, to the end');
+  T.ok(JSON.stringify(s4.get().room.parts) === JSON.stringify({ [chorus]: { feel: 'open', busy: 1 } }) && s4.get().sections.at(-1).id === chorus, 'its room.parts entry stays with it');
+  // a take folder across an edge: the takes go with their bars, as two folders
+  const { s: s5 } = song();
+  const keys = s5.get().tracks.find((t) => t.name === 'Keys').id;
+  const tf = planTakeFolder(s5.get(), { track: keys, kind: 'notes', start: 8, end: 24, take: 'tk_move0001', passes: [{ start: 8, end: 24, notes: [{ p: 60, t: 8, d: 1, v: 0.8 }, { p: 62, t: 20, d: 1, v: 0.8 }] }, { start: 8, end: 24, notes: [{ p: 64, t: 9, d: 1, v: 0.8 }] }] });
+  s5.dispatch(tf.ops, { by: 'you', label: 'rec' });
+  const f0 = takeFolders(s5.get().tracks.find((t) => t.name === 'Keys'));
+  roundTrip(s5, { type: 'section.move', section: 'Chorus', before: 'Verse' }, 'you', 'move the Chorus with a take folder across its start');
+  const f1 = takeFolders(s5.get().tracks.find((t) => t.name === 'Keys'));
+  T.ok(f0.length === 1 && f1.length === 2 && f1.every((f) => f.clips.length === f0[0].clips.length) && f1.some((f) => f.start === 0 && f.end === 8) && f1.some((f) => f.start === 24 && f.end === 32), `the folder over 8-24 becomes two, each with every take: the Chorus's 0-8, the Verse's 24-32 (${f1.map((f) => `${f.start}-${f.end}: ${f.clips.length}`).join(', ')})`);
+  // refused: a move that changes nothing, and bars a tempo map follows
+  const no = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+  const p6 = song().s.get();
+  const same1 = no(() => planSectionMove(p6, { section: 'Verse', before: 'Chorus' })), same2 = no(() => planSectionMove(p6, { section: 'Outro', before: null }));
+  T.ok(/there already/.test(same1) && /there already/.test(same2), `a move to where it is says so ("${same1}")`);
+  const { s: s7 } = song();
+  s7.dispatch({ type: 'tempo.map', map: { anchors: [{ beat: 0, sec: 0 }, { beat: 16, sec: 8.2 }, { beat: 32, sec: 16.1 }] } }, { by: 'you' });
+  const tm = s7.dispatch({ type: 'section.move', section: 'Chorus', before: 'Verse' }, { by: 'you' });
+  T.ok(!tm.ok && /follows a recording/.test(tm.error), `inside a tempo map it is refused, as a duplicate is ("${tm.error}")`);
+  // a pickup goes with the bars it leads into; landing on the song's first beat, what would come before it is trimmed
+  // off first (a take's clip starts 30 ms before its part: the room moves parts to the top), whichever way the bars
+  // get there, so the rest stays on the beat
+  const pickup = () => {
+    const x = song();
+    const pk = x.s.dispatch([
+      { type: 'clip.add', track: 'Keys', ref: 'pk', clip: { start: 15.8, length: 1.2, name: 'Pickup', notes: 'G4@0:0.2 C5@0.2:1' } },
+      { type: 'clip.add', track: 'Vox', ref: 'vk', clip: { kind: 'audio', asset: 'a_take01', start: 15.94, length: 8.06, offset: 2, name: 'Take 2' } },
+    ], { by: 'you' }).created;
+    return { ...x, pk };
+  };
+  for (const [op, what] of [[{ type: 'section.move', section: 'Chorus', before: 'Verse' }, 'the Chorus to the top'], [{ type: 'section.move', section: 'Verse', before: null }, 'the Verse away from under the Chorus']]) {
+    const { s: s8, C: C8, pk } = pickup();
+    const r8 = roundTrip(s8, op, 'you', `move ${what}, with a pickup into the Chorus`);
+    const k = C8(pk.pk), v = C8(pk.vk);
+    T.ok(k.start === 0 && k.length === 1 && JSON.stringify(k.notes.map((n) => [n.t, n.d])) === '[[0,1]]' && v.start === 0 && near(v.length, 8) && near(v.offset, 2 + 0.06 * 0.5) && s8.get().sections.find((x) => x.name === 'Chorus').start === 0,
+      `moving ${what}: the pickups are trimmed to start on the song's first beat, the note before it gone and the take's offset moved on 30 ms, the rest where it sounded (${k.start}+${k.length}, ${v.start}+${v.length} at ${v.offset}): "${r8.ok ? planSectionMove(pickup().s.get(), op).summary : ''}"`);
+  }
+  {
+    const { s: s8, C: C8, pk } = pickup();
+    roundTrip(s8, { type: 'section.move', section: 'Chorus', before: null }, 'you', 'move the Chorus, its pickups with it, to the end');
+    T.ok(C8(pk.pk).start === 23.8 && C8(pk.vk).start === 23.94 && C8(pk.pk).notes.length === 2, `elsewhere the pickups go with the Chorus whole, a hair before it (${C8(pk.pk).start}, ${C8(pk.vk).start})`);
+    const { s: s9 } = song();
+    s9.dispatch({ type: 'clip.add', track: 'Keys', clip: { start: 15.8, length: 0.3, name: 'Sliver', notes: 'G4@0:0.2' } }, { by: 'you' });
+    const p9 = canon(s9.get()), sl = s9.dispatch({ type: 'section.move', section: 'Chorus', before: 'Verse' }, { by: 'you' });
+    T.ok(!sl.ok && /nearly all a pickup into Chorus/.test(sl.error) && canon(s9.get()) === p9, `a clip that is nearly all a pickup can't go to the top of the song, and nothing changes ("${sl.error}")`);
+  }
+  T.ok(/^Moved Chorus \(4 bars\) before Verse/.test(planSectionMove(song().s.get(), { section: 'Chorus', before: 'Verse' }).summary), 'its summary says what moved where: ' + planSectionMove(song().s.get(), { section: 'Chorus', before: 'Verse' }).summary);
 }
 
 /* ------------------------------------------------------------------ clip.repeat */

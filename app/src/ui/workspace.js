@@ -103,7 +103,7 @@ const KIND_ORDER = ['go', 'do', 'sound', 'help'];
 
 // Find's rows for a query out of every source: the best match first, then Go to, Do, Sound, Help, a few of each. Two
 // sounds that match as well are put in id order: the device list is in the order devices registered, which depends on
-// which of the built-ins and the vendored pedals finished loading first, and with only six Sound rows that decided
+// which of the built-ins and the guitar pedals finished loading first, and with only six Sound rows that decided
 // which reverbs a search for "reverb" showed. Go to, Do and Help keep their list's order, which is fixed.
 export function pickRows(items, query) {
   const per = {};

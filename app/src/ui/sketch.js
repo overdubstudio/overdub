@@ -1902,7 +1902,7 @@ function mount(el, app) {
       if (!st.open) {
         side.replaceChildren(h('div.sk-explain.small',
           h('p', h('b', 'Plug in a guitar, a bass or a mic.'), ' The browser asks first. Overdub turns its voice processing off, so your instrument sounds like itself.'),
-          h('button.btn.btn-go', { onclick: async () => { try { await audio.open(); try { localStorage.setItem(MIC_OK, '1'); } catch { /* ok */ } loadDevs(); } catch (e) { ui.toast(e.message, { kind: 'bad' }); } } }, 'Open the input'),
+          h('button.btn.btn-go', { onclick: async () => { try { await audio.openBest(); try { localStorage.setItem(MIC_OK, '1'); } catch { /* ok */ } loadDevs(); } catch (e) { ui.toast(e.message, { kind: 'bad' }); } } }, 'Open the input'),
           st.error ? h('p.sk-err', st.error) : null));
         return;
       }
@@ -1919,7 +1919,7 @@ function mount(el, app) {
     function calibView() {
       const dots = h('div.sk-dots', Array.from({ length: 8 }, (_, i) => h('i' + (i < 2 ? '.w' : ''))));
       const res = h('p.sk-calres', 'Clap, tap or mute-strum on each click (the first two are a warm-up). Or loop an output back into the input and send chirps.');
-      const use = h('button.btn.btn-go', { disabled: true, onclick: () => { if (last && last.ok) { audio.latency.set(Math.max(0, last.ms), { how: last.how, spread: last.spread ?? last.agree }); ui.toast(`Using ${fmtMs(Math.max(0, last.ms))} ms for ${audio.state.label || 'this input'}.`, { kind: 'ok' }); calib = null; paintSide(); } } }, 'Use this');
+      const use = h('button.btn.btn-go', { disabled: true, onclick: () => { if (last && last.ok) { audio.latency.set(Math.max(0, last.ms), { how: last.how, spread: last.spread ?? last.agree, confidence: last.confidence }); ui.toast(`Using ${fmtMs(Math.max(0, last.ms))} ms for ${audio.state.label || 'this input'}.`, { kind: 'ok' }); calib = null; paintSide(); } } }, 'Use this');
       let last = null, sig = null;
       const run = async (how) => {
         if (sig) { sig.stop = true; return; }

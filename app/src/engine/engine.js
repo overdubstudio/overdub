@@ -3,7 +3,11 @@
 //
 //   const engine = createEngine(store);
 //   await engine.start();                       // from a user gesture
-//   engine.play(fromBeat?, { countIn: { beats, preroll } }?) / stop({ live }?) / seek(beat) / toggle(); engine.playing; engine.beat
+//   engine.play(fromBeat?, { countIn: { beats, preroll, voice, hits }, at }?) / stop({ live }?) / seek(beat) / toggle(); engine.playing; engine.beat
+//     at: the audio-clock time (ctx.currentTime's) the first beat is scheduled for, when that is later than now and
+//     the start delay (the live room's deck starts a count where a beat it decided at key time falls: ui/liveroom/deck.js)
+//   engine.lastCount ({ from, until, beats, voice, hits, startT, spb, sounded: [{ i, at }] } of the last count-in: the
+//     beats that sounded and the audio-clock time each was handed to the speakers at; null before one)
 //   engine.starting (a play() waiting for the engine or a renew: stop() cancels it) ; engine.gen (counts transport
 //     starts: play, seek, play from elsewhere; a loop wrap is the same run)
 //   engine.gridBeat (the playhead on the unwrapped grid: it doesn't jump back at a loop wrap; null when stopped)
@@ -23,6 +27,10 @@
 //   engine.probeLatency({ tracks, withMix }) -> { tracks, max } (what render's delay compensation would line up to; stems use it)
 //   engine.settled() -> Promise (every strip matches the document) ; engine.dispose()
 //   engine.silence() -> Promise (the killswitch: see below) ; engine.silencing ; engine.on('silence', fn)
+//   engine.monitored(trackId | null) ; engine.monitoredTrack (the strip live input plays through: the polite stop never
+//     fades or renews it) ; engine.rebuild(trackId) -> Promise<{ ok, failed }> (the strip renewed, atomically: a repair)
+//     ; engine.chainTaps(trackId) -> { input, chain, settling, strip } | null (where the live path's check listens:
+//     input/livepath.js)
 //   engine.voices() -> Promise<{ [trackId]: { device, voices, held, peak, stuck } }> (debug: what each instrument is
 //     sounding: voices alive, voices whose note is still down, its output's peak in dBFS over the last ~40 ms, and
 //     how many voices the kernel host's watchdog has let go; tools/stuck-test.js)
@@ -72,13 +80,17 @@
 // render. It clicks the whole beats counted from each bar line, accenting the bar line, so a bar of 7/8 (3.5 beats)
 // clicks 0, 1, 2, 3 and the next bar starts on a click, half a beat later.
 //
-// Count-in (docs/research/RECORDING-UX.md 3.5). play(from, { countIn: { beats, preroll = true } }) starts the
+// Count-in (docs/research/RECORDING-UX.md 3.5). play(from, { countIn: { beats, preroll = true, voice, hits } }) starts the
 // transport `beats` before `from` (u = 0 is from - beats, so engine.beat is negative below bar 1). What is a count is
 // decided on u (u < beats), never on the song beat, so a loop that wraps back below `from` doesn't count again. In the
 // count the click always sounds; below beat 0 nothing else can; with preroll the song plays from from - beats, without
 // it the count is a quiet segment and the song starts at `from` as a fresh one (held notes chased). No loop wraps
 // inside the count (a count that runs past the loop's end must reach `from`). 'transport' why 'countin-end' fires at
-// the audible downbeat; stopping in the count puts the playhead back at `from`.
+// the audible downbeat; stopping in the count puts the playhead back at `from`. The count's voice (the live room's,
+// docs/research/LIVE-ROOM-MODE.md §9.4): 'click' (the click's knock, the default), 'sticks' (click.js sticksSamples:
+// the drummer counting you in) or 'none' (no count sounds: the pre-roll is the count); hits: the count's beats that
+// sound, counted from 0 (the basement's two bars, 1 3 5 6 7 8, are [0, 2, 4, 5, 6, 7]); left out, every beat. Like the
+// click it goes to the speakers only, never into a render.
 //
 // Recording. engine.recording is the recorder's flag: it rides on 'transport' events, makes click.whileRecording
 // sound, and is cleared by stop() and silence() after their 'stop' event. A loop wrap's 'transport' 'loop' event
@@ -130,7 +142,7 @@ import { noteExpr } from '../kernel/expr.js';
 import { renderProject, probeLatency } from './render.js';
 import { assets as sharedAssets } from './assets.js';
 import { emitter, frame, beatsPerBarOf, sleep, soon, afterAudio, ramp, dbToGain } from './util.js';
-import { clickSamples } from './click.js';
+import { clickSamples, sticksSamples } from './click.js';
 
 const TICK_MS = 25;
 const AHEAD = 0.12;        // seconds scheduled ahead of the audio clock
@@ -178,6 +190,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   // automation (see the header): the lanes that play, what was handed over, how far each control grid has been laid
   const AU = { doc: null, lanes: [], byId: new Map(), sigs: new Map(), sent: new Set(), insts: new Set(), mix: new Map(), graph: new Map() };
   let calm = null;                   // the polite stop under way: { stopT, strips: Set<Strip>, fading, renewing, job }
+  let monitoredId = null;            // the track live input plays through (engine.monitored): never renewed by the polite stop
   const lastLive = new Map();        // track id -> audio time of its last live note or audition
   let lastEnd = null;                // the song's last sound (schedule.js lastSound), cached until the song changes
 
@@ -350,6 +363,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       let s = strips.get(t.id);
       if (!s) {
         s = new Strip(ctx, stripOpts(t.id, { dest: master.head }));
+        s.monitored = t.id === monitoredId;
         strips.set(t.id, s);
         ev.emit('graph', { kind: 'track', track: t.id, added: true });
       }
@@ -766,8 +780,14 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     for (const [b, accent] of beats) {
       const counting = inCount(b);
       if (counting ? fill : !on) continue;
+      // (the count's own voice and the beats of it that sound)
+      const i = counting ? Math.round(uA + (b - sA)) : -1;
+      if (counting && (cnt.voice === 'none' || (cnt.hits && !cnt.hits.includes(i)))) continue;
       const t = time(b);
-      if (t >= now) clickAt(frame(ctx, t + pdc.total), accent, counting);
+      if (t < now) continue;
+      const at = frame(ctx, t + pdc.total);
+      clickAt(at, accent, counting, counting && cnt.voice === 'sticks');
+      if (counting && cnt.sounded) cnt.sounded.push({ i, at });
     }
   }
 
@@ -920,13 +940,16 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   // by the plugin latency so it lands with the beat you hear.
   // (the sound is engine/click.js's, made once per context: a wood-block knock that cuts through a drum kit)
   let clickBufs = null;
-  function clickAt(t, accent, count = false) {
+  function clickAt(t, accent, count = false, sticks = false) {
     if (!clickBufs || clickBufs.ctx !== ctx) {
-      const mk = (a) => { const x = clickSamples(ctx.sampleRate, a), b = ctx.createBuffer(1, x.length, ctx.sampleRate); b.getChannelData(0).set(x); return b; };
-      clickBufs = { ctx, beat: mk(false), bar: mk(true) };
+      const mk = (fn, a) => { const x = fn(ctx.sampleRate, a), b = ctx.createBuffer(1, x.length, ctx.sampleRate); b.getChannelData(0).set(x); return b; };
+      clickBufs = { ctx, beat: mk(clickSamples, false), bar: mk(clickSamples, true), sticks: null };
     }
+    // (the sticks, made the first time a count asks for them)
+    if (sticks && !clickBufs.sticks) clickBufs.sticks = { beat: (() => { const x = sticksSamples(ctx.sampleRate, false), b = ctx.createBuffer(1, x.length, ctx.sampleRate); b.getChannelData(0).set(x); return b; })(), bar: (() => { const x = sticksSamples(ctx.sampleRate, true), b = ctx.createBuffer(1, x.length, ctx.sampleRate); b.getChannelData(0).set(x); return b; })() };
     const o = ctx.createBufferSource();
-    o.buffer = accent ? clickBufs.bar : clickBufs.beat;
+    const set = sticks ? clickBufs.sticks : clickBufs;
+    o.buffer = accent ? set.bar : set.beat;
     o.connect(clickBus);
     o.start(t);
     o.count = count;
@@ -1008,10 +1031,10 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
   }
 
   // Start the transport at song beat `from`, or `count.beats` before it with a count-in (see the header).
-  function begin(from, count = null) {
+  function begin(from, count = null, at = 0) {
     T.gen = (T.gen || 0) + 1;
     const now = ctx.currentTime;
-    T.startT = frame(ctx, now + START_DELAY);
+    T.startT = frame(ctx, Math.max(now + START_DELAY, Number.isFinite(at) ? at : 0));
     T.anchors = [{ t: T.startT, u: 0, spb: spbNow() }];
     const s0 = count ? from - count.beats : from;
     T.tmSrc = P().tempoMap || null;
@@ -1022,7 +1045,8 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     T.from = from;
     T.schedU = 0;
     T.wraps = 0;
-    T.count = count ? { from: s0, until: from, beats: count.beats, preroll: !!count.preroll, ended: false } : null;
+    T.count = count ? { from: s0, until: from, beats: count.beats, preroll: !!count.preroll, voice: count.voice, hits: count.hits, ended: false, sounded: [] } : null;
+    if (T.count) lastCount = { count: T.count, startT: T.startT, spb: spbNow() };
     T.playing = true;
     const events = [];
     scheduleUntil(ctx.currentTime + AHEAD, events);
@@ -1042,14 +1066,19 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     }, left);
   }
 
-  // A count-in: { beats (> 0, at most 4 bars), preroll (default true) }, or null.
+  // A count-in: { beats (> 0, at most 4 bars), preroll (default true), voice ('click' | 'sticks' | 'none'; default
+  // 'click'), hits (the count's beats that sound, from 0; default all) }, or null.
   function countOf(o) {
     const c = o && o.countIn;
-    if (!c || c === true) return c === true ? { beats: bpbNow(), preroll: true } : null;
+    if (!c || c === true) return c === true ? { beats: bpbNow(), preroll: true, voice: 'click', hits: null } : null;
     const beats = +c.beats;
     if (!(beats > 0)) return null;
-    return { beats: Math.min(beats, 4 * bpbNow()), preroll: c.preroll !== false };
+    const n = Math.min(beats, 4 * bpbNow());
+    const voice = c.voice === 'sticks' || c.voice === 'none' ? c.voice : 'click';
+    const hits = Array.isArray(c.hits) ? c.hits.map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < n) : null;
+    return { beats: n, preroll: c.preroll !== false, voice, hits };
   }
+  let lastCount = null;
 
   // A play that has to wait (the engine starting, a renew under way) is still the transport's: stop(), the killswitch
   // or a newer play() in the meantime wins, and it never starts (engine.starting says one is waiting).
@@ -1068,7 +1097,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     const from = Math.max(0, Number.isFinite(fromBeat) ? fromBeat : T.cursor);
     if (T.playing) halt(null, false, false);   // (the keys the musician holds play on)
     T.cursor = from;
-    begin(from, countOf(opts));
+    begin(from, countOf(opts), opts?.at);
     if (AU.lanes.length) reconcile();
     transportEvt('play');
     return api;
@@ -1120,7 +1149,8 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     if (T.playing || disposed || renewing || ctx.state !== 'running') { calm = null; return; }
     let busy = false;
     for (const [id, s] of strips) {
-      if ((lastLive.get(id) ?? -1) >= c.stopT || liveOn(id) || s.hearsInput()) { busy = true; continue; }
+      // (the monitored strip is live playing whatever its level: a guitar resting between phrases is still plugged in)
+      if (s.monitored || (lastLive.get(id) ?? -1) >= c.stopT || liveOn(id) || s.hearsInput()) { busy = true; continue; }
       const m = s.read();
       if (m && m.peak > CALM_DB) c.strips.add(s);
     }
@@ -1374,6 +1404,7 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
     get beat() { return beatNow(); },
     get gridBeat() { return gridNow(); },
     get counting() { return countingNow(); },
+    get lastCount() { if (!lastCount) return null; const k = lastCount.count; return { from: k.from, until: k.until, beats: k.beats, voice: k.voice, hits: k.hits ? [...k.hits] : null, startT: lastCount.startT, spb: lastCount.spb, sounded: k.sounded.map((x) => ({ ...x })) }; },
     beatAt,
     get click() { return { ...click }; },
     set click(v) { setClick(v); },
@@ -1404,6 +1435,31 @@ export function createEngine(store, { assets = sharedAssets } = {}) {
       const s = strips.get(trackId);
       if (s) s.watchInput(); // (the polite stop leaves a strip alone while its input is live)
       return s ? s.input : null;
+    },
+    // The live path (input/livepath.js, docs/research/AMP-PATH.md §6). monitored(id): the track live input plays through
+    // now (input/audioin.js sets it with the monitor's target), or null; the polite stop never fades or renews it.
+    monitored(trackId = null) {
+      monitoredId = trackId ? String(trackId) : null;
+      for (const [id, s] of strips) s.monitored = id === monitoredId;
+    },
+    get monitoredTrack() { return monitoredId; },
+    // rebuild(id): the strip renewed, atomically (every device built anew behind its own tail, nothing reused, never the
+    // dry input meanwhile) -> { ok, failed: [insert ids playing a stand-in] }
+    async rebuild(trackId) {
+      const s = trackId === 'master' ? master : strips.get(trackId);
+      if (!s || s.disposed) return { ok: false, failed: [] };
+      try { await s.renew(); } catch (e) { report({ kind: 'graph', track: trackId, message: 'rebuild: ' + ((e && e.message) || e) }); }
+      updatePdc();
+      const failed = s.fx.filter((f) => f.inst && f.inst.fallback && !f.inst.held).map((f) => f.id);
+      if (s.instr && s.instr.inst && s.instr.inst.fallback && !s.instr.inst.held) failed.push('instrument');
+      return { ok: !failed.length, failed };
+    },
+    // chainTaps(id): where to listen to a strip, never fed: its input (live input monitoring arrives there) and its
+    // chain's end (after the inserts, before the fader); settling: a build, a dip or a renew under way right now
+    chainTaps(trackId) {
+      const s = strips.get(trackId);
+      if (!s || s.disposed) return null;
+      return { input: s.input, chain: s.keyTap(), get settling() { return !!(s.job || s.dips || s.disposed); }, strip: s };
     },
     instance(trackId, which = 'instrument') {
       if (trackId === 'master') return master ? master.instance(which) : null;

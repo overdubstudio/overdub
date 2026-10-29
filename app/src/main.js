@@ -12,6 +12,8 @@ import { createTrust, heldIn, kernelHash, TRUST_KEY } from './devices/trust.js';
 import { createShell } from './ui/shell.js';
 import { decideView, WORKSPACE_KEY } from './ui/workspace-view.js';
 import { installWorkspace } from './ui/workspace.js';
+import { decideDoor } from './ui/liveroom/door-decide.js';
+import { prefs as roomPrefs } from './ui/liveroom/prefs.js';
 import { loadSiteConfig } from './site-config.js';
 
 const SAVE_KEY = 'overdub:project', PREV_KEY = 'overdub:previous';
@@ -38,6 +40,7 @@ const MODULES = [
   './ui/sounds.js', // the sound card (app.sounds: trying an instrument by ear, Keep and Back); after plugin.js and input/index.js
   './ui/grooves.js', // the Grooves tab (core/grooves.js) and the find_grooves, use_groove and drum_track tools; before the bridges too
   './ui/jam.js', // the Jam room beside Arrange, and its tools (get_jam, make_jam_track, set_tone, show_on_fretboard)
+  './ui/liveroom/index.js', // the live room in front of the glass (app.liveRoom), over the studio when the door says so (decideDoor, below)
   './ui/community.js', // the community shelf (From the community, in the Browser) and find_community_device; off unless on a local host
   './agent/sounds-tool.js', // suggest_sounds (sounds on the card, app.sounds.suggest); before the panel and the bridges
   './agent/panel.js', './agent/history.js', './agent/presence.js', './agent/bridge.js',
@@ -126,9 +129,14 @@ function migrateLegacyStorage() {
 }
 
 let opened = 'demo'; // how the song was opened (app.opened): 'new' | 'demo' | 'saved'
+// The song saved here, read once (before the door is asked, which needs to know whether it has a room) and cleaned:
+// null when there is none or it can't be read. savedRaw: whether there was one at all.
+let savedSong = null, savedRaw = false;
 // Which view this load opens in (ui/workspace-view.js): decided before the song, since a first visit in the simple
 // view opens a blank song ("Take 1 is yours."), not the demo. Night Shift stays one click away.
 let workspace = { view: 'full', persist: false, from: 'default' };
+// Which side of the glass this load opens on (ui/liveroom/door-decide.js: app.door), asked before the shell is built
+let door = { side: 'control', song: 'demo' };
 // ?new and ?demo=… (the landing page's links) open another song over the one saved here. That one is kept as the
 // previous song (the key ui/export.js keepPrevious uses) and in Recent songs (app.exporter.putAside), and the studio
 // says so, with an Undo, once it's up; then the parameter leaves the address. A blank song, or the same demo unedited,
@@ -145,10 +153,14 @@ function putAside(next) {
   } catch { /* storage blocked, or a saved song that can't be read: nothing here to keep */ }
   return next;
 }
+// The song this load opens with, as the door says (ui/liveroom/door-decide.js: door.song): a new one (?new, ?room,
+// ?studio, a first visit to the room), the demo (?demo=<id>, or with nothing saved Night Shift; the simple view's
+// blank sheet), or the one saved here. A share link's song never gets here (boot opens it instead).
 function loadSaved() {
-  if (params.has('new')) { opened = 'new'; return putAside(createProject()); }
-  if (params.has('demo')) return putAside(demoById(params.get('demo')));
-  try { const s = localStorage.getItem(SAVE_KEY); if (s) { const p = cleanProject(JSON.parse(s)); opened = 'saved'; return p; } } catch (e) { console.warn('overdub: saved project unreadable, starting the demo', e); }
+  if (door.song === 'new') { opened = 'new'; return putAside(createProject()); }
+  if (door.song === 'demo' && params.has('demo')) return putAside(demoById(params.get('demo')));
+  if (savedSong && door.song !== 'demo') { opened = 'saved'; return savedSong; }
+  if (savedRaw && !savedSong) console.warn('overdub: saved project unreadable, starting the demo');
   if (workspace.view === 'simple') { opened = 'new'; return createProject(); }
   return demoProject();
 }
@@ -174,6 +186,17 @@ async function boot() {
     try { storage = window.localStorage; } catch { /* blocked */ }
     workspace = decideView({ search: location.search, storage, webdriver: !!navigator.webdriver });
     if (workspace.persist) { try { const cur = JSON.parse(storage?.getItem(WORKSPACE_KEY) || 'null'); storage?.setItem(WORKSPACE_KEY, JSON.stringify({ ...(cur && typeof cur === 'object' ? cur : {}), v: 1, view: workspace.view })); } catch { /* private mode */ } }
+    // the room's side: the studio stays out of sight (app.css, html[data-room]) until the room has mounted over it. The
+    // door reads whether the saved song has a room (a room song comes back to the room, §2.1)
+    try { const raw = storage?.getItem(SAVE_KEY); if (raw) { savedRaw = true; savedSong = cleanProject(JSON.parse(raw)); } } catch { savedSong = null; /* blocked, or unreadable */ }
+    const saved = savedSong ? { room: !!(savedSong.room && typeof savedSong.room === 'object'), blank: (savedSong.title || 'Untitled') === 'Untitled' && savedSong.tracks.every((t) => !(t.clips || []).length) } : false;
+    let room = null;
+    try { room = roomPrefs.get(); } catch { /* storage: none */ }
+    try { door = decideDoor({ search: location.search, hash: location.hash, saved, room, webdriver: !!navigator.webdriver }); } catch (e) { console.error('overdub: the door', e); }
+    if (door.side === 'room') document.documentElement.dataset.room = '';
+    // a load the address sent to the control room (?studio, ?demo, ?device=...) is the side you were last on: a reload
+    // stays there (the room writes its own side as it opens and closes; a share link's listener is someone else's song)
+    else if (door.song !== 'shared' && !navigator.webdriver && room && room.side !== 'control') { try { roomPrefs.set({ side: 'control' }); } catch { /* storage */ } }
   }
   // Fetch every graph at once (an import runs nothing until default(app)); they start below, in order. One after
   // another, the panels' fetches took ~250 ms each and the studio ~12 s to finish booting.
@@ -215,7 +238,7 @@ async function boot() {
   const em = await engineLoading;
   const engine = em ? em.createEngine(store) : silentEngine(store);
 
-  const app = { store, engine, devices, music, summarize: (o) => summarize(store.get(), { ...o, devices: devices.getDevice, held: devices.heldDevice }), version: '0.1.0', agent: null, tools: null, input: null, opened, round: !!workspace.round };
+  const app = { store, engine, devices, music, summarize: (o) => summarize(store.get(), { ...o, devices: devices.getDevice, held: devices.heldDevice }), version: '0.1.0', agent: null, tools: null, input: null, opened, round: !!workspace.round, door };
   if (shared) app.share = { incoming: shared, listening: !!shared.ok };
   // app.trust: what's held, and the person's way to let it play (ui/share.js and the rack call play; no agent tool does)
   app.trust = {
@@ -269,10 +292,31 @@ async function boot() {
     const mod = await loading[i];
     if (mod?.default) { try { await mod.default(app); } catch (e) { console.error(`overdub: ${MODULES[i]} failed to start`, e); } }
   }
+  // (a room that didn't open, or didn't load: the studio comes out from under the anti-flash rule)
+  if (!app.liveRoom?.isOpen?.()) delete document.documentElement.dataset.room;
+  // the room's shelf (ui/liveroom/shelf.js, the module the room loaded): a room song is kept there on every autosave,
+  // and a load that comes back to one says where you left it (§2.6)
+  const shelfMod = app.liveRoom ? await tryImport('./ui/liveroom/shelf.js') : null;
+  let shelf = null;
+  try { shelf = shelfMod?.installShelf?.(app) || null; } catch (e) { console.error('overdub: the shelf', e); }
 
-  // autosave (the song only; audio lives in IndexedDB)
+  // autosave (the song only; audio lives in IndexedDB), and a room song on the shelf beside it
   let saveT = 0;
-  const save = () => { saveT = 0; try { localStorage.setItem(SAVE_KEY, JSON.stringify(store.get())); } catch { app.ui.toast('Could not save the song in this browser (storage is full or blocked)', { kind: 'bad' }); } };
+  // (the guitar room's drummer plays where the song has no drums through store.preview: clips named 'Jam' by the
+  // house, heard and never kept. A save mid-jam leaves them out, so a page closed while the drummer plays doesn't keep
+  // its bars: ui/liveroom/guitar/drummer-jam.js)
+  const jamClip = (c) => c?.name === 'Jam' && c?.by === 'overdub';
+  const kept = () => {
+    const p = store.get();
+    if (!p?.tracks?.some((t) => t.clips?.some(jamClip))) return p;
+    return { ...p, tracks: p.tracks.map((t) => (t.clips?.some(jamClip) ? { ...t, clips: t.clips.filter((c) => !jamClip(c)) } : t)) };
+  };
+  const save = () => {
+    saveT = 0;
+    const song = kept();
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(song)); } catch { app.ui.toast('Could not save the song in this browser (storage is full or blocked)', { kind: 'bad' }); }
+    try { shelf?.keep(song); } catch (e) { console.error('overdub: the shelf', e); }
+  };
   store.on('change', () => { clearTimeout(saveT); saveT = 0; if (app.share?.listening) return; saveT = setTimeout(save, 500); });
   // a page going away saves what's waiting (a sound on trial let go as the tab hides is the song's last change)
   const flush = () => { if (!saveT) return; clearTimeout(saveT); save(); };
@@ -292,10 +336,11 @@ async function boot() {
     if (app.exporter?.putAside) app.exporter.putAside(kept, `${what} “${kept.title}” is in Recent songs, and Undo brings it back.`);
     else app.ui.toast(`${what} “${kept.title}” is kept: Undo brings it back.`, { kind: 'ok', ms: 9000, action: { label: 'Undo', run: () => { store.load(kept, { by: 'you' }); app.ui.toast(`Back to “${kept.title}”`); } } });
   }
-  // ?new and ?demo= have done their job: off the address, so a reload (or a restored tab) opens the song saved here,
-  // not the demo again over your edits to it (the modules that read the address have read it by now)
-  if (params.has('new') || params.has('demo')) {
-    try { const u = new URL(location.href); u.searchParams.delete('new'); u.searchParams.delete('demo'); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* fine */ }
+  // ?new, ?demo=, ?room and ?studio have done their job: off the address, so a reload (or a restored tab) opens the song saved
+  // here, not the demo again over your edits to it (the modules that read the address have read it by now; which side
+  // of the glass a reload opens on is the room's to remember, overdub:room)
+  if (params.has('new') || params.has('demo') || params.has('room') || params.has('studio')) {
+    try { const u = new URL(location.href); for (const k of ['new', 'demo', 'room', 'studio']) u.searchParams.delete(k); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch { /* fine */ }
   }
 
   document.documentElement.dataset.ready = '1';

@@ -5,9 +5,10 @@
   "files": {
     "includes": [
       "**",
-      // Not ours to restyle: vendored verbatim (tools/vendor-clawd.js), generated (each says by what), or frozen data.
+      // Not restyled: the guitar gear (one-scope code in its own style, and worklet files held byte for byte to the
+      // strings it builds), third-party drops (app/vendor), generated (each says by what), or frozen data.
       "!app/vendor",
-      "!app/src/devices/guitar/*.gen.js",
+      "!app/src/devices/guitar/gear",
       "!app/src/devices/builtin/akwf.js",
       "!app/src/devices/library/reports.js",
       "!tools/fixtures"
@@ -100,7 +101,7 @@
     },
     {
       // AudioWorkletGlobalScope
-      "includes": ["app/src/kernel/worklet.js", "app/src/devices/worklets/*.js", "app/src/input/cap-worklet.js", "tools/test-worklets.js"],
+      "includes": ["app/src/kernel/worklet.js", "app/src/devices/worklets/*.js", "app/src/input/cap-worklet.js", "app/src/input/tape-worklet.js", "tools/test-worklets.js"],
       "javascript": { "globals": ["AudioWorkletProcessor", "registerProcessor", "sampleRate", "currentFrame", "currentTime"] }
     },
     {

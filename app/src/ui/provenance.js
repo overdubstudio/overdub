@@ -121,7 +121,7 @@ export function provenanceModel(p, { history = [], author = null, getDevice = ()
   }
   for (const fx of p.master?.inserts || []) if (fx.by) A(fx.by).effects++;
   function devAuthor(id) {
-    // only devices someone wrote in a song or for the house shelf; the built-ins and the vendored pedals are the studio's
+    // only devices someone wrote in a song or for the house shelf; the built-ins and the guitar gear are the studio's
     const src = p.devices?.[id];
     const def = src ? null : getDevice(id);
     const by = src?.by || (def && (def.source === 'library' || def.source === 'project') ? def.by : null) || null;

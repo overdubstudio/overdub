@@ -2,7 +2,9 @@
 // notes. Pure functions (no DOM, no audio graph), so they run in the browser and in Node (tools/input-test.js,
 // tools/hum-bench.js).
 //
-//   yin(buf, sr, { lo, hi, out })        -> { hz, ap, conf, sure }   one window, hz 0 when there is no one clear note
+//   yin(buf, sr, { lo, hi, out, hint })  -> { hz, ap, conf, sure, hinted }   one window, hz 0 when there is no one clear
+//                                           note; hint (Hz): the note a tuner holds, kept when YIN's pick is a whole
+//                                           multiple of its period and the dip at its own period is nearly as clear
 //   createPitchTracker({ sr, hop, win, lo, hi })
 //                                        -> { push(samples) -> new frames, decode() -> frames, trace() -> frames (the
 //                                             undecoded tail from each frame's own best guess), frames, n, peakDb,
@@ -43,8 +45,8 @@ export const dbOf = (x) => 20 * Math.log10(Math.max(1e-9, x));
 export function rms(x, a = 0, b = x.length) { let s = 0; for (let i = a; i < b; i++) s += x[i] * x[i]; return Math.sqrt(s / Math.max(1, b - a)); }
 
 const SCRATCH = new Map(); // N -> { x, d }
-export function yin(buf, sr, { lo = 50, hi = 1400, out = {}, thresh = 0.15 } = {}) {
-  out.hz = 0; out.ap = 1; out.conf = 0; out.sure = false;
+export function yin(buf, sr, { lo = 50, hi = 1400, out = {}, thresh = 0.15, hint = 0, hintAp = 0.35 } = {}) {
+  out.hz = 0; out.ap = 1; out.conf = 0; out.sure = false; out.hinted = false;
   const N = buf.length >> 1, s = sr / 2, W = N >> 1;
   const maxT = Math.min(W - 2, Math.floor(s / lo)), minT = Math.max(2, Math.floor(s / hi));
   if (maxT <= minT + 2) return out;
@@ -70,6 +72,17 @@ export function yin(buf, sr, { lo = 50, hi = 1400, out = {}, thresh = 0.15 } = {
   }
   if (T < 0) { let b = 1; for (let t = minT; t <= maxT; t++) if (d[t] < b) { b = d[t]; T = t; } }
   if (T < 0 || T >= maxT) return out;
+  // the hint: a string decaying under mains hum (or under another string ringing) gives a period that is a whole
+  // multiple of its own (A2 under 60 Hz hum reads A1; E4 reads C2, five of its periods). While a tuner holds a note,
+  // a pick k = 2..8 times its period, with a dip at its own period under hintAp, is that note (input/tuner.js)
+  if (hint > 0) {
+    const Th = s / hint, k = T / Th, kr = Math.round(k);
+    if (Th >= minT && Th <= maxT - 2 && kr >= 2 && kr <= 8 && Math.abs(k - kr) < 0.03 * kr) {
+      let b = Math.max(minT, Math.round(Th) - 2);
+      for (let t = b + 1; t <= Math.min(maxT - 1, Math.round(Th) + 2); t++) if (d[t] < d[b]) b = t;
+      if (d[b] < hintAp && b > minT) { T = b; out.hinted = true; }
+    }
+  }
   out.ap = d[T];
   out.conf = Math.max(0, Math.min(1, 1 - d[T] / 0.4));
   if (d[T] > 0.4) return out; // no one clear period: a chord, noise, breath, a note dying away

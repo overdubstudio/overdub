@@ -7,9 +7,13 @@ then shows where everything else lives. In the studio, `?` shows every key.
 ## Your first overdub in five minutes
 
 1. **Open the studio.** [overdubstudio.com/app/](/app/) in Chrome, Safari or Firefox, on a computer or a phone.
-   Nothing to install, no account. The first time, it opens on **Night Shift**, a finished song, with a card on who
-   played what; the Song menu's **Demos** has more, in other genres. Nothing plays until you press something. **Make
-   your own** on that card starts a blank song and **Take one**, a small card that walks you through the steps below.
+   Nothing to install, no account. The first time, it opens on the [**live room**](#the-live-room)'s door, *Where are
+   we playing?*, for a guitar and a band; its **Control room →** link, or **No guitar? Hum, tap or play keys in the
+   control room.**, brings you here. [/app/?studio](/app/?studio) opens a new song in the control room straight away,
+   [/app/?demo](/app/?demo) opens on **Night Shift**, a finished song, with a card on who played what, and
+   [/app/?room](/app/?room) opens the live room. The Song menu's **Demos** has more songs, in other genres. Nothing
+   plays until you press something. **Make your own** on the Night Shift card starts a blank song and **Take one**, a
+   small card that walks you through the steps below.
    It waits for each one to really happen, and you can close it. It stays out of songs someone sends you, and closing
    it puts back the loop it set, unless you've changed that loop since. If you've used Overdub in this browser before,
    it opens where you left off. Everything is on screen, and [**Find anything**](#find-anything) (`⌘K`) gets you to
@@ -49,6 +53,94 @@ That's an overdub. Take one is yours, take two is the agent's, and the **History
 agent gave. `⌘Z` undoes the latest edit.
 **Revert all Claude's changes (keep mine)** takes back everything the agent did and leaves your edits alone, and
 `⇧⌘Z` puts it back, as it does after **Undo** on one of the agent's lines there.
+
+## The live room
+
+The live room is the other side of the glass: you bring a guitar and an interface, the stage is the screen, and the
+rig on it is the song's. Everything in it is the same song, signed the same way: **Control room →** at the top right
+(or `⌘G`) goes through the glass to the arranger with the song as it is, and `G` in the control room comes back. Your
+takes stay in this browser.
+
+**Where are we playing?** The door offers the metal club (VOID: an electric at 132 BPM, one stack and a big kit),
+and the control room for anyone without a guitar. `1` walks in.
+
+### The stage
+
+The screen is the stage seen from the front, and everything on it is a real control: the amp head on its cab (turn a
+knob: drag it, scroll it, or focus it and use the arrow keys; double-click puts it back), the pedalboard along the
+front (`1`–`8` stomp the pedals, a drag along the board reorders them, × puts one back in the case, **+ Pedal** opens
+the shop's case), the input meter on the head, the drummer on the riser and the tape machine by the door. Every change
+is one step by you on both sides of the stack, and `⌘Z` takes it back. Edits go to this song's copy of the stack;
+nothing goes to the rack unless you say so.
+
+The camera goes closer: `H` the head (every knob), `C` the cab (which cab, the mics on the cones, their distance and
+angle, a second mic), `K` the kit and the drummer's book, `B` the board, `U` the tuner, `G` the tape. `Esc` steps back
+one at a time, and never further than the stage.
+
+The lamp by the first pedal's jack, **MON**, is monitoring: lit while you're heard through the rig, dark when it's off,
+dim while the tuner holds you muted, red when something on the way is wrong. `M` (or a click on the lamp) turns it on
+or off. An interface is monitored as soon as it opens, however you picked it; a microphone isn't, since through
+speakers it howls. The room keeps listening to the way through: if your guitar stops reaching the amp, a pedal didn't
+build, or the amp comes up dry, it puts it right (plugs the input back in, or rebuilds the chain) and the talkback says
+what it did, once. If the browser pauses the audio, any key or click brings it back.
+
+**Getting started** (the button at the top) comes up by itself the first time, in the room: **Plug in** (the cable
+goes into the first pedal's jack, and the meter on the head wants your hardest strum between −12 and −6 dBFS),
+**Tune** (Tuna Fork, first on the board: `U` stomps it and holds you muted while it's on), **Timing** (the drummer clicks
+their sticks eight times and you strum on each, so takes land on the beat), **Your sound** (keep the club's stack, or
+go through the door), and a short tour. `Esc` pauses it; the button carries on where you left it.
+
+### The drummer
+
+`Space` starts the drummer and stops them: a plain guide beat by default, played where the song has no drums of its
+own, never kept. The beat cards on the riser are this song's few (`[` `]` or a click picks one); `K` opens the book,
+every groove the drummer knows, where you edit the cards on the riser, pin a new one or play one now. `←` `→` move
+the tempo (`⇧` for ten) until there's a take, and `T` taps it. Nothing else plays unless you ask: no bass, no fills.
+
+### Takes and the part line
+
+`R` records the selected part, or a new one at the end, counted in by a bar of sticks (`⇧K` turns the count-in off).
+The room dims and says what's happening: `Space` stops, `R` starts again, `Esc` tosses it. A take doesn't stop at the
+part's end: play past it, and what rings on is kept under the next part. Then it plays back once: **Keep** (`Enter`),
+**Toss** (`⌫`) or **Again** (`R`), and the handles trim it on the bar grid. `↑` `↓` pick which kept take plays. `D`
+records the other side of the part on the same rig, against your first, and Keep plays both, wide.
+
+The part line (`L` puts it up over the board) is the song in order: `Enter` plays from the selected part, `Home` from the top,
+`N` adds a part after it and `⇧N` one before (an intro), `⌥←` `⌥→` or a drag move it, `⌫` deletes it, and `⌘Z` puts
+any of it back. Played top to bottom, the song puts **Send** at the top.
+
+### The tape, the riffs and Claude
+
+The tape is always rolling, quietly: a faint line at the left of the drawer `L` puts up. When something was the one, `G` (or the
+tape machine) opens the last minute on the drummer's bar lines with the last thing you played picked; the handles
+trim it (`B` snaps them to bars), and `Enter` keeps it as a riff. Riffs go in the tray beside the part line: a click
+hears one through your rig, a drag puts it on the part line, `Enter` puts it after the selected part. `⇧L` is the
+library, every song's riffs, each tagged with its song, to search and filter.
+
+`/` talks through the glass to the agent you started in the control room: what you type goes to Claude, and what it
+says back comes through the talkback, signed **Claude**, in cool. When Claude is connected from outside (claude.ai or
+Claude Code), the header says so and what it says comes through the talkback the same way. Whatever it changes is
+signed too, one step `⌘Z` takes back.
+
+### The shop
+
+The door under NO STAIRWAY is the shop, and `S` walks through it: the amp wall in sections (clean, crunch, weird, high gain, bass; `A`),
+the pedal case in drawers by type (`P`, `[` `]` between drawers), and your stack big in the try-out corner (`H` the
+head, `C` the cab). Look at something to read its card; hold the look and you're hearing it; a click or `Enter`
+carries it onto your stack. **Save to rack** keeps a stack under a name, and the rack loads one back into the song in
+one step (the song keeps its own copy). `S` goes back to the stage.
+
+### The shelf and sending
+
+**Shelf** at the top right shows the room's songs as tape boxes, newest first, each with its label, its parts, its
+day and its engineer's note. The die on an untitled box offers three titles. A box opens its song on the stage, and
+**Take it off the shelf** asks first.
+
+**Send** (on a box, or at the top once the song's been heard top to bottom) has two choices. **Send a mix** is the song as a WAV,
+through your device's share sheet where it has one, else a download. **Send the song** is one `.overdub.zip`: the
+song and its recordings. `⌘O` opens it again, here or in another browser, and puts the recordings back; it's also
+the shelf's backup. There's no share link from the room: a link carries the notes and the devices and leaves your
+recordings behind.
 
 ## Start a song
 
@@ -525,11 +617,11 @@ and pedalboard), then your guitar and practice, then ideas. The song plays on wh
   song's notes, so take them as a good reading, not gospel; a song made only of audio clips has none.
 - **The neck.** The pentatonic box, the key's scale, the chord's tones (by interval, or by name with **Note names**)
   and the next chord, fading in as the change comes; each one toggles. Pick a tuning (standard, drop D, half-step
-  down, DADGAD, open G), or **Left-handed**. What you play lights up wherever it falls: filled when it fits, a ring
+  down, DADGAD, open G, D standard, drop C, C standard, B standard, drop B), or **Left-handed**. What you play lights up wherever it falls: filled when it fits, a ring
   when it's outside, and the line under the neck says what it is ("G: the blue third over E7; bend it a little toward
   G#").
-- **Your guitar.** With an interface, choose it and its input under **Your guitar** and open it. An interface or a
-  line input you pick is monitored at once, through the Guitar track's effects, and the line under it says through
+- **Your guitar.** With an interface, choose it and its input under **Your guitar** and open it. An interface is
+  monitored at once, however you picked it (the browser's default entry for one too), through the Guitar track's effects, and the line under it says through
   which tone; a microphone stays unmonitored, since through speakers it howls, and the line says that too. **Monitor**
   turns it on or off by hand. Your guitar's track starts loud, where a guitar at an interface's usual level sits over
   the band. **Match the band** listens while you play along for five seconds and puts your guitar 3 dB over the band,

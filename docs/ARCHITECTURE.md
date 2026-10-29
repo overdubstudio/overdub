@@ -42,13 +42,12 @@ overdub/
   app/style/tokens.css   brand tokens (CSS custom properties; names below are fixed)                   [brand owns values]
   app/style/fonts.css    the faces, from the site (fonts/<family>/: each woff2 and its licence)         [brand]
   app/style/app.css      the shell, shared widgets and the phone layout                                [core / ui]
-  app/vendor/clawd/      verbatim Claw'd-o-Matic sources (pedals, amps, presets) and worklets/ (each processor they
-                         build, as a file); tools/vendor-clawd.js writes them, never edited here      [guitar]
   app/src/main.js        boot: devices, store, engine, shell, then MODULES; window.overdub             [core]
   app/src/analytics.js   anonymous counts on the live site only                                        [core]
-  app/src/core/          project.js (schema, ids, defaults), ops.js (every op), store.js (dispatch, history,
-                         events), music.js (theory, notes text format, drum grids), arrangement.js (section and
-                         time edits, take folders), automation.js (lanes: values, travel, text form, shapes),
+  app/src/core/          project.js (schema, ids, defaults, a take's tail: clipTail, clipBodyEnd), ops.js (every
+                         op), store.js (dispatch, history, events), music.js (theory, notes text format, drum
+                         grids), arrangement.js (section and time edits, take folders, overlapping takes,
+                         clip.trim and snapStep), automation.js (lanes: values, travel, text form, shapes),
                          transforms.js (note transforms and infill), arrange.js (Build a band),
                          grooves.js + grooves/ (the groove library: a style file per family, feel and humanising,
                          tap-to-find, the song creator), share.js (share links, forks), dawproject.js (DAWproject
@@ -57,6 +56,20 @@ overdub/
                          fingering in one hand position, tab text in and out), riff.js (the house riff writer),
                          playalong.js (judging what you play against a part)                           [jam]
                          sounds.js (newPartFor: the track a new idea makes; the rest is ux-instruments')   [core]
+                         stacks.js (a guitar's whole chain as one thing: planStack makes a track's chain exactly a
+                         stack in as few ops as it takes, one undo step; the live room, the Jam room and the rack
+                         swap chains through it)                                                      [core]
+  app/src/core/liveroom/ the live room's song side, pure: model.js (its ids, caps and names), room-ops.js + sheet-ops.js
+                         (the ten ops' room.* and sheet.*), places.js (each place's band, tempo, rigs, feels),
+                         plans.js + session.js (the stage's plans, the room's view of the song, the offered move;
+                         planRig puts a rig's chain on each guitar for its side, rigNow names what's on),
+                         band.js (the drummer and bass learning a part), read.js + read-worker.js (reading a take),
+                         double.js + tight.js (the other side, and how tight it is), kitchen.js + kitchen-plans.js,
+                         tape.js + tape-worker.js + align.js (the work tape, its chords lined up), sheet.js +
+                         sheet-text.js (the paper's words and chords), label.js (the tape box), lines/ (everything
+                         the house says in the talkback, by id)                                       [room]
+                         riffs.js (what a riff is: its row, detail and audio, the filters, into a song), stacks.js
+                         (a guitar chain as data: read off a track, put back on one as ops)  [guitar room]
   app/src/engine/        engine.js (context, transport, scheduler, tracks, mixer), strip.js (channel strips),
                          schedule.js (what plays when), click.js (the click's sound), render.js (offline, in the browser), node/render.js (the
                          canonical Node renderer), node/check.js + check-render.js (the device check in Node, the
@@ -71,7 +84,11 @@ overdub/
                          dsp.js, pool.js + dsp-worker.js, runner.js)                                 [jobs]
   app/src/devices/       registry.js (fixed), trust.js (which song devices run here), graph.js + kit.js (graph devices:
                          bypass, glide, the PFX kit), worklets/ (the kit's END and envelope follower modules),
-                         guitar/ (ported pedals, amps, cabs, rigs)                                     [guitar]
+                         guitar/ (the pedals, amps, cabs and rigs as devices: index.js, pedals.js, amps.js,
+                         rigs.js; gear/ is the gear's own code, ours: code.js the sound and looks.js the
+                         faces, each one function scope, evaluated once by gear/index.js; worklets/ each
+                         processor code.js builds, as a file, byte for byte; docs/ and LICENSE, MIT, from
+                         Claw'd-o-Matic, where it began)                                              [guitar]
                          builtin/ (Overdub's own kernels: synths, drums, pluck, bass, eq, comp, verb...;
                          wavetables.js is Light Table's tables, which its kernel embeds and its face imports;
                          akwf.js the AKWF single cycles they carry),
@@ -87,7 +104,10 @@ overdub/
                          rounds.js (Start a song: the loop, folding rounds, the 1, the readings, the timing words),
                          recorder.js (R: takes into the song), autorec.js (knob moves into lanes), latency.js
                          (calibration), capture.js (never lose an idea), importers.js (MIDI and audio files in),
-                         index.js (app.input)                                                           [input]
+                         tape.js + tape-core.js + tape-worklet.js (the rolling tape: the last minute of the input
+                         on the band's grid, its default selection and grab),
+                         tuner.js (the steady tuner: strings, tunings), level.js (the gain window and its advice),
+                         calibrate.js (the strum along around latency.js), index.js (app.input)         [input]
   app/src/ui/            shell.js + dom.js (fixed frame), workspace.js + workspace-view.js (Find anything), 
                          transport.js, arranger.js, lanes.js (automation lanes),
                          arrange-kit.js, pianoroll.js, drumgrid.js, grooves.js (the Grooves tab)        [ui-arrange]
@@ -98,6 +118,8 @@ overdub/
                          editors/ (generic.js, and the editors the studio's own devices name: eq8.js, shaper.js,
                          drumroom.js: Studio A's drawn kit)                                             [ui-mix]
                          sketch.js (capture UI), spiral.js (pitch spiral)                               [input]
+                         gauges/ (Getting started's instruments, mounted by any screen: tuner.js, level.js,
+                         timing.js)                                                                     [input]
                          export.js (the Song menu, files out), songs.js (My songs and Save to cloud: songs in your
                          Overdub account, app.songs), account.js (the account key beside Song and its sheet: sign
                          in, the plan and Get Plus, the songs' rows, app.account), provenance.js, share.js,
@@ -107,6 +129,27 @@ overdub/
                          coach-strip.js (the next parts, docked under the arranger, app.coach),
                          flip.js (Flip a song: the import, the split, the analysis, the readings; app.flip),
                          devices-io.js                                                                  [core / ui]
+  app/src/ui/liveroom/   the live room in front of the glass: index.js (app.liveRoom, the overlay, the screens'
+                         registry from screens.js, the held keys), door-decide.js (which side a load opens on),
+                         door.js, stage.js + menu.js + setlist.js + soundcheck.js + lamps.js, kitchen.js + paper.js,
+                         shelf.js + shelf-db.js (overdub-shelf), send.js, talkback.js, deck.js (count-in, takes,
+                         the tuner on the audio clock), view.js, prefs.js (overdub:room), style.js, pixels/ (the
+                         scenes, the gear, the tape box covers, drawn whole-pixel)                     [room]
+                         riffs-db.js (the riff library, overdub-riffs), rack-db.js (the stack rack, overdub-rack),
+                         idb.js (their opener)                                                         [guitar room]
+  app/src/ui/liveroom/guitar/   the guitar room, the screen 'guitar' (the metal club rebuilt for the guitarist):
+                         index.js (the frame, R, the router), keys.js (the one key table), camera.js, layout.js,
+                         state.js (ui.state.liveRoom.gr), bind.js (the gear bound to the song), prefs.js
+                         (overdub:guitar-room), style.js; one module per stream: stage.js [room], shop.js [shop],
+                         drummer.js [drummer], start.js [start], takes.js [takes], tape.js [tape]; the room's
+                         room-pixels.js (the stage in pixels, the tape machine, the kit), room-rig.js (the cab, the
+                         mics, Tuna Fork, the cables, a face's menu as a button), room-style.js. stage.js's view adds
+                         kit(state | null) (the drummer drives the kit's hits) and redraw(); R.gr.room holds where
+                         the mics sit on the grille
+                         drummer.js [drummer], start.js [start], takes.js [takes] (takes-*.js, parts-*.js: the
+                         recording view, the review, the part line and its plans), tape.js [tape]
+  app/src/core/liveroom/guitar/ the guitar room's pure part: setup.js (the club's setup and stack, GUITAR_DB), rig.js
+                         (the rig on both guitars and its plans), beats.js (the riser's beats and cards) [guitar room]
                          community.js (From the community in the Browser: previews, Try and its prompt)  [shelf]
                          jam.js (the Jam room beside Arrange: chords, the neck, the rig, practice, ideas),
                          tabs.js (the room's tab lane: riffs, practice, play-along), tabstaff.js (drawing tab;
@@ -117,6 +160,7 @@ overdub/
                          (Messages API via the local server's key), prompt.js, mock.js (the demo agent),
                          lexicon.js + lexicon-personal.js, panel.js (chat UI), history.js, presence.js, diff.js,
                          keep.js (a song from a link: what waits for Keep), bridge.js (page side of MCP),
+                         take-export.js (export_take: a take as recorded, a WAV for a local MCP client),
                          remote.js (page side of the relay), cloud.js, cloud-kind.js, cloud-panel.js (Claude
                          on Overdub credits; off unless the site config names cloud.api), cloud-songs.js (the
                          link between a song here and one in the account, and the saver that keeps it saved),
@@ -156,6 +200,8 @@ Project = {
   assets: { [id]: { kind: 'audio', name, sr, channels, duration } },   // the samples live in IndexedDB (engine/assets.js)
   master: { gain: 0, inserts: [Insert], auto?: { gain?: Lane } },   // gain in dB
   reference?: { asset, name, sr, channels, duration, profile, by },   // the reference track: beside the song, never in it
+  room?: Room,                                           // the live room's memory of the song (below); absent: a control-room song
+  sheet?: Sheet,                                         // the kitchen table's paper (below)
   meta: { created, modified, authors: { [authorId]: { kind: 'human' | 'agent' | 'house', name } },
           forkedFrom?: { title, authors, at, id, from } },             // set by "Make it yours" (core/share.js)
 }
@@ -178,10 +224,23 @@ Clip   = { id: 'c_x', kind: 'notes', start, length, name?, color?, mute?, notes:
        | { id: 'c_x', kind: 'audio', start, length, asset: 'a_x', offset: 0 /* s into asset */, gain: 0, name?, mute?, by }
          // mute: true keeps the clip and plays it nowhere (live, renders, the Node render); absent = playing
          // take?: 'tk_x' the take group a recording stacked (clips on one track sharing it; the unmuted one plays)
+         // tail?: beats (0 < tail < length) at the clip's end that ring past its part ("Overlapping takes", below):
+         //   it plays, and claims no beats: a take folder, a new take, a drop and the arrangement's cuts go by the body,
+         //   [start, start + length - tail)
 Note   = { id: 'n7', p: 60 /* MIDI */, t: 0 /* beats from clip start */, d: 0.5 /* beats */, v: 0.8 /* 0..1 */, by,
            s?: 0..11 /* string, 0 the lowest */, f?: 0..36 /* fret from the nut */ }   // a place on the neck: both or neither
 DeviceSource = { id, name, kind, cat, blurb, params: [ParamSpec], look, kernel: 'source', by, version, created, modified }
+Room   = { v: 1, place?: 'metal' | 'basement' | 'bluesbar' | 'kitchen', rig?, tuning? /* a TUNINGS id */, finish?,
+           mic?: 'one' | 'two', master? /* the clip the band follows */, tracks?: { [role]: trackId },
+           parts?: { [sectionId]: { feel?, busy?: -1..1, loud?: -1..1, reps?: 1..4, oneSide?, drop?, sheet?, learned? } },
+           takes?: { [clipId]: { capo?, bpm?, onMaster? } }, managed?: { [trackId | 'master']: { gain, pan, chain } } }
+Sheet  = { v: 1, capo?: 1..11, time?: [n, d], notes?, sections: [{ id: 'ss_x', name, lines: [{ id: 'sl_x', text, by }] }] }
+         // a line is plain text, its chords [bracketed] on their syllables; capo is the paper's, not the song's key
 ```
+
+`room` and `sheet` (`core/liveroom/model.js`: the ids, the caps, the canonical key order) are written only by their
+ops, below. What the band plays is clips like any other; the room's fields remember how it was made, so a part's
+feel or a take's capo survive a reload. A reader that doesn't know them skips them.
 
 ### The tempo map
 
@@ -354,7 +413,7 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `insert.set` | `track`, `insert`, `patch: { on?, params?, key? }` (params merge; key: `{ track }` or null, below) |
 | `clip.add` | `track`, `clip: Partial<Clip>` (notes may be the text format, or `grid`), `ref?` |
 | `clip.remove` | `track`, `clip` |
-| `clip.set` | `track`, `clip`, `patch: { start?, length?, name?, color?, offset?, gain?, mute?, tuning?, capo? }` (`mute: true` silences the clip and keeps it; `false` stores no flag; `tuning` and `capo`, a notes clip's, for its tab: `null` or capo 0 removes them) |
+| `clip.set` | `track`, `clip`, `patch: { start?, length?, name?, color?, offset?, gain?, mute?, take?, tuning?, capo?, tail? }` (`mute: true` silences the clip and keeps it; `false` stores no flag; `tuning` and `capo`, a notes clip's, for its tab: `null` or capo 0 removes them; `tail`, an audio clip's ring past its part in beats, shorter than the clip: `null` removes it) |
 | `clip.move` | `track`, `clip`, `toTrack?`, `start?` |
 | `notes.add` | `track`, `clip`, `notes: [Note] \| "text"` (or `grid`) |
 | `notes.remove` | `track`, `clip`, `ids: [noteId]` |
@@ -364,10 +423,17 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `section.add` | `section: { name, start, length, color?, key? }`, `ref?` (`key`: the section's own key's name, `"F# minor"`) |
 | `section.set` / `section.remove` | `section` (object, id or name), `patch: { name?, start?, length?, color?, key? }` |
 | `section.duplicate` | `section`, `to?` (beats; default right after it), `push?` (make room there first), `ref?` |
+| `section.move` | `section`, `before` (a section id or name; `null`: the end): the section and everything in it moves, the bars between close up (an arrangement op, planned like `section.duplicate`) |
+| `room.set` | `patch: { place?, rig?, tuning?, finish?, master?, mic?, tracks?, takes?, managed? }` (whole values; `null` deletes a key; makes the room when there's none), or `clear: true` (`core/liveroom/room-ops.js`) |
+| `room.part.set` | `section`, `patch: { feel?, busy?, loud?, reps?, oneSide?, drop?, sheet?, learned? }` (merged; `null` deletes a key), or `remove: true` |
+| `sheet.set` | `patch: { capo?, time?, notes? }` (`null` deletes a key; makes the sheet), or `clear: true` (`core/liveroom/sheet-ops.js`) |
+| `sheet.section.add` / `.set` / `.remove` | `section: { name, lines? }`, `index?`, `ref?` / `section`, `patch: { name }` / `section` (by id, `$ref` or name) |
+| `sheet.line.add` / `.set` / `.remove` | `section`, `line: { text }`, `index?`, `ref?` / `section`, `line`, `patch: { text }` / `section`, `line` (each line signed by the op's author) |
 | `time.insert` / `time.remove` | `at`, `length` (beats, across the whole song: clips, sections, the loop, the tempo map) |
 | `tempo.map` | `map: { anchors: [{ beat, sec }], clip? } \| null`, `tempo?` (sets or clears the tempo map; set, `tempo` becomes its nominal; cleared, the grid plays at `tempo` if given, else the nominal it had. The inverse restores both exactly) |
 | `clip.repeat` | `track`, `clip`, `times` (2..64, in all), `mode?: 'copies' \| 'loop'`, `ref?` |
 | `clip.split` | `track`, `clip`, `at` (a song beat inside it), `ref?` (the right half) |
+| `clip.trim` | `track`, `clip`, `start?`, `end?` (song beats: its new in- and out-points; one left out stays), `snap?` (`'bar'`, `'beat'` or a step in beats: the edges given land on the nearest line of that grid). An arrangement op (`planClipTrim`): a folder's playing take trimmed into its body gives back what it no longer covers; a take's tail shortens (or grows) with its end, the body as it was |
 | `master.set` | `patch: { gain?, clip? }` (gain dB, −96..24; clip `'soft'` or `'clean'`, below) |
 | `auto.write` | `track`, `insert?`, `param`, `points: [Point] \| "text"`, `from?`, `to?`: replaces the lane's points in [from, to] (default: the span of the points; none with a range clears it), making the lane if there is none; signs it `by` the writer; values checked against the param's range |
 | `auto.clear` | `track`, `insert?`, `param`, `from?`, `to?`: removes the points in the range; with neither, the lane |
@@ -377,11 +443,12 @@ The op catalog (`core/ops.js`; each returns its inverse; `OP_TYPES` lists them).
 | `device.define` | `device: DeviceSource` (registers it; a new version if the id exists) |
 | `device.remove` | `id` |
 
-**Arrangement ops** (`core/arrangement.js`). `planSectionDuplicate`, `planTimeInsert`, `planTimeRemove`,
-`planClipRepeat` and `planClipSplit` are pure functions over the project that return the ordinary ops for the change
-(`clip.set`/`clip.add`/`clip.remove`, `notes.replace` in its exact restore form, `section.*`, `project.set` for the
-loop), plus a one-line summary. `ops.js` registers `section.duplicate`, `time.insert`, `time.remove`, `clip.repeat` and
-`clip.split` as ops that plan from the song as it is and apply those, so their inverse is the primitives' own. Notes
+**Arrangement ops** (`core/arrangement.js`). `planSectionDuplicate`, `planSectionMove`, `planTimeInsert`,
+`planTimeRemove`, `planClipRepeat`, `planClipSplit` and `planClipTrim` are pure functions over the project that return
+the ordinary ops for the change (`clip.set`/`clip.add`/`clip.remove`, `notes.replace` in its exact restore form,
+`section.*`, `project.set` for the loop), plus a one-line summary. `ops.js` registers `section.duplicate`,
+`section.move`, `time.insert`, `time.remove`, `clip.repeat`, `clip.split` and `clip.trim` as ops that plan from the song
+as it is and apply those, so their inverse is the primitives' own. Notes
 keep their sounding part across a cut (a pitched note is cut in two, the halves add up; a drum hit stays whole on its
 side), their ids within a clip and their authors; a copy's clip is signed by whoever asked, a split's right half by
 the clip's maker. A duplicated section brings every clip that plays in it, cut to its bars (a full-length beat that
@@ -454,14 +521,14 @@ through `core/music.js` `kitNotes(def)` (as text only: notes 0-127, strings of a
 A graph device that needs its own AudioWorkletProcessor lists `worklets: { name: url }`, the URL of a module file on
 the studio's origin (`new URL('./x.js', import.meta.url).href`), never source: the pages' policy refuses scripts from
 `data:` and `blob:` URLs. `kit.loadWorklet` loads each once per context behind END (`devices/worklets/end.js`, which
-stops a disposed node's processor); the vendored pedals' are `WORKLETS` in `devices/guitar/clawd.gen.js`.
+stops a disposed node's processor); the guitar gear's are `WORKLETS` in `devices/guitar/gear/code.js`.
 
 Ids are forever; display names are not. The built-ins are named after studio objects (core.poly Patch Bay, core.bass
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
 core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
-with the vendored pedals' (`tools/guitar-test.js` checks).
+with the guitar pedals' (`tools/guitar-test.js` checks).
 A def the studio ships may carry `describe(params)` (one line of text for `get_project`, in place of the params' JSON:
 core/project.js `summarize`), and a param `hidden` (not on the face or in the generic window), `auto: false` (no lane)
 and `quantum` (a window control's smallest step); DEVICES.md, "Params that aren't knobs".
@@ -599,8 +666,20 @@ Instance = {
   expr?({ bend?, mod?, sustain? }, time),   // kernels: the channel's pitch bend, mod wheel and pedal (docs/DEVICES.md)
   cancel?(pitch, time, off?, to?),    // take back a note handed over but not started (kernels, the fallback synth)
   latency: 0, meter?(): number, dispose(),
+  health?(): { ok, failed, on, settled, dry, wet, want },   // what the device says about itself (below)
+  assure?(): boolean,                 // snap anything not at its target at once; true if it had to
 }
 ```
+
+A device's life in a live chain is `devices/lifecycle.js` (a frozen seam between the engine and the devices;
+`docs/research/AMP-PATH.md` §5): `ready` resolves once the instance is at its state (params set, bypass as asked,
+worklets in) and **rejects** with `failure(code, message)` (`code` one of `FAILURE_CODES`: `'threw'`, `'no-output'`,
+`'worklet'`) when the device can't be what it says, so a device never stands in for itself as a quiet unity gain. A
+rejected `ready` plays the engine's stand-in, is reported (the report carries the code) and is built again later
+(`strip.js` `BUILD`). Nothing is scheduled on a node that hasn't rendered yet (no value curve on a live context:
+Chrome 155 and 156 drop one that ends before its node first renders). `healthOf(inst)` normalises `health()` (a
+device without it, a kernel, is ok unless it's a stand-in) and never throws; the strip calls `assure(inst)` on each
+device it has newly wired once its fades are over, and the live path's check calls it when it finds one wrong.
 
 `clock` (from the engine; `engine.clock`) is `{ playing(), bpm(), beatsPerBar(), barTime(b), barAt(t), bar(), next(t),
 phaseAt(t, bars = 1) }`, the shape the ported pedals expect (clawd-o-matic's `PLUG.clock` / `x.clock`). Offline it is
@@ -721,6 +800,10 @@ engine.liveNoteOn(trackId, pitch, vel) ; engine.liveNoteOff(trackId, pitch)   //
 engine.audition(trackId, pitch, vel = 0.8, beats = 0.5)
 engine.inputNode(trackId)             // a GainNode feeding that track's inserts (live input monitoring)
 engine.instance(trackId, insertId | 'instrument')   // the live Instance
+engine.monitored(trackId | null)      // the track live input plays through (audio.monitorVia's): never renewed while stopped
+engine.monitoredTrack                 // its id, or null
+engine.rebuild(trackId) → Promise<{ ok, failed: [insertId | 'instrument'] }>   // the strip renewed (fresh devices, atomically)
+engine.chainTaps(trackId) → { input, chain, settling, strip } | null   // for analysers: the strip's input and its chain's end
 engine.masterTap                      // an AudioNode to tap (recorders, analysers); don't feed it
 engine.clock                          // the device clock above
 engine.latency                        // { base, output, tracks, comp, max, master, total } (seconds; comp in samples)
@@ -750,7 +833,12 @@ inserts… → fader (stereo) → mute → balance pan → meter → master sum 
 golden hash is the same with or without it). The master's meter listens at its gain, before the safety soft clip, so the top bar sees a mix over 0
 dBFS (red, "Clipping N dB"; pressing it takes the over off the master's gain in one undo step, a master level lane
 moving with it); `masterTap` and every render are after the clip. The engine reconciles this graph with the project
-on every store change (add, remove, reorder, params with a glide, bypass with a crossfade). Notes are read by a lookahead scheduler (`engine/schedule.js`; 25 ms tick,
+on every store change (add, remove, reorder, params with a glide, bypass with a crossfade). Live, a rewire dips the
+strip out and back in (8 ms each way), except a chain swapped for one that shares no built device with it (a guitar's
+whole stack for another's): the new path is wired beside the old one behind its own tail gain and the two crossfade
+linearly over 30 ms, so a swap while you play has no gap. A device whose build fails live (it throws, or isn't ready
+in `BUILD.ready`, 8 s) plays its stand-in and is built again `BUILD.retry` (10 s) later, up to `BUILD.tries` (3) more
+times; offline a stand-in stays what it is (`tools/liveroom/checks-rig.js` checks the retry). Notes are read by a lookahead scheduler (`engine/schedule.js`; 25 ms tick,
 120 ms ahead) each tick, so editing notes never rebuilds anything. `render` builds the same graph in an
 OfflineAudioContext with the same functions, so what an agent measures is what the human hears.
 
@@ -788,13 +876,16 @@ Timing rules (`engine/engine.js` header; checked in `tools/engine-test.js`):
   an agent). It stops the transport, ramps the speakers' feed (the last gain before the destination) to zero in 6 ms,
   releases every note and emits `'silence'` (Sketch's previews stop on it); then every strip builds fresh instances of
   its devices (`Strip.renew`), so held voices and reverb and delay tails are gone, and the feed opens again. `play()`
-  waits for that. Anything that plays to the speakers on its own should go through the feed (`engine._monitor`) or stop
+  waits for that. A renew is a fresh build under the strip's job lock: the strip hushes (its tail and instrument at
+  zero), builds every device new (nothing reused, so a renew racing a build never wires a disposed device), wires the
+  new chain and crossfades it in; while it builds the strip passes silence, never its dry input. A rewire that throws
+  is reported and still brings the strip's dips back up (`dipped()` always ends). Anything that plays to the speakers on its own should go through the feed (`engine._monitor`) or stop
   on `'silence'`. `tools/silence-test.js` measures it.
 - **The polite stop.** Tails ring on after `stop()`, but not for ever: 2 s after a stop (still stopped), every strip
   still over -50 dBFS fades out over 1 s (a gain only live strips have, `Strip.calmDown`) and is renewed like the
   killswitch renews it, then comes back up; the master too when it has inserts and nothing live goes through it. A
   strip that took a live note or an audition since the stop, or hears its input (listened for through the fade), is
-  left alone; play during the fade brings it straight back. `tools/stopping-test.js` holds every demo song to -60 dBFS
+  left alone, and so is the strip live input monitors through (`engine.monitored`), sounding or not; play during the fade brings it straight back. `tools/stopping-test.js` holds every demo song to -60 dBFS
   3.5 s after Stop.
 - **Held keys.** The keys the musician holds (`liveNoteOn`) are theirs. The song's end, an agent's
   `stop({ live: false })`, a seek or a play from elsewhere let the transport's notes go (one by one on an instrument
@@ -856,9 +947,9 @@ kernels (`tools/golden-test.js`; most scenes come out bit-identical, the rest di
 round `Math.exp`/`sin`/`tanh` in the last bit). `tools/golden.json` pins each scene's hash (`tools/golden-scenes.js`:
 built-in instruments on the test phrase, effects on the DI strum, the demo). **It is never regenerated casually:** a
 moved hash means the sound moved; regenerate only the scenes changed on purpose (`UPDATE_GOLDEN=<scene,...>`) and say
-why in the commit (clawd-o-matic has the same rule). Hashes hold for the Node major and CPU arch in `golden.json`
+why in the commit (Claw'd-o-Matic, where the guitar gear began, had the same rule). Hashes hold for the Node major and CPU arch in `golden.json`
 `made`; elsewhere loudness must match to 0.05 dB. Graph devices built on native nodes are held to −80 dB between
-renders (a few vendored pedals move their LFOs from main-thread timers; `tools/guitar-test.js` names them).
+renders (a few of the guitar gear's pedals move their LFOs from main-thread timers; `tools/guitar-test.js` names them).
 
 ## The ears (`audio/measure.js`)
 
@@ -1039,6 +1130,16 @@ typing, K and L in Tap, where L is an open hat): the shell tries a mode's keys b
 transport says so under the title. R and Space still record and stop, and M, which neither mode plays, still mutes.
 In the Jam room (its keys have `when`, so they win there): [ and ] flip the tones, ⇧L loops the section, − and =
 change the practice speed, and R records what you play onto the Guitar track, never a hum.
+
+**Space is always the transport's** outside a place that types text (a text field, a textarea, contenteditable, or
+anything a module marks `data-typing`). A button, select, checkbox, slider or link the mouse last clicked keeps focus,
+so the shell takes Space on keydown and keyup both, prevents the control's default and stops it at the window: no
+control under it sees Space, and none should handle it. Enter presses a focused button (and checks a focused
+checkbox), so the keyboard loses nothing. An open modal dialog or menu owns Space while it is up, except while a take
+counts in or records: then only a text field keeps it. A held Space is one press. The take keys follow the same rule:
+R, ⇧R and Esc reach the studio from a clicked select or slider too (a closed select's type-ahead would otherwise
+change its value on R), and an open modal dialog (for Esc, a menu or popover) keeps them only while no take runs. They
+aren't stopped at the window, so a control's own Esc listener still hears one the studio didn't use.
 
 **Phones** (under 900 px): the side panes become full-height sheets (one at a time) and the detail pane a bottom
 sheet whose divider is a drag handle (never taller than the room it has: turning the phone clamps it, so the first
@@ -1364,8 +1465,9 @@ so each gets the whole area, one click apart, and the song plays on across them.
   uses the one that matches what you play with and makes it when needed (its fader set by measuring the band against
   a lick on it: the guitar sits 3 dB over the band, up to the fader's top, +6 dB; **Match the band** measures your own
   playing for five seconds and sets it again, one undo step). The input opens with `audio.open({ monitor: 'auto' })`:
-  an interface or line input you pick is monitored at once, a microphone isn't (`state.monitorLine` says why), and a
-  feedback guard turns monitoring off if it hears a howl; with no audio track the monitor waits and the room makes
+  an interface is monitored at once however it was picked (the browser's "Default - " entry for one too), a microphone
+  isn't (`state.monitorLine` says why), and a feedback guard turns monitoring off if it hears a howl (the live path's
+  rules: "The live path" under the input); with no audio track the monitor waits and the room makes
   Live guitar in the `'monitor'` event, so nothing toasts. A tone is a Guitar Studio rig loaded with
   `rigOps(track, rig, { replace })`, one undo step; with both guitars present a tone loads on both, and a knob on the
   board moves both chains.
@@ -1469,7 +1571,8 @@ locked() → boolean                      // a take is running: tempo, meter and
 - **The record key** shows the recorder's state: a ring (nothing to record onto), the ring in record ink (a target),
   its dot lit on each beat of the count, a filled lamp with REC beside the position (recording), dimmed while the take
   goes in.
-- **All off** (`silence()`, a key printed in record red; ⇧Esc from anywhere): input monitoring off, the ui event
+- **All off** (`silence()`, a key printed in record red; ⇧Esc from anywhere): the input hushed (`audio.hush()`: an
+  interface's monitoring comes back with the renewed chain; a microphone's is turned off, by hand), the ui event
   `'silence'`, then `engine.silence()` (see the engine). Every panic path in the studio comes here.
 - **Back to the lanes (n held)** appears on the bar while any lane in the song is held, and gives every held lane
   back in one `auto.set` dispatch.
@@ -1537,7 +1640,7 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
 
 ## Capture and bringing material in
 
-`app.input` (`input/index.js`) = `{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec }`.
+`app.input` (`input/index.js`) = `{ pitch, audio, hum, tap, midi, qwerty, capture, recorder, autorec, tape }`.
 
 - **Recording into the song** (`input/recorder.js`, `app.input.recorder`; the spec is
   `docs/research/RECORDING-UX.md` 3.2-3.17). One Record for every source: R (the transport's key and button) calls
@@ -1624,6 +1727,35 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
     clip; so every folder is still one range with one take playing in each stretch. A take folder moves whole (a drag
     of any of its clips takes every take along); on a comped folder a drag across the body selects bars (a piece of a
     comp isn't a clip of its own) and its label line moves the folder.
+  - **Overlapping takes** (`docs/research/GUITAR-ROOM.md` §2.6, §4.3; the guitar room's model). A take recorded for a
+    part keeps what it rang past the part's end: its audio clip runs on, and `clip.tail` says how many beats of it
+    are that ring (`core/project.js` `clipTail(clip)` → beats, `clipBodyEnd(clip)` → the song beat its part ends).
+    The clip's **body**, `[start, start + length - tail)`, is the take; the tail plays and claims nothing. A take
+    folder is its takes' bodies (`takeFolders`' `start`/`end`, the comp's cuts), so the next part's take over
+    `[body end, …)` on the same track never cuts, folds or mutes the tail ringing under it: both sound, summed, in the
+    live engine, the browser's render and the Node render alike (each plays a clip's whole window: `engine/schedule.js`
+    `audioIn`; nothing in the engine knows tails). Picking another take in a folder mutes the others, tails and all,
+    so only the playing take rings. Every planner reckons by the body: a take whose body ends before a `time.insert`,
+    a `time.remove` or a moved section's edge stays whole, its tail ringing on over what follows; a cut through the
+    body leaves the tail on the piece ending where the body did (`clip.split`, `time.remove`, comping, a drop); a
+    duplicated section brings the tails of takes whose bodies end in it; `clip.repeat` repeats a take on its body.
+    `planDropTrim` and the live room's seams (`core/liveroom/plans.js`) leave a tail alone. Without a tail nothing
+    changes: a clip is reckoned by its end, and take folders mute what played under them as above.
+    - **Recording one:** `recorder.record({ ..., tailFrom })` (or `stop({ tailFrom })`; the deck's `take({ tailFrom })`):
+      the take is for a part ending at `tailFrom`. It doesn't stop there; when it stops, each audio pass that runs past
+      it gets `audio.tail` (`withTails(passes, from)`, pure), `planTake` makes the folder `[start, tailFrom)` and the
+      clip runs on with its tail (`planTakeFolder`'s pass `tail`), and the commit's `takes[]` (and the deck's landed
+      `take.ringing`) say how many beats rang.
+    - **Trimming it:** the op `clip.trim { track, clip, end, snap? }` moves the out-point (`snap: 'bar' | 'beat' |
+      beats`; `snapStep(p, snap)` gives the step a handle can preview with). An end inside the tail shortens it, past
+      it grows it, at the body's end takes it off; into the body it cuts the body as a trim always did. Undo is exact
+      (its inverse is `clip.set`'s, with the old `length` and `tail`). `clip.set` takes `tail` too, and refuses one as
+      long as the clip. A plain new length (the Inspector's Length) goes through `core/project.js`
+      `clipLengthPatch(clip, length)`, the `clip.set` patch that keeps the body: the tail shortens or grows, and a
+      length into the body takes it off. get_project's summary names where a take's part ends and its ring starts.
+    - **Room for a crossfade:** a later field can shape `[body end, end)` (a fade out over the tail, or a fade in on
+      the next take's head); the body, the folder and every planner above stay as they are. An older studio drops
+      `tail` and plays the clip whole, as it is.
   - **The lean at the stop** (`relean`, `input/timing.js` `placeTake`): every note the forgiving grid placed (pads,
     beatbox, a hum against the click) is placed again with the whole take's lean out, and a drum's nervous first hits
     (in its first two beats, before any lands on a beat, 0.25 to 0.5 beat late, on a drum otherwise on the beat) go
@@ -1682,12 +1814,94 @@ shared classes built on them (`.btn`, `.tog`, `.ledger`, `.sheet-head`, `.by`, �
   key, C major). The line over the keys says what they do, "Snapping to 1/16, in C minor", each part a click that turns
   its helper off ("Your timing", "every note") and on: `qwerty.snapLine({ touch })`, its words `snapWords(...)` (pure).
   A MIDI keyboard's notes are never moved.
+- **The rolling tape** (`input/tape.js`, `app.input.tape`; `docs/research/GUITAR-ROOM.md` §1.4, §2.3, §4.3). While
+  the guitar room is open (`tape.start()`; `tape.stop()` lets it go) the picked input is always on tape: mono 16-bit
+  at the device's rate in a ring in the audio thread (`input/tape-worklet.js`, `'ew-tape'`, fed by `audio.tap(node)`
+  through every reopen and channel change), 60 s by default, 15 to 300 (`tape.setSeconds`, `localStorage
+  overdub:tape`): 5.3 MB a minute at 44.1 kHz, 5.8 at 48. The ring is indexed by the audio-clock frame, so it neither
+  copies nor allocates as it rolls (a 256-frame peak bin goes to the page a few times a second for the waveform;
+  `test/unit/tape.test.js` measures a minute: about 1 µs and nothing allocated a quantum, the posts aside). The
+  band's grid rides alongside as linear pieces read off the engine's clock at every peak post and transport event
+  (`input/tape-core.js` `createGrid`: a tempo change splits a piece where the two lines meet, a loop wrap where the
+  song beat reached the loop's end, a new run from its start), and frames meet beats by the recorder's rule: input
+  frame f was played to the band's scheduled time f / sr − (the measured round trip + the engine's delay
+  compensation), so a grab lines up with a deck take to the sample (`tools/liveroom/checks-tape.js`). The UI reads
+  `span()`, `peaks(from, to, n, out)`, `lines(from, to)` (the drummer's bars, numbered), `beatAt`, `frameAt` and `snap`
+  in its frame; `select()` is the default selection (`defaultSelection`: the last phrase from the attacks,
+  `input/onsets.js` with `pitch: false`, snapped to its bar lines, a lone downbeat hit left out as the ending, over
+  four bars the shortest pass that repeats the one before it, else the last four; free time when no band played);
+  `grab(range)` copies frames into an asset in `engine.assets` (the recording format: `{ id, kind: 'audio', name, sr,
+  channels: 1, duration }`) with its place (`start`, `from`, `to`, `beats`, `length`, `bars`, `bpm`) and touches
+  nothing else; a riff goes in the song only when it's kept, as `tape.ops(grab, { track, at })` (`riffOps`:
+  `asset.add` and the clip, one dispatch by whoever keeps it). The full API is `input/tape.js`'s header.
 - **Latency** (`input/latency.js`): tap along to eight clicks, or a loopback, once per input device; takes, hums and
-  beatbox are shifted by the measured round trip.
+  beatbox are shifted by the measured round trip. A strum along is judged by `judgeTaps(hits)` (one wild strum left
+  out; grade good, fair, poor or none; a confidence 0 to 1), and the confidence is kept beside the round trip
+  (`measured.confidence`, `localStorage overdub:latency`, per deviceId).
+- **Getting started's gauges** (the guitar room, `docs/research/GUITAR-ROOM.md` §2.1): three instruments any screen
+  mounts, each a pure module under `input/` and a drawn one under `ui/gauges/`. The drawn ones own no keys and no
+  loop: the host calls `frame(now)` from its own (the shell's, or the room's), and they read `app.input.audio`, or
+  anything else with `samples() -> { buf, sr } | null` (a check's fake). `audio.samples()` is the picked input's
+  latest analyser window (4096 samples at 48 kHz, 8192 over 50 kHz).
+  - **The tuner** (`input/tuner.js`): `createSteadyTuner({ tuning })` -> `{ push(buf, sr, t) -> reading, reading,
+    setTuning(id | { strings } | null), reset() }`; a reading is `{ live, held, hz, midi, p, note, octave, cents,
+    shown, inTune, settled, string: { s, number, name, open, cents, near } | null, db, floor, since, conf }`. YIN
+    (`pitch.js`, with the held note as its `hint`) in the tuning's range (a fourth under its low string; 30 Hz up with
+    no tuning), a noise floor and a gate 10 dB over it, a new note on an attack, a median and a one-euro smoother,
+    whole cents shown with hysteresis, in tune within ±2 (out past ±4). `TUNER_TUNINGS` is the fretboard's tunings
+    plus `drop-a`, `7-standard` and `7-drop-a`; `tuningsFromLow(midi)` asks which a low string is, `guessTuning(heard)`
+    settles it from the strings heard, `stringOf(midi, tuning)` names the string. Measured in `tools/input-test.js` on
+    Karplus-Strong strings (`tools/strings.js`) from E1 to E4 at 48 and 96 kHz: named within 100 ms of the pluck,
+    within 3 cents within 180 ms, a tenth of a cent clean and six tenths with hum at -48 dBFS at the median.
+    `ui/gauges/tuner.js`: `mountTuner(el, { source, tuning, style: 'needle' | 'strobe', size: 'big' | 'small',
+    onReading })` -> `{ frame(now), reading, setTuning, setStyle, tuner, el, unmount() }`.
+  - **The level** (`input/level.js`): `createLevel({ lo: -12, hi: -6, device })` -> `{ push(samples | { peak } |
+    peak, nowMs) -> state, state, reset(), clearClip() }`; the state is `{ db (the bar), peak, hold, clip, clips,
+    strum (the hardest in 3 s), verdict: 'none' | 'quiet' | 'low' | 'ok' | 'hot' | 'clip', advice: { id, text, turn:
+    'up' | 'down' | null, by (dB) }, inWindow, good (ms in the window) }`; `levelAdvice(verdict, db, { device })` is
+    the words alone (the knob on the interface; on a Focusrite, the ring round it). `ui/gauges/level.js`:
+    `mountLevel(el, { source, device, onPickChannel, advice })` -> `{ frame(now), state, setDevice, reset(), meter,
+    el, unmount() }`.
+  - **Calibration** (`input/calibrate.js`): `createCalibration({ latency, label, autoKeep })` -> `{ state: { phase:
+    'idle' | 'listening' | 'done' | 'stopped' | 'error', step, hits, result, kept, measured, estimate, error },
+    start(), stop(), keep(), again(), forget(), line(), on(fn) }`; a good one is kept by itself, a fair or poor one
+    waits for keep(); `calibrationLine(state)` is the words. `ui/gauges/timing.js`: `mountTiming(el, { latency, label
+    })` -> `{ frame(now), start(), stop(), cal, el, unmount() }`. The clicks are sound: a check swaps
+    `latency.measure` for a fake that calls `onStep` as the real one does.
+  - `design/bench/getting-started/` (served locally, never deployed) mounts all three on the input module alone, to
+    try them on a real guitar.
 - **Audio inputs** (`input/audioin.js`): an interface opens with all its channels (`channelCount` up to what the
   device reports) and the chosen input is split off (`state.channels`, `state.channel` '1'…'32', 'both', 'stereo'); a
-  channel the device doesn't have is silence, never input 1. A `devicechange` emits `app.input` `'devices'` and ui
+  channel the device doesn't have is silence, never input 1. Monitoring plays through the track a take would record
+  (the armed audio track, else the selected one, else the song's first), unless `audio.monitorVia(trackId)` names
+  one: the live room's stage names the guitar its next take goes on (Guitar L, Guitar R for the other side, the Lead
+  for the blues bar's solo) while it's up and lets go (`null`)
+  through the glass, so an older audio track ahead of the room's never takes the guitar dry. A `devicechange` emits `app.input` `'devices'` and ui
   `'input:devices'` (the Inspector and Sketch re-read the list without a reload).
+- **The live path** (`input/livepath.js`, `docs/research/AMP-PATH.md`): the input, its monitoring and the chain it
+  plays through, owned by `audioin.js` and checked by `app.input.path`. Its rules are pure and unit-tested
+  (`test/unit/livepath.test.js`):
+  - *Which input.* Every opener (Getting started, the Jam room, Sketch, the soundcheck) chooses with
+    `chooseInput(list, { saved, role })` (`audio.choose()`, `audio.openBest({ role })`): the remembered device by its
+    id, else by its label, else for an instrument the interface. What's remembered (`overdub:input`'s `deviceId`) is
+    the device's own id, never `'default'`: the browser's "Default - " entry is resolved to the device behind it
+    (`realIdOf`, `state.realId`). A remembered id that's gone is chosen again by its label, never asked for loosely,
+    and every ask turns the browser's voice processing off; a first visit (no labels before the grant) opens blind and
+    chooses again once they're in. An instrument open (`listen: true`) picks the channel that moves as you play. The
+    input's `ended` is its own: a device that goes away closes (`LINES.gone`) and reopens by itself when it's back.
+  - *Monitoring* is one decision per real device: `autoMonitor({ kind, channels, role })` (an interface monitors
+    however it was picked, its "Default - " entry too; a microphone or a virtual device doesn't), or what you said
+    by hand (`monitor(on)`, M in the guitar room), kept for that device. `state.monitorBy` is `'auto'`, `'hand'`,
+    `'open'` (an opener's `monitor: false`) or `'guard'` (the feedback guard). Closing never decides. A hold mutes
+    without deciding (`hold('tuner')` / `release('tuner')`, `state.monitorHolds`); `hush()` is the killswitch's.
+    Monitoring plays through `engine.monitored`'s strip, which the polite stop never renews.
+  - *The check* (`app.input.path`: `status()`, `check()`, `wake()`, `speaker(fn)`): analysers on the input, the
+    strip's input and its chain's end (`engine.chainTaps`), read once a change settles and every 2 s while something
+    comes in (`HEALTH`); `pathVerdict` names what's wrong (the context suspended, the monitor unwired, a stand-in, a
+    device stuck half on, a silent chain, an amp passing its input dry, the track muted) and the repair: resume,
+    rewire once, `assure` once, then `engine.rebuild` up to three times 5 s apart, then `LINES.gaveUp`. Each
+    episode's line is said once (`LINES`), through the room's talkback when one listens (`speaker`), else a toast.
+    `state.path` and the `'path'` event carry the verdict; the guitar room's lamp by the jack shows it.
 - **Files in** (`input/importers.js`, `app.importers`): a Standard MIDI File (types 0 and 1; running status, note-on at
   velocity 0, the first tempo of a tempo map, time and key signatures, markers, track names, program changes) dropped
   anywhere or from Song menu → Import MIDI… becomes a track per part (type 0 split by channel; channel 10 →
@@ -1985,12 +2199,197 @@ of this version trusts the kept songs' devices, once), decodes a share link if t
 (the link's song, `?new`, `?demo`, the saved song, or the demo), the engine (a silent stand-in if it fails), the
 shell, then starts each module in `MODULES` (each `export default function (app)`) in order; one failing never stops
 the rest. Audio starts on the first gesture. URL switches: `?new`, `?demo=<id>`, `?device=<id>`, `?agent=mock`,
-`?coach`, `?autostart`, `?view=simple|full`, `#s=…`. Straight after the shell,
+`?coach`, `?autostart`, `?view=simple|full`, `?room`, `?studio`, `#s=…`.
+
+**The door.** Before the shell is built, `main.js` asks `decideDoor` (`ui/liveroom/door-decide.js`, pure) which side of
+the glass the load opens on and with which song, and keeps the answer as `app.door` (`{ side, song }`). A share link
+opens in the control room; `?room` opens the live room on a new song; `?demo`, `?studio` and the control room's own
+switches open the control room; a saved song with a room opens in the room (unless it was last on the control room's
+side); a first visit opens the room's door. Under `navigator.webdriver` everything but `?room` opens the control
+room, as before the room, so the suites see what they always saw. On the room's side `main.js` sets `data-room` on
+`<html>`, and `app.css` keeps the studio out of sight until the room has mounted over it.
+
+**The live room** (`ui/liveroom/index.js`) is a screen over an inert studio, one at a time from its registry
+(`door`, `stage`, `kitchen`, `shelf`, `send`, `guitar`: the guitar room, below), drawn from the shell's loop. `app.liveRoom` is `{ isOpen(), busy(),
+open({ screen }), close(), say(text, { by }), selection(), press(id), on(evt, fn) }`: `busy()` is true through a
+count, a take and the band's read, and the agent's song-changing tools refuse while it is (`agent/tools.js`,
+`recordingBlock`); `say` puts a line in the talkback, the house's unsigned and an agent's signed. Its state is
+`ui.state.liveRoom`; its memory in this browser is `localStorage overdub:room` (`ui/liveroom/prefs.js`: the side
+last used, the place, headphones or speakers per output, the once-only lines said per song); the room's songs are
+kept in IndexedDB `overdub-shelf` (`ui/liveroom/shelf-db.js`), beside `overdub:project`. Both names are forever. Straight after the shell,
 `installWorkspace(ui, app)` gives it `ui.workspace`, before any module mounts a panel.
+
+**The riff library and the stack rack** (`docs/research/GUITAR-ROOM.md` §2.4, §2.9, §4.3) are the guitar room's
+storage, across songs, with no UI of their own: the room's tray, the part line and the tone room are built on them.
+Both are modules of Promises that never throw (`import * as riffs from './ui/liveroom/riffs-db.js'`), and both keep the
+visit's in memory when IndexedDB is refused or the disk is full, with `where()` (`'disk' | 'memory'`) and `note()` (a
+line for the talkback, or null) saying so. The databases' names are forever: `overdub-riffs` and `overdub-rack`.
+
+- **A riff** (`core/liveroom/riffs.js`, pure) is kept three ways so a listing never loads audio: a **row** (about 1 KB:
+  `id` `rf_xxxxxx`, `name` ("Riff N" until named), `at`, `starred` 0 | 1, `song` (the song's id) and `songTitle` (only
+  once the song is named), `tempo`, `beats`, `bars`, `meter`, `offset` (s into the audio of its first beat), `tail` (s
+  rung past its last beat), `tuning`, `key` `{ root, scale, sure }` (a read, `sure: false` until confirmed), `stack`
+  `{ name, amp }`, `duration`, `sr`, `channels`, `bytes`, `peaks` (Int8Array, 256 columns of min and max), `peak`,
+  `notes`), a **detail** (`{ chain, stackId }`: the stack it went through) and its **audio** (`{ sr, channels:
+  [Float32Array] }`, an asset store record: the dry input, mono, at the device's rate, as a recording is kept).
+- **The library** (`ui/liveroom/riffs-db.js`): `add(input)` (`{ audio, tempo, beats? | bars?, meter?, offset?, name?,
+  tuning?, key?, stack?, song?, starred?, notes? }`) → `{ ok, id, row, where, note? }`; `list(filter)` → `{ rows, next }`
+  with `filter = { q, song, tuning, tempo: [lo, hi], from, to, starred, order: 'new' | 'old', limit (50, up to 500),
+  after: next }` (q: each word in the name or the song's title; this session's riffs first is `from: sessionStart`);
+  `get(id)` (the row and its chain), `audio(id)`, `buffer(id)` (an AudioBuffer, for a preview), `update(id, { name?,
+  starred?, notes?, key? (confirms it), tuning? })`, `rename`, `star`, `remove(id)` → the whole riff, `restore(it)`,
+  `count()`, `facets()` → `{ total, starred, songs: [{ id, title, count }], tunings: [{ id, count }] }`, `tagSong(songId,
+  title)` (a song just named: its riffs take the title), `usage()` → `{ count, bytes }`, and `intoSong(id, { project,
+  track?, start? })` → `{ ok, ops, asset, clip, beats, bars, fits, ratio, tail, chain, stackName }`: the audio is put in
+  `engine.assets` once as `a_<riff id>` (shared by every song it goes into, and still there if the riff is deleted),
+  and the ops (`asset.add` when the song doesn't describe it, `clip.add` on `track` at `start`, ref `riff`) are
+  dispatched by the caller with its `by`. `fits` is false when the song's tempo isn't the riff's: nothing is stretched,
+  and the clip keeps the audio's time. Stores: `riffs` (the rows; indexes `new` [rat, id], `song` [song, rat, id],
+  `star` [starred, rat, id], `tuning` [tuning, rat, id] with rat = −at, and `songs`, `tunings`, `bytes`), `details`,
+  `audio`. A page reads its index in batches, newest first, and checks each row against the rest of the filter; 2,000
+  riffs list in a few milliseconds (`tools/liveroom/checks-library.js`).
+- **A stack** (`core/liveroom/stacks.js`, pure) is `{ name, chain: [{ device, params, on }], amp }`: the guitar's gear
+  in signal order (pedals, the amp with its cab and mics as its own params, a `core.cab`, pedals after). On a track it's
+  the run of inserts from the first piece of gear (`isGear`: `pedal.*`, `amp.*`, `cab.*`, `core.stack`, `core.cab`, or
+  a device of cat `amp`) to the last; inserts outside the run (the room's Slide Rule EQ) aren't the stack's.
+  `stackOf(track)` reads it (what Save to rack keeps), `loadOps(track, stack)` → `{ ops, label, by: 'you', replaced }`
+  swaps the run for the stack in place (the top of the chain when there's none) in one undo step, `chainKey` /
+  `sameChain` / `matchStack(chain, stacks)` say whether the song's copy is still a saved stack, and
+  `houseStacks(place)` gives the place's own (Half Stack at its settings), never stored.
+- **The rack** (`ui/liveroom/rack-db.js`): `save(stack, { id?, name?, song? })` (a new stack; with `id`, that stack of
+  yours takes the chain and keeps its name: the only way a saved stack's sound changes), `list()` (the last changed
+  first), `get(id)` (a house id too, and the guitar room's club stack, `house.metal.club`), `load(id, track)` → the ops for the song (the rack is read, never written: the
+  song keeps its own copy, the track's inserts, and edits on the stage are `insert.set`s on it), `rename`, `remove(id)`
+  → the stack, `restore(it)`, `house(place)`. Store `stacks` (keyPath `id`, index `modified`).
+
+### The guitar room (`ui/liveroom/guitar/`, `core/liveroom/guitar/`)
+
+The metal club, rebuilt for the guitarist (`docs/research/GUITAR-ROOM.md`; the blueprint is the second mock,
+`design/mock/guitar-room-2/`). It is the live room's screen `guitar`: the door offers the club and the control room
+(`ui/liveroom/door.js` `OFFERED`; the basement, the blues bar and the kitchen are held, their code kept and
+`press('place:<id>')` still opening one), and a song whose room is the metal club opens on it (`homeOf` in
+`ui/liveroom/index.js`). The screen is the stage seen from the front, every physical thing a real control at a usable
+size, a camera to go closer, and the shop through a door. Six streams build it on one frame, `ui/liveroom/guitar/index.js`,
+which draws nothing itself:
+
+- **R** is the room as a stream sees it: `{ app, ui, store, deck, lr, getDevice, gr, L, gprefs, el, camera, rig, panel(target),
+  sheet(id), overlay(id), drawer(open?), say(text, { by }), line(id, vars), press(id), run(next?), busy(), on, emit,
+  parts }`. `R.el` holds the slots: the stage world and its layers back to front (`pixels`, `gear`, `riser`, `hot`,
+  `spot`), the shop world (`pixels`, `wall`, `case`, `corner`, `hot`), `panels` (a camera target's side panel),
+  `sheets` (a bottom sheet per overlay), `drawer` (`tray`, `parts`), `over` (the recording view), `callout`, `strip`
+  (`talk` holds the live room's talkback, `tools`) and `tools` (the header's `.lr-tools`). The bus: `cam`, `overlay`,
+  `drawer`, `rig`, `press`, and `<stream>:<what>` for a stream's own.
+- **A stream's module** exports `mount(R)` → `{ press?(id), back?(), frame?(now), unmount?(), ...its API }`, mounted in
+  `ORDER` (room, shop, drummer, start, takes, tape); its API is `R.parts[name]`. The router sends each action to its
+  owner (`OWNER`: by id or prefix): `space` goes to takes (`stop`) while a count, a take or the song plays, to takes
+  (`hear`) in review, else to the drummer; `back` (Esc) asks each stream in `BACK` order (takes, tape, start, shop,
+  drummer, room), then the camera; `glass` (⌘G) and `cam:<target>` and `shop` are the frame's. `app.liveRoom.press(id)`
+  reaches the same router. The frozen APIs are in each module's header and in `tools/liveroom/checks-guitar.js`
+  (`FROZEN`, `STREAM_API`).
+- **The camera** (`camera.js`) dollies over a world (a CSS transform on the world's element, GLIDE 660 ms, a cut under
+  reduced motion) to a registered target: `head`, `cab`, `kit`, `board`, `tuner`, `tape` on the stage, `wall`, `case`,
+  `rack`, `tryout-head`, `tryout-cab` in the shop, each world's overview by its own name; a target in the other world goes
+  through the door (a fade, WALK 600 ms). The world is 1440 × 804 units at 4 px a pixel-art pixel (`layout.js`
+  `REGIONS`, `SHOP_REGIONS`); the room stream re-registers the targets with the drawn gear's boxes.
+- **One key table** (`keys.js` `KEYS`): each key's action by where you are (`contextOf`: `rec`, `review`, `talk`, `gs`,
+  `tape`, `library`, `shop`, `stage`, `any`), installed first in the group 'Live room'. Letters and digits stay in a
+  text field; arrows go to a focused slider or list, Enter to a focused button; Space is the transport's everywhere
+  but a text field (the shell's rule). On the stage: R record, D side, Enter play, Home, ⌫ remove a part, N / ⇧N a
+  part after / before, ⌥← ⌥→ move it, ← → tempo (⇧ by 10), T tap, [ ] the beat, ⇧K the count-in, 1–8 stomp, H C K B U
+  the head, the cab, the kit, the board, the tuner, G the tape, S the shop, L the riffs, ⇧L the library, / talk;
+  ⌘G through the glass. ⌘S stays the studio's.
+- **The state** is `ui.state.liveRoom.gr` (`state.js`: `world`, `cam`, `trail`, `overlay`, `drawer`, `slot`, `tuner`,
+  `jam`, `take`, `tape`, `shop`, `gs`, `talk`, `said`; each key names its owner), and the run is
+  `ui.state.liveRoom.run` (`'idle' | 'count' | 'take' | 'play' | 'jam'`). The musician's own settings are
+  `localStorage overdub:guitar-room` (`prefs.js`: `countIn`, `gs`, `tuning`, `tunerStyle`, `snap`, and a stream's own
+  keys), a name that is forever.
+- **The gear is the song's** (`bind.js` over `core/liveroom/guitar/rig.js`): the rig is the run of gear on Guitar L
+  (`rigOf`: its slots, the amp, the board in order), and every change is made on both guitars at once, one undo step
+  by you: a knob is `insert.set` (a drag coalesces), a footswitch the insert's `on`, a drag on the board
+  `insert.move`s, the + pedal `insert.add` at its place in the order (`PEDAL_RANK`), a swap the whole run for a stack
+  (`core/stacks.js` `planStacks`). Swaps, adds, removes and moves wait for a take to finish; a knob and a stomp don't.
+- **The shop** (`shop.js`, with `shop-data.js` the catalogue, `shop-cab.js` the cab and its mics, `shop-pixels.js`,
+  `shop-style.js`, `shop-say.js` its talkback lines): the amp wall in sections by tone, the pedal case in drawers by
+  `pedalCat`, the rack, and your stack in the try-out corner over your board. A look shows a thing's card; a held look
+  is a try (`store.preview`: heard on both guitars, nothing in History, released on any other key, click, take or
+  leaving); a click or Enter carries it (`R.rig.swap` for an amp, at its measured level `AMP_TRIM`, on your cab with
+  your mics; `R.rig.add` for a pedal). A rack load is `R.rig.swap` and `room.set { stack }` dispatched with `join` on
+  the swap's transaction: one step (a stack carried without a rack id sets `stack` to none, in the same step). Its targets are `wall`, `case`, `rack` (the shop at a glance; the area changes, the
+  camera stays) and `tryout-head`, `tryout-cab` from the drawn gear; it fills `R.panel('tryout-head')`,
+  `R.panel('tryout-cab')` and the stage's `R.panel('cab')` (the cab builder: the amp's own cab and mic params through
+  `R.rig.turn`). Beside the frozen API: `load(id)`, `tryOn(device)`, `release()`, `area()`, `changed()`.
+- **The song's fields** (`core/liveroom/model.js`): the room's `beat` (a groove id `style/slug`, the house's
+  `house/guide`, or `pin:<id>`), `pins` (the riser's cards, at most 8, `[{ id, groove, name?, hits? }]`) and `stack`
+  (`{ id, name }`, the rack stack the chain was loaded from), and a part's `beat`, through `room.set` and
+  `room.part.set`. The club's setup (`core/liveroom/guitar/setup.js` `planGuitarRoom`) is one step: both guitars on
+  the club's stack (`CLUB_STACK`: Snapper gate, Mantis boost, the Kraken head into a 4×12, a delay and a plate off) at
+  `GUITAR_DB` (+3.3 dB, measured against the old Half Stack), the drummer, no bass, the guide beat and five cards.
+- **The drummer** (`drummer.js` with `drummer-jam.js`, `-kit.js`, `-book.js`; `core/liveroom/guitar/beats.js` and
+  `beats-grid.js`): the riser's plate and cards, the kit, and the book in the kit's zoom. A card picked is
+  `room.set { beat: 'pin:<id>' }` by you (a run of picks one step); with the part line up and a part selected, that
+  part's drums in the same step (`beatOps`: `room.part.set { beat }` and one clip the house signs, the house's own clips
+  there replaced, one someone changed left alone). The riser's cards change whole through `pinOps` (pin, unpin, rename,
+  reorder, a card's bar edited as `hits [{ t, row, v }]`). The drummer plays where the song has no drums: a jam (Space:
+  the room's beat from the song's end) and the bars under a take (`countIn`) are `jamOps` bars through `store.preview`,
+  a bar at a time two ahead, named `Jam` by the house, released behind the playhead and when the transport stops; never
+  in History, and no plan touches a `Jam` clip (the studio's autosave leaves them out too, `kept()` in `main.js`).
+  `countIn({ bars, at, from, beat })` is the deck's count (`voice: 'sticks'`, or none with the count-in off) and
+  resolves once it's on the audio clock (`downbeat` in the result), so the take armed after it records from the 1;
+  with `counted: true` the deck's count is someone else's (the takes stream's) and the drummer only starts the bars
+  under the take. While Getting started's Timing listens, its clicks are the drummer's sticks (`R.gr.sticks`: `{ count,
+  tap }`). The guide plays as written (it sits with the club's verse beat, measured);
+  the library's grooves at the house's touch. The drummer's lines are `core/liveroom/lines/drummer.js`, said through
+  `R.say`.
+- **Getting started and the tuner** (`start.js` [start], with `start-plan.js` (pure: the steps, the tour, the shots,
+  the words), `start-tuner.js` and `start-style.js`): plug in, tune, timing, your sound and a tour, on the stage itself
+  on the gauges (`ui/gauges/`). Each step registers the camera target `gs` (the step's shot, the slate's side kept
+  clear; the header's `where()` reads it as "Getting started"), stands the slate (`R.el.callout`) beside it and dims
+  the stage round a pool of light on what it's about (`R.el.stage.spot`, in world units, so it glides with the
+  camera). It comes up by itself once in a visitor's browser (never under `navigator.webdriver`), Esc pauses it where
+  it is (`gprefs` `gs.step`; the header's button carries on), and the tour's Done sets `gs.done`. The tuner pedal,
+  Tuna Fork, is the room's own (nothing in the song): drawn once, by the room stream on the board (`room-rig.js`
+  `tunerFace`), from the reading the start stream puts at `R.gr.tuner.reading` (`{ note, octave, cents, string,
+  inTune, held, input }`); U or its footswitch stomps it, the camera goes to it (`R.panel('tuner')`: the gauge, the strings lighting as each comes
+  in, the tunings), and while it's on the monitor is held (`audio.hold('tuner')`: muted without deciding anything),
+  released when it goes off, when a take starts, or when the screen goes. **M** (or a click on the lamp by the jack)
+  turns monitoring on or off by hand; the lamp shows on, off, held (the tuner) or a fault the path's check found (its
+  line in the title, the talkback says it). A tuning picked on it that the song knows is the song's: one step
+  by you (`room.set { tuning }` and the guitars' low cut). Bus: `start:gs`, `start:tuner`, `start:plug`.
+- **Takes and the part line** (`takes.js`; `parts-plans.js` is its pure part). A part is a section, in start order;
+  the room adds none unasked. R records the selected part (fixed length; what rings past it is the take's tail, the
+  deck's `tailFrom`) or a new part at the end (whole bars to the bar line before the stop, the ring its tail). The
+  count is the deck's, the engine's sticks its voice while the count-in is on; the drummer is told first
+  (`R.parts.drummer.countIn({ bars, bpm, from, beat, sounded, counted: true })`, `sounded: true` when the engine sounds
+  it) and plays the bars under the take, stopped when it's done (with no drummer the stream previews them itself); a
+  drummer that sounds the count itself sets `countsAloud: true`, the engine's voice then `'none'`. A take and its part
+  are one step by you: the part's section, its drums (`beatOps`) and, for the other side, the pans are dispatched with
+  `join` on the recorder's transaction, and so is every trim and pick in review, so Toss (`store.undo({ id, redo:
+  false })`) leaves History as it was. Each part-line move (a new part, before, moved, deleted, a riff placed) is one
+  step by you. Beside the frozen API: `place()` returns a Promise; `summary()` → `{ parts, bars, secs }` and the bus's
+  `takes:parts` (the same, when it changes) for the strip; `takes:landed` when a take is in; `dropAt(x, y, { final,
+  kind })` → the index a riff dragged there lands at (the tape's drag). The drawer's two columns (the tray's 340 px,
+  the part line's the rest) are set in `takes-style.js`. Keys on what the stream draws: the part line is a listbox, and
+  the shell leaves a focused listbox its Space, so the lane hands Space to the room (`R.press('space')`) and leaves
+  Enter to the key table (play from the card); a review handle is a slider, which the shell leaves its Enter, so the
+  handle's Enter is Keep. Whether a key arrives marked (`defaultPrevented`) says nothing: the live room's holds mark
+  keys they do nothing with.
+- **The tape, the riffs and the talkback** (`tape.js` and its `tape-*.js`, `talk-room.js`): the guitar room starts
+  `app.input.tape` as it mounts and stops it as it goes, if it started it. G puts the last minute up (`app.input.tape`
+  select and grab, snapped to the drummer's bar lines unless `snap` is off); Enter keeps the selection as a riff in
+  `riffs-db.js` (nothing in History) and puts the drawer up with the riff in the tray; a riff goes onto the part line
+  only through the takes stream's `place(riff, { at, after })`, one step by you. Beside the frozen view the stream
+  adds `place`, `claude()` (who's on the talkback) and its pieces, and says `'tape:grab'` ({ riff }) and
+  `'tape:drag'` ({ riff, x, y, over, at, phase }) on the bus. / opens a field for Claude in the strip; the agent acts
+  through ops signed `claude`, and its reply goes to the talkback (`R.say`, by `claude`). The header says who's on it (`.gr-r-who`, from `claude()`); the
+  strip has the one Talk to Claude and the header the one Getting started.
+- **Send** (the live room's `.lr-send`, the send screen) comes up once the song has been heard from the top to its
+  end (Home, played out), for as long as the page lives, and never while a take runs: the takes stream shows it.
+- **Checks**: `tools/liveroom/checks-guitar.js` holds the seams; each stream has its own `checks-<stream>.js` (the tape
+  stream's is `checks-tape.js`, beside the rolling tape's), run with `ONLY=<name> node tools/liveroom-test.js`.
 
 The app object (`window.overdub`): `{ store, engine, ui, devices, music, summarize, version, opened, trust, agent,
 tools, input, presence, bridge, remote, share, onboard, devicesIO, importers, reference, band, provenance, exporter,
-analytics, plugin, jam, songs, site, siteConfig }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
+analytics, plugin, jam, songs, site, siteConfig, door, liveRoom }` plus the panels that publish an API (`arranger`, `pianoroll`, `drumgrid`, `rack`, `mixer`,
 `browser`, `transport`). `app.site` is which site this is (`ui/preview.js` reads `app/site-config.json`; deploy/README.md). `app.siteConfig` is
 `loadSiteConfig`'s answer as boot read it (main.js waits for it, at most 4 s, `CONFIG_WAIT_MS`, before the first
 module starts), or null when this load couldn't see it.

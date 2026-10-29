@@ -186,7 +186,8 @@ function keysOverlay(app) {
 // The killswitch: every panic path in the studio comes here, and here goes to engine.silence().
 function silenceAll(app) {
   const { engine, ui } = app;
-  try { if (app.input?.audio?.state?.monitoring) app.input.audio.monitor(false); } catch { /* ok */ }
+  // (a mic's monitoring off by hand, the howl the killswitch was pressed for; an interface's stays: input/audioin.js hush)
+  try { app.input?.audio?.hush?.(); } catch { /* ok */ }
   ui.emit('silence');
   if (!engine?.silence) { try { engine?.stop?.(); } catch { /* ok */ } return Promise.resolve(); }
   return Promise.resolve(engine.silence()).catch((e) => ui.toast('Could not silence: ' + e.message, { kind: 'bad' }));
@@ -227,12 +228,17 @@ function countdown(app) {
 // The click's options, kept in this browser: { on, whileRecording, level } on the engine, the count-in on the recorder,
 // and `takes`: the click while a take records, even with the click off (on unless turned off). A take that starts with
 // the click off borrows it for the take (engine.click { on, whileRecording }: it sounds only while recording) and gives
-// it back when the take ends; anything that sets the click meanwhile (K, Sketch, an agent) keeps what it set.
+// it back when the take ends; anything that sets the click meanwhile (K, Sketch, an agent) keeps what it set. In the
+// live room (ui.covered 'liveroom') the band is the time (docs/research/LIVE-ROOM-MODE.md §2.5, §3.4): nothing is
+// borrowed, and a click that's on is held off whenever the room plays (a take, Hear it all, a wide playback, a preview).
+// One that's on as the room opens is held off until it closes and given back then exactly as it was (on, and only
+// while recording or not); one turned on while it's open (an agent's) is held off for each play and given back when
+// that play stops. get() reads what the person set, the held click as on.
 const CLICK_KEY = 'overdub:click';
 function clickSettings(app) {
   const { engine, ui } = app;
   const has = () => !!engine && 'click' in engine;
-  let takes = true, borrowed = null, self = false;
+  let takes = true, borrowed = null, self = false, roomHeld = null, playHeld = null;
   const quiet = (fn) => { self = true; try { fn(); } finally { self = false; } };
   try {
     const v = JSON.parse(localStorage.getItem(CLICK_KEY) || 'null');
@@ -250,15 +256,61 @@ function clickSettings(app) {
   // what the person set (a borrowed click reads as off)
   const get = () => {
     const c = has() ? engine.click : { on: !!engine.metronome, whileRecording: false, level: 0 };
-    return { ...c, ...(borrowed ? { on: false, whileRecording: borrowed.wr } : {}), takes, countIn: app.input?.recorder ? app.input.recorder.countIn : null };
+    return { ...c, ...(roomHeld || {}), ...(playHeld || {}), ...(borrowed ? borrowed.back || { on: false, whileRecording: borrowed.wr } : {}), takes, countIn: app.input?.recorder ? app.input.recorder.countIn : null };
   };
   const save = () => { try { const c = get(); localStorage.setItem(CLICK_KEY, JSON.stringify({ on: !!c.on, whileRecording: !!c.whileRecording, takes, level: Math.round((+c.level || 0) * 10) / 10 })); } catch { /* ok */ } };
   // every change, from here or anywhere (Sketch, an agent), is kept; one made during a borrowed take is theirs to keep
-  engine.on?.('transport', (e) => { if (e?.why !== 'metronome' || self) return; borrowed = null; save(); });
+  // (one that turns the click on while the room holds it is theirs: the hold lets go, and the next play holds it again)
+  engine.on?.('transport', (e) => {
+    if (e?.why === 'play' || e?.why === 'stop') { roomPlay(e.why === 'play'); return; }
+    if (e?.why !== 'metronome' || self) return;
+    borrowed = null;
+    if (has() && engine.click.on) { roomHeld = null; playHeld = null; }
+    save();
+  });
+  // the live room's hold: the click as it was, kept while the room is open
+  const heldOf = (c) => ({ on: true, whileRecording: !!c.whileRecording });
+  function roomOpen() {
+    if (!has() || roomHeld || playHeld || !engine.click.on) return;
+    roomHeld = heldOf(engine.click);
+    quiet(() => { engine.click = { on: false }; });
+    ui.emit('transport-ui');
+  }
+  function roomClose() {
+    const back = roomHeld || playHeld;
+    roomHeld = null; playHeld = null;
+    if (!back || !has()) return;
+    quiet(() => { engine.click = back; });
+    ui.emit('transport-ui');
+  }
+  function roomPlay(playing) {
+    if (!has()) return;
+    if (playing && ui.covered === 'liveroom' && engine.click.on && !roomHeld && !playHeld && !borrowed) {
+      playHeld = heldOf(engine.click);
+      quiet(() => { engine.click = { on: false }; });
+      ui.emit('transport-ui');
+    } else if (!playing && playHeld) {
+      const back = playHeld;
+      playHeld = null;
+      quiet(() => { engine.click = back; });
+      ui.emit('transport-ui');
+    }
+  }
+  let roomHooked = false;
+  const hookRoom = () => {
+    const lr = app.liveRoom;
+    if (roomHooked || !lr?.on) return;
+    roomHooked = true;
+    lr.on('open', roomOpen);
+    lr.on('close', roomClose);
+    if (lr.isOpen?.()) roomOpen();
+  };
+  hookRoom();
+  ui.on('ready', hookRoom);
   function set(v, { announce = false } = {}) {
     if ('takes' in v) takes = !!v.takes;
     const eng = { ...v }; delete eng.takes;
-    if ('on' in eng || 'whileRecording' in eng) borrowed = null;
+    if ('on' in eng || 'whileRecording' in eng) { borrowed = null; roomHeld = null; playHeld = null; }
     if (Object.keys(eng).length) { if (has()) quiet(() => { engine.click = eng; }); else if ('on' in eng) engine.metronome = !!eng.on; }
     save();
     ui.emit('transport-ui');
@@ -269,15 +321,21 @@ function clickSettings(app) {
   // a take starting (counting in or recording) with the click off: it clicks for the take; the take over, it goes back
   function onTake(st) {
     if (!has()) return;
-    if ((st === 'count' || st === 'rec') && !borrowed && takes && !engine.click.on) {
+    const room = ui.covered === 'liveroom';
+    if ((st === 'count' || st === 'rec') && !borrowed && room && engine.click.on) {
+      const back = { on: true, whileRecording: !!engine.click.whileRecording };
+      quiet(() => { engine.click = { on: false }; });
+      borrowed = { wr: back.whileRecording, back };
+      ui.emit('transport-ui');
+    } else if ((st === 'count' || st === 'rec') && !borrowed && !room && takes && !engine.click.on) {
       const wr = !!engine.click.whileRecording;
       quiet(() => { engine.click = { on: true, whileRecording: true }; });
       borrowed = { wr };
       ui.emit('transport-ui');
     } else if (st === 'idle' && borrowed) {
-      const wr = borrowed.wr;
+      const back = borrowed.back || { on: false, whileRecording: borrowed.wr };
       borrowed = null;
-      quiet(() => { engine.click = { on: false, whileRecording: wr }; });
+      quiet(() => { engine.click = back; });
       ui.emit('transport-ui');
     }
   }

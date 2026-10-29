@@ -370,10 +370,10 @@ async function studio(b, base, tag) {
     return { n: all.length, off: all.filter((u) => !here(u)).map((u) => u.slice(0, 60)), paths: all.filter(here).map(path) };
   });
   const has = (p) => mods.paths.includes(p);
-  const pedalMods = mods.paths.filter((p) => p.startsWith('vendor/clawd/worklets/')).length;
+  const pedalMods = mods.paths.filter((p) => p.startsWith('src/devices/guitar/gear/worklets/')).length;
   const own = ['src/kernel/processor.js', 'src/devices/worklets/end.js', 'src/input/cap-worklet.js'];
   T.ok(!mods.off.length && own.every(has) && pedalMods >= 40,
-    `${tag}: every worklet module loaded is a file on the studio's origin: ${mods.n - mods.off.length} of ${mods.n} (${own.filter(has).join(', ') || 'none of the studio\'s own'}${own.some((p) => !has(p)) ? '; not ' + own.filter((p) => !has(p)).join(', ') : ''}; ${pedalMods} from vendor/clawd/worklets/)${list(mods.off, 4)}`);
+    `${tag}: every worklet module loaded is a file on the studio's origin: ${mods.n - mods.off.length} of ${mods.n} (${own.filter(has).join(', ') || 'none of the studio\'s own'}${own.some((p) => !has(p)) ? '; not ' + own.filter((p) => !has(p)).join(', ') : ''}; ${pedalMods} from src/devices/guitar/gear/worklets/)${list(mods.off, 4)}`);
 
   const errs = real(errors);
   T.ok(!errs.length, `${tag}: no console or page errors in the studio${list(errs, 5)}`);

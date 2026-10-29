@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started bench</title>
+<!--
+  A bench for Getting started's gauges (docs/research/GUITAR-ROOM.md §2.1), to try on a real guitar before the guitar
+  room's own screens are built on them: the level meter, the tuner and the timing step (app/src/ui/gauges/), on the
+  input module the studio uses (app/src/input/audioin.js), with a stand-in for the rest of the studio. Served by
+  node server/serve.js at /design/bench/getting-started/; design/ is never deployed.
+  Monitoring stays off (nothing you play comes out). Strum along plays eight clicks through the speakers.
+-->
+<link rel="stylesheet" href="/app/style/tokens.css">
+<style>
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+  main { box-sizing: border-box; max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 28px; }
+  h1 { margin: 0; font: 800 italic 28px/1.1 var(--font-display); font-variation-settings: var(--font-display-vars); }
+  h2 { margin: 0 0 10px; padding-top: 10px; border-top: var(--rule-heavy); font: 700 15px/1.2 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; }
+  p.note { margin: 6px 0 0; color: var(--text-2); font-size: 14px; line-height: 1.4; }
+  .row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 16px; margin-bottom: 12px; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
+  select, button { font: 600 15px/1 var(--font-ui); min-height: 38px; border: var(--rule-2); border-radius: var(--r-press); background: var(--bg-2); color: var(--text); padding: 0 12px; max-width: 100%; }
+  button { cursor: pointer; }
+  button.go { background: var(--text); color: var(--bg); border-color: var(--text); }
+  button:focus-visible, select:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+  .status { min-height: 1.3em; color: var(--text-2); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Getting started bench</h1>
+    <p class="note">The guitar room's level meter, tuner and timing step, on your own input. Nothing you play comes out of the speakers here; Strum along plays eight clicks.</p>
+  </header>
+  <section aria-labelledby="h-plug">
+    <h2 id="h-plug">1. Plug in</h2>
+    <div class="row">
+      <label>Interface <select id="dev"><option value="">The browser’s choice</option></select></label>
+      <label>Input <select id="ch"></select></label>
+      <button type="button" class="go" id="open">Open the input</button>
+    </div>
+    <p class="status" id="status" role="status">Press Open the input (the browser asks first).</p>
+    <div id="level"></div>
+  </section>
+  <section aria-labelledby="h-tune">
+    <h2 id="h-tune">2. Tune</h2>
+    <div class="row">
+      <label>Tuning <select id="tuning"></select></label>
+      <label>Look <select id="style"><option value="needle">Needle</option><option value="strobe">Strobe</option></select></label>
+    </div>
+    <div id="tuner"></div>
+  </section>
+  <section aria-labelledby="h-time">
+    <h2 id="h-time">3. Timing</h2>
+    <p class="note">Mute the strings with your fretting hand and strum on each click: the first two count you in. Kept for this interface, in this browser.</p>
+    <div id="timing" style="margin-top: 12px"></div>
+  </section>
+</main>
+<script type="module">
+  import { createAudioIn } from '/app/src/input/audioin.js';
+  import { mountLevel } from '/app/src/ui/gauges/level.js';
+  import { mountTuner } from '/app/src/ui/gauges/tuner.js';
+  import { mountTiming } from '/app/src/ui/gauges/timing.js';
+  import { TUNER_TUNINGS, tuningName } from '/app/src/input/tuner.js';
+
+  // a stand-in for the studio around the input: no song, no engine (the input opens its own audio context), no tracks
+  const fns = new Map();
+  const input = { recorder: null, emit(t, d) { for (const f of fns.get(t) || []) f(d); }, on(t, f) { if (!fns.has(t)) fns.set(t, new Set()); fns.get(t).add(f); return () => fns.get(t).delete(f); } };
+  const app = {
+    engine: { ctx: null, start: async () => {}, on() {}, inputNode: null },
+    store: { get: () => ({ tracks: [] }), track: () => null, dispatch: () => ({ ok: false }), on() {} },
+    ui: { toast: (t) => { say(t); }, state: {} },
+    input,
+  };
+  const audio = createAudioIn(app, input);
+  const $ = (id) => document.getElementById(id);
+  const say = (t) => { $('status').textContent = t; };
+
+  const level = mountLevel($('level'), { source: audio, onPickChannel: (ch) => { audio.useChannel(ch); $('ch').value = String(ch); } });
+  const tuner = mountTuner($('tuner'), { source: audio, tuning: 'standard' });
+  const timing = mountTiming($('timing'), { latency: audio.latency, label: () => audio.state.label });
+
+  for (const [id, t] of Object.entries(TUNER_TUNINGS)) $('tuning').append(new Option(tuningName({ ...t, id }).replace(/^./, (c) => c.toUpperCase()), id));
+  $('tuning').append(new Option('Any note (which tuning is this?)', ''));
+  $('tuning').addEventListener('change', (e) => tuner.setTuning(e.target.value || null));
+  $('style').addEventListener('change', (e) => tuner.setStyle(e.target.value));
+
+  async function fillDevices() {
+    const list = await audio.devices();
+    const sel = $('dev'), was = sel.value || audio.state.deviceId;
+    sel.replaceChildren(new Option('The browser’s choice', ''), ...list.filter((d) => d.id !== 'default').map((d) => new Option(d.label, d.id)));
+    if (was && [...sel.options].some((o) => o.value === was)) sel.value = was;
+  }
+  function fillChannels() {
+    const n = Math.max(1, Math.min(8, audio.state.channels || 2));
+    $('ch').replaceChildren(...Array.from({ length: n }, (_, i) => new Option(`Input ${i + 1}`, String(i + 1))));
+    $('ch').value = String(audio.state.channel || '1');
+  }
+  fillChannels();
+  async function openIt() {
+    say('Opening…');
+    try {
+      await audio.open({ device: $('dev').value, channel: $('ch').value || '1', monitor: false });
+      say(`Open: ${audio.state.label}, ${audio.state.channels} input${audio.state.channels === 1 ? '' : 's'}, ${audio.state.sr / 1000} kHz. Strum hard and watch the meter.`);
+      level.setDevice(audio.state.label);
+      level.reset();
+      fillChannels();
+      await fillDevices();
+    } catch (e) { say(e.message || String(e)); }
+  }
+  $('open').addEventListener('click', openIt);
+  $('dev').addEventListener('change', () => { if (audio.state.open) openIt(); });
+  $('ch').addEventListener('change', () => { if (audio.state.open) { audio.useChannel($('ch').value); level.reset(); } });
+  fillDevices();
+
+  const loop = (now) => { level.frame(now); tuner.frame(now); timing.frame(now); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -170,4 +170,47 @@ export const AMP_VOICINGS = {
     stack: { R1: 220e3, R2: 1e6, R3: 22e3, R4: 33e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
     pw: 2, sag: 0.3, xf: [50, 10434.783], depth: [90, 2.5], pres: [3800, 1.6], trim: -20.69,
   },
+  // Siren Song: a hot-rodded lead head, the stack early (a Mark-style: V1 -> the stack, 250 pF, 100 nF, 47 nF; treble
+  // 250k, bass 250k, mid 10k, slope 100k -> GAIN -> three cascaded stages -> EL34s). Fitted: within 2.6 dB rms (4.2 at
+  // worst: 6 dB more at 80 Hz, 4 less at 640 Hz); the same THD (23.2 %).
+  lead: {
+    os: 4, hp: 96, tight: [220, -5],
+    chain: [['tri', 1.536, 0.1, 2.2, 144.804, 4688.573], ['stack'], ['gain', 20], ['pot'], ['tri', 12, 0.18, 1.6, 120, 4629.63], ['tri', 6, 0.3, 1.3, 60, 4050.926], ['tri', 3, 0.2, 1.4, 40, 5555.556]],
+    pot: [-34, 0], bright: null,
+    stack: { R1: 250e3, R2: 250e3, R3: 10e3, R4: 100e3, C1: 250e-12, C2: 100e-9, C3: 47e-9 },
+    pw: -3, sag: 0.4, xf: [50, 10434.783], depth: [103.5, 2.5], pres: [3500, 1.6], trim: -21.99,
+  },
+  // Pearl Diver: an overdrive special (the stack first, as a Skyliner's: 470 pF, 22 nF, 22 nF; treble 250k, bass 250k,
+  // mid 25k, slope 100k -> GAIN -> two stages into the overdrive -> a clean, stiff power section). Low confidence on
+  // the values (no two are the same). Fitted: within 2.2 dB rms (4.0 at worst); the same THD (11.4 %).
+  dumble: {
+    os: 4, hp: 120.96, tight: [220, -2],
+    chain: [['tri', 0.614, 0.1, 2.2, 26.003, 5023.47], ['stack'], ['gain', 15], ['pot'], ['tri', 10, 0.18, 1.6, 104, 19906.56], ['tri', 6, 0.25, 1.4, 50.001, 7000]],
+    pot: [-24, 0], bright: null,
+    stack: { R1: 250e3, R2: 250e3, R3: 25e3, R4: 100e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
+    pw: -11, sag: 0, xf: [50, 12650], depth: [103.5, 4], pres: [3200, 1.6], trim: -20.68,
+  },
+  // Barracuda: an SLO-100's lead channel: TIGHT before V1A -> GAIN -> a cold clipper -> two more stages (the coupling
+  // small, 130-340 Hz) -> the stack (470 pF, 22 nF, 22 nF; treble 250k, bass 1M, mid 25k, slope 47k) -> four 6L6s.
+  // Fitted: within 1.6 dB rms (2.6 at worst), then the four stages' Miller corners set to 9 kHz (the fit had them at
+  // 14-19 kHz, where five hot stages alias 26 dB under the graph amp at 4x; at 9 kHz, 30): within 2.0 dB rms (4.2 at
+  // worst). The same THD (28.4 %).
+  slo: {
+    os: 4, hp: 90, tight: [250, -6],
+    chain: [['tri', 5.86, 0.1, 2.2, 318.135, 9000], ['pot'], ['tri', 10, 0.45, 1.4, 342.732, 9000], ['tri', 4.8, 0.16, 1.7, 131.82, 9000], ['tri', 4, 0.2, 1.5, 67.6, 9000], ['gain', -1], ['stack'], ['gain', 16], ['tri', 1.2, 0.05, 1.3, 30, 6250]],
+    pot: [-40, 0], bright: null,
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
+    pw: 0, sag: 0.6, xf: [50, 12000], depth: [103.5, 2], pres: [4200, 1.6], trim: -22.13,
+  },
+  // Megalodon: a 5150's lead channel: TIGHT (a small cathode cap, -12 dB under 600 Hz) -> V1 -> GAIN -> four more
+  // stages -> the stack last (470 pF, 22 nF, 22 nF; treble 250k, bass 1M, mid 25k, slope 47k) -> 6L6s. Fitted: within
+  // 1.1 dB rms (2.1 at worst), then the five stages' Miller corners set to 11 kHz (at 11-20 kHz they aliased 26 dB
+  // under the graph amp at 4x; at 11 kHz, 35): within 1.4 dB rms (2.9 at worst). The same THD (24.3 %).
+  metal: {
+    os: 4, hp: 132, tight: [604.8, -12],
+    chain: [['tri', 5.86, 0.12, 2.2, 371.159, 11000], ['pot'], ['tri', 4.915, 0.18, 1.6, 260, 11000], ['tri', 6, 0.3, 1.3, 101.4, 11000], ['tri', 4, 0.2, 1.4, 10.773, 11000], ['tri', 3, 0.15, 1.5, 39, 11000], ['stack'], ['gain', 10]],
+    pot: [-28, 0], bright: null,
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
+    pw: -2, sag: 0.2, xf: [27.778, 11304.348], depth: [80, 0], pres: [4500, 1.6], trim: -27.44,
+  },
 };

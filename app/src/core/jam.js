@@ -519,7 +519,7 @@ export const JAM_STYLES = {
     chords: { ...STYLES.ballad.chords }, bass: { ...STYLES.ballad.bass }, drums: { ...STYLES.ballad.drums },
     pad: { name: 'Strings', device: 'core.strings', params: { attack: 0.6, release: 1.2, bright: 0.45, vibrato: 0.45, ensemble: 0.5, width: 0.6, hall: 0.35 }, register: [55, 76] },
     guitar: { params: DI_NECK, tone: 'siren' },
-    gain: { chords: -1.6, bass: -8.5, drums: -6.2, pad: -8, guitar: 2 },
+    gain: { chords: -1.6, bass: -8.5, drums: -6.2, pad: -8, guitar: 1.7 },
   },
   neosoul: {
     label: 'Neo-soul', blurb: 'lazy drums, ninth chords on the electric piano, a round bass', key: { root: 'Eb', scale: 'major' }, tempo: 78,

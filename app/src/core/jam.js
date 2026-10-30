@@ -485,7 +485,7 @@ export const JAM_STYLES = {
       rows: { kick: 'X.......X.......', snare: '....X.......X...', hat: 'x.x.x.x.x.x.x.x.' }, alt: { kick: 'X.......X.....x.' },
       fill: { from: 12, rows: { snare: 'x.x.', tom3: '...' } }, crash: 'after' },
     guitar: { params: DI_NECK, tone: 'blues' },
-    gain: { chords: -3.3, bass: -6.6, drums: -4.8, guitar: -1 },
+    gain: { chords: -3.3, bass: -6.6, drums: -4.8, guitar: 3.6 },
   },
   funk: {
     label: 'Funk', blurb: 'a two-chord vamp: sixteenth hats, ghost notes, stabs on the e-piano', key: { root: 'E', scale: 'minor' }, tempo: 104,
@@ -587,7 +587,7 @@ export const JAM_STYLES = {
     progs: { verse: 'I bVII IV I', chorus: 'IV V IV V' }, form: [['Verse', 'verse'], ['Verse', 'verse'], ['Chorus', 'chorus'], ['Verse', 'verse']],
     chords: { ...STYLES.rock.chords }, bass: { ...STYLES.rock.bass }, drums: { ...STYLES.rock.drums },
     guitar: { params: DI_CLEAN, tone: 'crunch' },
-    gain: { chords: -6.1, bass: -8.3, drums: -6.2, guitar: 1.2 },
+    gain: { chords: -6.1, bass: -8.3, drums: -6.2, guitar: 1.9 },
   },
 };
 export const JAM_STYLE_IDS = Object.keys(JAM_STYLES);

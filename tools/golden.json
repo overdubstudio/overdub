@@ -743,6 +743,26 @@
       "data": {
         "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
       }
+    },
+    "fx:amp.crunch#7fd30c061e6b": {
+      "sha256": "c430bc76d5f5b070dec4fc17b9715fc87eaf35f20542f593bcdb40455839cc3b",
+      "frames": 576000,
+      "lufs": -18.42,
+      "truePeak": -11.5,
+      "peak": -11.62,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.bassman#7fd30c061e6b": {
+      "sha256": "80f3e230b728be5141e383b438356b40a9da970a7716047a59e49dd8624673c9",
+      "frames": 576000,
+      "lufs": -18.22,
+      "truePeak": -10.37,
+      "peak": -10.37,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
     }
   }
 }

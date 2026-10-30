@@ -117,4 +117,26 @@ export const AMP_VOICINGS = {
     stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 56e3, C1: 470e-12, C2: 47e-9, C3: 47e-9 },
     pw: 6, pwb: 0.06, sag: 0.4, xf: [64.8, 10000], depth: [90, 2], pres: [3000, 1.6], trim: -16.48, irLv: 0.95,
   },
+  // Crab Shack: a tweed Deluxe turned up (a 5E3: V1 -> VOLUME -> V2 -> a cathodyne into two 6V6s, cathode biased, on
+  // a tube rectifier). The 5E3 has one tone pot; ours has three, so it wears the 5F6-A's stack (250 pF, 20 nF, 20 nF;
+  // treble 250k, bass 1M, mid 25k, slope 56k) as a stand-in, and the cathodyne's even harmonics as bias. Fitted:
+  // within 2.9 dB rms (5.5 at worst: 5 dB hotter at 1.8-2.6 kHz, the stack's top where the old voicing had a peak at
+  // 1 kHz); the same THD (6.5 %).
+  crunch: {
+    os: 4, hp: 58.333, tight: null,
+    chain: [['tri', 0.738, 0.1, 2.2, 26, 4186.225], ['pot'], ['tri', 6, 0.16, 1.7, 40, 4340.278], ['gain', -1], ['stack'], ['gain', 14], ['tri', 1.5, 0.2, 1.3, 30, 9000]],
+    pot: [-34, 0], bright: [500, 1e6],
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 56e3, C1: 250e-12, C2: 20e-9, C3: 20e-9 },
+    pw: 6, pwb: 0.25, sag: 0.15, xf: [60, 10000], depth: null, pres: [3800, 1.6], trim: -10.91,
+  },
+  // Driftwood: a 5F6-A Bassman: V1A -> VOLUME (its bright cap) -> V1B -> V2, a cathode follower into the stack (250
+  // pF, 20 nF, 20 nF; treble 250k, bass 1M, mid 25k, slope 56k) -> the long-tailed pair -> two 5881s, the presence in
+  // the feedback loop. Fitted: within 1.7 dB rms (3.0 at worst); the same THD (5.3 %).
+  bassman: {
+    os: 4, hp: 55, tight: null,
+    chain: [['tri', 0.614, 0.1, 2.2, 11.835, 6028.164], ['pot'], ['tri', 6, 0.16, 1.7, 14.005, 6250], ['gain', -1], ['stack'], ['gain', 16], ['tri', 1.2, 0.06, 1.3, 8.08, 10000]],
+    pot: [-34, 0], bright: [140, 1e6],
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 56e3, C1: 250e-12, C2: 20e-9, C3: 20e-9 },
+    pw: 8, sag: 0.15, xf: [45, 11000], depth: [90, 2], pres: [3200, 1.6], trim: -7.94,
+  },
 };

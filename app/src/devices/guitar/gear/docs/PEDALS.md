@@ -189,7 +189,7 @@ Phones (390 px) show two pedals across, with `wide` and `rack` full width.
 | `kit.constant(v = 0)` | a started ConstantSourceNode (an offset to add to a param alongside an LFO or envelope) |
 | `kit.noise({ secs = 2, seed = 1, color = 'white' \| 'pink' \| 'brown', channels = 1 })` | a deterministic noise AudioBuffer, cached per context |
 | `kit.noiseSource(opts)` | a started, looping BufferSource of that noise |
-| `kit.ir({ secs = 2, pre = 0.012, seed = 1, tail = 1.2, damp = 0.25, darken = 0.7, width = 1, channels = 2 })` | a reverb impulse response (the Deep Trench's, generalised): decaying noise, −60 dB at `secs`, `pre`-delay, getting darker as it goes (`damp` 0 bright … 1 dark, plus `darken` by `secs`), `width` 0 mono … 1 wide. Deterministic for a seed. It takes a few ms, so rebuild it with `kit.later` once a knob settles (see Deep Trench). |
+| `kit.ir({ secs = 2, pre = 0.012, seed = 1, tail = 1.2, damp = 0.25, darken = 0.7, width = 1, channels = 2 })` | a room's impulse response for a convolver (Plankton Cloud's): decaying noise, −60 dB at `secs`, `pre`-delay, getting darker as it goes (`damp` 0 bright … 1 dark, plus `darken` by `secs`), `width` 0 mono … 1 wide. Deterministic for a seed. It takes a few ms, so rebuild it with `kit.later` once a knob settles. A reverb with a DECAY knob wants the tank instead (Worklets, below). |
 | `kit.convolver(buffer?)` | ConvolverNode (live, a new `.buffer` crossfades from the old one instead of cutting its tail) |
 | `kit.merge(L, R)` | a 2-channel ChannelMerger with L on the left and R on the right (`R` defaults to `L`) |
 | `kit.pan(v)` | StereoPannerNode |
@@ -262,6 +262,13 @@ pedalDef({ id: 'reefcrush', …, worklets: { 'reef-crush': CRUSH },
 - `process` must return `true`, cope with a missing input (`ins[0][0]` can be undefined), and allocate nothing per
   call. Keep it deterministic: no `Math.random`, so seed your own LCG.
 - A processor has no latency of its own. If you buffer (a pitch shifter's window), declare `latency`.
+- **A reverb uses the tank.** `VERB_TANK` (pedals/00-classic.js, processor `'verb-tank'`) is the reverbs' algorithmic
+  tank: Dattorro's plate (`algo: 'plate'`) or a ring of four of his sections (`'hall'`), modulated by seeded sines,
+  mono in and stereo out. Declare `worklets: { 'verb-tank': VERB_TANK }` (the same code under the same name, so every
+  pack can) and make it with `verbTank(k, { algo, scale, pre, bw, early, er, shimmer, out })`; its params are `decay`
+  (the T60 in seconds, glided, never rebuilt), `hf` (the highs die in `hf` times that), `shim` and `ratio` (a shimmer
+  fed back into it) and `space` (which set of early reflections). Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly
+  and Frostbite Crab are built on it, and `tools/guitar-test.js` holds each to its DECAY's T60, its level and its cost.
 
 ## Levels (measured, never guessed)
 

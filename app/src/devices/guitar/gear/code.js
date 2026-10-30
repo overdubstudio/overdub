@@ -1264,19 +1264,238 @@ pedalDef({
   },
 });
 
-// Deep Trench: a convolver on a generated tail (a new one when DECAY settles)
+// The reverbs' tank (Deep Trench here; Lobster Plate, Kraken Hall, Halo Jelly and Frostbite Crab in pedals/60-time.js):
+// an algorithmic reverb in a worklet, mono in and stereo out, where convolvers on a generated noise tail were. A plate
+// is Jon Dattorro's ("Effect Design, Part 1: Reverberator and Other Filters", JAES 45(9), 1997): input diffusers into a
+// figure eight of two halves, each a modulated allpass, a delay, a damping one-pole, an allpass and a delay, the stereo
+// read from fourteen taps inside the loop. A hall is that section four times round a ring (two of them his). Ported
+// into this file's style from khoin's DattorroReverbNode (github.com/khoin/DattorroReverbNode: public domain, "In
+// jurisdictions that recognize copyright laws, this software is to be released into the public domain"), and changed:
+// DECAY is a T60 in seconds (every line and tap takes the loss of its own length, so the tail falls 60 dB in T60 from
+// the first echo, however short), the highs die in hf times that (Jot's one-pole in each section), two more input
+// diffusers and a short allpass on each side straight out (dense from the start), two seeded sines on each modulated
+// allpass (two copies never move in lockstep; nothing random), a hall's early reflections, a shimmer (an octave or a
+// fifth up, fed back into the input), and an idle state (no input and nothing left ringing: it costs nothing). Nothing
+// is rebuilt when a knob turns: a block DECAY moves in ramps every coefficient, sample by sample.
+//   processorOptions: { algo: 'plate' | 'hall', seed, scale (of the lengths), pre (s), mod (ms of swing), rate (Hz), bw
+//   (the input's one-pole, 0 open: the old IR's damp), early (the straight-out level), er (the early reflections'
+//   level), shimmer (true: build the shifter), out (the level) }; params (k-rate): decay (T60 s), hf, shim, ratio, space
+const VERB_TANK = `// The 'verb-tank' worklet (pedals/00-classic.js, the reverbs' tank in ../code.js: Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly, Frostbite Crab): the processor source the code builds, byte for byte below this line; change both together (tools/guitar-test.js)
+class VerbTank extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    const P = (name, defaultValue, minValue, maxValue) => ({ name, defaultValue, minValue, maxValue, automationRate: 'k-rate' });
+    return [P('decay', 2, 0.05, 40), P('hf', 0.8, 0.05, 1), P('shim', 0, 0, 2), P('ratio', 2, 0.5, 4), P('space', 0, 0, 1)];
+  }
+  constructor(o) {
+    super();
+    const q = (o && o.processorOptions) || {}, sr = sampleRate, hall = q.algo === 'hall';
+    let s = (q.seed >>> 0) || 1;
+    const rnd = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296;
+    // The tank: N sections of [modulated allpass, delay, allpass, delay], each feeding the next round a loop. A plate is
+    // Dattorro's figure eight (two sections, his lengths at 29761 Hz); a hall is a ring of four, two of them his.
+    const SEC = hall ? [[672, 4453, 1800, 3720], [908, 4217, 2656, 3163], [764, 4021, 2103, 3449], [1021, 4639, 1567, 2851]] : [[672, 4453, 1800, 3720], [908, 4217, 2656, 3163]];
+    const k = (sr / 29761) * (q.scale || 1), N = SEC.length, ex = ((q.mod == null ? 0.5 : q.mod) * sr) / 1000;
+    // the input diffusers: Dattorro's four and two more (longer in a hall: its slower build)
+    const DIF = hall ? [142, 107, 379, 277, 811, 1123] : [142, 107, 379, 277, 233, 311], DG = [0.7, 0.7, 0.65, 0.65, 0.6, 0.6];
+    const pre = Math.max(1, Math.round((q.pre || 0) * sr)), erMax = Math.round(0.16 * sr), EL = [Math.round(0.0071 * sr), Math.round(0.0097 * sr)];
+    const len = (i, j) => Math.max(4, Math.round(SEC[i][j] * k));
+    // every line in one buffer, each a power of two long: the pre-delay (the early reflections tap it), the diffusers,
+    // the sections' lines, the two early allpasses
+    const lens = [pre + erMax + 4];
+    for (const d of DIF) lens.push(Math.max(1, Math.round(d * k)));
+    for (let i = 0; i < N; i++) for (let j = 0; j < 4; j++) lens.push(len(i, j) + (j === 0 ? Math.ceil(2 * ex) + 4 : 0));
+    lens.push(EL[0], EL[1]);
+    const off = new Int32Array(lens.length), msk = new Int32Array(lens.length), at = (i, j) => 1 + DIF.length + i * 4 + j;
+    let tot = 0;
+    lens.forEach((L, i) => { const n = 1 << Math.ceil(Math.log2(L + 1)); off[i] = tot; msk[i] = n - 1; tot += n; });
+    this.B = new Float32Array(tot); this.w = 0; this.pre = pre; this.ex = ex; this.N = N; this.nd = DIF.length;
+    this.pO = off[0]; this.pM = msk[0];
+    this.dO = Int32Array.from(DIF, (_, i) => off[1 + i]); this.dM = Int32Array.from(DIF, (_, i) => msk[1 + i]);
+    this.dL = Int32Array.from(DIF, (d) => Math.max(1, Math.round(d * k))); this.dG = Float64Array.from(DIF, (_, i) => DG[i]);
+    this.so = new Int32Array(N * 4); this.sm = new Int32Array(N * 4); this.sl = new Int32Array(N * 4);
+    for (let i = 0; i < N; i++) for (let j = 0; j < 4; j++) { this.so[i * 4 + j] = off[at(i, j)]; this.sm[i * 4 + j] = msk[at(i, j)]; this.sl[i * 4 + j] = len(i, j); }
+    const e0 = lens.length - 2;
+    this.eg = q.early || 0; this.eD = Int32Array.from(EL); this.eO = Int32Array.from([off[e0], off[e0 + 1]]); this.eM = Int32Array.from([msk[e0], msk[e0 + 1]]);
+    // the output taps, Dattorro's (as fractions of their lines: a hall's four sections are read the same way, the odd
+    // ones like his right half): [line, where, sign] for the left from the odd sections and less the even, and the right
+    // the other way about. Offset, mask, delay and gain each.
+    const LP = [[1, 0.0631, 1], [1, 0.7052, 1], [2, 0.7203, -1], [3, 0.6311, 1]], LN = [[1, 0.4469, -1], [2, 0.1039, -1], [3, 0.2866, -1]];
+    const RP = [[1, 0.0793, 1], [1, 0.8145, 1], [2, 0.6822, -1], [3, 0.7185, 1]], RN = [[1, 0.5006, -1], [2, 0.1261, -1], [3, 0.0383, -1]];
+    const taps = (pos, neg, odd) => {
+      const t = [];
+      for (let i = 0; i < N; i++) for (const [j, f, sg] of (i & 1) === odd ? pos : neg) t.push([off[at(i, j)], msk[at(i, j)], Math.max(1, Math.round(f * len(i, j))), (sg * 0.6) / Math.sqrt(N / 2)]);
+      return t;
+    };
+    const T = taps(LP, LN, 1).concat(taps(RP, RN, 0));
+    this.nL = T.length / 2;
+    this.tO = Int32Array.from(T, (t) => t[0]); this.tM = Int32Array.from(T, (t) => t[1]); this.tD = Int32Array.from(T, (t) => t[2]); this.tG0 = Float64Array.from(T, (t) => t[3]);
+    // what DECAY sets, in one array (ramped as one): each line's loss, each tap's, each section's damping coefficient
+    const nK = N * 5 + T.length;
+    this.K = new Float64Array(nK); this.Kt = new Float64Array(nK); this.Ks = new Float64Array(nK); this.T = -1; this.hf = -1;
+    this.lg = this.K.subarray(0, N * 4); this.tG = this.K.subarray(N * 4, N * 4 + T.length); this.da = this.K.subarray(N * 4 + T.length);
+    // the modulation: each section's first allpass swings through 0..2ex samples longer, two slow sines at seeded
+    // rates and phases (phasors turned a block at a time; the delay moves in a straight line across the block)
+    this.mc = new Float64Array(N * 2); this.ms = new Float64Array(N * 2); this.rc = new Float64Array(N * 2); this.rs = new Float64Array(N * 2); this.md = new Float64Array(N);
+    const rate = q.rate || 0.8;
+    for (let i = 0; i < N * 2; i++) {
+      const ph = rnd() * 6.283185307, w = (6.283185307 * rate * (i & 1 ? 0.37 + 0.2 * rnd() : 0.8 + 0.4 * rnd()) * 128) / sr;
+      this.mc[i] = Math.cos(ph); this.ms[i] = Math.sin(ph); this.rc[i] = Math.cos(w); this.rs[i] = Math.sin(w);
+    }
+    for (let i = 0; i < N; i++) this.md[i] = ex * (1 + 0.7 * this.ms[i * 2] + 0.3 * this.ms[i * 2 + 1]);
+    this.lp = new Float64Array(N); this.fb = new Float64Array(N);
+    this.inj = Float64Array.from(SEC, (_, i) => (hall && i & 1 ? 0 : 1)); // (a plate feeds both halves, a hall every other section)
+    this.bw = q.bw || 0; this.bz = 0; this.out = q.out == null ? 1 : q.out;
+    // early reflections: ten taps off the pre-delay, alternating sides, for each SPACE (0 and 1), crossfaded
+    this.er = null;
+    if (q.er) {
+      const er = new Float64Array(60);
+      for (let sp = 0; sp < 2; sp++) for (let e = 0; e < 10; e++) {
+        const t = 0.006 + (e + 0.5 + (rnd() * 2 - 1) * 0.4) * (sp ? 0.012 : 0.0075), g = q.er * Math.exp(-e * 0.22) * (rnd() < 0.5 ? -1 : 1), b = sp * 30 + e * 3;
+        er[b] = pre + Math.min(erMax, Math.round(t * sr)); er[b + 1] = e & 1 ? 0.4 * g : g; er[b + 2] = e & 1 ? g : 0.4 * g;
+      }
+      this.er = er;
+    }
+    // the shimmer: the tank's sum through a two-tap pitch shifter (taps half a 70 ms window apart, each under a
+    // parabolic window), 400 Hz up and 7 kHz down, softly limited, and back into the tank's input
+    this.sh = q.shimmer ? new Float32Array(8192) : null; this.sw = 0; this.sph = 0; this.SW = Math.round(0.07 * sr);
+    this.hp = 0; this.l1 = 0; this.l2 = 0; this.shOut = 0;
+    this.hpc = 1 - Math.exp((-6.283185307 * 400) / sr); this.lpc = 1 - Math.exp((-6.283185307 * 7000) / sr);
+    this.sp = -1; this.sg = 0; this.quiet = 0; this.idle = true;
+  }
+  process(ins, outs, p) {
+    const oL = outs[0][0], oR = outs[0][1] || outs[0][0], x = ins[0] && ins[0][0], n = oL.length;
+    let inPk = 0;
+    if (x) for (let i = 0; i < n; i++) { const v = x[i] < 0 ? -x[i] : x[i]; if (v > inPk) inPk = v; }
+    if (this.idle) { if (inPk < 1e-9) { oL.fill(0); if (oR !== oL) oR.fill(0); return true; } this.idle = false; this.quiet = 0; }
+    const N = this.N, B = this.B, nd = this.nd, dO = this.dO, dM = this.dM, dL = this.dL, dG = this.dG, pO = this.pO, pM = this.pM, pre = this.pre;
+    const so = this.so, sm = this.sm, sl = this.sl, md = this.md, lp = this.lp, fb = this.fb, inj = this.inj, ex = this.ex;
+    const lg = this.lg, dA = this.da, tO = this.tO, tM = this.tM, tD = this.tD, tG = this.tG, nL = this.nL, nT = nL * 2, er = this.er, sh = this.sh, eg = this.eg, eO = this.eO, eM = this.eM, eD = this.eD;
+    // DECAY is a T60 in seconds: every line takes the loss of its own length (a signal is 60 dB down after T60 of
+    // lines, whichever way it went round), and each tap the loss of how far along its line it reads, so the tail falls
+    // from the first echo however short it is against the tank. The highs: each section's damping one-pole (Jot's)
+    // brings the loss at Nyquist to 60 dB in hf * T60. A block that DECAY moves in ramps them all, sample by sample, and
+    // a step (a preset, a lane) glides there over about 20 ms, in its logarithm, a block at a time.
+    const Tw = p.decay[0], hw = p.hf[0], K = this.K, Kt = this.Kt, Ks = this.Ks, nK = K.length;
+    let T = this.T < 0 ? Tw : this.T * Math.pow(Tw / this.T, 0.15), hf = this.hf < 0 ? hw : this.hf + (hw - this.hf) * 0.15, ramp = false;
+    if (Math.abs(T / Tw - 1) < 1e-3) T = Tw;
+    if (Math.abs(hf - hw) < 1e-3) hf = hw;
+    if (T !== this.T || hf !== this.hf) {
+      const c = -6.907755279 / (T * sampleRate), tG0 = this.tG0;
+      for (let i = 0; i < N * 4; i++) Kt[i] = Math.exp(c * (sl[i] + (i & 3 ? 0 : ex)));
+      for (let t = 0; t < nT; t++) Kt[N * 4 + t] = tG0[t] * Math.exp(c * tD[t]);
+      for (let s = 0; s < N; s++) { const qn = Math.exp(c * (sl[s * 4] + ex + sl[s * 4 + 1] + sl[s * 4 + 2] + sl[s * 4 + 3]) * (1 / hf - 1)); Kt[N * 4 + nT + s] = 1 - (1 - qn) / (1 + qn); }
+      if (this.T < 0) K.set(Kt);
+      else { for (let j = 0; j < nK; j++) Ks[j] = (Kt[j] - K[j]) / n; ramp = true; }
+      this.T = T; this.hf = hf;
+    }
+    if (this.sp < 0) { this.sp = p.space[0]; this.sg = p.shim[0]; }
+    const sp1 = this.sp + (p.space[0] - this.sp) * 0.1, sg1 = p.shim[0], spS = (sp1 - this.sp) / n, sgS = (sg1 - this.sg) / n;
+    let sp = this.sp, sg = this.sg;
+    const SW = this.SW, step = (1 - p.ratio[0]) / SW, bwc = 1 - this.bw, hpc = this.hpc, lpc = this.lpc, out = this.out;
+    const mc = this.mc, ms = this.ms, rc = this.rc, rs = this.rs, mdS = this.mdS || (this.mdS = new Float64Array(N));
+    for (let i = 0; i < N * 2; i++) { const c = mc[i], si = ms[i], m = 1 / Math.sqrt(c * c + si * si); mc[i] = (c * rc[i] - si * rs[i]) * m; ms[i] = (si * rc[i] + c * rs[i]) * m; }
+    for (let s = 0; s < N; s++) mdS[s] = (ex * (1 + 0.7 * ms[s * 2] + 0.3 * ms[s * 2 + 1]) - md[s]) / n;
+    let w = this.w, bz = this.bz, sph = this.sph, sw = this.sw, hp = this.hp, l1 = this.l1, l2 = this.l2, shOut = this.shOut, outPk = 0;
+    for (let i = 0; i < n; i++) {
+      sp += spS; sg += sgS;
+      if (ramp) for (let j = 0; j < nK; j++) K[j] += Ks[j];
+      // the pre-delay, the input's bandwidth (a one-pole), the diffusers
+      B[pO + (w & pM)] = x ? x[i] : 0;
+      let d = B[pO + ((w - pre) & pM)] + shOut;
+      bz += bwc * (d - bz); d = bz;
+      for (let j = 0; j < nd; j++) {
+        const o = dO[j], m = dM[j], z = B[o + ((w - dL[j]) & m)], v = d - dG[j] * z;
+        B[o + (w & m)] = v; d = z + dG[j] * v;
+      }
+      // early: the diffused input itself, through a short allpass of its own on each side
+      let yl = 0, yr = 0;
+      if (eg) {
+        let o = eO[0], m = eM[0], z = B[o + ((w - eD[0]) & m)], v = d - 0.6 * z;
+        B[o + (w & m)] = v; yl = eg * (z + 0.6 * v);
+        o = eO[1]; m = eM[1]; z = B[o + ((w - eD[1]) & m)]; v = d - 0.6 * z;
+        B[o + (w & m)] = v; yr = eg * (z + 0.6 * v);
+      }
+      // the tank: each section takes the diffused input (if it's one that does) and the section before's output
+      for (let s = 0; s < N; s++) { const h = s * 4 + 3; fb[s] = lg[h] * B[so[h] + ((w - sl[h]) & sm[h])]; }
+      for (let s = 0; s < N; s++) {
+        const h = s * 4;
+        // the modulated allpass (Dattorro's decay diffusion 1, -0.7), read between samples (cubic: Catmull-Rom)
+        const r = sl[h] + (md[s] += mdS[s]), ri = r | 0, f = r - ri, o0 = so[h], k0 = sm[h], b0 = w - ri;
+        const y0 = B[o0 + ((b0 + 1) & k0)], y1 = B[o0 + (b0 & k0)], y2 = B[o0 + ((b0 - 1) & k0)], y3 = B[o0 + ((b0 - 2) & k0)];
+        const z0 = lg[h] * (y1 + f * (0.5 * (y2 - y0) + f * (y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3 + f * (1.5 * (y1 - y2) + 0.5 * (y3 - y0)))));
+        let v = inj[s] * d + fb[s === 0 ? N - 1 : s - 1] + 0.7 * z0;
+        B[o0 + (w & k0)] = v;
+        // its delay, the damping, the decay
+        const o1 = so[h + 1], k1 = sm[h + 1];
+        B[o1 + (w & k1)] = z0 - 0.7 * v;
+        const ls = lp[s] + dA[s] * (lg[h + 1] * B[o1 + ((w - sl[h + 1]) & k1)] - lp[s]);
+        lp[s] = ls;
+        // the second allpass (decay diffusion 2, 0.5), into the delay that feeds the next section
+        const o2 = so[h + 2], k2 = sm[h + 2], z2 = lg[h + 2] * B[o2 + ((w - sl[h + 2]) & k2)];
+        v = ls - 0.5 * z2;
+        B[o2 + (w & k2)] = v;
+        B[so[h + 3] + (w & sm[h + 3])] = z2 + 0.5 * v;
+      }
+      for (let t = 0; t < nL; t++) yl += tG[t] * B[tO[t] + ((w - tD[t]) & tM[t])];
+      for (let t = nL; t < nT; t++) yr += tG[t] * B[tO[t] + ((w - tD[t]) & tM[t])];
+      if (er) {
+        // (one set, or both while SPACE crossfades)
+        const s0 = 1 - sp, e0 = sp > 0.9999 ? 30 : 0, e1 = sp < 1e-4 ? 30 : 60;
+        for (let e = e0; e < e1; e += 3) {
+          const v = B[pO + ((w - er[e]) & pM)] * (e < 30 ? s0 : sp);
+          yl += v * er[e + 1]; yr += v * er[e + 2];
+        }
+      }
+      // the shimmer: (L + R) / 2 into the shifter; its taps read at ratio times speed, each faded in and out as it jumps
+      if (sh) {
+        sh[sw] = 0.5 * (yl + yr);
+        sph += step; sph -= Math.floor(sph);
+        const q2 = sph + 0.5 - Math.floor(sph + 0.5);
+        const r1 = sw - 2 - sph * SW, i1 = Math.floor(r1), f1 = r1 - i1, x1 = sh[i1 & 8191], x2 = sh[(i1 + 1) & 8191];
+        const r2 = sw - 2 - q2 * SW, i2 = Math.floor(r2), f2 = r2 - i2, x3 = sh[i2 & 8191], x4 = sh[(i2 + 1) & 8191];
+        let z = (x1 + (x2 - x1) * f1) * sph * (1 - sph) * 4 + (x3 + (x4 - x3) * f2) * q2 * (1 - q2) * 4;
+        hp += hpc * (z - hp); z -= hp; // (400 Hz up: z less its low-pass)
+        l1 += lpc * (z - l1); l2 += lpc * (l1 - l2); // (7 kHz down, twice)
+        z = l2 * sg;
+        shOut = z > 1.5 ? 1 : z < -1.5 ? -1 : z - 0.148148148 * z * z * z; // (a cubic soft limit: flat at ±1)
+        sw = (sw + 1) & 8191;
+      }
+      yl *= out; yr *= out;
+      oL[i] = yl; oR[i] = yr;
+      const pk = (yl < 0 ? -yl : yl) + (yr < 0 ? -yr : yr);
+      if (pk > outPk) outPk = pk;
+      w = (w + 1) & 0x3fffffff;
+    }
+    if (ramp) K.set(Kt);
+    this.sp = sp1; this.sg = sg1;
+    this.w = w; this.bz = bz; this.sph = sph; this.sw = sw; this.hp = hp; this.l1 = l1; this.l2 = l2; this.shOut = shOut;
+    // idle: no input, and the tail under -120 dB for a quarter of a second: cleared, and silent at no cost till played
+    if (inPk < 1e-9 && outPk < 1e-6) {
+      if (++this.quiet * n > 0.25 * sampleRate) { this.B.fill(0); if (sh) sh.fill(0); lp.fill(0); this.bz = this.hp = this.l1 = this.l2 = this.shOut = 0; this.idle = true; }
+    } else this.quiet = 0;
+    return true;
+  }
+}
+registerProcessor('verb-tank', VerbTank);`;
+// a tank node for a pedal (null if the worklet didn't load: the pedal is then dry, its send going nowhere)
+const verbTank = (k, opts) => k.worklet('verb-tank', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 1, channelCountMode: 'explicit',
+  processorOptions: Object.assign({ seed: k.seed || 1 }, opts) });
+// what a tank's knobs are on the meter: each pedal's out was set so its wet reads as loud as its convolver's did (the
+// DI strum, at its defaults: tools/guitar-test.js holds the reverbs to it)
+const VERB_OUT = { verb: 0.519, lobsterplate: 0.371, krakenhall: 0.674, halojelly: 0.627, frostbite: 0.607 };
+
+// Deep Trench: the everyday reverb, a plate a little bigger than the studio's (VERB_TANK) behind 12 ms
 pedalDef({
   id: 'verb', name: 'Deep Trench', kind: 'REVERB', cat: 'ambient', where: 'post', trails: true, color: '#e8b53a', ink: '#1a1405', stereo: true,
   nod: 'a big digital hall in a small box', blurb: 'A hall that rings on after you stomp it off',
   look: { finish: 'flat', knob: 'black', label: 'script' },
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 4], ['tone', 'TONE', 0, 10, 5], ['mix', 'MIX', 0, 10, 3]],
   build(c, k) {
-    const input = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 6000, 0.5), wet = k.G(0);
-    k.chain(input, k.F('highpass', 220, 0.6), conv, tone, wet);
-    let decay = -1, timer = 0;
-    const make = (d) => { const secs = 0.4 + d * 0.36; conv.buffer = k.ir({ secs, seed: 1 + Math.round(d * 97), pre: 0.012, tail: 1.2 }); };
-    return { input, output: wet, set(v, x) {
-      if (v.decay !== decay) { decay = v.decay; clearTimeout(timer); if (!conv.buffer) make(decay); else timer = k.later(() => make(decay), 120); }
+    const input = k.G(1), tank = verbTank(k, { algo: 'plate', scale: 1.1, pre: 0.012, bw: 0.25, early: 0.4, out: VERB_OUT.verb }), tone = k.F('lowpass', 6000, 0.5), wet = k.G(0);
+    if (tank) { tank.parameters.get('hf').value = 0.8; k.chain(input, k.F('highpass', 220, 0.6), tank, tone, wet); }
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) x.to(tank.parameters.get('decay'), 0.4 + v.decay * 0.36); // 0.4 to 4 s
       x.to(tone.frequency, 1500 * Math.pow(2, v.tone * 0.25)); // 1.5 to 8.5 kHz
       x.to(wet.gain, 0.19 * v.mix);
     } };
@@ -3975,31 +4194,6 @@ const TM_REV = `class SidewaysRev extends AudioWorkletProcessor {
 }
 registerProcessor('sideways-rev', SidewaysRev);`;
 
-// A two-tap delay-line pitch shifter (the shimmer's octave): each tap's delay sweeps at (1 - ratio) samples a sample,
-// so it reads at ratio times speed, and the taps take turns under a sine window. Grainy on its own; lovely in a reverb.
-const TM_PITCH = `class HaloPitch extends AudioWorkletProcessor {
-  static get parameterDescriptors() { return [{ name: 'ratio', defaultValue: 2, minValue: 0.25, maxValue: 4, automationRate: 'k-rate' }]; }
-  constructor() { super(); this.b = new Float32Array(16384); this.w = 0; this.ph = 0; this.W = Math.min(12000, Math.round(0.07 * sampleRate)); }
-  process(ins, outs, p) {
-    const o = outs[0][0], i = ins[0] && ins[0][0];
-    if (!o) return true;
-    const b = this.b, M = 16383, W = this.W, step = (1 - p.ratio[0]) / W;
-    let ph = this.ph, w = this.w;
-    for (let n = 0; n < o.length; n++) {
-      b[w] = i ? i[n] : 0;
-      ph += step; ph -= Math.floor(ph);
-      const q2 = ph + 0.5 - Math.floor(ph + 0.5);
-      const r1 = w - 2 - ph * W, a1 = Math.floor(r1), f1 = r1 - a1, x1 = b[a1 & M], y1 = b[(a1 + 1) & M];
-      const r2 = w - 2 - q2 * W, a2 = Math.floor(r2), f2 = r2 - a2, x2 = b[a2 & M], y2 = b[(a2 + 1) & M];
-      o[n] = 0.8 * ((x1 + (y1 - x1) * f1) * Math.sin(Math.PI * ph) + (x2 + (y2 - x2) * f2) * Math.sin(Math.PI * q2));
-      w = (w + 1) & M;
-    }
-    this.ph = ph; this.w = w;
-    return true;
-  }
-}
-registerProcessor('halojelly-pitch', HaloPitch);`;
-
 // A granular cloud: the input (and some of the cloud, fed back) goes into a few seconds of buffer; grains a GRAIN
 // long start at random points up to SMEAR back, each slightly detuned (and at high DRIFT sometimes an octave up or
 // down), panned at random under a Hann window. Seeded, so it's the same cloud every time.
@@ -4093,16 +4287,6 @@ const TM_FREEZE = `class FrostbiteFreeze extends AudioWorkletProcessor {
   }
 }
 registerProcessor('frostbite-freeze', FrostbiteFreeze);`;
-
-// A reverb IR that rebuilds (off the audio thread's critical moment: once the knob settles) when its key changes.
-const tmIR = (k, conv, make) => {
-  let key = null, timer = 0;
-  return (next) => {
-    if (next === key) return;
-    key = next; clearTimeout(timer);
-    if (!conv.buffer) conv.buffer = make(); else timer = k.later(() => (conv.buffer = make()), 120);
-  };
-};
 
 /* ================================================================ time */
 
@@ -4273,19 +4457,18 @@ pedalDef({
   },
 });
 
-// Lobster Plate: a studio plate. Dense straight away (no echoes first), bright, smooth.
+// Lobster Plate: a studio plate (VERB_TANK's Dattorro, at his size). Dense straight away (no echoes first), bright, smooth.
 pedalDef({
   id: 'lobsterplate', name: 'Lobster Plate', kind: 'PLATE REVERB', cat: 'ambient', where: 'post', trails: true, stereo: true,
   color: '#2a2a2e', ink: '#ff6b4a', look: { shape: 'rack', finish: 'brushed', knob: 'small', label: 'plate', led: '#ff3b30' },
   nod: 'the big steel studio plate hung in a back room', blurb: 'The shiny, dense studio reverb on classic vocals',
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 4], ['tone', 'TONE', 0, 10, 6], ['pre', 'PREDELAY', 0, 150, 20, 1, tmMs], ['mix', 'MIX', 0, 10, 3]],
   build(c, k) {
-    const input = k.G(1), pre = k.delay(0.2, 0.02), conv = k.convolver(), tone = k.F('lowpass', 8000, -3), wet = k.G(0);
-    k.chain(input, k.F('highpass', 180, -3), pre, conv, tone, wet);
-    let d = 4;
-    const ir = tmIR(k, conv, () => k.ir({ secs: 0.6 + d * 0.54, pre: 0.001, seed: 31 + Math.round(d * 10), tail: 1.15, damp: 0.06, darken: 0.45 }));
-    return { input, output: wet, set(v, x) {
-      d = v.decay; ir(d);
+    const input = k.G(1), pre = k.delay(0.2, 0.02), tank = verbTank(k, { algo: 'plate', pre: 0.001, bw: 0.06, early: 0.5, out: VERB_OUT.lobsterplate }), tone = k.F('lowpass', 8000, -3), wet = k.G(0);
+    if (tank) { tank.parameters.get('hf').value = 0.85; k.chain(input, k.F('highpass', 180, -3), pre, tank, tone, wet); }
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) x.to(tank.parameters.get('decay'), 0.6 + v.decay * 0.54); // 0.6 to 6 s
       x.to(pre.delayTime, v.pre / 1000);
       x.to(tone.frequency, 2500 * Math.pow(2, v.tone * 0.23)); // 2.5 to 12 kHz
       x.to(wet.gain, v.mix * 0.18);
@@ -4293,60 +4476,52 @@ pedalDef({
   },
 });
 
-// Kraken Hall: a big hall, or a cathedral. The IR gets early reflections off the walls and a slow build before its
-// long tail (a cathedral: further walls, a slower build, darker, 1.6 times as long).
+// Kraken Hall: a big hall, or a cathedral (VERB_TANK's ring of four). Early reflections off the walls first, a slow
+// build, a long tail; a cathedral's walls are further off, and it rings 1.6 times as long and darker.
 pedalDef({
   id: 'krakenhall', name: 'Kraken Hall', kind: 'HALL · CATHEDRAL', cat: 'ambient', where: 'post', trails: true, stereo: true, tail: 13,
   color: '#101a3a', ink: '#dfe6ff', look: { shape: 'wide', finish: 'sparkle', knob: 'chrome', label: 'stencil', led: '#8fa8ff', foot2: 'space' },
   nod: 'the huge concert-hall and cathedral programs of the big studio reverbs', blurb: 'A vast stone room: long, slow, enormous',
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['size', 'SIZE', 0, 10, 5], ['tone', 'TONE', 0, 10, 4], ['pre', 'PREDELAY', 0, 120, 30, 1, tmMs], ['mix', 'MIX', 0, 10, 3],
     { key: 'space', label: 'SPACE', opts: ['HALL', 'CATH'], def: 0 }],
   build(c, k) {
-    const input = k.G(1), pre = k.delay(0.15, 0.03), conv = k.convolver(), tone = k.F('lowpass', 5000, -3), wet = k.G(0);
-    k.chain(input, k.F('highpass', 150, -3), pre, conv, tone, wet);
-    let s = 5, cath = 0;
-    const make = () => {
-      const secs = (1.8 + 0.62 * s) * (cath ? 1.6 : 1), sr = k.sr, seed = 51 + Math.round(s * 10) + cath * 7;
-      const b = k.ir({ secs, pre: 0.004, seed, tail: 1.12, damp: cath ? 0.3 : 0.2, darken: cath ? 0.6 : 0.65 /* (damp + darken < 1, or the noise's filter blows up) */ });
-      const L = b.getChannelData(0), R = b.getChannelData(1), build = cath ? 0.09 : 0.05, rnd = k.rng(seed + 1);
-      // the slow build (a hall's tail swells in), then early reflections off the walls, alternating sides
-      for (let i = 0, n = Math.min(L.length, Math.round(sr * build * 6)); i < n; i++) { const g = 1 - Math.exp(-i / (sr * build)); L[i] *= g; R[i] *= g; }
-      for (let e = 0; e < 10; e++) {
-        const i = Math.round(sr * (0.006 + (e + 0.5 + rnd() * 0.4) * (cath ? 0.012 : 0.0075))), g = 0.35 * Math.exp(-e * 0.22) * (rnd() < 0 ? -1 : 1);
-        if (i < L.length) { (e & 1 ? R : L)[i] += g; (e & 1 ? L : R)[i] += g * 0.4; }
-      }
-      return b;
-    };
-    const ir = tmIR(k, conv, make);
-    return { input, output: wet, set(v, x) {
-      s = v.size; cath = v.space; ir(s + ':' + cath);
+    const input = k.G(1), pre = k.delay(0.15, 0.03), tank = verbTank(k, { algo: 'hall', scale: 1.3, pre: 0.004, bw: 0.25, early: 0.25, er: 0.3, out: VERB_OUT.krakenhall });
+    const tone = k.F('lowpass', 5000, -3), wet = k.G(0);
+    if (tank) k.chain(input, k.F('highpass', 150, -3), pre, tank, tone, wet);
+    const P = (n) => tank.parameters.get(n);
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) { x.to(P('decay'), (1.8 + 0.62 * v.size) * (v.space ? 1.6 : 1)); x.to(P('space'), v.space ? 1 : 0); x.to(P('hf'), v.space ? 0.7 : 0.8); } // (1.8 to 8 s, a cathedral 2.9 to 12.8)
       x.to(pre.delayTime, v.pre / 1000);
       x.to(tone.frequency, 1800 * Math.pow(2, v.tone * 0.25)); // 1.8 to 10 kHz
-      x.to(wet.gain, v.mix * 0.2);
+      x.to(wet.gain, v.mix * 0.2 * (v.space ? 1.17 : 1)); // (a cathedral 1.4 dB up: as much louder than the hall as its convolver was)
     } };
   },
 });
 
-// Halo Jelly: a shimmer. A reverb whose tail goes through an octave-up (or a fifth-up) pitch shifter and back into
-// itself, so it climbs as it rings, like an organ over your chord. Each trip goes up and the top filter lets it go.
+// the shimmer's gain into the tank at SHIMMER 10 (on a square root: 5 is where the octave's convolver had it, the tail
+// rising from 5 s at 125 Hz to 8 at 8 kHz; 10 blooms for a quarter of a minute and still dies, DECAY at 10 too)
+const HALO_OCT = 1.7, HALO_5TH = 1;
+// Halo Jelly: a shimmer. A reverb (VERB_TANK's hall) whose tail goes through an octave-up (or a fifth-up) pitch shifter
+// and back into itself, so it climbs as it rings, like an organ over your chord. Each trip goes up and the top filter
+// lets it go.
 pedalDef({
   id: 'halojelly', name: 'Halo Jelly', kind: 'SHIMMER REVERB', cat: 'ambient', where: 'post', trails: true, stereo: true, tail: 8,
   color: '#f5d8ef', ink: '#3a1238', look: { shape: 'wide', finish: 'sparkle', knob: 'cream', label: 'script', led: '#ffffff', foot2: 'intv' },
   nod: 'the octave-shimmer reverbs of the ambient and post-rock crowd', blurb: 'Choir-of-angels reverb that climbs an octave as it rings',
-  worklets: { 'halojelly-pitch': TM_PITCH },
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 5], ['shim', 'SHIMMER', 0, 10, 5], ['tone', 'TONE', 0, 10, 6], ['mix', 'MIX', 0, 10, 3.5],
     { key: 'intv', label: 'INTERVAL', opts: ['OCT', '5TH'], def: 0 }],
   build(c, k) {
-    const input = k.G(1), sum = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 7000, -3), wet = k.G(0), shim = k.G(0);
-    k.chain(input, k.F('highpass', 200, -3), sum, conv, tone, wet);
-    const ps = k.worklet('halojelly-pitch', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: 'explicit' });
-    if (ps) k.chain(conv, ps, k.F('highpass', 400, -3), k.F('lowpass', 7000, -3), shim, k.curve(Math.tanh, '2x', 4096, 'soft'), k.delay(0.1, 0.03), sum); // (tanh: a safety net) // (no worklet: a plain reverb)
-    let d = 5;
-    const ir = tmIR(k, conv, () => k.ir({ secs: 1.5 + d * 0.65, pre: 0.02, seed: 71 + Math.round(d * 10), tail: 1.1, damp: 0.1, darken: 0.5 }));
-    return { input, output: wet, node: ps, set(v, x) {
-      d = v.decay; ir(d);
-      if (ps) x.to(ps.parameters.get('ratio'), v.intv ? 1.5 : 2, 0.001);
-      x.to(shim.gain, v.shim * (v.intv ? 0.24 : 0.45)); // (measured: the loop stays under unity at 10 with DECAY at 10; a fifth stays in band longer)
+    const input = k.G(1), tank = verbTank(k, { algo: 'hall', scale: 1.1, pre: 0.02, bw: 0.1, early: 0.3, shimmer: true, out: VERB_OUT.halojelly }), tone = k.F('lowpass', 7000, -3), wet = k.G(0);
+    if (tank) { tank.parameters.get('hf').value = 0.8; k.chain(input, k.F('highpass', 200, -3), tank, tone, wet); }
+    const P = (n) => tank.parameters.get(n);
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) {
+        x.to(P('decay'), 1.5 + v.decay * 0.65); // 1.5 to 8 s
+        x.to(P('ratio'), v.intv ? 1.5 : 2, 0.001);
+        x.to(P('shim'), Math.sqrt(v.shim / 10) * (v.intv ? HALO_5TH : HALO_OCT));
+      }
       x.to(tone.frequency, 2500 * Math.pow(2, v.tone * 0.25));
       x.to(wet.gain, v.mix * 0.14);
     } };
@@ -4468,24 +4643,22 @@ pedalDef({
   },
 });
 
-// Frostbite Crab: a reverb with a freeze. HOLD grabs what's ringing and holds it for ever as a pad you play over (it
+// Frostbite Crab: a reverb (VERB_TANK's hall) with a freeze. HOLD grabs what's ringing and holds it for ever as a pad you play over (it
 // keeps going when the pedal is stomped off, too: only letting go of HOLD fades it).
 pedalDef({
   id: 'frostbite', name: 'Frostbite Crab', kind: 'FREEZE REVERB', cat: 'ambient', where: 'post', trails: true, stereo: true, drone: true,
   color: '#e9f7ff', ink: '#1b4a73', look: { shape: 'wide', finish: 'brushed', knob: 'chrome', label: 'stencil', led: '#35d4ff', foot2: 'hold' },
   nod: 'the infinite-sustain freeze pedals that hold a chord for ever', blurb: 'Freeze a chord into an endless pad, then solo over it',
-  worklets: { 'frostbite-freeze': TM_FREEZE },
+  worklets: { 'frostbite-freeze': TM_FREEZE, 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 5], ['tone', 'TONE', 0, 10, 5], ['mix', 'MIX', 0, 10, 3], ['pad', 'FREEZE', 0, 10, 6],
     { key: 'hold', label: 'HOLD', opts: ['OFF', 'HOLD'], def: 0 }],
   build(c, k) {
-    const input = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 5000, -3), verb = k.G(0), pad = k.G(0), wet = k.G(1);
-    k.chain(input, k.F('highpass', 150, -3), conv, tone, verb, wet);
+    const input = k.G(1), tank = verbTank(k, { algo: 'hall', pre: 0.015, bw: 0.2, early: 0.3, out: VERB_OUT.frostbite }), tone = k.F('lowpass', 5000, -3), verb = k.G(0), pad = k.G(0), wet = k.G(1);
+    if (tank) { tank.parameters.get('hf').value = 0.8; k.chain(input, k.F('highpass', 150, -3), tank, tone, verb, wet); }
     const fz = k.worklet('frostbite-freeze', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 1, channelCountMode: 'explicit' });
     if (fz) { k.chain(tone, fz); k.chain(input, k.G(0.5), fz); k.chain(fz, pad, wet); }
-    let d = 5;
-    const ir = tmIR(k, conv, () => k.ir({ secs: 1 + d * 0.7, pre: 0.015, seed: 111 + Math.round(d * 10), tail: 1.15, damp: 0.2, darken: 0.6 }));
-    return { input, output: wet, node: fz, set(v, x) {
-      d = v.decay; ir(d);
+    return { input, output: wet, node: fz, tank, set(v, x) {
+      if (tank) x.to(tank.parameters.get('decay'), 1 + v.decay * 0.7); // 1 to 8 s
       if (fz) x.to(fz.parameters.get('hold'), v.hold, 0.001);
       x.to(tone.frequency, 1800 * Math.pow(2, v.tone * 0.25));
       x.to(verb.gain, v.mix * 0.2); x.to(pad.gain, v.pad * 0.12);
@@ -6937,7 +7110,6 @@ export const WORKLETS = {
   'doubledory-adt': new URL('./worklets/doubledory-adt.js', import.meta.url).href,
   'eelslide-glide': new URL('./worklets/eelslide-glide.js', import.meta.url).href,
   'frostbite-freeze': new URL('./worklets/frostbite-freeze.js', import.meta.url).href,
-  'halojelly-pitch': new URL('./worklets/halojelly-pitch.js', import.meta.url).href,
   'hermit-harm': new URL('./worklets/hermit-harm.js', import.meta.url).href,
   'hermithold-sh': new URL('./worklets/hermithold-sh.js', import.meta.url).href,
   'iceberg-freeze': new URL('./worklets/iceberg-freeze.js', import.meta.url).href,
@@ -6962,5 +7134,6 @@ export const WORKLETS = {
   'submarine-div': new URL('./worklets/submarine-div.js', import.meta.url).href,
   'submariner-div': new URL('./worklets/submariner-div.js', import.meta.url).href,
   'tapesnail-vs': new URL('./worklets/tapesnail-vs.js', import.meta.url).href,
+  'verb-tank': new URL('./worklets/verb-tank.js', import.meta.url).href,
   'whammerhead-shift': new URL('./worklets/whammerhead-shift.js', import.meta.url).href,
 };

@@ -49,6 +49,7 @@ export const AMP_GOLDEN = {
   ['fx:amp.dumble' + TAG]: 'be3eb1c34b75b7e66c3706ce2129a222bd7e84cc7927469a2ed408bae25e8507',
   ['fx:amp.slo' + TAG]: 'a591b9a9651e84d561f601996a46a919de3e45fdd796938ec6e61910986c2811',
   ['fx:amp.metal' + TAG]: 'eed86b201575637a76dc53e3a031e925874dd4a8fa9917d6390ce0deecf93c93',
+  ['fx:amp.jc' + TAG]: '7bcfd03238f167950bd736adf1e765df797ef75423328c21ac26d7ff9323d0c7',
 };
 
 function scene(name, id, params, signal = 'strum') {

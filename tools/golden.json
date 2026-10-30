@@ -833,6 +833,16 @@
       "data": {
         "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
       }
+    },
+    "fx:amp.jc#7fd30c061e6b": {
+      "sha256": "7bcfd03238f167950bd736adf1e765df797ef75423328c21ac26d7ff9323d0c7",
+      "frames": 576000,
+      "lufs": -18.52,
+      "truePeak": -7.35,
+      "peak": -7.35,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
     }
   }
 }

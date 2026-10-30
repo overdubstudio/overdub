@@ -213,4 +213,14 @@ export const AMP_VOICINGS = {
     stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
     pw: -2, sag: 0.2, xf: [27.778, 11304.348], depth: [80, 0], pres: [4500, 1.6], trim: -27.44,
   },
+  // Jellyfish: a JC-120: solid state throughout. An op-amp input (GAIN is an input pot ahead of it, -16 dB at 0), an
+  // active tone circuit (shelves at 90 Hz and 3.5 kHz, a bell at 600 Hz), a clean class-B power amp: nothing clips at
+  // the gear's levels, so it's at 2x. Fitted: within 1.0 dB rms (1.8 at worst); THD under 0.01 %, as it was. (Its
+  // chorus isn't in the amp, here or on the graph engine: a rig puts one on the board.)
+  jc: {
+    os: 2, hp: 41.667, tight: null,
+    chain: [['ss', 0.512, 0, 28.561, 11574.074], ['pot'], ['stack'], ['ss', 1.28, 0, 16.9, 13888.889]],
+    pot: [-16, 0], bright: null, eq: [[90, 1], [600, 0.6, -7], [3500, 7], 2.4],
+    pw: -12, sag: 0, xf: [20, 15122.873], depth: null, pres: [5000, 1.6], trim: 8.17, irLv: -0.55,
+  },
 };

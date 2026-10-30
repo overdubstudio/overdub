@@ -571,7 +571,7 @@ export const JAM_STYLES = {
       rows: { kick: 'X..xX..xX..xX..x', rim: 'x..x..x...x..x..', hat: 'xoxoxoxoxoxoxoxo' }, alt: { rim: '..x..x...x..x...' },
       fill: { from: 16, rows: {} }, crash: 'none' },
     guitar: { params: DI_NYLON, tone: 'gr-jazz' },
-    gain: { chords: 2, bass: -6.9, drums: -9.4, guitar: -0.3 },
+    gain: { chords: 2, bass: -6.9, drums: -9.4, guitar: 0.4 },
   },
   lofi: {
     label: 'Lo-fi', blurb: 'dusty Rhodes sevenths, a lazy swung beat, a warm round bass', key: { root: 'F', scale: 'major' }, tempo: 80,

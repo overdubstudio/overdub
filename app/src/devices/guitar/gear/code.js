@@ -6974,7 +6974,7 @@ presetBank({ id: 'grooves', name: 'Session Players', blurb: 'Every other gig: fu
       { id: 'sirensquid', time: 2, fb: 5, freq: 6, sweep: 3, rate: 3, mix: 2.5 }, { id: 'springsquid', dwell: 4, tone: 6, mix: 2.5 }] },
   { id: 'gr-jazz', name: 'Autumn Reefs', blurb: 'Round, dark neck-pickup warmth for chord melody', tags: ['clean', 'lead'],
     nod: 'a big hollowbody on the neck pickup, tone rolled back, into a solid-state 1x15 combo', amp: 'jc',
-    knobs: { gain: 3.5, bass: 6.5, mid: 5.5, treble: 2.5, presence: 3, level: 8.8 }, cab: 'j15',
+    knobs: { gain: 3.5, bass: 6.5, mid: 5.5, treble: 2.5, presence: 3, level: 8.6 }, cab: 'j15',
     board: [{ id: 'gate', th: -85 }, { id: 'pearl', peak: 3, gain: 0, blend: 6, mode: 0 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 3.5, pre: 20, mix: 2 }] },
   { id: 'gr-mannish', name: 'Mannish Buoy', blurb: 'A small tweed cranked all the way: Chicago grit', tags: ['rhythm', 'lead'],
     nod: '1950s Chicago electric blues: a little tweed amp flat out, a short slap off the wall', amp: 'bassman',

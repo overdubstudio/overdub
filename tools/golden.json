@@ -843,6 +843,76 @@
       "data": {
         "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
       }
+    },
+    "fx:amp.abyss#7fd30c061e6b": {
+      "sha256": "1d09fe5f794939a862edb2807c2d5a1019fb29d14902bd7c627a66baddea39c0",
+      "frames": 576000,
+      "lufs": -18.28,
+      "truePeak": -11.41,
+      "peak": -11.43,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.urchin#7fd30c061e6b": {
+      "sha256": "66a285ccbb12532afcd290be09f46c6956b81facdb4e10953ebb2744750f5ada",
+      "frames": 576000,
+      "lufs": -18.38,
+      "truePeak": -7.84,
+      "peak": -7.85,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.di#7fd30c061e6b": {
+      "sha256": "b709a74d8f3238e64a86cfe16e8fbad51bd8a817ba054e83e3562fb5462d7658",
+      "frames": 576000,
+      "lufs": -18.3,
+      "truePeak": -6.24,
+      "peak": -7.71,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.whale#7fd30c061e6b": {
+      "sha256": "718b8f58c9c5edb5553a88de71f48f7b2e58e082760b5b403c621769758e2022",
+      "frames": 576000,
+      "lufs": -18.47,
+      "truePeak": -9.61,
+      "peak": -9.61,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.walrus#7fd30c061e6b": {
+      "sha256": "bb955881f5b2e680a1be9a070421253440d5da410251b7dacafaaacb6fe06a9c",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -7.28,
+      "peak": -7.28,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.narwhal#7fd30c061e6b": {
+      "sha256": "6443abb55c3bc5eeb5ff1920a62e855aad7651f145d592e476b1c74e82d8501b",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -7.35,
+      "peak": -7.35,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.sandbar#7fd30c061e6b": {
+      "sha256": "cfd414abbfbb4db2c034d6daf519984e9deda358de43690892b858b5b2fc8898",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -8.17,
+      "peak": -8.19,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
     }
   }
 }

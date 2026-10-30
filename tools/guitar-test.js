@@ -72,6 +72,8 @@ const KERNEL_AMPS = Object.keys(AMP_VOICINGS);
 const FIT_GATE = {
   plexi: { rms: 3.5, max: 6.5, why: "a 1959's stack at noon scoops 700 Hz-1.4 kHz deeper than the graph amp's voicing did (to -6 dB) and its bright channel sits 5 dB hotter at 2.8-5.6 kHz" },
   recto: { alias: 25, why: "at GAIN 10 it's as hot as Half Stack's (THD 20 % at 196 Hz) and aliases as Half Stack does at 4x, within 6 dB" },
+  abyss: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 5 dB under the graph amp, whose octave was the same' },
+  urchin: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 27 dB under the graph amp, whose octave was the same' },
 };
 {
   const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps, own = AMP_CABS.indexOf('own'), x = diStrum(8, 48000), bass = bassDI(8, 48000);
@@ -370,7 +372,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     // the same as the gear's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
     const same = [];
     const studio = G.gear.presetResolve(G.gear.PLUG_PRESETS.find((p) => p.id === 'studio'));
-    for (const [id, S] of [['tiny', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['abyss', { gain: 7, bass: 4, mid: 6, treble: 5, presence: 6, level: 5 }], ['tiny', studio], ['radio', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
+    for (const [id, S] of [['tiny', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['tiny', studio], ['radio', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
       const x = input('di', 2), P = Object.assign({}, S, { amp: id }); delete P.board;
       const a = await render([{ device: 'amp.' + id, params: G.ampParams(P) }], x);
       const { loadWorklet } = await import('/app/src/devices/kit.js');

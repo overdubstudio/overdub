@@ -50,6 +50,13 @@ export const AMP_GOLDEN = {
   ['fx:amp.slo' + TAG]: 'a591b9a9651e84d561f601996a46a919de3e45fdd796938ec6e61910986c2811',
   ['fx:amp.metal' + TAG]: 'eed86b201575637a76dc53e3a031e925874dd4a8fa9917d6390ce0deecf93c93',
   ['fx:amp.jc' + TAG]: '7bcfd03238f167950bd736adf1e765df797ef75423328c21ac26d7ff9323d0c7',
+  ['fx:amp.abyss' + TAG]: '1d09fe5f794939a862edb2807c2d5a1019fb29d14902bd7c627a66baddea39c0',
+  ['fx:amp.urchin' + TAG]: '66a285ccbb12532afcd290be09f46c6956b81facdb4e10953ebb2744750f5ada',
+  ['fx:amp.di' + TAG]: 'b709a74d8f3238e64a86cfe16e8fbad51bd8a817ba054e83e3562fb5462d7658',
+  ['fx:amp.whale' + TAG]: '718b8f58c9c5edb5553a88de71f48f7b2e58e082760b5b403c621769758e2022',
+  ['fx:amp.walrus' + TAG]: 'bb955881f5b2e680a1be9a070421253440d5da410251b7dacafaaacb6fe06a9c',
+  ['fx:amp.narwhal' + TAG]: '6443abb55c3bc5eeb5ff1920a62e855aad7651f145d592e476b1c74e82d8501b',
+  ['fx:amp.sandbar' + TAG]: 'cfd414abbfbb4db2c034d6daf519984e9deda358de43690892b858b5b2fc8898',
 };
 
 function scene(name, id, params, signal = 'strum') {

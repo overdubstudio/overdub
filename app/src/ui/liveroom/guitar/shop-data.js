@@ -155,8 +155,8 @@ export function cabOf(link) {
 export const AMP_TRIM = Object.freeze({
   'amp.clean': -2.6, 'amp.jangle': -1.6, 'amp.crunch': -0.3, 'amp.plexi': 1.2, 'amp.punk': 1, 'amp.lead': 0.8, 'amp.recto': 1,
   'amp.tiny': -1.4, 'amp.jc': -3.4, 'amp.hiwatt': -2, 'amp.bassman': -1.2, 'amp.dumble': -0.6, 'amp.brown': 1.7, 'amp.slo': 1.2,
-  'amp.friedman': 0.7, 'amp.metal': 1.1, 'amp.orange': 0.2, 'amp.radio': 1.4, 'amp.bit': 1.9, 'amp.tape': -2.1, 'amp.abyss': 0.2,
-  'amp.di': -3.1, 'amp.whale': -4.1, 'amp.walrus': -0.4, 'amp.narwhal': -5.9, 'amp.sandbar': -1.9, 'amp.urchin': -4.4, 'core.stack': 2.7,
+  'amp.friedman': 0.7, 'amp.metal': 1.1, 'amp.orange': 0.2, 'amp.radio': 1.4, 'amp.bit': 1.9, 'amp.tape': -2.1, 'amp.abyss': 0.4,
+  'amp.di': -3.2, 'amp.whale': -3.7, 'amp.walrus': -2.3, 'amp.narwhal': -6.3, 'amp.sandbar': -2.5, 'amp.urchin': -4, 'core.stack': 2.7,
 });
 const CAB_KEYS = ['cab', 'mic', 'micpos', 'micdist', 'micang', 'mic2', 'mic2pos', 'mic2dist', 'mic2ang', 'blend', 'flip'];
 const round1 = (x) => Math.round(x * 10) / 10;

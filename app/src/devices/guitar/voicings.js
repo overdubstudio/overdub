@@ -223,4 +223,71 @@ export const AMP_VOICINGS = {
     pot: [-16, 0], bright: null, eq: [[90, 1], [600, 0.6, -7], [3500, 7], 2.4],
     pw: -12, sag: 0, xf: [20, 15122.873], depth: null, pres: [5000, 1.6], trim: 8.17, irLv: -0.55,
   },
+  // Abyss: an analog octave pedal into a fuzz and a 1x15: the fuzz (a transistor pair driven 7.5 times), the octave
+  // down (a flip-flop on the dry input's rising crossings, through a 700 Hz resonant low-pass, +6 dB), a second
+  // stage, an active tone circuit, at 8x (the fuzz is driven square). Fitted: within 1.1 dB rms (2.2 at worst); the
+  // same THD (11.2 %).
+  abyss: {
+    os: 8, hp: 50, tight: null,
+    chain: [['pot'], ['ss', 7.5, 0.1, 52, 2777.778], ['sub', 6, 700, 6], ['ss', 8, 0.05, 14.005, 3858.025], ['stack']],
+    pot: [-28, 0], bright: null, eq: [[90, 4], [700, 0.7, -2], [2500, 1], 2.4],
+    pw: 4, sag: 0.1, xf: [40, 10000], depth: [90, 2], pres: [2500, 1.6], trim: -14.01,
+  },
+  // Sea Urchin: an octave-down bass fuzz into a resonant synth filter: the fuzz (driven 48 times), the octave (300 Hz,
+  // +11 dB), a second stage, the filter's peak as a bell (900 Hz, Q 3). Fitted: within 0.4 dB rms (0.7 at worst); the
+  // same THD (43 %).
+  urchin: {
+    os: 4, hp: 30, tight: null,
+    chain: [['pot'], ['ss', 47.685, 0.05, 13.655, 6000], ['sub', 11, 300, 2], ['ss', 9.375, 0.08, 6.215, 8000], ['stack']],
+    pot: [-20, 0], bright: null, eq: [[70, -3], [900, 3, 4], [2500, -2], 2.4],
+    pw: 10, sag: 0.05, xf: [20.833, 10000], depth: null, pres: [2200, 1.6], trim: -7.96,
+  },
+  // Straight In: a DI box into a desk channel: GAIN is the channel's trim (-6 dB at 0), the desk's EQ near flat, no
+  // stage that clips and no oversampling (no latency). Fitted: within 0.6 dB rms (1.1 at worst); THD under 0.01 %.
+  di: {
+    os: 1, hp: 28.8, tight: null,
+    chain: [['pot'], ['stack']],
+    pot: [-6, 0], bright: null, eq: [[120, 0], [900, 0.7, -2], [4000, 1], 1.6],
+    pw: -24, sag: 0, xf: [20, 13150.324], depth: null, pres: [5000, 1.6], trim: 5.78,
+  },
+  // Blue Whale: an SVT: V1 -> GAIN -> V2 -> the passive bass and treble (a James with a mid rheostat stands in for its
+  // five-way MIDDLE: treble 250k, bass 250k, mid 25k; 470 pF, 10 nF, 22 nF, 220 nF) -> a driver -> six 6550s, a big
+  // supply that still sags at 300 W. Fitted: within 1.7 dB rms (3.1 at worst; 4 dB less at 40 Hz); the same THD (11.3 %).
+  whale: {
+    os: 2, hp: 20.255, tight: null,
+    chain: [['tri', 4.579, 0.14, 2.2, 5.387, 8680.556], ['pot'], ['tri', 4, 0.12, 1.7, 6.375, 5555.556], ['gain', -1], ['stack'], ['gain', 15], ['tri', 1.2, 0.06, 1.3, 5.179, 5555.556]],
+    pot: [-24, 0], bright: [100, 1e6],
+    stack: { net: 'james', R1: 250e3, R2: 250e3, R3: 25e3, R4: 33e3, R5: 100e3, R6: 3.3e3, RL: 1e6, C1: 470e-12, C2: 10e-9, C3: 22e-9, C4: 220e-9 },
+    pw: 0.5, sag: 0.45, xf: [20.833, 15208.75], depth: [80, 3.5], pres: [3000, 1.6], trim: -11.76,
+  },
+  // Walrus: a B-15 flip-top: two clean stages, the passive bass and treble (the James stands in: treble 250k, bass
+  // 250k; 470 pF, 10 nF, 47 nF, 470 nF), two 6V6s far from clipping, a closed 15. Fitted: within 1.6 dB rms (2.8 at
+  // worst; 5.5 dB less at 40 Hz, with the speaker's bump at its limit); the same THD (0.8 %).
+  walrus: {
+    os: 2, hp: 22.223, tight: null,
+    chain: [['tri', 0.96, 0.06, 2.2, 5.252, 7233.797], ['pot'], ['tri', 3.906, 0.05, 1.8, 5.179, 6666.667], ['gain', -1], ['stack'], ['gain', 13], ['tri', 0.704, 0.04, 1.3, 5.179, 6666.667]],
+    pot: [-18, 0], bright: null,
+    stack: { net: 'james', R1: 250e3, R2: 250e3, R3: 25e3, R4: 33e3, R5: 100e3, R6: 3.3e3, RL: 1e6, C1: 470e-12, C2: 10e-9, C3: 47e-9, C4: 470e-9 },
+    pw: -11.5, sag: 0.3, xf: [20.833, 10000], depth: [70, 4], pres: [2500, 1.6], trim: 0.15,
+  },
+  // Narwhal: a modern class-D head with a drive channel blended in: the drive (an op-amp driven 7.5 times, coupled at
+  // 160 Hz so it only grits the top, then a second stage), the clean lows (220 Hz, +10 dB) beside it, an active tone
+  // circuit, a clean class-D power amp, at 8x (the drive clips hard: at 4x its aliasing sat 86-97 dB down, at 8x
+  // under 106). Fitted: within 2.2 dB rms (5.3 at worst: the blend's 220 Hz sits 5 dB proud); the same THD (0.8 %).
+  narwhal: {
+    os: 8, hp: 23.333, tight: null,
+    chain: [['pot'], ['ss', 7.5, 0.02, 160, 3472.223], ['ss', 4, 0.02, 6.215, 4629.63], ['blend', 220, 10], ['stack']],
+    pot: [-24, 0], bright: null, eq: [[80, 0], [500, 0.8, -4], [3000, 5], 2.4],
+    pw: -7.5, sag: 0.15, xf: [20, 11342.155], depth: null, pres: [3500, 1.6], trim: -10.85,
+  },
+  // Sandbar: a 1952 tweed bass combo (a 5B6: two stages, a cathode follower, two 6L6s, a 15). The 5B6 has one tone pot;
+  // it wears the 5F6-A's stack with bigger caps (250 pF, 47 nF, 47 nF; treble 250k, bass 1M, mid 25k, slope 56k) as a
+  // stand-in. Fitted: within 1.3 dB rms (2.2 at worst); THD 10.0 % (9.8 %).
+  sandbar: {
+    os: 2, hp: 35, tight: null,
+    chain: [['tri', 1.5, 0.18, 2.2, 5.387, 4822.531], ['pot'], ['tri', 5, 0.15, 1.7, 8.288, 5000], ['gain', -1], ['stack'], ['gain', 14], ['tri', 1.3, 0.1, 1.3, 5.179, 5833.333]],
+    pot: [-28, 0], bright: null,
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 56e3, C1: 250e-12, C2: 47e-9, C3: 47e-9 },
+    pw: 8.5, sag: 0, xf: [74.65, 10000], depth: [80, 0], pres: [2600, 1.6], trim: -4.74,
+  },
 };

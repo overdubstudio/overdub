@@ -139,4 +139,35 @@ export const AMP_VOICINGS = {
     stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 56e3, C1: 250e-12, C2: 20e-9, C3: 20e-9 },
     pw: 8, sag: 0.15, xf: [45, 11000], depth: [90, 2], pres: [3200, 1.6], trim: -7.94,
   },
+  // Pinch Punk: a JCM800 2203: V1A, its cathode half bypassed (TIGHT) -> VOLUME (470 pF bright) -> V1B, the cold
+  // clipper (biased hard) -> V2A -> a cathode follower into the stack (470 pF, 22 nF, 22 nF; treble 220k, bass 1M, mid
+  // 22k, slope 33k) -> the long-tailed pair -> four EL34s. Fitted: within 2.4 dB rms (4.0 at worst); the same THD
+  // (9.5 %).
+  punk: {
+    os: 4, hp: 70, tight: [220, -6],
+    chain: [['tri', 0.524, 0.1, 2.2, 15.385, 6028.164], ['pot'], ['tri', 8, 0.45, 1.4, 100, 4340.278], ['tri', 6, 0.16, 1.7, 60, 6666.667], ['gain', -1], ['stack'], ['gain', 16], ['tri', 1.2, 0.05, 1.3, 65.91, 5208.333]],
+    pot: [-38, 0], bright: [171.283, 1e6],
+    stack: { R1: 220e3, R2: 1e6, R3: 22e3, R4: 33e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
+    pw: 3.5, sag: 0.15, xf: [60, 13800], depth: [90, 2.5], pres: [3800, 1.6], trim: -17.12,
+  },
+  // Brown Tide: a 1959 Super Lead on a variac: the plexi's circuit (V1A -> VOLUME, the bright cap -> V2A -> a cathode
+  // follower into 500 pF, 22 nF, 22 nF; treble 220k, bass 1M, mid 25k, slope 33k) with its supply turned down: the
+  // most sag of any (0.6). Fitted: within 2.1 dB rms (3.8 at worst); the same THD (27.5 %).
+  brown: {
+    os: 4, hp: 58.333, tight: null,
+    chain: [['tri', 2, 0.1, 2.2, 5.387, 4186.225], ['pot'], ['tri', 8, 0.16, 1.7, 9.562, 19906.56], ['gain', -1], ['stack'], ['gain', 16], ['tri', 1.5, 0.06, 1.3, 23.077, 4629.63]],
+    pot: [-36, 0], bright: [500, 1e6],
+    stack: { R1: 220e3, R2: 1e6, R3: 25e3, R4: 33e3, C1: 500e-12, C2: 22e-9, C3: 22e-9 },
+    pw: 6, sag: 0.6, xf: [45, 19239.069], depth: [90, 2], pres: [4000, 1.6], trim: -16.58,
+  },
+  // Rogue Wave: a modded plexi (a BE-100's idea): TIGHT before V1A -> VOLUME (470 pF) -> a cold clipper -> two more
+  // stages -> the stack (470 pF, 22 nF, 22 nF; treble 220k, bass 1M, mid 22k, slope 33k) -> four EL34s. Fitted: within
+  // 2.6 dB rms (4.6 at worst: 5 dB more at 80 Hz and 4.6 less at 640 Hz); the same THD (31.4 %).
+  friedman: {
+    os: 4, hp: 80, tight: [240, -5],
+    chain: [['tri', 1.229, 0.1, 2.2, 50.7, 4186.225], ['pot'], ['tri', 10, 0.45, 1.4, 120, 4340.278], ['tri', 6, 0.16, 1.7, 60, 4629.63], ['tri', 3, 0.2, 1.5, 52, 19906.56], ['gain', -1], ['stack'], ['gain', 16], ['tri', 1.2, 0.05, 1.3, 23.077, 7500]],
+    pot: [-40, 0], bright: [470, 1e6],
+    stack: { R1: 220e3, R2: 1e6, R3: 22e3, R4: 33e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 },
+    pw: 2, sag: 0.3, xf: [50, 10434.783], depth: [90, 2.5], pres: [3800, 1.6], trim: -20.69,
+  },
 };

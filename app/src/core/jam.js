@@ -579,7 +579,7 @@ export const JAM_STYLES = {
     progs: { a: 'ii7 V7 Imaj7 vi7', b: 'IVmaj7 V7 iii7 vi7' }, form: [['A', 'a'], ['A', 'a'], ['B', 'b'], ['A', 'a']],
     chords: { ...STYLES.lofi.chords }, bass: { ...STYLES.lofi.bass }, drums: { ...STYLES.lofi.drums },
     guitar: { params: DI_NECK, tone: 'in-salad' },
-    gain: { chords: -4.8, bass: -10, drums: -2.4, guitar: -1.2 },
+    gain: { chords: -4.8, bass: -10, drums: -2.4, guitar: 0 },
   },
   rock: {
     label: 'Classic rock', blurb: 'driving eighths, power chords and a big backbeat', key: { root: 'E', scale: 'mixolydian' }, tempo: 116,

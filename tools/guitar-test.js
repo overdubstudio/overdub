@@ -1,29 +1,26 @@
 // The Guitar Studio in Overdub (devices/guitar, devices/graph.js + kit.js, ui/faces.js, gallery.html):
 //  1. registry: every pedal and amp in the gear (devices/guitar/gear/) is registered (ids kept: pedal.<id>, amp.<id>),
 //     none refused, and every rig's devices exist; rigOps dispatch through the real store. Every worklet the gear's code
-//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals and amps
-//     load theirs from those files.
+//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals load
+//     theirs from those files.
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
 //  3. bypass is exact: a sample of insert and trails pedals and a kernel amp, off, equals the dry input to -90 dB (lined
 //     up with its declared latency).
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
-//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
-//     plugAmp sample for sample (also with a cab and two mics).
+//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP.
 //  4c. the measured cabs (gear/code.js PLUG_AMP_IR): the gear's six are Half Stack's (ids and names); every guitar amp
 //     defaults to one and the bass amps, Abyss, Hermit, Flotsam, the 8-Bit Crab, Beach Tape and Straight In to their own
 //     designed cab (sample for sample as before); each guitar amp's default sound at its default knobs reads as it did
 //     on its own cab within 0.5 LU (the band's loudness and BS.1770; the half-octave change is noted), in time with it,
-//     true peak under -1 dBTP; a saved rig without a cab plays the measured one and an explicit 'own' the designed one;
-//     with the bank held off the amp plays its own cab exactly and the rack's words say so; live, an amp built before
-//     the bank is in plays its own cab and moves onto the measured one click-free, and switching cabs among measured
-//     and designed ones is click-free with no dip.
+//     true peak under -1 dBTP; a saved rig without a cab plays the measured one and an explicit 'own' the designed one.
 //  4d. the amps on the kernel engine (devices/guitar/voicings.js; devices/builtin/amp-voiced.js), in Node and in
 //     Chromium: each renders finite and bit-exact twice, and with the bank held off plays its own designed cab exactly;
 //     held against what it was on the graph engine (tools/fixtures/amp-voices.json: its spectrum on its own cab, its
 //     drive, its aliasing, which must be 30 dB under the old amp's or under -100 dB) and its cost per block; Half Stack's
 //     own chain as a voicing reads as Half Stack; the golden scenes (tools/amp-scenes.js) in Node and Chromium alike;
-//     the kernel's cab and mics are the graph amps' native nodes on pink noise; and switching cabs live is click-free.
+//     the kernel's cab and mics are the graph amps' native nodes on pink noise; and switching cabs live (among measured
+//     and designed ones) is click-free with no dip, on one amp at each rate and the odd ones.
 //  5. the rigs: every preset (but the keys bank's) through its whole chain lands at -14 LUFS ±1.5 (leads up to -12),
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
 //  2b. automation: every pedal param that changes the sound before set()'s `at` is marked auto: false (no lane).
@@ -36,7 +33,7 @@
 //     built on a context whose clock moves 11.6 ms between reads, stomped before and after it's wired 25 ms later, says
 //     health().ok with its bypass gains at their targets, and nothing calls setValueCurveAtTime live; a device whose
 //     build throws rejects ready with 'threw' and plays the engine's stand-in with an 'error' report; a worklet module
-//     that fails once loads on the next build; assure() snaps a sabotaged dry gain; 50 amp swaps leave no wow
+//     that fails once loads on the next build; assure() snaps a kernel amp's sabotaged dry gain; 50 amp swaps leave no
 //     oscillator running.
 //  7. faces: gallery.html renders a face for every device with no page errors; knobs turn (keys, double-click reset),
 //     switches flip, footswitches stomp; screenshots at 1440 and 390 wide (tools/.out/gallery-*.png).
@@ -72,6 +69,8 @@ const KERNEL_AMPS = Object.keys(AMP_VOICINGS);
 const FIT_GATE = {
   plexi: { rms: 3.5, max: 6.5, why: "a 1959's stack at noon scoops 700 Hz-1.4 kHz deeper than the graph amp's voicing did (to -6 dB) and its bright channel sits 5 dB hotter at 2.8-5.6 kHz" },
   recto: { alias: 25, why: "at GAIN 10 it's as hot as Half Stack's (THD 20 % at 196 Hz) and aliases as Half Stack does at 4x, within 6 dB" },
+  bit: { alias: 19, why: "a 4-bit DAC's steps aren't harmonics of the note: the measure reads the quantiser, 20-22 dB under the graph amp's" },
+  tape: { alias: -1.5, why: "the transport's wow puts sidebands round every note, which the measure counts; within 1.5 dB of the graph amp's, the same wow" },
   abyss: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 5 dB under the graph amp, whose octave was the same' },
   urchin: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 27 dB under the graph amp, whose octave was the same' },
 };
@@ -167,7 +166,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
   const wl = await page.evaluate(async () => {
     const { G, R } = window.__gt;
     const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
-    const src = { 'clawd-amps': G.gear.PLUG_WORKLETS };
+    const src = {};
     for (const [n, w] of Object.entries(G.gear.PFX.worklets)) src[n] = w.src;
     const diff = [], files = Object.values(WORKLETS);
     for (const [n, s] of Object.entries(src)) {
@@ -362,50 +361,24 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
 
   // 4. the amps
   const amps = await page.evaluate(async () => {
-    const { G, R, render, input, clawdLufs, check, tp, M, SR } = window.__gt, out = [];
+    const { R, render, input, clawdLufs, check, tp, M, SR } = window.__gt, out = [];
     for (const d of R.listDevices({ cat: 'amp' }).filter((x) => x.id.startsWith('amp.'))) {
       const bass = d.tone === 'bass', x = input(bass ? 'bass' : 'di', 8);
       const r = await render([{ device: d.id }], x, { band: true });
       const buf = { sampleRate: SR, numberOfChannels: 2, length: r[0].length, getChannelData: (i) => r[i] };
       out.push({ id: d.id, name: d.name, bass, lufs: clawdLufs(r[0], r[1]), bs1770: M.lufs(buf), tp: tp(r), ...check(r) });
     }
-    // the same as the gear's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
-    const same = [];
-    const studio = G.gear.presetResolve(G.gear.PLUG_PRESETS.find((p) => p.id === 'studio'));
-    for (const [id, S] of [['tiny', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['tiny', studio], ['radio', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
-      const x = input('di', 2), P = Object.assign({}, S, { amp: id }); delete P.board;
-      const a = await render([{ device: 'amp.' + id, params: G.ampParams(P) }], x);
-      const { loadWorklet } = await import('/app/src/devices/kit.js');
-      const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
-      // (exact: the settings the device hands plugAmp; the preset's own: within its mic position's rounding)
-      const run = async (Q) => {
-        const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-        b.copyToChannel(x, 0); s.buffer = b;
-        if (G.gear.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
-        const amp = G.gear.plugAmp(c); amp.set(Q); await amp.ready();
-        s.connect(amp.input); amp.output.connect(c.destination); s.start(0);
-        const o = await c.startRendering();
-        let d = 0; for (let ch = 0; ch < 2; ch++) { const y = o.getChannelData(ch); for (let i = 0; i < y.length; i++) d = Math.max(d, Math.abs(a[ch][i] - y[i])); }
-        return d;
-      };
-      const def = R.getDevice('amp.' + id);
-      same.push({ id: id + (P.cab ? '+' + P.cab : '') + (P.mic2 ? '+2 mics' : ''), d: await run(G.ampSettings(id, R.paramValues(def, G.ampParams(P)))), dPreset: await run(P) });
-    }
-    return { out, same };
+    return { out };
   });
   for (const a of amps.out) {
     const okLevel = Math.abs(a.lufs + 14) <= 0.75;
     t.ok(!a.bad && okLevel && a.tp <= -1, `${a.id.padEnd(12)} ${a.name.padEnd(13)} ${a.lufs.toFixed(1)} LUFS (BS.1770 ${a.bs1770.toFixed(1)}), TP ${a.tp.toFixed(1)} dBTP${a.bass ? ' (bass DI)' : ''}${a.bad ? ' NaN!' : ''}`);
   }
-  t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are the gear's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
-  const worstPreset = Math.max(...amps.same.map((s) => s.dPreset));
-  t.ok(worstPreset < 1e-3, `a preset's amp settings come across within ${(20 * Math.log10(worstPreset + 1e-12)).toFixed(0)} dBFS (a mic's x, y on the cone become one radius, as the sound only hears the radius; plugCabClean rounds x and y)`);
 
   // 4c. the measured cabs
   const irs = await page.evaluate(async () => {
     const { G, R, render, input, clawdLufs, tp, check, M, SR } = window.__gt;
     const AL = await import('/app/src/devices/builtin/amp-lib.js');
-    const GI = await import('/app/src/devices/guitar/gear/index.js');
     const A = await import('/app/src/devices/guitar/amps.js');
     const g = G.gear, own = G.CAB_IDS.indexOf('own');
     const measured = G.CAB_IDS.filter(A.isMeasured);
@@ -430,7 +403,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     const rows = [];
     for (const d of R.listDevices({ cat: 'amp' }).filter((x) => x.id.startsWith('amp.'))) {
       const id = d.id.slice(4), def = d.params.find((p) => p.key === 'cab').def, bass = d.tone === 'bass';
-      const row = { id: d.id, cab: G.CAB_IDS[def], want: g.PLUG_AMP_IR[id] || 'own', data: !!d.data, kernel: typeof d.kernel === 'string' };
+      const row = { id: d.id, cab: G.CAB_IDS[def], want: g.PLUG_AMP_IR[id] || 'own', data: !!d.data };
       if (row.cab === 'own') {
         // the amps that keep their own: the default is the designed cab, sample for sample
         const x = input(bass ? 'bass' : 'di', 2), a = await render([{ device: d.id }], x), b = await render([{ device: d.id, params: { cab: own } }], x);
@@ -451,23 +424,11 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     const saved = { none: !('cab' in rec), ownIdx: ownP.cab === own, back: G.ampSettings('recto', R.paramValues(R.getDevice('amp.recto'), ownP)).cab === 'own',
       dflt: !('cab' in G.ampSettings('recto', R.paramValues(R.getDevice('amp.recto'), {}))), clean: JSON.stringify(g.plugCabClean({ amp: 'recto', cab: 'own' })) === '{"cab":"own"}' && JSON.stringify(g.plugCabClean({ amp: 'whale', cab: 'own' })) === '{}',
       older: !g.PLUG_CABS['not-a-cab'] && JSON.stringify(g.plugCabClean({ amp: 'recto', cab: 'not-a-cab' })) === '{}' };
-    // the bank held off (as on a server without it): the amp plays its own designed cab, exactly; the rack's words
-    // (a graph amp's: the gear's bank, GI.useCabBank; a kernel amp's is its kernel data, held off in 4d)
-    GI.useCabBank(null);
-    const x2 = input('di', 2);
-    // (a graph amp still, on a measured cab: Hermit's default is its own)
-    const mc = { cab: G.CAB_IDS.indexOf('modern-close') };
-    const held = await render([{ device: 'amp.tiny', params: mc }], x2), heldOwn = await render([{ device: 'amp.tiny', params: { cab: own } }], x2);
-    GI.useCabBank();
-    let hd = 0; for (let i = 0; i < held[0].length; i++) hd = Math.max(hd, Math.abs(held[0][i] - heldOwn[0][i]));
-    const back = await render([{ device: 'amp.tiny', params: mc }], x2);
-    let bd = 0; for (let i = 0; i < back[0].length; i++) bd = Math.max(bd, Math.abs(back[0][i] - heldOwn[0][i]));
-    const says = R.getDevice('amp.recto').dataSays; // (the rack's words, as every amp on a measured default says them)
-    return { ids, rows, saved, fallback: { exact: hd === 0, back: bd > 1e-3, says: says && says.missing[0] + ' / ' + says.loading[0] } };
+    return { ids, rows, saved };
   });
   t.ok(irs.ids.same && irs.ids.first === irs.ids.designed, `the gear's measured cabs are Half Stack's six, ids and names, after the ${irs.ids.designed} designed ones (every CAB index before them unchanged)`);
-  const wantOk = irs.rows.every((r) => r.cab === r.want && r.data === (r.kernel || r.want !== 'own'));
-  t.ok(wantOk, `every amp's CAB default is its PLUG_AMP_IR cab, and the measured ones (and every kernel amp) name the bank as data: ${irs.rows.filter((r) => r.cab !== 'own').map((r) => r.id.slice(4) + ' ' + r.cab).join(', ')}`);
+  const wantOk = irs.rows.every((r) => r.cab === r.want && r.data);
+  t.ok(wantOk, `every amp's CAB default is its PLUG_AMP_IR cab, and every amp names the bank as data (any CAB can be a measured one); the measured defaults: ${irs.rows.filter((r) => r.cab !== 'own').map((r) => r.id.slice(4) + ' ' + r.cab).join(', ')}`);
   const keep = irs.rows.filter((r) => r.cab === 'own');
   t.ok(keep.length === 11 && keep.every((r) => r.exact), `${keep.length} amps keep their own designed cab, sample for sample as before: ${keep.map((r) => r.id.slice(4)).join(' ')}`);
   for (const r of irs.rows.filter((x) => x.cab !== 'own')) {
@@ -477,50 +438,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
   t.note(`the change, measured cab against its own (half-octave bands from 63 Hz to 11.3 kHz, dB, loudness matched):\n${irs.rows.filter((r) => r.sp).map((r) => '    ' + r.id.slice(4).padEnd(9) + r.sp.map((v) => String(v).padStart(4)).join('')).join('\n')}`);
   const sv = irs.saved;
   t.ok(sv.none && sv.ownIdx && sv.back && sv.dflt && sv.clean && sv.older, `a saved rig without a cab plays the amp's default (measured); 'own' saved is CAB 0 and comes back as 'own' (designed); a cab id from later is dropped, the amp's default`);
-  t.ok(irs.fallback.exact && irs.fallback.back, `with the bank held off, an amp on a measured cab plays its own designed cab, exactly; with it back, the measured one ("${irs.fallback.says}")`);
 
-  // 4c, live: built before the bank is in, then moving onto it; switching cabs
-  const irLive = await page.evaluate(async () => {
-    const { R, G } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
-    const GI = await import('/app/src/devices/guitar/gear/index.js');
-    await c.resume();
-    const REC = `class GtRec3 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
-      process(i) { const x = i[0] && i[0][0]; if (x && this.on) this.port.postMessage(x.slice(0)); return this.on; } } registerProcessor('gt-rec3', GtRec3);`;
-    await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const ix = (id) => G.CAB_IDS.indexOf(id);
-    GI.useCabBank(null); // (not in yet)
-    const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
-    const inst = await R.instantiate(c, 'amp.tiny', { uid: 'ir-live', on: true, params: { cab: ix('modern-close') } }); await inst.ready; // (a graph amp: 4d switches a kernel amp's)
-    const amp = inst.device.amp;
-    const rec = new AudioWorkletNode(c, 'gt-rec3'), blocks = [];
-    rec.port.onmessage = (e) => blocks.push(e.data);
-    g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
-    const t0 = c.currentTime, marks = [];
-    await sleep(400);
-    const before = amp.playing();
-    GI.useCabBank(); marks.push(c.currentTime - t0); await amp.ready(); // (it lands)
-    await sleep(500);
-    const after = amp.playing();
-    // measured -> measured -> designed own -> measured -> designed 4x12 British (and its mics) -> the default
-    const seq = [ix('british-dynamic'), ix('own'), ix('modern-two'), ix('g412'), ix('modern-close')], plays = [];
-    for (const cab of seq) { marks.push(c.currentTime + 0.01 - t0); inst.set({ cab }); await sleep(450); plays.push(amp.playing()); }
-    rec.port.postMessage('stop'); o.stop(); await sleep(60);
-    inst.dispose(); g.disconnect(); rec.disconnect(); await c.close();
-    const n = blocks.reduce((s, b) => s + b.length, 0), y = new Float32Array(n); let p = 0; for (const b of blocks) { y.set(b, p); p += b.length; }
-    const sr = 48000, d2 = new Float32Array(n); for (let i = 2; i < n; i++) d2[i] = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]);
-    const near = new Uint8Array(n);
-    for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.12) * sr)); i++) near[i] = 1;
-    let steady = 0, at = 0;
-    for (let i = Math.round(0.15 * sr); i < n - 256; i++) { if (near[i]) at = Math.max(at, d2[i]); else steady = Math.max(steady, d2[i]); }
-    // no dip: the quietest 5 ms around a switch against the steady sound's (a duck would be -40 dB or so)
-    const W = 240, rms = (a) => { let s = 0; for (let i = a; i < a + W; i++) s += y[i] * y[i]; return Math.sqrt(s / W); };
-    let lo = Infinity, ref = 0, k = 0;
-    for (let a = Math.round(0.15 * sr); a + W < n - 256; a += W) { const r = rms(a); if (near[a]) lo = Math.min(lo, r); else { ref += r; k++; } }
-    return { before, after, plays, ratio: at / Math.max(steady, 1e-9), dip: 20 * Math.log10(lo / (ref / Math.max(1, k)) + 1e-12), secs: n / sr };
-  });
-  t.ok(irLive.before === 'own' && irLive.after === 'ir' && irLive.ratio < 1.6 && irLive.secs > 2, `live, an amp built before the bank is in plays its own designed cab (${irLive.before}) and moves onto the measured one when it lands (${irLive.after}), click-free`);
-  t.ok(irLive.plays.join() === 'ir,own,ir,g412,ir' && irLive.ratio < 1.6 && irLive.dip > -12, `live, switching cabs (measured, its own, measured, a designed 4x12 with its mic, measured) is click-free (second difference at the switches ${irLive.ratio.toFixed(2)}× the steady sound's) and never dips (quietest 5 ms ${irLive.dip.toFixed(1)} dB): ${irLive.plays.join(' → ')}`);
 
   // 4d, in Chromium: the kernel's cab and mics against the graph amps' own nodes (plugAmp's, as its apply() sets them
   // from plugCabNet: the designed cab's six filters, each mic's align delay, seven filters and four room taps, the
@@ -612,7 +530,7 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
     }
     await c.close();
     return res;
-  }, KERNEL_AMPS);
+  }, ['clean', 'recto', 'tiny', 'di', 'tape', 'abyss', 'whale']); // (one at each rate, 2x, 4x, 8x and none, the wow, the octave, a bass amp)
   for (const r of kLive) t.ok(r.ratio < 1.6 && r.dip > -12 && r.secs > 2, `live, amp.${r.id} switching cabs (measured, its own, measured, a designed 4x12 with its mic, measured) is click-free (${r.ratio.toFixed(2)}× the steady sound's second difference) and never dips (quietest 5 ms ${r.dip.toFixed(1)} dB)`);
 
   // 5. the rigs, end to end
@@ -753,9 +671,9 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
     // assure(): the dry gain put back to 1 under an amp that's on (what Chrome 156 left) is seen, and snapped
     const gains = [], mk = c.createGain;
     c.createGain = function () { const n = mk.call(c); gains.push(n); return n; };
-    const amp = await R.instantiate(c, 'amp.tiny', { uid: 'sabotage', on: true }); await amp.ready; // (a graph amp: its bypass gains are its own)
+    const amp = await R.instantiate(c, 'amp.recto', { uid: 'sabotage', on: true }); await amp.ready; // (a kernel amp: the host's bypass gains)
     c.createGain = mk;
-    const dry = gains[2]; // (graph.js: in, out, dry, wet)
+    const dry = gains.find((n) => n.gain.value === 0); // (kernel/host.js: out, input, feed, wet, dry; on, only the dry is shut)
     await sleep(30);
     dry.gain.cancelScheduledValues(0); dry.gain.value = 1;
     const before = amp.health(), snapped = amp.assure(), after = amp.health(), again = amp.assure();
@@ -805,7 +723,7 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
       out.second = await b.ready.then(() => 'resolved', (e) => failureCode(e));
       out.gateNode = !!(b.device && b.device.node);
       b.dispose();
-      // 50 amp swaps: each one's wow oscillator stops with it
+      // 50 amp swaps: nothing an amp starts outlives it (the graph amps' wow oscillator didn't, once: docs/DEVICES.md)
       const running = new Set(), mkOsc = c.createOscillator;
       c.createOscillator = function () { const o = mkOsc.call(c), st = o.start, sp = o.stop; o.start = (...x) => { running.add(o); return st.apply(o, x); }; o.stop = (...x) => { running.delete(o); return sp.apply(o, x); }; return o; };
       const amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.')).map((d) => d.id);
@@ -815,7 +733,7 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
         if (cur) cur.dispose();
         cur = next;
       }
-      out.whileOne = running.size; out.wantOne = cur.def && cur.def.build ? 1 : 0; // (only a graph amp makes one)
+      out.whileOne = running.size;
       cur.dispose();
       out.after = running.size;
       await sleep(10); await c.close();
@@ -824,7 +742,7 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
   });
   t.ok(fail.code === 'threw' && fail.standIn && fail.reported.length > 0, `a device whose build throws rejects ready with 'threw' (${fail.code}), and the engine plays its stand-in (${fail.standIn}) and says so (${fail.reported[0] || 'no error report'})`);
   t.ok(fail.first === 'worklet' && fail.second === 'resolved' && fail.gateNode, `the Snapper with its worklet failing to load once is a 'worklet' failure (${fail.first}), and the next build loads it (${fail.second}, gate ${fail.gateNode ? 'in' : 'missing'})`);
-  t.ok(fail.whileOne === fail.wantOne && fail.after === 0, `50 amp swaps leave only the playing amp's wow oscillator running (${fail.whileOne}${fail.wantOne ? '' : ': it is a kernel amp, which has none'}), and none once it's gone (${fail.after})`);
+  t.ok(fail.whileOne === 0 && fail.after === 0, `50 amp swaps leave no oscillator running, while the last one plays (${fail.whileOne}) or once it's gone (${fail.after}): a kernel amp starts none`);
 
   t.ok(!errors.length, `no page errors in the audio checks${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await close();

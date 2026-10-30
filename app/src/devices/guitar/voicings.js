@@ -223,6 +223,44 @@ export const AMP_VOICINGS = {
     pot: [-16, 0], bright: null, eq: [[90, 1], [600, 0.6, -7], [3500, 7], 2.4],
     pw: -12, sag: 0, xf: [20, 15122.873], depth: null, pres: [5000, 1.6], trim: 8.17, irLv: -0.55,
   },
+  // Hermit: a battery practice amp: an op-amp gain stage with its drive switch on (driven 178 times into its rails,
+  // off centre; its feedback cap rolls it off at 6 kHz), an active tone circuit, a small chip power amp; the battery
+  // sags a little. TIGHT: its input cap, a small one. Driven that hard it's a square, so it runs at 8x (at 4x it
+  // aliased 2-15 dB under the graph amp; at 8x, 37-43). Fitted: within 1.7 dB rms (3.5 at worst); THD 53.5 % (54 %).
+  tiny: {
+    os: 8, hp: 48.225, tight: [622.08, -2],
+    chain: [['ss', 177.651, 0.25, 150, 6000], ['pot'], ['stack'], ['ss', 3, 0.2, 115.385, 17418.24]],
+    pot: [-34, 0], bright: null, eq: [[150, -3], [1000, 0.8, 1], [2500, 1], 2.4],
+    pw: 5.5, sag: 0.1, xf: [20.932, 13225], depth: null, pres: [3000, 1.6], trim: -16.82,
+  },
+  // Flotsam: a pocket transistor radio: a germanium preamp driven hard, the volume, a tone network, the driver and a
+  // starved class-B pair (its crossover a small dead zone), into a tiny speaker on a small coupling cap (hp 216 Hz).
+  // Both stages roll off at 5 kHz, and it runs at 8x: driven square, at 4x it aliased 11-21 dB under the graph amp; at
+  // 8x, 45-58. Fitted: within 1.8 dB rms (3.4 at worst); the same THD (41.6 %).
+  radio: {
+    os: 8, hp: 216, tight: null,
+    chain: [['ss', 10, 0, 23.905, 5000], ['pot'], ['stack'], ['ss', 12, 0.1, 6.438, 5000], ['xover', 0.05]],
+    pot: [-30, 0], bright: null, eq: [[300, 0], [1500, 1, 4], [3000, -3], 2.4],
+    pw: 6.5, sag: 0.15, xf: [20.932, 17490.063], depth: null, pres: [2500, 1.6], trim: -18.33,
+  },
+  // 8-Bit Crab: a handheld console's speaker amp turned up: VOLUME, the amp driven into its rails, its DAC's 4 bits
+  // (16 steps over +-1, the old graph amp's crush), a tone network, at 8x. Fitted: within 1.1 dB rms (1.9 at worst);
+  // the same THD (45.8 %).
+  bit: {
+    os: 8, hp: 250, tight: null,
+    chain: [['pot'], ['ss', 178.818, 0, 79.999, 10800], ['crush', 4], ['stack']],
+    pot: [-20, 0], bright: null, eq: [[110, -2], [800, 0.8, -2], [3000, -1], 2.4],
+    pw: -11.5, sag: 0.05, xf: [52.083, 13800], depth: null, pres: [4000, 1.6], trim: -23.93,
+  },
+  // Beach Tape: a four-track pushed into the red: the record amp, the tape's soft saturation (the triode's curve with
+  // almost no bias), the deck's EQ as an active tone circuit, the transport's wow (0.6 ms at 0.7 Hz, as the graph
+  // amp's: 1.5 ms of latency more) and the playback amp. Fitted: within 0.8 dB rms (2.0 at worst); the same THD (5.1 %).
+  tape: {
+    os: 2, hp: 23.148, tight: null,
+    chain: [['tri', 5.724, 0.02, 1.2, 6.215, 10416.667], ['pot'], ['stack'], ['tri', 1.2, 0.02, 1.2, 6.215, 12000]],
+    pot: [-14, 0], bright: null, eq: [[90, 6], [800, 0.7, 0], [3000, 2], 2.4], wow: [0.6, 0.7],
+    pw: -6, sag: 0.35, xf: [20.833, 12000], depth: [78.261, 2.5], pres: [3000, 1.6], trim: -8,
+  },
   // Abyss: an analog octave pedal into a fuzz and a 1x15: the fuzz (a transistor pair driven 7.5 times), the octave
   // down (a flip-flop on the dry input's rising crossings, through a 700 Hz resonant low-pass, +6 dB), a second
   // stage, an active tone circuit, at 8x (the fuzz is driven square). Fitted: within 1.1 dB rms (2.2 at worst); the

@@ -1,9 +1,9 @@
-// The guitar amps' voices, as numbers: what each amp sounded like on the gear's graph engine (plugAmp, native nodes),
-// fixed once in tools/fixtures/amp-voices.json, so an amp moved onto the kernel engine (devices/guitar/voicings.js) is
-// held against what it was after the graph engine is gone.
+// The guitar amps' voices, as numbers: what each amp sounded like on the gear's graph engine (plugAmp, native nodes,
+// rendered in muted headless Chromium), fixed once in tools/fixtures/amp-voices.json, so the amps on the kernel engine
+// (devices/guitar/voicings.js) are held against what they were. The graph engine is gone (retired on 2026-10-29, once
+// every amp was on the kernel; the renderer that made the fixture went with it, at commit b30a1a7): the fixture is what
+// it was.
 //
-//   node tools/amp-voices.js --fixture     render every amp on plugAmp in muted headless Chromium and write the fixture
-//                                          (only while plugAmp is in the gear; the fixture is then what it was)
 //   node tools/amp-voices.js [ids]         the kernel amps (all, or these) against the fixture, in Node: level,
 //                                          spectrum, drive, knob travel, aliasing, latency, CPU (tools/.out/amp-voices.json)
 //
@@ -61,58 +61,6 @@ export function travelOf(v) {
   return out;
 }
 
-async function fixture() {
-  const { open } = await import('./pw.js');
-  const { page, close, errors } = await open('/app/style/tokens.css');
-  page.setDefaultTimeout(1200000);
-  await page.addScriptTag({ type: 'module', content: `
-    const G = await import('/app/src/devices/guitar/index.js');
-    const K = await import('/app/src/devices/kit.js');
-    const GI = await import('/app/src/devices/guitar/gear/index.js');
-    const SR = ${SR};
-    // the gear's own amp (plugAmp) at settings P, offline, the bank in; mono out
-    async function render(P, x) {
-      const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-      b.copyToChannel(x, 0); s.buffer = b;
-      if (G.gear.PLUG_AMPS[P.amp].sub) c.__clawdAmpWorklets = await K.loadWorklet(c, 'clawd-amps', GI.WORKLETS['clawd-amps']);
-      const amp = G.gear.plugAmp(c); amp.set(P); await amp.ready();
-      s.connect(amp.input); amp.output.connect(c.destination); s.start(0);
-      const o = await c.startRendering(); amp.dispose();
-      return o.getChannelData(0);
-    }
-    const enc = (f) => { const u = new Uint8Array(f.buffer, f.byteOffset, f.byteLength); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
-    window.__av = { G, render, enc };
-  ` });
-  await page.waitForFunction(() => window.__av, null, { timeout: 30000 });
-  const info = await page.evaluate(() => {
-    const { G } = window.__av;
-    return { ids: Object.keys(G.gear.PLUG_AMPS), def: G.gear.PLUG_DEFAULT, bass: Object.fromEntries(Object.entries(G.gear.PLUG_AMPS).map(([k, a]) => [k, a.tone === 'bass'])),
-      cab: Object.fromEntries(Object.keys(G.gear.PLUG_AMPS).map((k) => [k, G.gear.plugCabDefault(k)])) };
-  });
-  const sent = new Map();
-  const out = { made: new Date().toISOString().slice(0, 10), engine: 'the gear\'s plugAmp (native Web Audio nodes) in Chromium, offline at 48 kHz', knobs: { ...info.def, amp: undefined }, amps: {} };
-  for (const id of process.argv.slice(3).length ? process.argv.slice(3) : info.ids) {
-    const render = async (p, x) => {
-      const P = { ...info.def, ...p, amp: id };
-      if (P.cab == null) delete P.cab;
-      // (each input goes to the page once)
-      if (!sent.has(x)) { const k = 'x' + sent.size; sent.set(x, k); await page.evaluate(({ k, b }) => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); window.__av[k] = new Float32Array(u.buffer); }, { k, b: Buffer.from(x.buffer, x.byteOffset, x.byteLength).toString('base64') }); }
-      const b64 = await page.evaluate(async ({ P, k }) => { const { render, enc } = window.__av; return enc(await render(P, window.__av[k])); }, { P, k: sent.get(x) });
-      const buf = Buffer.from(b64, 'base64');
-      return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-    };
-    out.amps[id] = { signal: info.bass[id] ? 'bass' : 'di', cab: info.cab[id], latency: 256, ...await voiceOf(render, { bass: info.bass[id] }) };
-    console.log(id, out.amps[id].own.lufs, 'LUFS, THD', out.amps[id].thd, '%');
-  }
-  if (errors.length) console.log('page errors:', errors.slice(0, 3));
-  await close();
-  let prev = {};
-  try { prev = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps || {}; } catch { /* the first */ }
-  out.amps = { ...prev, ...out.amps };
-  fs.writeFileSync(FIXTURE, JSON.stringify(out) + '\n');
-  console.log('wrote', path.relative(process.cwd(), FIXTURE), Object.keys(out.amps).length, 'amps');
-}
-
 // The kernel amps against the fixture (Node, the worklet's KernelCore): per amp { lufs, spectrum, thd, alias, travel,
 // latency, usPerBlock }, each old against new
 export async function report(ids) {
@@ -144,11 +92,8 @@ export async function report(ids) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  if (process.argv[2] === '--fixture') await fixture();
-  else {
-    const rows = await report(process.argv[2] ? process.argv[2].split(',') : null);
-    fs.mkdirSync(path.join(HERE, '.out'), { recursive: true });
-    fs.writeFileSync(path.join(HERE, '.out', 'amp-voices.json'), JSON.stringify(rows, null, 1));
-    console.log(JSON.stringify(rows, null, 1));
-  }
+  const rows = await report(process.argv[2] ? process.argv[2].split(',') : null);
+  fs.mkdirSync(path.join(HERE, '.out'), { recursive: true });
+  fs.writeFileSync(path.join(HERE, '.out', 'amp-voices.json'), JSON.stringify(rows, null, 1));
+  console.log(JSON.stringify(rows, null, 1));
 }

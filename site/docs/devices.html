@@ -82,7 +82,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Devices: writing instruments and effects</a></h1>
-    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 72 min to read</p>
+    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 73 min to read</p>
     <article class="prose">
 <p>Overdub's instruments and effects are <strong>devices</strong>: a small definition (id, name, params, look) plus either a Web Audio
 graph (<code>build(c, kit)</code>, trusted built-ins like the ported pedals and amps) or a <strong>kernel</strong>: a few dozen lines of pure DSP
@@ -388,10 +388,10 @@ built.</li>
 ramps through its points live, as Low-Batt Limpet's motor does, and keep any curve behind <code>isOffline(c)</code>.</li>
 <li>Read <code>c.currentTime</code> once per move, or use <code>x.t</code> (graph.js read it once for that <code>set</code>).</li>
 <li>Start sources through the kit (<code>kit.lfo</code>, <code>kit.constant</code>, <code>kit.noiseSource</code>, or <code>kit.own(node)</code> for your own), set
-timers with <code>kit.later</code>, and stop anything else in your <code>dispose()</code>. An amp's wow oscillator outlived every amp a
-swap threw away until <code>plugAmp</code>'s <code>dispose</code> stopped it.</li>
-<li>A device that can't be what it says should fail its build: throw, or throw <code>lifecycle.failure('worklet', ...)</code> (Abyss
-without its octave does). Don't pass the signal through quietly.</li>
+timers with <code>kit.later</code>, and stop anything else in your <code>dispose()</code>. The graph amps' wow oscillator outlived every
+amp a swap threw away until their <code>dispose</code> stopped it.</li>
+<li>A device that can't be what it says should fail its build: throw, or throw <code>lifecycle.failure('worklet', ...)</code> (a
+pedal whose worklet didn't load does). Don't pass the signal through quietly.</li>
 </ul>
 <p>The checks: <code>test/unit/kit.test.js</code> and <code>test/unit/graph.test.js</code> (a glide on a clock that moves between reads, the
 offline events held to what they always were, ready's failures, health and assure), and <code>tools/guitar-test.js</code> 6c.
@@ -735,8 +735,8 @@ crest from 15.4 to 12.6 dB), Room, Smash, Glue.</li>
 <p><code>tools/drumbus-test.js</code> holds it to this; the golden scene <code>fx:core.drumbus</code> pins its render.</p>
 <h2 id="half-stack-iso-cab-and-y-cable-corestack-corecab-corebassrig-a-guitar-amp-that-renders"><a class="h-link" href="#half-stack-iso-cab-and-y-cable-corestack-corecab-corebassrig-a-guitar-amp-that-renders">Half Stack, Iso Cab and Y Cable (core.stack, core.cab, core.bassrig): a guitar amp that renders</a></h2>
 <p>A high-gain head into a measured 4x12, as a kernel. The canonical render, the agent's render_and_measure and the
-studio hear the same amp, within the house's -90 dB. (So do the Guitar Studio's amps on the kernel engine, below; its
-graph amps render clean in Node.) The devices
+studio hear the same amp, within the house's -90 dB. (So do the Guitar Studio's amps, below: every one is on the
+kernel engine.) The devices
 are <code>app/src/devices/builtin/stack.js</code>, <code>cab.js</code> and <code>bassrig.js</code>. The DSP they share is <code>amp-lib.js</code>: kernel text,
 not <code>dsp</code> names.</p>
 <ul>
@@ -760,10 +760,14 @@ a driven top through a guitar cab. Presets: Modern, Grind, Clean.</li>
 <li>The cab IRs are kernel data (<code>data: { cabs }</code>, 39 KB). Until they arrive, or on a server without them, every IR
 choice plays the Filter 4x12 at the same level, and the card says so.</li>
 <li><strong>The Guitar Studio's amps on the same engine.</strong> <code>amp-voiced.js</code> generalises Half Stack's chain into voicings
-(<code>app/src/devices/guitar/voicings.js</code>): a circuit's stages in order, its tone stack solved from its netlist, its
-power amp and sag, at 2x or 4x. Each keeps its <code>amp.&lt;id&gt;</code> id and params; its cab and mics are the graph amps' (the
-measured IRs, the designed cabs, the mic network), worked out number for number as before. Sea Glass, Shell Shock
-and Kraken run on it so far; the rest are graph amps until theirs is written. They aren't exported as device files.</li>
+(<code>app/src/devices/guitar/voicings.js</code>): a circuit's stages in order (triodes, or solid-state stages driven into
+their rails), its tone stack solved from its netlist (the TMB, or the British 100-watt's Baxandall with a mid
+rheostat) or an active tone circuit, its power amp and sag, at 2x, 4x or 8x (or none, for a clean line in), and what
+the odd ones need: a crossover's dead zone, a 4-bit DAC, tape wow, an octave divider, a clean blend. Each keeps its
+<code>amp.&lt;id&gt;</code> id and params; its cab and mics are the graph amps' (the measured IRs, the designed cabs, the mic
+network), worked out number for number as before. All 27 run on it: each was fitted, within physical limits, to
+what it sounded like on the graph engine (<code>tools/fixtures/amp-voices.json</code>), which was then retired. They aren't
+exported as device files.</li>
 </ul>
 <h2 id="echo-chamber-corerooms-measured-rooms"><a class="h-link" href="#echo-chamber-corerooms-measured-rooms">Echo Chamber (<code>core.rooms</code>): measured rooms</a></h2>
 <p>A reverb made from recordings of real spaces: six rooms from the Aachen Impulse Response Database (RWTH Aachen

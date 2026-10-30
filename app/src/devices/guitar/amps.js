@@ -1,7 +1,8 @@
 // @ts-check
-// Every amp in the guitar gear as an Overdub effect device, 'amp.<id>' (cat 'amp'). The sound is the gear's own
-// plugAmp (gear/code.js, its amps.js section): the same knobs give the same samples. Each amp has its cab: a measured
-// one (Half Stack's six impulse responses, each with the mic it was recorded with: every guitar amp's default, gear/
+// Every amp in the guitar gear as an Overdub effect device, 'amp.<id>' (cat 'amp'). The sound is a kernel: the amp's
+// circuit (voicings.js) on the voiced-amp engine (devices/builtin/amp-voiced.js), with the gear's knobs, cabs and mics
+// (gear/code.js, its amps.js section: PLUG_AMPS, plugCabNet) worked out in it. Each amp has its cab: a measured one
+// (Half Stack's six impulse responses, each with the mic it was recorded with: every guitar amp's default, gear/
 // code.js PLUG_AMP_IR) or a designed one, with the mic network (plugCabNet): any of the designed cabs, a mic of any
 // type moved across the cone, back from the grille and off axis, and a second mic blended in (phase flip and all). On
 // a measured cab the mics are kept but not heard. With the cab on 'Its own' and one mic where it was voiced, it's the
@@ -10,14 +11,13 @@
 // and its default is the amp's own: a song or rig that never set it plays the amp's default cab. An index an older
 // reader doesn't know is 'own' there.
 import { defineDevice } from '../registry.js';
-import { failure } from '../lifecycle.js';
-import { gear, workletFiles } from './gear/index.js';
+import { gear } from './gear/index.js';
 import { CABS_HASH } from '../builtin/amp-lib.js';
 import { kernel } from '../builtin/lib.js';
 import { AMP_VOICED, AMP_CAB } from '../builtin/amp-voiced.js';
 import { AMP_VOICINGS, AMP_IR_ENERGY } from './voicings.js';
 
-const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_WORKLETS, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_IR_LV, plugCabDefault } = gear;
+const { PLUG_AMPS, PLUG_CABS, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, PLUG_DEFAULT, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_IR_LV, plugCabDefault } = gear;
 export const CAB_IDS = Object.keys(PLUG_CABS);              // 'own' first, the measured six last
 // an amp's default cab (a PLUG_CABS id) and its index (the CAB param's default)
 export const cabDefault = (id) => plugCabDefault(String(id || '').replace(/^amp\./, ''));
@@ -133,53 +133,22 @@ return {
 `);
 }
 
-// ampDevice(id, voicing?): an amp's def (on the kernel engine when it has a voicing, or one is given)
+// ampDevice(id, voicing?): an amp's def, on the kernel engine (its voicing, or the one given)
 export function ampDevice(id, voicing = AMP_VOICINGS[id]) {
-  const A = PLUG_AMPS[id];
-  if (voicing) {
-    const V = voicing;
-    return {
-      id: 'amp.' + id, name: A.name, kind: 'effect', cat: 'amp', amp: id, kindLabel: TONE_LABEL[A.tone] || 'AMP', tone: A.tone, style: A.style,
-      blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic', exportable: false, // (the gear's: not a device file)
-      params: AMP_PARAMS.map((p) => Object.assign({}, p, p.key === 'cab' ? { def: cabDefaultIndex(id) } : null)),
-      // (the measured cabs' bank, whichever cab is its default: any CAB can be a measured one)
-      data: { cabs: CABS_HASH }, dataSays: AMP_CAB_SAYS,
-      look: { amp: id, style: A.style },
-      // (the oversampler's: dsp.oversample2x 23 samples, oversample4x 27.5 (and with the 2x inside it, at 8x), none at
-      // 1x; and a tape's wow, 1.5 x its depth)
-      latency: ((V.os === 1 ? 0 : V.os === 2 ? 23 : 28) + (V.wow ? Math.round(1.5 * V.wow[0] * 48) : 0)) / 48000,
-      tail: 0.25, // (the stadium horn's slap)
-      kernel: ampKernel(id, voicing),
-    };
-  }
-  // (Abyss's octave divider: only the amps with one; plugin.js loads PLUG_WORKLETS as 'clawd-amps', from its file here)
-  const worklets = A.sub ? workletFiles({ 'clawd-amps': PLUG_WORKLETS }, 'amp.' + id) : null;
+  const A = PLUG_AMPS[id], V = voicing;
+  if (!V) throw new Error(`amp.${id}: no voicing (guitar/voicings.js)`);
   return {
     id: 'amp.' + id, name: A.name, kind: 'effect', cat: 'amp', amp: id, kindLabel: TONE_LABEL[A.tone] || 'AMP', tone: A.tone, style: A.style,
-    blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic', // (both ids: kept as they were)
+    blurb: A.blurb, nod: A.nod, by: 'clawd', source: 'clawd-o-matic', exportable: false, // (both ids: kept as they were; the gear's: not a device file)
     params: AMP_PARAMS.map((p) => Object.assign({}, p, p.key === 'cab' ? { def: cabDefaultIndex(id) } : null)),
-    // (an amp on a measured cab by default names the bank: an export waits for it, and the rack says while it loads)
-    ...(isMeasured(plugCabDefault(id)) ? { data: { cabs: CABS_HASH }, dataSays: AMP_CAB_SAYS } : {}),
+    // (the measured cabs' bank, whichever cab is its default: any CAB can be a measured one)
+    data: { cabs: CABS_HASH }, dataSays: AMP_CAB_SAYS,
     look: { amp: id, style: A.style },
-    latency: 256 / 48000, // (the two 2x-oversampled stages: 128 samples each; the instance reports it at its own rate)
-    worklets,
-    build(c, kit) {
-      // An amp with an octave (Abyss) is that amp only with it: no worklet, or an octave that can't be made, is a
-      // 'worklet' failure (the engine stands in, says so and builds it again), never a quiet Abyss without its octave.
-      if (A.sub) {
-        c.__clawdAmpWorklets = kit.loaded('clawd-amps'); // (plugAmp builds the octave only when they're in)
-        if (!c.__clawdAmpWorklets) throw failure('worklet', `${A.name}'s octave (the clawd-amps worklet) didn't load`);
-      }
-      const amp = gear.plugAmp(c);
-      if (A.sub && !amp.octave()) { amp.dispose(); throw failure('worklet', `${A.name}'s octave couldn't be made`); }
-      // (the measured cabs' bank: an amp whose default is one asks for it now; the others when one is picked)
-      if (isMeasured(plugCabDefault(id))) amp.ready();
-      return {
-        input: amp.input, output: amp.output, latency: amp.latency, amp,
-        set(v, x) { amp.set(ampSettings(id, v), x && !x.first ? x.t : undefined); },
-        dispose() { amp.dispose(); },
-      };
-    },
+    // (the oversampler's: dsp.oversample2x 23 samples, oversample4x 27.5 (and with the 2x inside it, at 8x), none at 1x;
+    // and a tape's wow, 1.5 x its depth)
+    latency: ((V.os === 1 ? 0 : V.os === 2 ? 23 : 28) + (V.wow ? Math.round(1.5 * V.wow[0] * 48) : 0)) / 48000,
+    tail: 0.25, // (the stadium horn's slap)
+    kernel: ampKernel(id, voicing),
   };
 }
 

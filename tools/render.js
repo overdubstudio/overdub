@@ -16,7 +16,7 @@
 //   --strict      fail (exit 1) if any device had to be skipped or bypassed (graph devices, missing ones)
 //   --json        one JSON object on stdout: { file, seconds, sha256?, measure?, warnings, skipped }
 //
-// Graph devices (the pedals and amps) can't run outside a browser: an insert that uses one is bypassed and a track
+// Graph devices (the guitar pedals; the amps are kernels) can't run outside a browser: an insert that uses one is bypassed and a track
 // whose instrument is one is skipped, each with a warning on stderr.
 //
 // A song's kernels are code from whoever wrote the song, and here they run in Node, not a worklet. A song file is

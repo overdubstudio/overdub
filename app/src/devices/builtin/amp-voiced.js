@@ -417,7 +417,7 @@ function makeVoiced(sr, dsp, V) {
 }
 `;
 
-// The cab, as the gear's graph amps had it (gear/code.js plugAmp and plugCabNet), in the kernel:
+// The cab, as the gear's graph amps had it (gear/code.js: plugAmp, retired, and plugCabNet), in the kernel:
 //   ampCabWeights(spec, sr, cab)  what a cab's trim weighs it by: 480 points log-spaced from 40 Hz to 16 kHz, the amp's
 //                  spectrum before its cab (spec: half-octave dB, the gear's PLUG_AMP_SPEC) through K-weighting, and the
 //                  amp's own designed cab's energy over them (e0)

@@ -222,7 +222,8 @@ and its code keeps these rules:
   makes 23 linear ramps through the raised cosine's points (`devices/kit.js` `glide`). `pfxGlide` and the kit's
   convolver crossfade work the same way.
 - **What you start, you stop.** Sources go through the kit or `kit.own`, timers through `kit.later`, and everything
-  else through `dispose` (the amps' `plugAmp` stops its wow oscillator and clears its duck timers there).
+  else through `dispose` (the graph amps' `plugAmp`, since retired, stopped its wow oscillator and cleared its duck
+  timers there).
 - **A declared worklet that didn't load fails the build** (`ready` rejects with `'worklet'`), so `k.worklet(...)` is
   never null in a pedal that's playing. Keep the `|| k.G(1)` fallback for pedalRig's own board. The module is asked
   for again on the next build.

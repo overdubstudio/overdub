@@ -1,7 +1,7 @@
 // @ts-check
-// The guitar amps on the kernel engine (devices/builtin/amp-voiced.js): each one's circuit as numbers. An amp here is
-// a kernel device (devices/guitar/amps.js ampDevice); the rest are still the gear's graph amps (plugAmp) until theirs
-// is written. Each voicing is a published circuit's structure and its tone stack's real parts; the free values (stage
+// The guitar amps on the kernel engine (devices/builtin/amp-voiced.js): each one's circuit as numbers. Every amp is
+// here, a kernel device (devices/guitar/amps.js ampDevice); the gear's graph amps (plugAmp) they replaced are retired.
+// Each voicing is a published circuit's structure and its tone stack's real parts; the free values (stage
 // drives, the coupling and Miller corners, the pot's range, the power amp's drive and sag, the transformer's band, the
 // speaker's resonance) were fitted within physical limits to what the amp sounded like on the graph engine
 // (tools/amp-fit.js, against tools/fixtures/amp-voices.json), and nothing else: no EQ that isn't in the circuit. What

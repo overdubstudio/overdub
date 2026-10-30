@@ -320,10 +320,10 @@ When you write a graph device's `build` and `set`:
   ramps through its points live, as Low-Batt Limpet's motor does, and keep any curve behind `isOffline(c)`.
 - Read `c.currentTime` once per move, or use `x.t` (graph.js read it once for that `set`).
 - Start sources through the kit (`kit.lfo`, `kit.constant`, `kit.noiseSource`, or `kit.own(node)` for your own), set
-  timers with `kit.later`, and stop anything else in your `dispose()`. An amp's wow oscillator outlived every amp a
-  swap threw away until `plugAmp`'s `dispose` stopped it.
-- A device that can't be what it says should fail its build: throw, or throw `lifecycle.failure('worklet', ...)` (Abyss
-  without its octave does). Don't pass the signal through quietly.
+  timers with `kit.later`, and stop anything else in your `dispose()`. The graph amps' wow oscillator outlived every
+  amp a swap threw away until their `dispose` stopped it.
+- A device that can't be what it says should fail its build: throw, or throw `lifecycle.failure('worklet', ...)` (a
+  pedal whose worklet didn't load does). Don't pass the signal through quietly.
 
 The checks: `test/unit/kit.test.js` and `test/unit/graph.test.js` (a glide on a clock that moves between reads, the
 offline events held to what they always were, ready's failures, health and assure), and `tools/guitar-test.js` 6c.
@@ -698,8 +698,8 @@ What a record's drum bus does, as one insert on the drum track (the studio has n
 ## Half Stack, Iso Cab and Y Cable (core.stack, core.cab, core.bassrig): a guitar amp that renders
 
 A high-gain head into a measured 4x12, as a kernel. The canonical render, the agent's render_and_measure and the
-studio hear the same amp, within the house's -90 dB. (So do the Guitar Studio's amps on the kernel engine, below; its
-graph amps render clean in Node.) The devices
+studio hear the same amp, within the house's -90 dB. (So do the Guitar Studio's amps, below: every one is on the
+kernel engine.) The devices
 are `app/src/devices/builtin/stack.js`, `cab.js` and `bassrig.js`. The DSP they share is `amp-lib.js`: kernel text,
 not `dsp` names.
 - **Half Stack**:
@@ -720,10 +720,14 @@ not `dsp` names.
 - The cab IRs are kernel data (`data: { cabs }`, 39 KB). Until they arrive, or on a server without them, every IR
   choice plays the Filter 4x12 at the same level, and the card says so.
 - **The Guitar Studio's amps on the same engine.** `amp-voiced.js` generalises Half Stack's chain into voicings
-  (`app/src/devices/guitar/voicings.js`): a circuit's stages in order, its tone stack solved from its netlist, its
-  power amp and sag, at 2x or 4x. Each keeps its `amp.<id>` id and params; its cab and mics are the graph amps' (the
-  measured IRs, the designed cabs, the mic network), worked out number for number as before. Sea Glass, Shell Shock
-  and Kraken run on it so far; the rest are graph amps until theirs is written. They aren't exported as device files.
+  (`app/src/devices/guitar/voicings.js`): a circuit's stages in order (triodes, or solid-state stages driven into
+  their rails), its tone stack solved from its netlist (the TMB, or the British 100-watt's Baxandall with a mid
+  rheostat) or an active tone circuit, its power amp and sag, at 2x, 4x or 8x (or none, for a clean line in), and what
+  the odd ones need: a crossover's dead zone, a 4-bit DAC, tape wow, an octave divider, a clean blend. Each keeps its
+  `amp.<id>` id and params; its cab and mics are the graph amps' (the measured IRs, the designed cabs, the mic
+  network), worked out number for number as before. All 27 run on it: each was fitted, within physical limits, to
+  what it sounded like on the graph engine (`tools/fixtures/amp-voices.json`), which was then retired. They aren't
+  exported as device files.
 
 ## Echo Chamber (`core.rooms`): measured rooms
 

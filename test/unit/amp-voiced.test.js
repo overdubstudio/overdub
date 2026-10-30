@@ -257,13 +257,15 @@ describe("the cab maths are the gear's", () => {
 });
 
 describe('the kernel amps', () => {
-  test('are the ones with a voicing; the rest are still the graph amps', () => {
+  test('are every amp: each has a voicing, a kernel and no graph build, and none is a device file', () => {
     for (const id of Object.keys(gear.PLUG_AMPS)) {
+      assert.ok(AMP_VOICINGS[id], `${id} has a voicing`);
       const d = ampDevice(id);
-      assert.equal(typeof d.kernel === 'string', !!AMP_VOICINGS[id], id);
-      assert.equal(!!d.build, !AMP_VOICINGS[id], id);
-      if (AMP_VOICINGS[id]) assert.equal(d.exportable, false, id);
+      assert.equal(typeof d.kernel, 'string', id);
+      assert.equal(d.build, undefined, id);
+      assert.equal(d.exportable, false, id);
     }
+    assert.equal(gear.plugAmp, undefined, 'the graph amp is retired');
   });
   test('every fitted value is inside the physical limits the fit was given (tools/amp-fit.js freeValues)', async () => {
     const { freeValues } = await import('../../tools/amp-fit.js');

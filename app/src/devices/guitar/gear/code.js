@@ -584,18 +584,17 @@ function pedalRig(c, amp) {
   };
 }
 
-/* ---- what a board costs on this device: renders `secs` of it (a 110 Hz tone in, the amp as it's set if plugAmp is
-   there, the pedals as they're set, on or off) offline and times it, as a percentage of real time on one core. The
-   board UI shows it (pedalboard.js) because 14 heavy pedals on a slow phone can be more than its audio thread manages
-   (measured on an M-series Mac: the fourteen costliest pedals together, about 11%). Resolves null if it can't. */
+/* ---- what a board costs on this device: renders `secs` of it (a 110 Hz tone in, a wire where the amp goes: the amps
+   are kernels now, outside the board; the pedals as they're set, on or off) offline and times it, as a percentage of
+   real time on one core. The board UI shows it (pedalboard.js) because 14 heavy pedals on a slow phone can be more
+   than its audio thread manages (measured on an M-series Mac: the fourteen costliest pedals together, about 11%).
+   Resolves null if it can't. */
 async function pedalLoad(P, secs = 0.25) {
   if (typeof OfflineAudioContext === 'undefined') return null;
   try {
     const sr = 48000, c = new OfflineAudioContext(2, Math.round(sr * secs), sr), o = c.createOscillator(), g = c.createGain();
     o.frequency.value = 110; g.gain.value = 0.2; o.connect(g);
-    let amp = null;
-    try { amp = typeof plugAmp === 'function' ? plugAmp(c) : null; } catch (e) { amp = null; } // (plugin.js, later in the page)
-    if (!amp) { const n = c.createGain(); amp = { input: n, output: n, set() {}, latency: 0 }; }
+    const n = c.createGain(), amp = { input: n, output: n, set() {}, latency: 0 };
     const r = pedalRig(c, amp);
     r.set(P, 120); await r.ready(); r.set(P, 120);
     g.connect(r.input); r.output.connect(c.destination); o.start();
@@ -648,12 +647,13 @@ function plugKnob({ label, min, max, step, value, def, fmt, onInput, name }) {
 
   // ---------------------------------------------------------------- amps.js
 /* ================================================================ Claw'd-o-Matic: the plug-in amps */
-// Concatenated in the app's scope before pedals.js and plugin.js. Each amp is a voicing of one Web Audio circuit
-// (plugAmp): hp -> tight/bright/push -> stage 1 -> inter-stage filters -> stage 2 -> tone stack (bass, mid, treble) ->
-// power stage -> presence -> cab -> level. Settings: { amp, gain, bass, mid, treble, presence, level } (knobs 0-10;
-// a missing presence is 5: it's a high shelf at the amp's pres Hz after the power stage, ±1.6 dB a step, flat at 5).
-// Levels are measured with tools/plug-level.js: every amp at its default knobs comes out
-// about -14 LUFS with the tool's DI strum.
+// Concatenated in the app's scope before pedals.js and plugin.js. (Overdub's) The amps' sound is a kernel now: each
+// amp's circuit is in devices/guitar/voicings.js, on devices/builtin/amp-voiced.js. What's here is what the rest of the
+// gear reads: each amp's name, look and nod, its designed cab (cab), the spectrum it puts into a cab (PLUG_AMP_SPEC),
+// its default cab and the mics (plugCabNet, which the kernel works out number for number). The numbers below were the
+// graph engine's circuit (hp -> tight/bright/push -> stage 1 -> filters -> stage 2 -> tone stack -> power stage ->
+// presence -> cab -> level), retired on 2026-10-29: tools/fixtures/amp-voices.json is what each one sounded like, and
+// the kernel amps were fitted to it. Settings: { amp, gain, bass, mid, treble, presence, level } (knobs 0-10).
 //
 // Per amp (dB unless noted):
 //   name, blurb, style: for the UI (style is a hint for its look: american, british, boutique, modern, tiny, solid, weird)
@@ -673,7 +673,7 @@ function plugKnob({ label, min, max, step, value, def, fmt, onInput, name }) {
 //   s1/s2's 4th value: crossover (a dead zone around zero, like a starved class-B output: the broken radio).
 //   crush: bits, a quantiser after stage 2 (no oversampling, on purpose: the grit is the point).
 //   wow: [ms, Hz], a wobbling delay after stage 2: tape wow (the delay adds ms*1.5 of latency to that amp only).
-//   sub: [dB, lp Hz, lp Q], an octave down (PLUG_WORKLETS' divider) into stage 2 (Abyss; built only for an amp with one).
+//   sub: [dB, lp Hz, lp Q], an octave down (an analog divider) into stage 2 (Abyss).
 const PLUG_AMPS = {
   clean: {
     name: 'Sea Glass', blurb: 'Big glassy clean with headroom for days', style: 'american', nod: 'a 1960s blackface American 2x12 combo with reverb', tone: 'clean',
@@ -860,31 +860,6 @@ const PLUG_AMPS = {
     cab: [35, [70, 1, 1.5], [350, 1, -2], [1400, 1, 1], [4500, 0.9], 6000], trim: -9.3,
   },
 };
-// The amps' AudioWorklets, loaded with the gate's (plugGate in plugin.js), so they're there whenever the gate is.
-// clawd-octave: an analog octave divider (Abyss, sub: [dB, lp Hz, Q]). The guitar, low-passed so the fundamental rules
-// its zero crossings, flips a flip-flop on each rising crossing (with hysteresis): a square an octave down, as loud as
-// the note (an envelope follower), its edges rounded off. It goes into the amp's second stage, so it fuzzes with you.
-const PLUG_WORKLETS = `class ClawdOctave extends AudioWorkletProcessor {
-  constructor() { super(); this.env = 0; this.hi = false; this.flip = 1; this.y = 0; }
-  process(ins, outs) {
-    const o = outs[0][0], i = ins[0] && ins[0][0];
-    if (!o) return true;
-    if (!i) { o.fill(0); return true; }
-    const att = 1 - Math.exp(-1 / (0.002 * sampleRate)), rel = 1 - Math.exp(-1 / (0.15 * sampleRate)), sm = 1 - Math.exp(-2 * Math.PI * 2500 / sampleRate);
-    for (let n = 0; n < o.length; n++) {
-      const x = i[n], a = Math.abs(x);
-      this.env += (a - this.env) * (a > this.env ? att : rel);
-      const th = 0.45 * this.env + 1e-5; // (well clear of the wiggles the harmonics leave)
-      if (!this.hi && x > th) { this.hi = true; this.flip = -this.flip; }
-      else if (this.hi && x < -th) this.hi = false;
-      const g = this.env > 3e-4 ? this.env : (this.env * this.env) / 3e-4;
-      this.y += (this.flip * g - this.y) * sm;
-      o[n] = this.y;
-    }
-    return true;
-  }
-}
-registerProcessor('clawd-octave', ClawdOctave);`;
 
 /* ---- cabs and mics. Two kinds of cab: measured and designed.
    Measured (PLUG_CABS' six with an `ir`): the impulse responses Half Stack plays (devices/builtin/amp-lib.js CAB_IDS:
@@ -1159,7 +1134,7 @@ plugCabNet.resp = (() => {
     return [(nr * dr + ni * di) / dd, (ni * dr - nr * di) / dd];
   };
   const chain = (list, f, sr) => { let r = 1, i = 0; for (const [t, f0, Q, G] of list) { const [a, b] = one(t, f0, Q, G, f, sr); [r, i] = [r * a - i * b, r * b + i * a]; } return [r, i]; };
-  // a cab's six filters as plugAmp sets them: |H|²
+  // a cab's six filters as the graph amps set them (and amp-voiced.js does): |H|²
   const cab = (cb, f, sr) => { const [r, i] = chain([['highpass', cb[0], 0.7, 0], ['peaking', cb[1][0], cb[1][1], cb[1][2]], ['peaking', cb[2][0], cb[2][1], cb[2][2]], ['peaking', cb[3][0], cb[3][1], cb[3][2]], ['lowpass', cb[4][0], cb[4][1], 0], ['lowpass', cb[5], 0.6, 0]], f, sr); return r * r + i * i; };
   return { one, chain, cab };
 })();
@@ -1191,253 +1166,6 @@ function plugIrTrim(id, i, sr) {
   return Math.max(-12, Math.min(12, 10 * Math.log10(e0 / Math.max(e1, 1e-12)) + (PLUG_IR_LV[id] || 0)));
 }
 
-// An amp on any context (the live one, or an offline one for measuring).
-function plugAmp(c) {
-  const dB = (d) => Math.pow(10, d / 20);
-  const G = (v) => { const n = c.createGain(); n.gain.value = v; return n; };
-  const F = (type, f, q, g) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; n.Q.value = q; if (g != null) n.gain.value = g; return n; };
-  const shaper = (os) => { const n = c.createWaveShaper(); n.oversample = os; return n; };
-  // a stage's curve and its slope at 0: DC removed and scaled so f(±1) reaches about ±1
-  const curves = {};
-  const curve = ([k, b, knee, xo]) => {
-    const key = k + ',' + b + ',' + knee + (xo ? ',' + xo : '');
-    if (curves[key]) return curves[key];
-    const sat0 = knee ? (u) => u / Math.pow(1 + Math.pow(Math.abs(u), knee), 1 / knee) : Math.tanh;
-    // crossover: the input sags through a soft dead zone xo wide before it's clipped (a tenth of it still leaks
-    // through, so the slope at 0 isn't 0). Without it, the arithmetic is exactly what it always was.
-    const sat = xo ? (u) => sat0(u - 0.9 * xo * k * Math.tanh(u / (xo * k))) : sat0;
-    const t0 = sat(k * b), norm = Math.max(sat(k * (1 + b)) - t0, t0 - sat(k * (-1 + b)));
-    const N = 4096, out = new Float32Array(N);
-    for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; out[i] = (sat(k * (x + b)) - t0) / norm; }
-    const h = 1e-4, slope = (sat(k * (h + b)) - sat(k * (b - h))) / (2 * h) / norm;
-    return (curves[key] = { out, slope });
-  };
-  // a quantiser's curve: 2^bits steps over ±1
-  const crushes = {};
-  const crushCurve = (bits) => {
-    if (crushes[bits]) return crushes[bits];
-    const L = Math.pow(2, bits - 1), N = 8192, out = new Float32Array(N);
-    for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; out[i] = Math.max(-1, Math.min(1, Math.round(x * L) / L)); }
-    return (crushes[bits] = out);
-  };
-  const PW = curve([1.5, 0.04, 0]);
-  const input = G(1), hp = F('highpass', 70, 0.7), tight = F('lowshelf', 220, 0.7, 0), bright = F('highshelf', 2200, 0.7, 0), push = F('peaking', 800, 0.9, 0);
-  const pre1 = G(1), s1 = shaper('2x'), lp1 = F('lowpass', 6500, 0.6), hp1 = F('highpass', 110, 0.6);
-  const pre2 = G(1), s2 = shaper('2x'), post2 = G(1);
-  const bass = F('lowshelf', 110, 0.7, 0), mid = F('peaking', 700, 0.8, 0), treble = F('highshelf', 2800, 0.7, 0);
-  // the power stage: soft and fed band-limited, so no oversampling (and no more latency); its makeup keeps the level
-  const pl = F('lowpass', 8000, 0.6), pre3 = G(1), s3 = shaper('none'), post3 = G(1); // (pl: what it makes stays under Nyquist)
-  s3.curve = PW.out;
-  const presence = F('highshelf', 3800, 0.7, 0);
-  const cab = [F('highpass', 80, 0.7), F('peaking', 120, 1.1, 3), F('peaking', 420, 1, -2.5), F('peaking', 2300, 1.2, 3), F('lowpass', 5200, 0.9), F('lowpass', 7200, 0.6)];
-  const level = G(1), mute = G(1), output = G(1), hush = G(1); // (mute, hush: the output and the input, for changing amps)
-  const chain = [input, hush, hp, tight, bright, push, pre1, s1, lp1, hp1, pre2, s2, post2, bass, mid, treble, pl, pre3, s3, post3, presence, ...cab, level, mute, output];
-  for (let i = 0; i + 1 < chain.length; i++) chain[i].connect(chain[i + 1]);
-  // The measured cab, beside the designed one: presence -> the IR (a convolver that crossfades a new IR in, the pedals'
-  // kit's) -> its trim (measured) -> the level, fed only while it's used; the designed cab's way out (the wire and the
-  // mics, below) goes through `designed`. One of the two is at 1 (or the trim) and the other at exactly 0, and they
-  // crossfade over 30 ms (a raised cosine) when a measured cab comes or goes, so nothing ducks for it. At a designed cab
-  // `designed` is 1, which changes nothing.
-  const kitOwn = { src: [], timers: [], fns: [], wk: [] }, conv = PFX.kit(c, kitOwn).convolver(null), irOut = G(0), designed = G(1);
-  conv.normalize = false; // (the bank's taps are its levels: Half Stack plays them as they are)
-  conv.connect(irOut); irOut.connect(level); designed.connect(level);
-  let irFed = false, irOffT = 0, irCur = -1, irWait = null, irFailed = false;
-  const irFeed = (on) => {
-    clearTimeout(irOffT);
-    if (dead) return;
-    if (on && !irFed) { presence.connect(conv); irFed = true; }
-    else if (!on && irFed) irOffT = setTimeout(() => { if (irFed && !dead) { try { presence.disconnect(conv); } catch (e) { /* gone */ } irFed = false; } }, realtime ? 400 : 0);
-  };
-  // the bank's IRs as AudioBuffers at this context's rate (made once per context), or null while it isn't in
-  const irBufs = () => {
-    if (!PLUG_IRS) return null;
-    if (c.__plugIrs) return c.__plugIrs;
-    const t = PLUG_IRS.taps(c.sampleRate);
-    if (!t) return null;
-    return (c.__plugIrs = t.map((x) => { if (!x) return null; const b = c.createBuffer(1, x.length, c.sampleRate); b.copyToChannel(x, 0); return b; }));
-  };
-  // the bank, asked for once (again only by ready(), if it wasn't here: a knob turned doesn't ask the server again); when
-  // it lands, the amp moves onto its measured cab (live: crossfaded; offline: at once)
-  const irLoad = (retry) => {
-    if (!PLUG_IRS) return Promise.resolve(false);
-    if (retry && irFailed) { irWait = null; irFailed = false; }
-    if (!irWait) {
-      irWait = Promise.resolve(PLUG_IRS.load()).then((ok) => {
-        if (!ok || !irBufs()) { irFailed = true; return false; }
-        if (!dead && last && !pending) apply(last, !realtime);
-        return true;
-      }, () => { irFailed = true; return false; });
-    }
-    return irWait;
-  };
-  // the side route for the odd ones (crush, wow): post2 -> quantiser -> wobbling delay -> side -> the tone stack, beside
-  // the straight wire. An amp that uses it turns the wire (via) off and the side on; the rest keep side at exactly 0, so
-  // what they sum into the tone stack is their own signal plus zero, bit for bit.
-  const via = G(1), qz = shaper('none'), wow = c.createDelay(0.05), wowLfo = c.createOscillator(), wowDepth = G(0), side = G(0);
-  post2.disconnect(bass); post2.connect(via); via.connect(bass);
-  post2.connect(qz); qz.connect(wow); wow.connect(side); side.connect(bass);
-  wow.delayTime.value = 0; wowLfo.connect(wowDepth); wowDepth.connect(wow.delayTime); wowLfo.start();
-  // Abyss's octave (PLUG_WORKLETS): hp -> two low-passes -> the divider -> a resonant low-pass -> its level -> stage 2.
-  // Made the first time an amp asks for it, when the worklet's there (an amp on a context without the gate's module:
-  // no octave, the rest as ever); it's never made for the others, so their path is untouched.
-  let sub = null;
-  const subOn = () => {
-    if (sub || !c.__clawdAmpWorklets) return sub;
-    try {
-      const l1 = F('lowpass', 180, -3), l2 = F('lowpass', 180, -3), f = F('lowpass', 700, 6), g = G(0);
-      const w = new AudioWorkletNode(c, 'clawd-octave', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: 'explicit' });
-      hp.connect(l1); l1.connect(l2); l2.connect(w); w.connect(f); f.connect(g); g.connect(s2);
-      sub = { f, g, w };
-    } catch (e) { sub = null; }
-    return sub;
-  };
-  // A bass amp's clean blend (blend: [Hz, dB]): hp -> two low-passes -> its level -> the tone stack, beside stage 2's
-  // way out. Made the first time an amp asks for it and at 0 for the others after, so theirs is untouched.
-  let cln = null;
-  const blendOn = () => {
-    if (cln) return cln;
-    const a = F('lowpass', 220, -3), b = F('lowpass', 220, -3), g = G(0);
-    hp.connect(a); a.connect(b); b.connect(g); g.connect(bass);
-    return (cln = { a, b, g });
-  };
-  // the cab's other way out (plugCabNet): the straight wire (the amp's own cab, the default mic: exactly as ever) or two
-  // mics, each seven filters and four room taps, blended and trimmed. The wire and micOut crossfade; the unused one sits
-  // at exactly 0, and the wire's 1 changes nothing.
-  const wire = G(1), micOut = G(0), mics = [];
-  cab[5].disconnect(level); cab[5].connect(wire); wire.connect(designed); micOut.connect(designed);
-  for (let m = 0; m < 2; m++) {
-    const align = c.createDelay(0.01), f = [F('lowshelf', 200, 0, 0), F('peaking', 400, 0.9, 0), F('peaking', 4500, 1.2, 0), F('highshelf', 2500, 0, 0), F('highshelf', 9000, 0, 0), F('highpass', 0, 0), F('lowpass', c.sampleRate / 2, 0)];
-    const sum = G(1), mix = G(0), taps = [];
-    align.connect(f[0]); // (fed from the cab only while it's used: feed, below)
-    for (let i = 0; i + 1 < f.length; i++) f[i].connect(f[i + 1]);
-    f[6].connect(sum);
-    for (let i = 0; i < 4; i++) { const d = c.createDelay(0.2), g = G(0); f[6].connect(d); d.connect(g); g.connect(sum); taps.push([d, g]); }
-    sum.connect(mix); mix.connect(micOut);
-    mics.push({ align, f, taps, mix, fed: false });
-  }
-  // a mic network runs only while it's used (a live one keeps going a moment after, while its level fades)
-  const feed = (M, on) => {
-    clearTimeout(M.off);
-    if (dead) return;
-    if (on && !M.fed) { cab[5].connect(M.align); M.fed = true; }
-    else if (!on && M.fed) M.off = setTimeout(() => { if (M.fed && !M.want && !dead) { cab[5].disconnect(M.align); M.fed = false; } }, realtime ? 400 : 0);
-    M.want = on;
-  };
-  // A new amp (live): duck the input and the output, and once it's quiet change the curves and jump every setting, then
-  // fade back in (knob moves in the meantime just update what it will jump to). Knob moves on the same amp glide.
-  let cur = null, curCab = null, last = null, pending = false, duckT = 0, dead = false;
-  const realtime = typeof OfflineAudioContext === 'undefined' || !(c instanceof OfflineAudioContext);
-  // at (optional): the audio time the change lands at, a little ahead (pedalRig's set: scenes.js puts it on a bar line)
-  function set(p, at) {
-    last = p;
-    const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', cb = plays(id, p);
-    if (pending) return;
-    // (a new designed cab ducks too: its filters jump. A measured cab coming or going doesn't: apply crossfades it)
-    if (cur != null && (id !== cur || (cb !== curCab && cb !== 'ir' && curCab !== 'ir')) && realtime) {
-      const t = Math.max(c.currentTime, at || 0);
-      pending = true;
-      for (const m of [mute, hush]) { m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(m.gain.value, t); m.gain.linearRampToValueAtTime(0, t + 0.008); }
-      // the curves jump once the duck is down by the audio clock (a starved audio thread, or a duck scheduled ahead,
-      // mustn't have them jump under a live signal); back in from 30 ms after it began (or as soon as it can). A
-      // scheduled one waits 40 ms, so the main thread has room to be late and it still comes back on time.
-      const go = () => {
-        duckT = 0;
-        if (dead) return;
-        if (c.currentTime < t + 0.012 && c.state === 'running') { duckT = setTimeout(go, 4); return; }
-        pending = false; apply(last, true);
-        const u = Math.max(c.currentTime, t + (at ? 0.04 : 0.03)); // (the stages' filters have drained by now: the new amp starts from silence)
-        for (const m of [mute, hush]) { m.gain.cancelScheduledValues(c.currentTime); m.gain.setValueAtTime(0, u + 0.005); m.gain.linearRampToValueAtTime(1, u + 0.035); }
-      };
-      duckT = setTimeout(go, Math.max(30, (t - c.currentTime) * 1000 + 14));
-      return;
-    }
-    apply(p, cur == null || id !== cur || (cb !== curCab && cb !== 'ir' && curCab !== 'ir'), at);
-  }
-  // what the cab plays for amp id at p: 'ir' (a measured cab, with the bank in), else the designed cab's PLUG_CABS id
-  // (an amp on a measured cab without the bank: 'own', what it plays meanwhile)
-  function plays(id, p) {
-    const S = plugCabClean(p, id), cb = S.cab || plugCabDefault(id), C = PLUG_CABS[cb];
-    if (C && C.ir != null) { const b = irBufs(); return b && b[C.ir] ? 'ir' : 'own'; }
-    return cb;
-  }
-  function apply(p, jump, at) {
-    const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', A = PLUG_AMPS[id], t = jump ? c.currentTime : Math.max(c.currentTime, at || 0);
-    const to = (param, v) => {
-      if (!Number.isFinite(v)) return;
-      if (jump) { param.cancelScheduledValues(t); param.setValueAtTime(v, t); } else param.setTargetAtTime(v, t, 0.02);
-    };
-    if (id !== cur) {
-      s1.curve = curve(A.s1).out; s2.curve = curve(A.s2).out; cur = id;
-      qz.curve = A.crush ? crushCurve(A.crush) : null;
-    }
-    const odd = !!(A.crush || A.wow), w = A.wow || [0, 1];
-    to(via.gain, odd ? 0 : 1); to(side.gain, odd ? 1 : 0);
-    to(wow.delayTime, (w[0] * 1.5) / 1000); to(wowDepth.gain, w[0] / 1000); to(wowLfo.frequency, w[1]);
-    const k = (v, d) => (Number.isFinite(+v) ? Math.max(0, Math.min(10, +v)) : d) - 5;
-    const g = k(p.gain, 6) + 5, e = A.eq[3];
-    to(hp.frequency, A.hp); to(tight.frequency, A.tight[0]); to(tight.gain, A.tight[1]); to(bright.gain, A.bright);
-    to(push.frequency, A.push[0]); to(push.gain, A.push[1]);
-    to(pre1.gain, dB(A.d1[0] + A.d1[1] * g));
-    to(lp1.frequency, A.lp1); to(hp1.frequency, A.hp1);
-    const pr2 = dB(A.d2);
-    to(pre2.gain, pr2); to(post2.gain, A.d2 <= -12 ? 1 / (curve(A.s2).slope * pr2) : 1);
-    to(bass.frequency, A.eq[0][0]); to(bass.gain, A.eq[0][1] + k(p.bass, 5) * e);
-    to(mid.frequency, A.eq[1][0]); to(mid.Q, A.eq[1][1]); to(mid.gain, A.eq[1][2] + k(p.mid, 5) * e);
-    to(treble.frequency, A.eq[2][0]); to(treble.gain, A.eq[2][1] + k(p.treble, 5) * e);
-    to(pre3.gain, dB(A.pw)); to(post3.gain, 1 / (PW.slope * dB(A.pw)));
-    if (A.sub && subOn()) { to(sub.g.gain, dB(A.sub[0])); to(sub.f.frequency, A.sub[1]); to(sub.f.Q, A.sub[2]); } else if (sub) to(sub.g.gain, 0);
-    if (A.blend) { blendOn(); to(cln.g.gain, dB(A.blend[1])); to(cln.a.frequency, A.blend[0]); to(cln.b.frequency, A.blend[0]); } else if (cln) to(cln.g.gain, 0);
-    to(presence.frequency, A.pres); to(presence.gain, k(p.presence, 5) * 1.6);
-    const N = plugCabNet(id, p, c.sampleRate), cb = N.custom ? N.cab : A.cab;
-    // a measured cab plays once the bank is in (asked for here); till then the amp's own designed cab, the wire
-    const bufs = N.ir != null ? irBufs() : null, ir = !!(bufs && bufs[N.ir] && N.trim != null);
-    if (N.ir != null && !bufs) irLoad();
-    curCab = plays(id, p);
-    if (ir && irCur !== N.ir) { conv.buffer = bufs[N.ir]; irCur = N.ir; }
-    irFeed(ir);
-    const xf = (param, v) => { if (jump) { param.cancelScheduledValues(t); param.setValueAtTime(v, t); } else pfxGlide(c, param, v, 0.03, t); };
-    xf(designed.gain, ir ? 0 : 1); xf(irOut.gain, ir ? dB(N.trim) : 0);
-    to(wire.gain, N.custom ? 0 : 1); to(micOut.gain, N.custom ? dB(N.trim) : 0);
-    mics.forEach((M, m) => feed(M, !!(N.custom && N.mics[m])));
-    if (N.custom) {
-      mics.forEach((M, m) => {
-        const X = N.mics[m];
-        to(M.mix.gain, X ? X.gain : 0);
-        if (!X) return;
-        to(M.align.delayTime, X.delay);
-        X.f.forEach(([, hz, q, g], i) => { to(M.f[i].frequency, hz); to(M.f[i].Q, q); to(M.f[i].gain, g); });
-        X.taps.forEach(([t, g], i) => { to(M.taps[i][0].delayTime, t); to(M.taps[i][1].gain, g); });
-      });
-    }
-    to(cab[0].frequency, cb[0]);
-    for (let i = 1; i <= 3; i++) { to(cab[i].frequency, cb[i][0]); to(cab[i].Q, cb[i][1]); to(cab[i].gain, cb[i][2]); }
-    to(cab[4].frequency, cb[4][0]); to(cab[4].Q, cb[4][1]); to(cab[5].frequency, cb[5]);
-    to(level.gain, dB(A.trim + k(p.level, 6) * 3 - 3));
-  }
-  // latency: what the two oversampled stages add (s), measured: 128 samples each at 2x (4x would be 192 each, and
-  // measures the same through the cab: tools/plug-level.js)
-  // unplugged: everything it started stops (the wow's oscillator, the octave's worklet: pedals.js pfxEnd) and its timers
-  // (a duck on its way, the mics' feeds) are cleared. Idempotent.
-  const dispose = () => {
-    if (dead) return;
-    dead = true;
-    clearTimeout(duckT); duckT = 0;
-    for (const M of mics) clearTimeout(M.off);
-    clearTimeout(irOffT);
-    for (const x of kitOwn.timers) clearTimeout(x);
-    try { wowLfo.stop(); } catch (e) { /* stopped */ }
-    try { wowLfo.disconnect(); } catch (e) { /* gone */ }
-    if (sub && sub.w && typeof pfxEnd === 'function') pfxEnd(sub.w);
-  };
-  // octave(): make the octave now (an amp with one: Abyss), true if it's there. Its build asks before it plays, so an
-  // octave that can't be made is the device failing to build, not a quiet amp without it (devices/guitar/amps.js).
-  // ready(): a promise that's resolved once the measured cabs' bank is in or known not to be here (an offline render
-  // awaits it after set(), so a measured cab is in it from the first sample: pedalRig's ready() waits for it too).
-  // playing(): what the cab plays now ('ir' or a designed cab's id).
-  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, ready: () => irLoad(true).then(() => {}), playing: () => curCab,
-    net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
-}
-plugAmp.amps = PLUG_AMPS; // (tools/plug-level.js)
 
 
   // ---------------------------------------------------------------- pedals/00-classic.js
@@ -7183,7 +6911,7 @@ presetBank({ id: 'bass', name: 'Low End Theory', blurb: 'For a bass on the input
     PFX, PLUG_GATE, PFX_ENV, PFX_END, DELAY_NOTES, PEDAL_CATS, PEDAL_RANK, PEDAL_DEFS, PEDAL_LIST, pedalKnob, pfxGlide,
     boardClean, boardFromFx, boardDefault, boardEntry,
     // the amps, cabs and mics (amps.js)
-    PLUG_AMPS, PLUG_WORKLETS, PLUG_CABS, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_AMP_IR, PLUG_IR_LV, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugAmp, plugCabNet, plugCabClean, plugCabDefault,
+    PLUG_AMPS, PLUG_CABS, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_AMP_IR, PLUG_IR_LV, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugCabNet, plugCabClean, plugCabDefault,
     // the presets (presets.js, presets/*.js)
     PLUG_PRESETS, PRESET_BANKS, PRESET_KNOBS, presetResolve, presetBanks, PLUG_DEFAULT,
   };
@@ -7200,7 +6928,6 @@ export const WORKLETS = {
   'bitreef-crush': new URL('./worklets/bitreef-crush.js', import.meta.url).href,
   'chewedcable-dsp': new URL('./worklets/chewedcable-dsp.js', import.meta.url).href,
   'clamshut-gate': new URL('./worklets/clamshut-gate.js', import.meta.url).href,
-  'clawd-amps': new URL('./worklets/clawd-amps.js', import.meta.url).href,
   'clawd-gate': new URL('./worklets/clawd-gate.js', import.meta.url).href,
   'clonecrab-shift': new URL('./worklets/clonecrab-shift.js', import.meta.url).href,
   'crabpeggio-arp': new URL('./worklets/crabpeggio-arp.js', import.meta.url).href,

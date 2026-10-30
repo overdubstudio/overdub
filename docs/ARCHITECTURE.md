@@ -939,8 +939,8 @@ Timing rules (`engine/engine.js` header; checked in `tools/engine-test.js`):
 worklet's own `KernelCore` (`kernel/worklet.js`: voices, stealing, the note queue, smoothing, the transport) in
 128-frame blocks at 48 kHz, and mirrors the strip in float32: fader, balance pan, track-order sum, master inserts,
 the soft clip's curve interpolated as Chrome does. Same song JSON, same samples; a render's identity is the SHA-256
-of its float samples (channel 0 then 1, Float32 LE). Graph devices (the pedals, and the amps not yet on the kernel
-engine) can't run there: their inserts are bypassed and their tracks skipped, with a warning (`--strict` fails instead).
+of its float samples (channel 0 then 1, Float32 LE). Graph devices (the guitar pedals; every amp is a kernel) can't
+run there: their inserts are bypassed and their tracks skipped, with a warning (`--strict` fails instead).
 
 **Browser renders and playback are the preview**, measured to agree with the canonical render within −90 dBFS for
 kernels (`tools/golden-test.js`; most scenes come out bit-identical, the rest differ where Chromium's and Node's V8

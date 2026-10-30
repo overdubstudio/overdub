@@ -1,7 +1,9 @@
 <!-- Written for Claw'd-o-Matic, where the guitar gear began, and kept here with the code it documents (the developer's map of the Guitar Studio).
      In Overdub that code is ../code.js and ../looks.js, each one function scope whose sections keep these file names;
      names of that app's other files (app.js, plugin.js, web/, its storage keys) are its history, not Overdub's.
-     Overdub's device contract is docs/DEVICES.md. -->
+     Overdub's device contract is docs/DEVICES.md. In Overdub the amps' sound is a kernel (devices/guitar/voicings.js on
+     devices/builtin/amp-voiced.js): plugAmp, the Web Audio amp below, and its worklet (PLUG_WORKLETS) were retired on
+     2026-10-29; PLUG_AMPS, the cabs and mics (plugCabNet) are still read. -->
 # Live guitar
 
 Claw'd-o-Matic can take a real guitar (a DI into an audio interface) and play it with the synthesized band: through

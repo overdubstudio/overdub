@@ -37,16 +37,13 @@ describe('the measured cabs', () => {
         p = d.params.find((x) => x.key === 'cab');
       assert.equal(CAB_IDS[p.def], cab, id);
       assert.equal(cabDefaultIndex('amp.' + id), p.def, id);
-      // (a kernel amp names the bank whatever its default: any CAB can be a measured one)
-      if (typeof d.kernel === 'string')
-        assert.deepEqual(Object.values(d.data), [Object.values(def('recto').data)[0]], `${id} names the bank`);
+      // (every amp is a kernel, and names the bank whatever its default: any CAB can be a measured one)
+      assert.deepEqual(Object.values(d.data), [Object.values(def('recto').data)[0]], `${id} names the bank`);
       if (OWN.includes(id)) {
         assert.equal(cab, 'own', id);
-        if (typeof d.kernel !== 'string') assert.equal(d.data, undefined, `${id} names no bank`);
       } else {
         assert.ok(isMeasured(cab), `${id} on ${cab}`);
         assert.equal(gear.PLUG_AMP_IR[id], cab, id);
-        assert.deepEqual(Object.values(d.data), [Object.values(def('recto').data)[0]], `${id} names the bank`);
         assert.equal(d.dataSays, AMP_CAB_SAYS);
       }
     }

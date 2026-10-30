@@ -440,9 +440,9 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
   t.ok(sv.none && sv.ownIdx && sv.back && sv.dflt && sv.clean && sv.older, `a saved rig without a cab plays the amp's default (measured); 'own' saved is CAB 0 and comes back as 'own' (designed); a cab id from later is dropped, the amp's default`);
 
 
-  // 4d, in Chromium: the kernel's cab and mics against the graph amps' own nodes (plugAmp's, as its apply() sets them
-  // from plugCabNet: the designed cab's six filters, each mic's align delay, seven filters and four room taps, the
-  // measured IR in a ConvolverNode), on pink noise
+  // 4d, in Chromium: the kernel's cab and mics against the graph amps' own nodes (as the retired plugAmp's apply() set
+  // them from plugCabNet: the designed cab's six filters, each mic's align delay, seven filters and four room taps,
+  // the measured IR in a ConvolverNode), on pink noise
   const kcab = await page.evaluate(async () => {
     const { G, R, TS, SR } = window.__gt;
     const A = await import('/app/src/devices/guitar/amps.js'), AV = await import('/app/src/devices/builtin/amp-voiced.js');

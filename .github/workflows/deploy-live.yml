@@ -78,7 +78,7 @@ jobs:
           echo "### End-to-end suite on $sha ($(hostname -s))" >> "$GITHUB_STEP_SUMMARY"
 
       # Node from mise.toml: the runner's own PATH is the system's, so nothing on the machine is relied on
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install_args: node
 
@@ -103,7 +103,7 @@ jobs:
 
       - name: Keep the screenshots and logs of a failed run
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-out
           path: e2e-out
@@ -168,7 +168,7 @@ jobs:
           persist-credentials: false
 
       # node only: nothing the deploy doesn't run goes near the job that holds the AWS role
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           install_args: node
 

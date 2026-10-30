@@ -1160,29 +1160,40 @@ const boot = async (opts = {}) => {
   await step('the Band level', async () => {
     // a band track's meter while the song plays, at 0 dB and at the Band's -12; the keys guitar's while it plays alone
     const ids = await E(() => { const o = window.overdub, g = o.jam.guitars(), keep = [g.keys?.id, g.audio?.id]; const band = o.store.get().tracks.filter((t) => !keep.includes(t.id) && t.clips.length && !t.mute); return { band: band.map((t) => t.id), keys: g.keys.id }; });
-    const peakWhile = (arg) => E(async ([kind, id, keys]) => {
-      // (every meter reading, as the engine makes them: polling the latest one every 30 ms skipped some, and with them
-      // a pluck's peak, on a slower machine)
-      const o = window.overdub, e = o.engine; let pk = -120;
-      const off = e.on('meters', (ms) => { const m = ms.tracks[id]; if (m && m.peak > pk) pk = m.peak; });
-      if (kind === 'band') { e.seek(0); await e.play(0); } else e.audition(keys, 52, 0.9, 2);
-      await new Promise((r) => setTimeout(r, 1400));
-      off();
+    // A track's level while it plays, as its meter hears it (the strip's meter branch, after its fader and the Band's
+    // gain), but every sample of it: a recorder on that branch for the whole window, read as the level over it (its
+    // energy, dBFS) and its peak. The band: its first 1.4 s; the guitar: one pluck, a beat long, and its ring, all of
+    // it inside 2.4 s, so when it starts doesn't move what's heard. (Reading the meters' last 40 ms each frame missed a
+    // pluck's peak on a loaded machine: 1.4-1.8 dB with nothing changed.)
+    const levelWhile = (arg) => E(async ([kind, id, keys]) => {
+      const o = window.overdub, e = o.engine, c = e.masterTap.context;
+      // (the input recorder's own processor, ew-cap: the pages' policy refuses a data: or blob: worklet)
+      await c.audioWorklet.addModule('/app/src/input/cap-worklet.js').catch(() => {});
+      const s = e.chainTaps(id).strip, blocks = [];
+      const rec = new AudioWorkletNode(c, 'ew-cap', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit', processorOptions: { channels: 1 } });
+      rec.port.onmessage = (m) => blocks.push(m.data.d[0]);
+      s.msplit.connect(rec, 0);
+      if (kind === 'band') { e.seek(0); await e.play(0); } else e.audition(keys, 52, 0.9, 1);
+      await new Promise((r) => setTimeout(r, kind === 'band' ? 1400 : 2400));
+      rec.port.postMessage('off');
       if (e.playing) e.stop(); await new Promise((r) => setTimeout(r, 400));
-      return Math.round(pk * 10) / 10;
+      try { s.msplit.disconnect(rec); } catch { /* the strip was renewed */ }
+      let sq = 0, n = 0, pk = 0;
+      for (const b of blocks) for (let i = 0; i < b.length; i++) { const v = b[i]; sq += v * v; n++; if (Math.abs(v) > pk) pk = Math.abs(v); }
+      const db = (x) => (x > 1e-6 ? Math.round(200 * Math.log10(x)) / 10 : -120);
+      return { lvl: db(Math.sqrt(sq / Math.max(1, n))), peak: db(pk), secs: Math.round((n / c.sampleRate) * 10) / 10 };
     }, arg);
     const loud = await E((ids) => ids[0], ids.band);
-    // the guitar's level is one pluck read off the meters, and a slow page can read past its peak: the loudest of three
-    // plucks each side (one reading each way moved 1.4-1.8 dB on a loaded machine with nothing changed)
-    const pluckPeak = async () => { let pk = -120; for (let i = 0; i < 3; i++) pk = Math.max(pk, await peakWhile(['keys', ids.keys, ids.keys])); return pk; };
-    const b0 = await peakWhile(['band', loud]), g0 = await pluckPeak();
+    const b0 = await levelWhile(['band', loud]), g0 = await levelWhile(['keys', ids.keys, ids.keys]);
     const song0 = await E(() => ({ json: JSON.stringify(window.overdub.store.get()), h: window.overdub.store.history.length }));
     // the fader in the room, as a hand moves it
     await E(() => { const r = document.querySelector('.jm-band'); r.value = '-12'; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); });
     await sleep(300);
-    const b1 = await peakWhile(['band', loud]), g1 = await pluckPeak();
+    const b1 = await levelWhile(['band', loud]), g1 = await levelWhile(['keys', ids.keys, ids.keys]);
     const lv = await E(() => window.overdub.engine.bandLevel);
-    T.ok(lv.db === -12 && Math.abs(b0 - b1 - 12) <= 1.5 && Math.abs(g0 - g1) <= 1 && lv.keep.includes(ids.keys), `the Band fader turns the band down and leaves the guitars as they were, on the live meters: a band track ${b0} → ${b1} dBFS at −12 dB, the keys guitar ${g0} → ${g1}`);
+    const heard = [b0, b1, g0, g1].every((x) => x.secs >= 1.2 && x.lvl > -80);
+    T.ok(heard && lv.db === -12 && Math.abs(b0.lvl - b1.lvl - 12) <= 1 && Math.abs(g0.lvl - g1.lvl) <= 0.5 && lv.keep.includes(ids.keys),
+      `the Band fader turns the band down and leaves the guitars as they were, on the meter's branch, every sample: a band track ${b0.lvl} → ${b1.lvl} dBFS at −12 dB (peaks ${b0.peak} → ${b1.peak}), the keys guitar's pluck ${g0.lvl} → ${g1.lvl} (peaks ${g0.peak} → ${g1.peak})`);
     const shown = await E(() => ({ flag: document.querySelector('.jm-bandflag').hidden ? '' : document.querySelector('.jm-bandflag').textContent, val: document.querySelector('.jm-band-val').textContent, down: document.querySelector('.jm-band-field').classList.contains('jm-down'), note: document.querySelector('.jm-bandnote').textContent }));
     const jam = await E(() => window.overdub.tools.run('get_jam', { tips: false }, { by: 'mcp:test' }));
     T.ok(/^Band−12 dB$/.test(shown.flag) && shown.val === '−12 dB' && shown.down && /^The band is 12 dB down in the room/.test(shown.note) && /^−12 dB \(practice only/.test(jam.room.band), `the room shows it plainly: "Band −12 dB" at the top of the room, the fader in the warning ink ("${shown.note.slice(0, 50)}…"), and get_jam says so`);

@@ -269,7 +269,7 @@ export function mount(R) {
     const nameOf = (d) => R.getDevice(d)?.name || '';
     const amp = rg?.amp ? nameOf(rg.amp.device) : '';
     let cab = '';
-    try { const d = R.getDevice(rg.amp.device), p = d?.params?.find((x) => x.key === 'cab'), v = Math.round(rg.amp.params?.cab ?? p?.def ?? -1); cab = p?.opts?.[v] || ''; if (/^(own|none|the amp’s own)/i.test(cab)) cab = ''; } catch { cab = ''; }
+    try { const d = R.getDevice(rg.amp.device), p = d?.params?.find((x) => x.key === 'cab'), v = Math.round(rg.amp.params?.cab ?? p?.def ?? -1); cab = p?.opts?.[v] || ''; if (/^(its own|own|none|the amp’s own)/i.test(cab)) cab = ''; } catch { cab = ''; }
     const pedals = (rg?.board || []).filter((s) => s.on && (rg.amp ? s.slot < rg.amp.slot : true)).map((s) => { const d = R.getDevice(s.device); const k = String(d?.kindLabel || '').toLowerCase(); return k ? `a ${k}` : d?.name || ''; });
     const st = roomOf(store.get())?.stack;
     return { stack: st?.name ? (/^the /i.test(st.name) ? st.name[0].toLowerCase() + st.name.slice(1) : st.name) : 'your stack', amp, cab, pedals };

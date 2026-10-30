@@ -9,7 +9,7 @@
 // tools/guitar-test.js checks the two agree): change both together.
 /* eslint-disable */
 // (the live rules, Overdub's: no value curve on a live context, one read of the clock: devices/kit.js, docs/DEVICES.md)
-import { isOffline as pfxOffline, cosineRamp as pfxRamp, LEAD as PFX_LEAD } from '../../kit.js';
+import { isOffline as pfxOffline, cosineRamp as pfxRamp, LEAD as PFX_LEAD, softReach as pfxSoftReach } from '../../kit.js';
 
 export function evaluate(env = {}) {
   // ---- what the code expects from the page it was written for, injected
@@ -20,6 +20,10 @@ export function evaluate(env = {}) {
   if (env.bind) env.bind({ song: (s) => { song = s; }, ctx: (c) => { ctx = c; } });
   // (plugin.js: the default amp settings, which presets.js reads)
   const PLUG_DEFAULT = { amp: 'punk', gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 };
+  // (Overdub's) the measured cabs' bank, Half Stack's, shared (gear/index.js): { load() (a promise, true once it's in),
+  // native() ({ sr, taps } at the bank's rate, or null), taps(sr) (Float32Arrays at sr, or null), state() }; or none:
+  // every amp plays its designed cab
+  const PLUG_IRS = env.CABS || null;
 
   // ---------------------------------------------------------------- pedals.js
 /* ================================================================ Claw'd-o-Matic: the pedal platform (plug in) */
@@ -149,17 +153,30 @@ const PFX = (() => {
     const G = (v = 1) => { const n = c.createGain(); n.gain.value = v; return n; };
     const F = (type, f, q, g) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q != null) n.Q.value = q; if (g != null) n.gain.value = g; return n; };
     const chain = (...ns) => { for (let i = 0; i + 1 < ns.length; i++) ns[i].connect(ns[i + 1]); return ns[ns.length - 1]; };
-    // a WaveShaper from fn(x) over [-1, 1]
-    const curve = (fn, over = '2x', N = 4096) => {
-      const n = c.createWaveShaper(), cv = new Float32Array(N);
-      for (let i = 0; i < N; i++) cv[i] = fn((i / (N - 1)) * 2 - 1);
-      n.curve = cv; n.oversample = over; return n;
+    // A WaveShaper from fn(x) over [-1, 1], which clamps its input there. reach R > 1 (or 'soft': as far as fn takes to
+    // flatten, devices/kit.js softReach) draws fn over [-R, R] behind a 1/R gain, with as many more points: the same
+    // fn for the signal, the clamp out at ±R. (Overdub's kit, devices/kit.js, is the one that plays: the same rule.)
+    const curve = (fn, over = '2x', N = 4096, reach = 1) => {
+      const R = reach === 'soft' ? pfxSoftReach(fn) : Math.max(1, reach);
+      const n = c.createWaveShaper();
+      if (R === 1) {
+        const cv = new Float32Array(N);
+        for (let i = 0; i < N; i++) cv[i] = fn((i / (N - 1)) * 2 - 1);
+        n.curve = cv; n.oversample = over; return n;
+      }
+      const M = 2 * Math.ceil(((N - 1) * R) / 2) + 1, cv = new Float32Array(M);
+      for (let i = 0; i < M; i++) cv[i] = fn(R * ((i / (M - 1)) * 2 - 1));
+      n.curve = cv; n.oversample = over;
+      const g = G(1 / R);
+      g.connect(n); g.connect = (...a) => n.connect(...a); g.disconnect = (...a) => n.disconnect(...a);
+      return g;
     };
-    // tanh at k with a bias b (asymmetry: even harmonics), normalised to ±1 and centred (no DC at rest).
+    // tanh at k with a bias b (asymmetry: even harmonics), centred (no DC at rest), ±1 in is ±1 out on its stronger
+    // side, and drawn out as far as it takes to flatten (reach 'soft'), so a small k stays soft however hard it's hit.
     // (2x oversampling: 128 samples of latency to 4x's 192; the amp measured no audible difference)
     const shaper = (k, b = 0, over = '2x') => {
       const t0 = Math.tanh(k * b), norm = Math.max(Math.tanh(k * (1 + b)) - t0, t0 - Math.tanh(k * (b - 1)));
-      return curve((x) => (Math.tanh(k * (x + b)) - t0) / norm, over);
+      return curve((x) => (Math.tanh(k * (x + b)) - t0) / norm, over, 4096, 'soft');
     };
     const start = (n) => { n.start(); own.src.push(n); return n; };
     // an oscillator at rate Hz, ±1: 'sine', 'triangle', 'square', 'sawtooth', or [harmonic amplitudes] (a custom wave)
@@ -548,7 +565,7 @@ function pedalRig(c, amp) {
     // the song's tempo moved (tempo-synced pedals follow it)
     tempo(b) { if (cur && b && b !== bpm) set(cur, b); },
     // resolves once every pedal on the board is built (worklets loaded)
-    async ready() { while (waiting.length) { const w = waiting; waiting = []; await Promise.all(w); } },
+    async ready() { while (waiting.length) { const w = waiting; waiting = []; await Promise.all(w); } if (amp && amp.ready) await amp.ready(); },
     // a pedal's build() result by uid (tests: its nodes)
     pedal: (uid) => (inst.get(uid) ? inst.get(uid).w.p : null),
     get latency() { let s = amp.latency || 0; for (const n of inst.values()) s += n.w.latency; return s; },
@@ -567,18 +584,17 @@ function pedalRig(c, amp) {
   };
 }
 
-/* ---- what a board costs on this device: renders `secs` of it (a 110 Hz tone in, the amp as it's set if plugAmp is
-   there, the pedals as they're set, on or off) offline and times it, as a percentage of real time on one core. The
-   board UI shows it (pedalboard.js) because 14 heavy pedals on a slow phone can be more than its audio thread manages
-   (measured on an M-series Mac: the fourteen costliest pedals together, about 11%). Resolves null if it can't. */
+/* ---- what a board costs on this device: renders `secs` of it (a 110 Hz tone in, a wire where the amp goes: the amps
+   are kernels now, outside the board; the pedals as they're set, on or off) offline and times it, as a percentage of
+   real time on one core. The board UI shows it (pedalboard.js) because 14 heavy pedals on a slow phone can be more
+   than its audio thread manages (measured on an M-series Mac: the fourteen costliest pedals together, about 11%).
+   Resolves null if it can't. */
 async function pedalLoad(P, secs = 0.25) {
   if (typeof OfflineAudioContext === 'undefined') return null;
   try {
     const sr = 48000, c = new OfflineAudioContext(2, Math.round(sr * secs), sr), o = c.createOscillator(), g = c.createGain();
     o.frequency.value = 110; g.gain.value = 0.2; o.connect(g);
-    let amp = null;
-    try { amp = typeof plugAmp === 'function' ? plugAmp(c) : null; } catch (e) { amp = null; } // (plugin.js, later in the page)
-    if (!amp) { const n = c.createGain(); amp = { input: n, output: n, set() {}, latency: 0 }; }
+    const n = c.createGain(), amp = { input: n, output: n, set() {}, latency: 0 };
     const r = pedalRig(c, amp);
     r.set(P, 120); await r.ready(); r.set(P, 120);
     g.connect(r.input); r.output.connect(c.destination); o.start();
@@ -631,12 +647,13 @@ function plugKnob({ label, min, max, step, value, def, fmt, onInput, name }) {
 
   // ---------------------------------------------------------------- amps.js
 /* ================================================================ Claw'd-o-Matic: the plug-in amps */
-// Concatenated in the app's scope before pedals.js and plugin.js. Each amp is a voicing of one Web Audio circuit
-// (plugAmp): hp -> tight/bright/push -> stage 1 -> inter-stage filters -> stage 2 -> tone stack (bass, mid, treble) ->
-// power stage -> presence -> cab -> level. Settings: { amp, gain, bass, mid, treble, presence, level } (knobs 0-10;
-// a missing presence is 5: it's a high shelf at the amp's pres Hz after the power stage, ±1.6 dB a step, flat at 5).
-// Levels are measured with tools/plug-level.js: every amp at its default knobs comes out
-// about -14 LUFS with the tool's DI strum.
+// Concatenated in the app's scope before pedals.js and plugin.js. (Overdub's) The amps' sound is a kernel now: each
+// amp's circuit is in devices/guitar/voicings.js, on devices/builtin/amp-voiced.js. What's here is what the rest of the
+// gear reads: each amp's name, look and nod, its designed cab (cab), the spectrum it puts into a cab (PLUG_AMP_SPEC),
+// its default cab and the mics (plugCabNet, which the kernel works out number for number). The numbers below were the
+// graph engine's circuit (hp -> tight/bright/push -> stage 1 -> filters -> stage 2 -> tone stack -> power stage ->
+// presence -> cab -> level), retired on 2026-10-29: tools/fixtures/amp-voices.json is what each one sounded like, and
+// the kernel amps were fitted to it. Settings: { amp, gain, bass, mid, treble, presence, level } (knobs 0-10).
 //
 // Per amp (dB unless noted):
 //   name, blurb, style: for the UI (style is a hint for its look: american, british, boutique, modern, tiny, solid, weird)
@@ -656,7 +673,7 @@ function plugKnob({ label, min, max, step, value, def, fmt, onInput, name }) {
 //   s1/s2's 4th value: crossover (a dead zone around zero, like a starved class-B output: the broken radio).
 //   crush: bits, a quantiser after stage 2 (no oversampling, on purpose: the grit is the point).
 //   wow: [ms, Hz], a wobbling delay after stage 2: tape wow (the delay adds ms*1.5 of latency to that amp only).
-//   sub: [dB, lp Hz, lp Q], an octave down (PLUG_WORKLETS' divider) into stage 2 (Abyss; built only for an amp with one).
+//   sub: [dB, lp Hz, lp Q], an octave down (an analog divider) into stage 2 (Abyss).
 const PLUG_AMPS = {
   clean: {
     name: 'Sea Glass', blurb: 'Big glassy clean with headroom for days', style: 'american', nod: 'a 1960s blackface American 2x12 combo with reverb', tone: 'clean',
@@ -843,48 +860,35 @@ const PLUG_AMPS = {
     cab: [35, [70, 1, 1.5], [350, 1, -2], [1400, 1, 1], [4500, 0.9], 6000], trim: -9.3,
   },
 };
-// The amps' AudioWorklets, loaded with the gate's (plugGate in plugin.js), so they're there whenever the gate is.
-// clawd-octave: an analog octave divider (Abyss, sub: [dB, lp Hz, Q]). The guitar, low-passed so the fundamental rules
-// its zero crossings, flips a flip-flop on each rising crossing (with hysteresis): a square an octave down, as loud as
-// the note (an envelope follower), its edges rounded off. It goes into the amp's second stage, so it fuzzes with you.
-const PLUG_WORKLETS = `class ClawdOctave extends AudioWorkletProcessor {
-  constructor() { super(); this.env = 0; this.hi = false; this.flip = 1; this.y = 0; }
-  process(ins, outs) {
-    const o = outs[0][0], i = ins[0] && ins[0][0];
-    if (!o) return true;
-    if (!i) { o.fill(0); return true; }
-    const att = 1 - Math.exp(-1 / (0.002 * sampleRate)), rel = 1 - Math.exp(-1 / (0.15 * sampleRate)), sm = 1 - Math.exp(-2 * Math.PI * 2500 / sampleRate);
-    for (let n = 0; n < o.length; n++) {
-      const x = i[n], a = Math.abs(x);
-      this.env += (a - this.env) * (a > this.env ? att : rel);
-      const th = 0.45 * this.env + 1e-5; // (well clear of the wiggles the harmonics leave)
-      if (!this.hi && x > th) { this.hi = true; this.flip = -this.flip; }
-      else if (this.hi && x < -th) this.hi = false;
-      const g = this.env > 3e-4 ? this.env : (this.env * this.env) / 3e-4;
-      this.y += (this.flip * g - this.y) * sm;
-      o[n] = this.y;
-    }
-    return true;
-  }
-}
-registerProcessor('clawd-octave', ClawdOctave);`;
 
-/* ---- cabs and mics. Every amp's voicing above has its own cab baked in (A.cab: the speaker, the box and a 57-style
-   dynamic mic on the cap edge, an inch back). That stays the default, bit for bit: an amp at its own cab with the
-   default mic goes straight from A.cab to the level, as it always has. Pick another cab, or move the mic, and the
-   signal goes through the mic network instead:
+/* ---- cabs and mics. Two kinds of cab: measured and designed.
+   Measured (PLUG_CABS' six with an `ir`): the impulse responses Half Stack plays (devices/builtin/amp-lib.js CAB_IDS:
+   six closed 4x12s, each with the mic it was recorded with, from the cab bank, kernel data: env.CABS, gear/index.js).
+   The amp's signal leaves before A.cab and goes through one of them (a ConvolverNode, kit.convolver's crossfade) and a
+   trim to the level. They are every guitar amp's default (PLUG_AMP_IR); the mics below don't apply to them (the mic is
+   in the measurement). Until the bank is in, or when it isn't on this server, an amp on a measured cab plays its own
+   designed cab instead (the straight wire), and moves over, crossfaded, once the bank lands.
+   Designed (the rest): every amp's voicing above has its own cab baked in (A.cab: the speaker, the box and a 57-style
+   dynamic mic on the cap edge, an inch back). At its own cab ('own') with the default mic it goes straight from A.cab
+   to the level, bit for bit as it always has. Pick another designed cab, or move the mic, and the signal goes through
+   the mic network instead:
      A.cab's six filters (with the new cab's values) -> [per mic: its placement and type as seven filters, plus the
      room: a floor bounce, a far wall, an open back's rear wave, a stadium's slap, as delay taps beside the direct
      sound] -> blend (a second mic, maybe flipped, delayed by the difference in distance) -> trim -> the level
-   The trim level-matches: it's worked out from the responses (plugCabNet below) against the amp's own cab, weighted
-   like a distorted guitar heard through K-weighting, plus a measured nudge per cab (lv). tools/cab-check.js checks it.
+   The trims level-match: each is worked out from the responses (plugCabNet below) against the amp's own cab, weighted
+   like a distorted guitar heard through K-weighting, plus a measured nudge per cab (lv) or per amp on its measured cab
+   (PLUG_IR_LV). tools/guitar-test.js measures them (section 4c).
    The mic filters are all flat at the default mic, so moving it off and back never jumps.
-   Settings, on the amp's P (none of them written when they're the default):
-     P.cab: a PLUG_CABS id ('own', or missing: the amp's own)
+   Settings, on the amp's P (none of them written when they're the amp's default):
+     P.cab: a PLUG_CABS id. Missing: the amp's default (PLUG_AMP_IR's measured cab, or 'own' for the amps that keep
+       theirs). 'own': the amp's own designed cab, written when the amp's default is a measured one. (Before the
+       measured cabs, missing meant 'own': a saved rig without a cab now plays the measured one. A reader from before
+       them drops an id it doesn't know and plays 'own'.)
      P.mic: { type, x, y, dist, ang, s }: a PLUG_MICS id; where it points on the cone (x, y in cone radii from the
        dustcap's centre: the cap's edge is 0.3, the cone's edge 1); inches from the grille (0.5-24); degrees off axis
        (0-60); which speaker it's on (s: for the picture only; every cone in a cab sounds the same)
-     P.mic2: the same for a second mic, plus blend (0-10: 0 all the first mic, 10 all this one) and flip (its phase) */
+     P.mic2: the same for a second mic, plus blend (0-10: 0 all the first mic, 10 all this one) and flip (its phase)
+   (P.mic and P.mic2 are kept on a measured cab, unheard, so a designed cab picked again has its mics where they were.) */
 // A cab: name, blurb; n cones of size inches; back: open, closed or odd (for the rear wave and the picture); cab: the
 // six filters (as an amp's); lv: a measured nudge (dB) on top of the worked-out trim; slap: [ms, gain] a far echo.
 const PLUG_CABS = {
@@ -923,6 +927,15 @@ const PLUG_CABS = {
     cab: [38, [60, 1.2, 1.5], [400, 1, -0.5], [1200, 1, 1.5], [3200, 0.7], 4800], lv: 0 },
   m212: { name: '2x12 Modern Bass', blurb: 'Light neo 12s and a tweeter: deep, and hi-fi on top', n: 2, size: 12, back: 'closed',
     cab: [40, [80, 1.1, 1.5], [400, 1, -1.5], [3000, 1, 2], [7000, 0.7], 10000], lv: 0 },
+  // the measured cabs: Half Stack's six, in its CAB switch's order (ir: the bank's index; amp-lib.js CAB_IDS and
+  // CAB_NAMES, the same ids and names: tools/guitar-test.js holds them together). No filters: the IR is the cab and its
+  // mic. Drawn as the closed 4x12s they are.
+  'modern-close': { name: 'Modern 4x12, close dynamic', blurb: 'Measured: a dynamic right on the cone; tight lows, even mids, a dark top', n: 4, size: 12, back: 'closed', ir: 0 },
+  'modern-bright': { name: 'Modern 4x12, bright dynamic', blurb: 'Measured: another speaker in the same box; firmer lows, softer upper mids, a little air', n: 4, size: 12, back: 'closed', ir: 1 },
+  'modern-side': { name: 'Modern 4x12, side-address', blurb: 'Measured: a side-address mic on a warmer speaker; thick low mids', n: 4, size: 12, back: 'closed', ir: 2 },
+  'modern-two': { name: 'Modern 4x12, two mics', blurb: 'Measured: two mics on two speakers; wide, smooth mids', n: 4, size: 12, back: 'closed', ir: 3 },
+  'british-dynamic': { name: 'British 4x12, dynamic', blurb: 'Measured: the old British 4x12 and a dynamic; scooped low mids, the most top', n: 4, size: 12, back: 'closed', ir: 4 },
+  'british-side': { name: 'British 4x12, side-address', blurb: 'Measured: the old British 4x12, side-address; big lows, bright upper mids', n: 4, size: 12, back: 'closed', ir: 5 },
 };
 // The cab each amp was voiced with (for the picture, and where the mic's sweet spots are): [cones, size, back]
 const PLUG_AMP_BOX = { clean: [2, 12, 'open'], jangle: [2, 12, 'open'], crunch: [1, 12, 'open'], plexi: [4, 12, 'closed'], punk: [2, 12, 'closed'],
@@ -930,6 +943,33 @@ const PLUG_AMP_BOX = { clean: [2, 12, 'open'], jangle: [2, 12, 'open'], crunch: 
   dumble: [2, 12, 'open'], brown: [4, 12, 'closed'], slo: [4, 12, 'closed'], friedman: [4, 12, 'closed'], metal: [4, 12, 'closed'],
   orange: [4, 12, 'closed'], radio: [1, 4, 'odd'], bit: [1, 2, 'odd'], tape: [2, 4, 'odd'], abyss: [1, 15, 'closed'], di: [1, 12, 'closed'],
   whale: [8, 10, 'closed'], walrus: [1, 15, 'closed'], narwhal: [2, 12, 'closed'], sandbar: [1, 15, 'open'], urchin: [4, 10, 'closed'] };
+// Each guitar amp's measured cab, by what the amp is (the default when P.cab is missing). The closest to its designed
+// cab is the British dynamic on most of them (about 2.4 dB rms, 100 Hz-5 kHz, weighted by what the amp puts in; the
+// bright dynamic is the furthest, 4-5 dB), so it's the default unless the amp is something else:
+//   British 4x12, dynamic      the plexi, the brown sound, the 80s master-volume head and the cranked tweed are British
+//                              4x12 amps (that cab is theirs); the two chimey cleans and the solid-state clean get its
+//                              open top, the most of the six above 5 kHz: clean, jangle, crunch, plexi, punk, brown, jc
+//   British 4x12, side-address the big British clean: its lows and firm upper mids are the 100-watt 4x12's: hiwatt
+//   Modern 4x12, two mics      smooth, wide mids for the singing leads and the tweed 4x10 (the nearest to its own cab
+//                              of all six, 2.3 dB): lead, dumble, friedman, bassman
+//   Modern 4x12, close dynamic the American high-gain heads were voiced on this modern closed 4x12: recto, slo, metal
+//   Modern 4x12, side-address  the thickest low mids, for stoner and doom: orange
+// Not here, so they keep their own designed cab: the bass amps (whale, walrus, narwhal, sandbar, urchin) and Abyss,
+// whose sound is under 100 Hz, where every one of the six (guitar 4x12s, recorded close) has given up; and the ones
+// whose cab is the effect: Hermit's fizzy 1x8, Flotsam's torn pocket speaker, the 8-Bit Crab's 2-inch console speaker,
+// Beach Tape's cassette deck; and Straight In, which has no cab at all.
+const PLUG_AMP_IR = { clean: 'british-dynamic', jangle: 'british-dynamic', crunch: 'british-dynamic', plexi: 'british-dynamic',
+  punk: 'british-dynamic', brown: 'british-dynamic', jc: 'british-dynamic', hiwatt: 'british-side', lead: 'modern-two', dumble: 'modern-two',
+  friedman: 'modern-two', bassman: 'modern-two', recto: 'modern-close', slo: 'modern-close', metal: 'modern-close', orange: 'modern-side' };
+// an amp's cab when P doesn't name one
+const plugCabDefault = (id) => PLUG_AMP_IR[id] || 'own';
+// A measured nudge (dB) per amp, on any measured cab, on top of the worked-out trim. Every guitar amp at its default
+// knobs, the DI strum through its default measured cab, reads within 0.2 LU of its own designed cab (BS.1770 and the
+// band's loudness alike; tools/guitar-test.js section 4c renders each and holds it within 0.5 LU). Through the presets'
+// whole chains (pedals in front, the band's tail) the 112 that leave the cab to the amp move -0.6 to +1.2 LU, a mean
+// of +0.1; the SLO's three come up most (+0.65 on average, its boosted lead +1.0), so it gives back a quarter dB, half
+// way between the amp alone and its presets.
+const PLUG_IR_LV = { slo: -0.25 };
 // A mic: name, blurb; what it does against the 57 the amps were voiced with: lo (a 200 Hz shelf), body and pres
 // ([Hz, Q, dB] peaks), air (a 9 kHz shelf), hp and lp ([Hz, Q in dB]; 0 is none); prox: how much proximity effect
 // (bass up close) against the 57; room: how much of the room it hears.
@@ -942,10 +982,12 @@ const PLUG_MICS = {
 };
 const PLUG_MIC_DEFAULT = { type: 'dyn', x: 0.3, y: 0, dist: 1, ang: 0, s: 0 };
 const PLUG_MIC2_DEFAULT = { type: 'ribbon', x: 0.62, y: 0, dist: 1, ang: 0, s: 0, blend: 5, flip: false };
-// P's cab and mics, cleaned (anything off becomes the default; a default isn't kept): { cab?, mic?, mic2? }
-function plugCabClean(p) {
+// P's cab and mics, cleaned (anything off becomes the default; a default isn't kept): { cab?, mic?, mic2? }. The cab's
+// default is amp id's (P.amp unless given): 'own' is kept for an amp whose default is a measured cab.
+function plugCabClean(p, id) {
   const out = {}, num = (v, lo, hi, d) => (Number.isFinite(+v) ? Math.max(lo, Math.min(hi, +v)) : d);
-  if (p && typeof p.cab === 'string' && PLUG_CABS[p.cab] && p.cab !== 'own') out.cab = p.cab;
+  const def = plugCabDefault(id != null ? id : p && p.amp);
+  if (p && typeof p.cab === 'string' && PLUG_CABS[p.cab] && p.cab !== def) out.cab = p.cab;
   const mic = (m, D, two) => {
     if (!m || typeof m !== 'object') return null;
     const r = { type: PLUG_MICS[m.type] ? m.type : D.type, x: num(m.x, -1.35, 1.35, D.x), y: num(m.y, -1.35, 1.35, D.y), dist: num(m.dist, 0.5, 24, D.dist),
@@ -962,13 +1004,16 @@ function plugCabClean(p) {
 }
 // Set P's cab fields to those of S (a cleaned set), removing what S doesn't have.
 function plugCabPut(P, S) { for (const k of ['cab', 'mic', 'mic2']) { if (S && S[k] != null) P[k] = S[k]; else delete P[k]; } }
-// The cab and mics as filters: for amp id with settings p at sample rate sr.
-//   { custom: false } when it's the amp's own cab and the default mic (the straight wire), else { custom: true, box, cab
-//   (six filter values), mics: [{ f: seven filters [type, Hz, Q, dB], taps: [[s, gain], ...], delay (s), gain }], trim (dB) }
+// The cab and mics as the amp plays them: for amp id with settings p at sample rate sr.
+//   { custom: false } when it's the amp's own cab and the default mic (the straight wire); { custom: false, ir, cab,
+//   trim } on a measured cab (the bank's IR ir, PLUG_CABS id cab, trim in dB: null while the bank isn't in, when the
+//   amp plays the straight wire); else { custom: true, box, cab (six filter values), mics: [{ f: seven filters [type,
+//   Hz, Q, dB], taps: [[s, gain], ...], delay (s), gain }], trim (dB) }
 function plugCabNet(id, p, sr) {
-  const A = PLUG_AMPS[id] || PLUG_AMPS.punk, S = plugCabClean(p);
-  if (!S.cab && !S.mic && !S.mic2) return { custom: false };
-  const C = PLUG_CABS[S.cab], own = PLUG_AMP_BOX[id] || [1, 12, 'closed'];
+  const A = PLUG_AMPS[id] || PLUG_AMPS.punk, S = plugCabClean(p, id), cabId = S.cab || plugCabDefault(id), C0 = PLUG_CABS[cabId];
+  if (C0 && C0.ir != null) return { custom: false, ir: C0.ir, cab: cabId, trim: plugIrTrim(id, C0.ir, sr) };
+  if (cabId === 'own' && !S.mic && !S.mic2) return { custom: false };
+  const C = cabId === 'own' ? null : C0, own = PLUG_AMP_BOX[id] || [1, 12, 'closed'];
   const box = C ? { n: C.n, size: C.size, back: C.back, slap: C.slap, lv: C.lv || 0 } : { n: own[0], size: own[1], back: own[2], lv: 0 };
   const cab = C ? C.cab : A.cab;
   const one = (m) => {
@@ -1089,200 +1134,38 @@ plugCabNet.resp = (() => {
     return [(nr * dr + ni * di) / dd, (ni * dr - nr * di) / dd];
   };
   const chain = (list, f, sr) => { let r = 1, i = 0; for (const [t, f0, Q, G] of list) { const [a, b] = one(t, f0, Q, G, f, sr); [r, i] = [r * a - i * b, r * b + i * a]; } return [r, i]; };
-  // a cab's six filters as plugAmp sets them: |H|²
+  // a cab's six filters as the graph amps set them (and amp-voiced.js does): |H|²
   const cab = (cb, f, sr) => { const [r, i] = chain([['highpass', cb[0], 0.7, 0], ['peaking', cb[1][0], cb[1][1], cb[1][2]], ['peaking', cb[2][0], cb[2][1], cb[2][2]], ['peaking', cb[3][0], cb[3][1], cb[3][2]], ['lowpass', cb[4][0], cb[4][1], 0], ['lowpass', cb[5], 0.6, 0]], f, sr); return r * r + i * i; };
   return { one, chain, cab };
 })();
 
-// An amp on any context (the live one, or an offline one for measuring).
-function plugAmp(c) {
-  const dB = (d) => Math.pow(10, d / 20);
-  const G = (v) => { const n = c.createGain(); n.gain.value = v; return n; };
-  const F = (type, f, q, g) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; n.Q.value = q; if (g != null) n.gain.value = g; return n; };
-  const shaper = (os) => { const n = c.createWaveShaper(); n.oversample = os; return n; };
-  // a stage's curve and its slope at 0: DC removed and scaled so f(±1) reaches about ±1
-  const curves = {};
-  const curve = ([k, b, knee, xo]) => {
-    const key = k + ',' + b + ',' + knee + (xo ? ',' + xo : '');
-    if (curves[key]) return curves[key];
-    const sat0 = knee ? (u) => u / Math.pow(1 + Math.pow(Math.abs(u), knee), 1 / knee) : Math.tanh;
-    // crossover: the input sags through a soft dead zone xo wide before it's clipped (a tenth of it still leaks
-    // through, so the slope at 0 isn't 0). Without it, the arithmetic is exactly what it always was.
-    const sat = xo ? (u) => sat0(u - 0.9 * xo * k * Math.tanh(u / (xo * k))) : sat0;
-    const t0 = sat(k * b), norm = Math.max(sat(k * (1 + b)) - t0, t0 - sat(k * (-1 + b)));
-    const N = 4096, out = new Float32Array(N);
-    for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; out[i] = (sat(k * (x + b)) - t0) / norm; }
-    const h = 1e-4, slope = (sat(k * (h + b)) - sat(k * (b - h))) / (2 * h) / norm;
-    return (curves[key] = { out, slope });
-  };
-  // a quantiser's curve: 2^bits steps over ±1
-  const crushes = {};
-  const crushCurve = (bits) => {
-    if (crushes[bits]) return crushes[bits];
-    const L = Math.pow(2, bits - 1), N = 8192, out = new Float32Array(N);
-    for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; out[i] = Math.max(-1, Math.min(1, Math.round(x * L) / L)); }
-    return (crushes[bits] = out);
-  };
-  const PW = curve([1.5, 0.04, 0]);
-  const input = G(1), hp = F('highpass', 70, 0.7), tight = F('lowshelf', 220, 0.7, 0), bright = F('highshelf', 2200, 0.7, 0), push = F('peaking', 800, 0.9, 0);
-  const pre1 = G(1), s1 = shaper('2x'), lp1 = F('lowpass', 6500, 0.6), hp1 = F('highpass', 110, 0.6);
-  const pre2 = G(1), s2 = shaper('2x'), post2 = G(1);
-  const bass = F('lowshelf', 110, 0.7, 0), mid = F('peaking', 700, 0.8, 0), treble = F('highshelf', 2800, 0.7, 0);
-  // the power stage: soft and fed band-limited, so no oversampling (and no more latency); its makeup keeps the level
-  const pl = F('lowpass', 8000, 0.6), pre3 = G(1), s3 = shaper('none'), post3 = G(1); // (pl: what it makes stays under Nyquist)
-  s3.curve = PW.out;
-  const presence = F('highshelf', 3800, 0.7, 0);
-  const cab = [F('highpass', 80, 0.7), F('peaking', 120, 1.1, 3), F('peaking', 420, 1, -2.5), F('peaking', 2300, 1.2, 3), F('lowpass', 5200, 0.9), F('lowpass', 7200, 0.6)];
-  const level = G(1), mute = G(1), output = G(1), hush = G(1); // (mute, hush: the output and the input, for changing amps)
-  const chain = [input, hush, hp, tight, bright, push, pre1, s1, lp1, hp1, pre2, s2, post2, bass, mid, treble, pl, pre3, s3, post3, presence, ...cab, level, mute, output];
-  for (let i = 0; i + 1 < chain.length; i++) chain[i].connect(chain[i + 1]);
-  // the side route for the odd ones (crush, wow): post2 -> quantiser -> wobbling delay -> side -> the tone stack, beside
-  // the straight wire. An amp that uses it turns the wire (via) off and the side on; the rest keep side at exactly 0, so
-  // what they sum into the tone stack is their own signal plus zero, bit for bit.
-  const via = G(1), qz = shaper('none'), wow = c.createDelay(0.05), wowLfo = c.createOscillator(), wowDepth = G(0), side = G(0);
-  post2.disconnect(bass); post2.connect(via); via.connect(bass);
-  post2.connect(qz); qz.connect(wow); wow.connect(side); side.connect(bass);
-  wow.delayTime.value = 0; wowLfo.connect(wowDepth); wowDepth.connect(wow.delayTime); wowLfo.start();
-  // Abyss's octave (PLUG_WORKLETS): hp -> two low-passes -> the divider -> a resonant low-pass -> its level -> stage 2.
-  // Made the first time an amp asks for it, when the worklet's there (an amp on a context without the gate's module:
-  // no octave, the rest as ever); it's never made for the others, so their path is untouched.
-  let sub = null;
-  const subOn = () => {
-    if (sub || !c.__clawdAmpWorklets) return sub;
-    try {
-      const l1 = F('lowpass', 180, -3), l2 = F('lowpass', 180, -3), f = F('lowpass', 700, 6), g = G(0);
-      const w = new AudioWorkletNode(c, 'clawd-octave', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: 'explicit' });
-      hp.connect(l1); l1.connect(l2); l2.connect(w); w.connect(f); f.connect(g); g.connect(s2);
-      sub = { f, g, w };
-    } catch (e) { sub = null; }
-    return sub;
-  };
-  // A bass amp's clean blend (blend: [Hz, dB]): hp -> two low-passes -> its level -> the tone stack, beside stage 2's
-  // way out. Made the first time an amp asks for it and at 0 for the others after, so theirs is untouched.
-  let cln = null;
-  const blendOn = () => {
-    if (cln) return cln;
-    const a = F('lowpass', 220, -3), b = F('lowpass', 220, -3), g = G(0);
-    hp.connect(a); a.connect(b); b.connect(g); g.connect(bass);
-    return (cln = { a, b, g });
-  };
-  // the cab's other way out (plugCabNet): the straight wire (the amp's own cab, the default mic: exactly as ever) or two
-  // mics, each seven filters and four room taps, blended and trimmed. The wire and micOut crossfade; the unused one sits
-  // at exactly 0, and the wire's 1 changes nothing.
-  const wire = G(1), micOut = G(0), mics = [];
-  cab[5].disconnect(level); cab[5].connect(wire); wire.connect(level); micOut.connect(level);
-  for (let m = 0; m < 2; m++) {
-    const align = c.createDelay(0.01), f = [F('lowshelf', 200, 0, 0), F('peaking', 400, 0.9, 0), F('peaking', 4500, 1.2, 0), F('highshelf', 2500, 0, 0), F('highshelf', 9000, 0, 0), F('highpass', 0, 0), F('lowpass', c.sampleRate / 2, 0)];
-    const sum = G(1), mix = G(0), taps = [];
-    align.connect(f[0]); // (fed from the cab only while it's used: feed, below)
-    for (let i = 0; i + 1 < f.length; i++) f[i].connect(f[i + 1]);
-    f[6].connect(sum);
-    for (let i = 0; i < 4; i++) { const d = c.createDelay(0.2), g = G(0); f[6].connect(d); d.connect(g); g.connect(sum); taps.push([d, g]); }
-    sum.connect(mix); mix.connect(micOut);
-    mics.push({ align, f, taps, mix, fed: false });
-  }
-  // a mic network runs only while it's used (a live one keeps going a moment after, while its level fades)
-  const feed = (M, on) => {
-    clearTimeout(M.off);
-    if (dead) return;
-    if (on && !M.fed) { cab[5].connect(M.align); M.fed = true; }
-    else if (!on && M.fed) M.off = setTimeout(() => { if (M.fed && !M.want && !dead) { cab[5].disconnect(M.align); M.fed = false; } }, realtime ? 400 : 0);
-    M.want = on;
-  };
-  // A new amp (live): duck the input and the output, and once it's quiet change the curves and jump every setting, then
-  // fade back in (knob moves in the meantime just update what it will jump to). Knob moves on the same amp glide.
-  let cur = null, curCab = null, last = null, pending = false, duckT = 0, dead = false;
-  const realtime = typeof OfflineAudioContext === 'undefined' || !(c instanceof OfflineAudioContext);
-  // at (optional): the audio time the change lands at, a little ahead (pedalRig's set: scenes.js puts it on a bar line)
-  function set(p, at) {
-    last = p;
-    const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', cb = PLUG_CABS[p.cab] ? p.cab : 'own';
-    if (pending) return;
-    if (cur != null && (id !== cur || cb !== curCab) && realtime) { // (a new cab ducks too: its filters jump)
-      const t = Math.max(c.currentTime, at || 0);
-      pending = true;
-      for (const m of [mute, hush]) { m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(m.gain.value, t); m.gain.linearRampToValueAtTime(0, t + 0.008); }
-      // the curves jump once the duck is down by the audio clock (a starved audio thread, or a duck scheduled ahead,
-      // mustn't have them jump under a live signal); back in from 30 ms after it began (or as soon as it can). A
-      // scheduled one waits 40 ms, so the main thread has room to be late and it still comes back on time.
-      const go = () => {
-        duckT = 0;
-        if (dead) return;
-        if (c.currentTime < t + 0.012 && c.state === 'running') { duckT = setTimeout(go, 4); return; }
-        pending = false; apply(last, true);
-        const u = Math.max(c.currentTime, t + (at ? 0.04 : 0.03)); // (the stages' filters have drained by now: the new amp starts from silence)
-        for (const m of [mute, hush]) { m.gain.cancelScheduledValues(c.currentTime); m.gain.setValueAtTime(0, u + 0.005); m.gain.linearRampToValueAtTime(1, u + 0.035); }
-      };
-      duckT = setTimeout(go, Math.max(30, (t - c.currentTime) * 1000 + 14));
-      return;
+// A measured cab's trim for amp id (dB): its own designed cab against the IR, weighted as plugCabNet weighs a designed
+// one (what the amp puts in, through K-weighting), plus the amp's measured nudge (PLUG_IR_LV). null while the bank
+// isn't in. The IR's response is worked out once, at the bank's own rate, on plugCabNet.weights' frequencies.
+function plugIrTrim(id, i, sr) {
+  const B = PLUG_IRS && PLUG_IRS.native();
+  if (!B || !B.taps[i]) return null;
+  const R = plugIrTrim._r || (plugIrTrim._r = []), W = plugCabNet.weights(id, sr), A = PLUG_AMPS[id] || PLUG_AMPS.punk;
+  if (!R[i]) {
+    const h = B.taps[i], out = new Float64Array(W.f.length);
+    for (let j = 0; j < W.f.length; j++) {
+      // (the phasor by rotation, renormalised every 256 taps)
+      const w = (2 * Math.PI * W.f[j]) / B.sr, cw = Math.cos(w), sw = Math.sin(w);
+      let zr = 1, zi = 0, re = 0, im = 0;
+      for (let k = 0; k < h.length; k++) {
+        re += h[k] * zr; im += h[k] * zi;
+        const t = zr * cw + zi * sw; zi = zi * cw - zr * sw; zr = t;
+        if ((k & 255) === 255) { const m = 1 / Math.hypot(zr, zi); zr *= m; zi *= m; }
+      }
+      out[j] = re * re + im * im;
     }
-    apply(p, cur == null || id !== cur || cb !== curCab, at);
+    R[i] = out;
   }
-  function apply(p, jump, at) {
-    const id = PLUG_AMPS[p.amp] ? p.amp : 'punk', A = PLUG_AMPS[id], t = jump ? c.currentTime : Math.max(c.currentTime, at || 0);
-    const to = (param, v) => {
-      if (!Number.isFinite(v)) return;
-      if (jump) { param.cancelScheduledValues(t); param.setValueAtTime(v, t); } else param.setTargetAtTime(v, t, 0.02);
-    };
-    if (id !== cur) {
-      s1.curve = curve(A.s1).out; s2.curve = curve(A.s2).out; cur = id;
-      qz.curve = A.crush ? crushCurve(A.crush) : null;
-    }
-    const odd = !!(A.crush || A.wow), w = A.wow || [0, 1];
-    to(via.gain, odd ? 0 : 1); to(side.gain, odd ? 1 : 0);
-    to(wow.delayTime, (w[0] * 1.5) / 1000); to(wowDepth.gain, w[0] / 1000); to(wowLfo.frequency, w[1]);
-    const k = (v, d) => (Number.isFinite(+v) ? Math.max(0, Math.min(10, +v)) : d) - 5;
-    const g = k(p.gain, 6) + 5, e = A.eq[3];
-    to(hp.frequency, A.hp); to(tight.frequency, A.tight[0]); to(tight.gain, A.tight[1]); to(bright.gain, A.bright);
-    to(push.frequency, A.push[0]); to(push.gain, A.push[1]);
-    to(pre1.gain, dB(A.d1[0] + A.d1[1] * g));
-    to(lp1.frequency, A.lp1); to(hp1.frequency, A.hp1);
-    const pr2 = dB(A.d2);
-    to(pre2.gain, pr2); to(post2.gain, A.d2 <= -12 ? 1 / (curve(A.s2).slope * pr2) : 1);
-    to(bass.frequency, A.eq[0][0]); to(bass.gain, A.eq[0][1] + k(p.bass, 5) * e);
-    to(mid.frequency, A.eq[1][0]); to(mid.Q, A.eq[1][1]); to(mid.gain, A.eq[1][2] + k(p.mid, 5) * e);
-    to(treble.frequency, A.eq[2][0]); to(treble.gain, A.eq[2][1] + k(p.treble, 5) * e);
-    to(pre3.gain, dB(A.pw)); to(post3.gain, 1 / (PW.slope * dB(A.pw)));
-    if (A.sub && subOn()) { to(sub.g.gain, dB(A.sub[0])); to(sub.f.frequency, A.sub[1]); to(sub.f.Q, A.sub[2]); } else if (sub) to(sub.g.gain, 0);
-    if (A.blend) { blendOn(); to(cln.g.gain, dB(A.blend[1])); to(cln.a.frequency, A.blend[0]); to(cln.b.frequency, A.blend[0]); } else if (cln) to(cln.g.gain, 0);
-    to(presence.frequency, A.pres); to(presence.gain, k(p.presence, 5) * 1.6);
-    const N = plugCabNet(id, p, c.sampleRate), cb = N.custom ? N.cab : A.cab;
-    curCab = PLUG_CABS[p.cab] ? p.cab : 'own';
-    to(wire.gain, N.custom ? 0 : 1); to(micOut.gain, N.custom ? dB(N.trim) : 0);
-    mics.forEach((M, m) => feed(M, !!(N.custom && N.mics[m])));
-    if (N.custom) {
-      mics.forEach((M, m) => {
-        const X = N.mics[m];
-        to(M.mix.gain, X ? X.gain : 0);
-        if (!X) return;
-        to(M.align.delayTime, X.delay);
-        X.f.forEach(([, hz, q, g], i) => { to(M.f[i].frequency, hz); to(M.f[i].Q, q); to(M.f[i].gain, g); });
-        X.taps.forEach(([t, g], i) => { to(M.taps[i][0].delayTime, t); to(M.taps[i][1].gain, g); });
-      });
-    }
-    to(cab[0].frequency, cb[0]);
-    for (let i = 1; i <= 3; i++) { to(cab[i].frequency, cb[i][0]); to(cab[i].Q, cb[i][1]); to(cab[i].gain, cb[i][2]); }
-    to(cab[4].frequency, cb[4][0]); to(cab[4].Q, cb[4][1]); to(cab[5].frequency, cb[5]);
-    to(level.gain, dB(A.trim + k(p.level, 6) * 3 - 3));
-  }
-  // latency: what the two oversampled stages add (s), measured: 128 samples each at 2x (4x would be 192 each, and
-  // measures the same through the cab: tools/plug-level.js)
-  // unplugged: everything it started stops (the wow's oscillator, the octave's worklet: pedals.js pfxEnd) and its timers
-  // (a duck on its way, the mics' feeds) are cleared. Idempotent.
-  const dispose = () => {
-    if (dead) return;
-    dead = true;
-    clearTimeout(duckT); duckT = 0;
-    for (const M of mics) clearTimeout(M.off);
-    try { wowLfo.stop(); } catch (e) { /* stopped */ }
-    try { wowLfo.disconnect(); } catch (e) { /* gone */ }
-    if (sub && sub.w && typeof pfxEnd === 'function') pfxEnd(sub.w);
-  };
-  // octave(): make the octave now (an amp with one: Abyss), true if it's there. Its build asks before it plays, so an
-  // octave that can't be made is the device failing to build, not a quiet amp without it (devices/guitar/amps.js).
-  return { input, output, set, dispose, octave: () => !!subOn(), latency: 256 / c.sampleRate, net: () => plugCabNet(last && PLUG_AMPS[last.amp] ? last.amp : 'punk', last || {}, c.sampleRate) };
+  let e0 = 0, e1 = 0;
+  for (let j = 0; j < W.f.length; j++) { e0 += W.w[j] * plugCabNet.resp.cab(A.cab, W.f[j], sr); e1 += W.w[j] * R[i][j]; }
+  return Math.max(-12, Math.min(12, 10 * Math.log10(e0 / Math.max(e1, 1e-12)) + (PLUG_IR_LV[id] || 0)));
 }
-plugAmp.amps = PLUG_AMPS; // (tools/plug-level.js)
+
 
 
   // ---------------------------------------------------------------- pedals/00-classic.js
@@ -1381,19 +1264,238 @@ pedalDef({
   },
 });
 
-// Deep Trench: a convolver on a generated tail (a new one when DECAY settles)
+// The reverbs' tank (Deep Trench here; Lobster Plate, Kraken Hall, Halo Jelly and Frostbite Crab in pedals/60-time.js):
+// an algorithmic reverb in a worklet, mono in and stereo out, where convolvers on a generated noise tail were. A plate
+// is Jon Dattorro's ("Effect Design, Part 1: Reverberator and Other Filters", JAES 45(9), 1997): input diffusers into a
+// figure eight of two halves, each a modulated allpass, a delay, a damping one-pole, an allpass and a delay, the stereo
+// read from fourteen taps inside the loop. A hall is that section four times round a ring (two of them his). Ported
+// into this file's style from khoin's DattorroReverbNode (github.com/khoin/DattorroReverbNode: public domain, "In
+// jurisdictions that recognize copyright laws, this software is to be released into the public domain"), and changed:
+// DECAY is a T60 in seconds (every line and tap takes the loss of its own length, so the tail falls 60 dB in T60 from
+// the first echo, however short), the highs die in hf times that (Jot's one-pole in each section), two more input
+// diffusers and a short allpass on each side straight out (dense from the start), two seeded sines on each modulated
+// allpass (two copies never move in lockstep; nothing random), a hall's early reflections, a shimmer (an octave or a
+// fifth up, fed back into the input), and an idle state (no input and nothing left ringing: it costs nothing). Nothing
+// is rebuilt when a knob turns: a block DECAY moves in ramps every coefficient, sample by sample.
+//   processorOptions: { algo: 'plate' | 'hall', seed, scale (of the lengths), pre (s), mod (ms of swing), rate (Hz), bw
+//   (the input's one-pole, 0 open: the old IR's damp), early (the straight-out level), er (the early reflections'
+//   level), shimmer (true: build the shifter), out (the level) }; params (k-rate): decay (T60 s), hf, shim, ratio, space
+const VERB_TANK = `// The 'verb-tank' worklet (pedals/00-classic.js, the reverbs' tank in ../code.js: Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly, Frostbite Crab): the processor source the code builds, byte for byte below this line; change both together (tools/guitar-test.js)
+class VerbTank extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    const P = (name, defaultValue, minValue, maxValue) => ({ name, defaultValue, minValue, maxValue, automationRate: 'k-rate' });
+    return [P('decay', 2, 0.05, 40), P('hf', 0.8, 0.05, 1), P('shim', 0, 0, 2), P('ratio', 2, 0.5, 4), P('space', 0, 0, 1)];
+  }
+  constructor(o) {
+    super();
+    const q = (o && o.processorOptions) || {}, sr = sampleRate, hall = q.algo === 'hall';
+    let s = (q.seed >>> 0) || 1;
+    const rnd = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296;
+    // The tank: N sections of [modulated allpass, delay, allpass, delay], each feeding the next round a loop. A plate is
+    // Dattorro's figure eight (two sections, his lengths at 29761 Hz); a hall is a ring of four, two of them his.
+    const SEC = hall ? [[672, 4453, 1800, 3720], [908, 4217, 2656, 3163], [764, 4021, 2103, 3449], [1021, 4639, 1567, 2851]] : [[672, 4453, 1800, 3720], [908, 4217, 2656, 3163]];
+    const k = (sr / 29761) * (q.scale || 1), N = SEC.length, ex = ((q.mod == null ? 0.5 : q.mod) * sr) / 1000;
+    // the input diffusers: Dattorro's four and two more (longer in a hall: its slower build)
+    const DIF = hall ? [142, 107, 379, 277, 811, 1123] : [142, 107, 379, 277, 233, 311], DG = [0.7, 0.7, 0.65, 0.65, 0.6, 0.6];
+    const pre = Math.max(1, Math.round((q.pre || 0) * sr)), erMax = Math.round(0.16 * sr), EL = [Math.round(0.0071 * sr), Math.round(0.0097 * sr)];
+    const len = (i, j) => Math.max(4, Math.round(SEC[i][j] * k));
+    // every line in one buffer, each a power of two long: the pre-delay (the early reflections tap it), the diffusers,
+    // the sections' lines, the two early allpasses
+    const lens = [pre + erMax + 4];
+    for (const d of DIF) lens.push(Math.max(1, Math.round(d * k)));
+    for (let i = 0; i < N; i++) for (let j = 0; j < 4; j++) lens.push(len(i, j) + (j === 0 ? Math.ceil(2 * ex) + 4 : 0));
+    lens.push(EL[0], EL[1]);
+    const off = new Int32Array(lens.length), msk = new Int32Array(lens.length), at = (i, j) => 1 + DIF.length + i * 4 + j;
+    let tot = 0;
+    lens.forEach((L, i) => { const n = 1 << Math.ceil(Math.log2(L + 1)); off[i] = tot; msk[i] = n - 1; tot += n; });
+    this.B = new Float32Array(tot); this.w = 0; this.pre = pre; this.ex = ex; this.N = N; this.nd = DIF.length;
+    this.pO = off[0]; this.pM = msk[0];
+    this.dO = Int32Array.from(DIF, (_, i) => off[1 + i]); this.dM = Int32Array.from(DIF, (_, i) => msk[1 + i]);
+    this.dL = Int32Array.from(DIF, (d) => Math.max(1, Math.round(d * k))); this.dG = Float64Array.from(DIF, (_, i) => DG[i]);
+    this.so = new Int32Array(N * 4); this.sm = new Int32Array(N * 4); this.sl = new Int32Array(N * 4);
+    for (let i = 0; i < N; i++) for (let j = 0; j < 4; j++) { this.so[i * 4 + j] = off[at(i, j)]; this.sm[i * 4 + j] = msk[at(i, j)]; this.sl[i * 4 + j] = len(i, j); }
+    const e0 = lens.length - 2;
+    this.eg = q.early || 0; this.eD = Int32Array.from(EL); this.eO = Int32Array.from([off[e0], off[e0 + 1]]); this.eM = Int32Array.from([msk[e0], msk[e0 + 1]]);
+    // the output taps, Dattorro's (as fractions of their lines: a hall's four sections are read the same way, the odd
+    // ones like his right half): [line, where, sign] for the left from the odd sections and less the even, and the right
+    // the other way about. Offset, mask, delay and gain each.
+    const LP = [[1, 0.0631, 1], [1, 0.7052, 1], [2, 0.7203, -1], [3, 0.6311, 1]], LN = [[1, 0.4469, -1], [2, 0.1039, -1], [3, 0.2866, -1]];
+    const RP = [[1, 0.0793, 1], [1, 0.8145, 1], [2, 0.6822, -1], [3, 0.7185, 1]], RN = [[1, 0.5006, -1], [2, 0.1261, -1], [3, 0.0383, -1]];
+    const taps = (pos, neg, odd) => {
+      const t = [];
+      for (let i = 0; i < N; i++) for (const [j, f, sg] of (i & 1) === odd ? pos : neg) t.push([off[at(i, j)], msk[at(i, j)], Math.max(1, Math.round(f * len(i, j))), (sg * 0.6) / Math.sqrt(N / 2)]);
+      return t;
+    };
+    const T = taps(LP, LN, 1).concat(taps(RP, RN, 0));
+    this.nL = T.length / 2;
+    this.tO = Int32Array.from(T, (t) => t[0]); this.tM = Int32Array.from(T, (t) => t[1]); this.tD = Int32Array.from(T, (t) => t[2]); this.tG0 = Float64Array.from(T, (t) => t[3]);
+    // what DECAY sets, in one array (ramped as one): each line's loss, each tap's, each section's damping coefficient
+    const nK = N * 5 + T.length;
+    this.K = new Float64Array(nK); this.Kt = new Float64Array(nK); this.Ks = new Float64Array(nK); this.T = -1; this.hf = -1;
+    this.lg = this.K.subarray(0, N * 4); this.tG = this.K.subarray(N * 4, N * 4 + T.length); this.da = this.K.subarray(N * 4 + T.length);
+    // the modulation: each section's first allpass swings through 0..2ex samples longer, two slow sines at seeded
+    // rates and phases (phasors turned a block at a time; the delay moves in a straight line across the block)
+    this.mc = new Float64Array(N * 2); this.ms = new Float64Array(N * 2); this.rc = new Float64Array(N * 2); this.rs = new Float64Array(N * 2); this.md = new Float64Array(N);
+    const rate = q.rate || 0.8;
+    for (let i = 0; i < N * 2; i++) {
+      const ph = rnd() * 6.283185307, w = (6.283185307 * rate * (i & 1 ? 0.37 + 0.2 * rnd() : 0.8 + 0.4 * rnd()) * 128) / sr;
+      this.mc[i] = Math.cos(ph); this.ms[i] = Math.sin(ph); this.rc[i] = Math.cos(w); this.rs[i] = Math.sin(w);
+    }
+    for (let i = 0; i < N; i++) this.md[i] = ex * (1 + 0.7 * this.ms[i * 2] + 0.3 * this.ms[i * 2 + 1]);
+    this.lp = new Float64Array(N); this.fb = new Float64Array(N);
+    this.inj = Float64Array.from(SEC, (_, i) => (hall && i & 1 ? 0 : 1)); // (a plate feeds both halves, a hall every other section)
+    this.bw = q.bw || 0; this.bz = 0; this.out = q.out == null ? 1 : q.out;
+    // early reflections: ten taps off the pre-delay, alternating sides, for each SPACE (0 and 1), crossfaded
+    this.er = null;
+    if (q.er) {
+      const er = new Float64Array(60);
+      for (let sp = 0; sp < 2; sp++) for (let e = 0; e < 10; e++) {
+        const t = 0.006 + (e + 0.5 + (rnd() * 2 - 1) * 0.4) * (sp ? 0.012 : 0.0075), g = q.er * Math.exp(-e * 0.22) * (rnd() < 0.5 ? -1 : 1), b = sp * 30 + e * 3;
+        er[b] = pre + Math.min(erMax, Math.round(t * sr)); er[b + 1] = e & 1 ? 0.4 * g : g; er[b + 2] = e & 1 ? g : 0.4 * g;
+      }
+      this.er = er;
+    }
+    // the shimmer: the tank's sum through a two-tap pitch shifter (taps half a 70 ms window apart, each under a
+    // parabolic window), 400 Hz up and 7 kHz down, softly limited, and back into the tank's input
+    this.sh = q.shimmer ? new Float32Array(8192) : null; this.sw = 0; this.sph = 0; this.SW = Math.round(0.07 * sr);
+    this.hp = 0; this.l1 = 0; this.l2 = 0; this.shOut = 0;
+    this.hpc = 1 - Math.exp((-6.283185307 * 400) / sr); this.lpc = 1 - Math.exp((-6.283185307 * 7000) / sr);
+    this.sp = -1; this.sg = 0; this.quiet = 0; this.idle = true;
+  }
+  process(ins, outs, p) {
+    const oL = outs[0][0], oR = outs[0][1] || outs[0][0], x = ins[0] && ins[0][0], n = oL.length;
+    let inPk = 0;
+    if (x) for (let i = 0; i < n; i++) { const v = x[i] < 0 ? -x[i] : x[i]; if (v > inPk) inPk = v; }
+    if (this.idle) { if (inPk < 1e-9) { oL.fill(0); if (oR !== oL) oR.fill(0); return true; } this.idle = false; this.quiet = 0; }
+    const N = this.N, B = this.B, nd = this.nd, dO = this.dO, dM = this.dM, dL = this.dL, dG = this.dG, pO = this.pO, pM = this.pM, pre = this.pre;
+    const so = this.so, sm = this.sm, sl = this.sl, md = this.md, lp = this.lp, fb = this.fb, inj = this.inj, ex = this.ex;
+    const lg = this.lg, dA = this.da, tO = this.tO, tM = this.tM, tD = this.tD, tG = this.tG, nL = this.nL, nT = nL * 2, er = this.er, sh = this.sh, eg = this.eg, eO = this.eO, eM = this.eM, eD = this.eD;
+    // DECAY is a T60 in seconds: every line takes the loss of its own length (a signal is 60 dB down after T60 of
+    // lines, whichever way it went round), and each tap the loss of how far along its line it reads, so the tail falls
+    // from the first echo however short it is against the tank. The highs: each section's damping one-pole (Jot's)
+    // brings the loss at Nyquist to 60 dB in hf * T60. A block that DECAY moves in ramps them all, sample by sample, and
+    // a step (a preset, a lane) glides there over about 20 ms, in its logarithm, a block at a time.
+    const Tw = p.decay[0], hw = p.hf[0], K = this.K, Kt = this.Kt, Ks = this.Ks, nK = K.length;
+    let T = this.T < 0 ? Tw : this.T * Math.pow(Tw / this.T, 0.15), hf = this.hf < 0 ? hw : this.hf + (hw - this.hf) * 0.15, ramp = false;
+    if (Math.abs(T / Tw - 1) < 1e-3) T = Tw;
+    if (Math.abs(hf - hw) < 1e-3) hf = hw;
+    if (T !== this.T || hf !== this.hf) {
+      const c = -6.907755279 / (T * sampleRate), tG0 = this.tG0;
+      for (let i = 0; i < N * 4; i++) Kt[i] = Math.exp(c * (sl[i] + (i & 3 ? 0 : ex)));
+      for (let t = 0; t < nT; t++) Kt[N * 4 + t] = tG0[t] * Math.exp(c * tD[t]);
+      for (let s = 0; s < N; s++) { const qn = Math.exp(c * (sl[s * 4] + ex + sl[s * 4 + 1] + sl[s * 4 + 2] + sl[s * 4 + 3]) * (1 / hf - 1)); Kt[N * 4 + nT + s] = 1 - (1 - qn) / (1 + qn); }
+      if (this.T < 0) K.set(Kt);
+      else { for (let j = 0; j < nK; j++) Ks[j] = (Kt[j] - K[j]) / n; ramp = true; }
+      this.T = T; this.hf = hf;
+    }
+    if (this.sp < 0) { this.sp = p.space[0]; this.sg = p.shim[0]; }
+    const sp1 = this.sp + (p.space[0] - this.sp) * 0.1, sg1 = p.shim[0], spS = (sp1 - this.sp) / n, sgS = (sg1 - this.sg) / n;
+    let sp = this.sp, sg = this.sg;
+    const SW = this.SW, step = (1 - p.ratio[0]) / SW, bwc = 1 - this.bw, hpc = this.hpc, lpc = this.lpc, out = this.out;
+    const mc = this.mc, ms = this.ms, rc = this.rc, rs = this.rs, mdS = this.mdS || (this.mdS = new Float64Array(N));
+    for (let i = 0; i < N * 2; i++) { const c = mc[i], si = ms[i], m = 1 / Math.sqrt(c * c + si * si); mc[i] = (c * rc[i] - si * rs[i]) * m; ms[i] = (si * rc[i] + c * rs[i]) * m; }
+    for (let s = 0; s < N; s++) mdS[s] = (ex * (1 + 0.7 * ms[s * 2] + 0.3 * ms[s * 2 + 1]) - md[s]) / n;
+    let w = this.w, bz = this.bz, sph = this.sph, sw = this.sw, hp = this.hp, l1 = this.l1, l2 = this.l2, shOut = this.shOut, outPk = 0;
+    for (let i = 0; i < n; i++) {
+      sp += spS; sg += sgS;
+      if (ramp) for (let j = 0; j < nK; j++) K[j] += Ks[j];
+      // the pre-delay, the input's bandwidth (a one-pole), the diffusers
+      B[pO + (w & pM)] = x ? x[i] : 0;
+      let d = B[pO + ((w - pre) & pM)] + shOut;
+      bz += bwc * (d - bz); d = bz;
+      for (let j = 0; j < nd; j++) {
+        const o = dO[j], m = dM[j], z = B[o + ((w - dL[j]) & m)], v = d - dG[j] * z;
+        B[o + (w & m)] = v; d = z + dG[j] * v;
+      }
+      // early: the diffused input itself, through a short allpass of its own on each side
+      let yl = 0, yr = 0;
+      if (eg) {
+        let o = eO[0], m = eM[0], z = B[o + ((w - eD[0]) & m)], v = d - 0.6 * z;
+        B[o + (w & m)] = v; yl = eg * (z + 0.6 * v);
+        o = eO[1]; m = eM[1]; z = B[o + ((w - eD[1]) & m)]; v = d - 0.6 * z;
+        B[o + (w & m)] = v; yr = eg * (z + 0.6 * v);
+      }
+      // the tank: each section takes the diffused input (if it's one that does) and the section before's output
+      for (let s = 0; s < N; s++) { const h = s * 4 + 3; fb[s] = lg[h] * B[so[h] + ((w - sl[h]) & sm[h])]; }
+      for (let s = 0; s < N; s++) {
+        const h = s * 4;
+        // the modulated allpass (Dattorro's decay diffusion 1, -0.7), read between samples (cubic: Catmull-Rom)
+        const r = sl[h] + (md[s] += mdS[s]), ri = r | 0, f = r - ri, o0 = so[h], k0 = sm[h], b0 = w - ri;
+        const y0 = B[o0 + ((b0 + 1) & k0)], y1 = B[o0 + (b0 & k0)], y2 = B[o0 + ((b0 - 1) & k0)], y3 = B[o0 + ((b0 - 2) & k0)];
+        const z0 = lg[h] * (y1 + f * (0.5 * (y2 - y0) + f * (y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3 + f * (1.5 * (y1 - y2) + 0.5 * (y3 - y0)))));
+        let v = inj[s] * d + fb[s === 0 ? N - 1 : s - 1] + 0.7 * z0;
+        B[o0 + (w & k0)] = v;
+        // its delay, the damping, the decay
+        const o1 = so[h + 1], k1 = sm[h + 1];
+        B[o1 + (w & k1)] = z0 - 0.7 * v;
+        const ls = lp[s] + dA[s] * (lg[h + 1] * B[o1 + ((w - sl[h + 1]) & k1)] - lp[s]);
+        lp[s] = ls;
+        // the second allpass (decay diffusion 2, 0.5), into the delay that feeds the next section
+        const o2 = so[h + 2], k2 = sm[h + 2], z2 = lg[h + 2] * B[o2 + ((w - sl[h + 2]) & k2)];
+        v = ls - 0.5 * z2;
+        B[o2 + (w & k2)] = v;
+        B[so[h + 3] + (w & sm[h + 3])] = z2 + 0.5 * v;
+      }
+      for (let t = 0; t < nL; t++) yl += tG[t] * B[tO[t] + ((w - tD[t]) & tM[t])];
+      for (let t = nL; t < nT; t++) yr += tG[t] * B[tO[t] + ((w - tD[t]) & tM[t])];
+      if (er) {
+        // (one set, or both while SPACE crossfades)
+        const s0 = 1 - sp, e0 = sp > 0.9999 ? 30 : 0, e1 = sp < 1e-4 ? 30 : 60;
+        for (let e = e0; e < e1; e += 3) {
+          const v = B[pO + ((w - er[e]) & pM)] * (e < 30 ? s0 : sp);
+          yl += v * er[e + 1]; yr += v * er[e + 2];
+        }
+      }
+      // the shimmer: (L + R) / 2 into the shifter; its taps read at ratio times speed, each faded in and out as it jumps
+      if (sh) {
+        sh[sw] = 0.5 * (yl + yr);
+        sph += step; sph -= Math.floor(sph);
+        const q2 = sph + 0.5 - Math.floor(sph + 0.5);
+        const r1 = sw - 2 - sph * SW, i1 = Math.floor(r1), f1 = r1 - i1, x1 = sh[i1 & 8191], x2 = sh[(i1 + 1) & 8191];
+        const r2 = sw - 2 - q2 * SW, i2 = Math.floor(r2), f2 = r2 - i2, x3 = sh[i2 & 8191], x4 = sh[(i2 + 1) & 8191];
+        let z = (x1 + (x2 - x1) * f1) * sph * (1 - sph) * 4 + (x3 + (x4 - x3) * f2) * q2 * (1 - q2) * 4;
+        hp += hpc * (z - hp); z -= hp; // (400 Hz up: z less its low-pass)
+        l1 += lpc * (z - l1); l2 += lpc * (l1 - l2); // (7 kHz down, twice)
+        z = l2 * sg;
+        shOut = z > 1.5 ? 1 : z < -1.5 ? -1 : z - 0.148148148 * z * z * z; // (a cubic soft limit: flat at ±1)
+        sw = (sw + 1) & 8191;
+      }
+      yl *= out; yr *= out;
+      oL[i] = yl; oR[i] = yr;
+      const pk = (yl < 0 ? -yl : yl) + (yr < 0 ? -yr : yr);
+      if (pk > outPk) outPk = pk;
+      w = (w + 1) & 0x3fffffff;
+    }
+    if (ramp) K.set(Kt);
+    this.sp = sp1; this.sg = sg1;
+    this.w = w; this.bz = bz; this.sph = sph; this.sw = sw; this.hp = hp; this.l1 = l1; this.l2 = l2; this.shOut = shOut;
+    // idle: no input, and the tail under -120 dB for a quarter of a second: cleared, and silent at no cost till played
+    if (inPk < 1e-9 && outPk < 1e-6) {
+      if (++this.quiet * n > 0.25 * sampleRate) { this.B.fill(0); if (sh) sh.fill(0); lp.fill(0); this.bz = this.hp = this.l1 = this.l2 = this.shOut = 0; this.idle = true; }
+    } else this.quiet = 0;
+    return true;
+  }
+}
+registerProcessor('verb-tank', VerbTank);`;
+// a tank node for a pedal (null if the worklet didn't load: the pedal is then dry, its send going nowhere)
+const verbTank = (k, opts) => k.worklet('verb-tank', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 1, channelCountMode: 'explicit',
+  processorOptions: Object.assign({ seed: k.seed || 1 }, opts) });
+// what a tank's knobs are on the meter: each pedal's out was set so its wet reads as loud as its convolver's did (the
+// DI strum, at its defaults: tools/guitar-test.js holds the reverbs to it)
+const VERB_OUT = { verb: 0.519, lobsterplate: 0.371, krakenhall: 0.674, halojelly: 0.627, frostbite: 0.607 };
+
+// Deep Trench: the everyday reverb, a plate a little bigger than the studio's (VERB_TANK) behind 12 ms
 pedalDef({
   id: 'verb', name: 'Deep Trench', kind: 'REVERB', cat: 'ambient', where: 'post', trails: true, color: '#e8b53a', ink: '#1a1405', stereo: true,
   nod: 'a big digital hall in a small box', blurb: 'A hall that rings on after you stomp it off',
   look: { finish: 'flat', knob: 'black', label: 'script' },
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 4], ['tone', 'TONE', 0, 10, 5], ['mix', 'MIX', 0, 10, 3]],
   build(c, k) {
-    const input = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 6000, 0.5), wet = k.G(0);
-    k.chain(input, k.F('highpass', 220, 0.6), conv, tone, wet);
-    let decay = -1, timer = 0;
-    const make = (d) => { const secs = 0.4 + d * 0.36; conv.buffer = k.ir({ secs, seed: 1 + Math.round(d * 97), pre: 0.012, tail: 1.2 }); };
-    return { input, output: wet, set(v, x) {
-      if (v.decay !== decay) { decay = v.decay; clearTimeout(timer); if (!conv.buffer) make(decay); else timer = k.later(() => make(decay), 120); }
+    const input = k.G(1), tank = verbTank(k, { algo: 'plate', scale: 1.1, pre: 0.012, bw: 0.25, early: 0.4, out: VERB_OUT.verb }), tone = k.F('lowpass', 6000, 0.5), wet = k.G(0);
+    if (tank) { tank.parameters.get('hf').value = 0.8; k.chain(input, k.F('highpass', 220, 0.6), tank, tone, wet); }
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) x.to(tank.parameters.get('decay'), 0.4 + v.decay * 0.36); // 0.4 to 4 s
       x.to(tone.frequency, 1500 * Math.pow(2, v.tone * 0.25)); // 1.5 to 8.5 kHz
       x.to(wet.gain, 0.19 * v.mix);
     } };
@@ -1420,8 +1522,9 @@ pedalDef({
     return k.c.createIIRFilter([b0, -b0], [1, (K - 1) / (K + 1)]);
   };
   // The output stage's supply rails: untouched up to 0.7 of `ceil`, then rounded off to it. For pedals whose EQ and
-  // output knobs together could otherwise swing far past anything a real 9-18 V box can put out.
-  const drvRail = (k, ceil) => [k.G(1 / ceil), k.curve((x) => { const a = Math.abs(x); return Math.sign(x) * (a < 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3)); }), k.G(ceil)];
+  // output knobs together could otherwise swing far past anything a real 9-18 V box can put out. (Drawn out to where
+  // it's flat, reach 'soft': clamped at ±1 it stopped at 0.93 of ceil with a corner, 42% of its slope still there.)
+  const drvRail = (k, ceil) => [k.G(1 / ceil), k.curve((x) => { const a = Math.abs(x); return Math.sign(x) * (a < 0.7 ? a : 0.7 + 0.3 * Math.tanh((a - 0.7) / 0.3)); }, '2x', 4096, 'soft'), k.G(ceil)];
   // a LEVEL knob: unity at its default, 2.4 dB a step
   const drvLvl = (k, v, d) => k.dB((v - d) * 2.4);
 
@@ -1528,7 +1631,7 @@ pedalDef({
     knobs: [['vol', 'VOLUME', 0, 10, 5], ['drive', 'DRIVE', 0, 10, 5], ['tone', 'TONE', 0, 10, 6], { key: 'mode', label: 'MODE', opts: ['LP', 'HP'], def: 1 }],
     build(c, k) {
       const input = k.G(1), pre = k.G(1), lpG = k.G(0), hpG = k.G(1), sum = k.G(1), tone = k.F('lowpass', 4000, -2), vol = k.G(1);
-      const mos = k.curve((x) => { const y = 3 * x; return (y / Math.pow(1 + Math.pow(Math.abs(y), 2.6), 1 / 2.6)) / (3 / Math.pow(1 + Math.pow(3, 2.6), 1 / 2.6)); });
+      const mos = k.curve((x) => { const y = 3 * x; return (y / Math.pow(1 + Math.pow(Math.abs(y), 2.6), 1 / 2.6)) / (3 / Math.pow(1 + Math.pow(3, 2.6), 1 / 2.6)); }, '2x', 4096, 'soft');
       k.chain(input, k.F('highpass', 45, 0), pre);
       // (the two feedback voicings run side by side; the switch picks one)
       k.chain(pre, k.F('lowpass', 2400, -3), k.F('highpass', 160, -3), lpG, sum);
@@ -1586,7 +1689,7 @@ pedalDef({
   // Plexi Prawn: the British stack in a box. A bright cap (treble past the gain pot, fading as it goes up), two lopsided
   // valve-ish stages with a coupling cap between them, and the passive tone stack (whose mids never quite come back).
   pedalDef({
-    id: 'plexiprawn', name: 'Plexi Prawn', kind: 'AMP IN A BOX', cat: 'drive', where: 'pre', color: '#2a2019', ink: '#e8c878', trim: -24,
+    id: 'plexiprawn', name: 'Plexi Prawn', kind: 'AMP IN A BOX', cat: 'drive', where: 'pre', color: '#2a2019', ink: '#e8c878', trim: -24.3,
     nod: 'the British plexi stack squeezed into a box',
     blurb: 'Stadium crunch from a stompbox: chords that roar',
     look: { shape: 'wide', finish: 'check', knob: 'cream', label: 'plate', led: '#ffcf4a' },
@@ -1676,8 +1779,9 @@ pedalDef({
     knobs: [['blow', 'BLOW', 0, 10, 6], ['rattle', 'RATTLE', 0, 10, 4], ['vol', 'VOLUME', 0, 10, 5]],
     build(c, k) {
       const input = k.G(1), pre = k.G(1), sum = k.G(1), out = k.G(1), rat = k.G(0), buzz = k.G(0), sag = k.G(0);
-      // the cone: asymmetric, a hard stop one way and a soft flap the other
-      const cone = k.curve((x) => (x > 0 ? 0.42 * Math.tanh(x / 0.42) * (1 - 0.3 * Math.max(0, x - 0.42)) : Math.tanh(x * 1.6) / Math.tanh(1.6)));
+      // the cone: asymmetric, a hard stop one way (the magnet: it folds back, then holds at +1) and a soft flap the other
+      // (tanh, drawn out to where it's flat: the plain curve's clamp at -1 was a second hard stop, 19% of its slope left)
+      const cone = k.curve((x) => { const u = Math.min(1, x); return x > 0 ? 0.42 * Math.tanh(u / 0.42) * (1 - 0.3 * Math.max(0, u - 0.42)) : Math.tanh(x * 1.6) / Math.tanh(1.6); }, '2x', 4096, 'soft');
       k.chain(input, k.F('highpass', 45, 0), pre, sum, cone, k.F('highpass', 30, 0), k.F('peaking', 1300, 1.2, 6), k.F('lowpass', 4200, -1), out);
       const env = k.envelope({ attack: 0.02, release: 0.25 });
       if (env) k.chain(input, env, sag, sum); // (a louder note shifts the cone's rest point: it starves and farts)
@@ -1748,9 +1852,10 @@ const fzDead = (w) => (u) => Math.sign(u) * Math.max(0, Math.abs(u) - w) / (1 - 
 const fzTanh = (d, b = 0) => { const t0 = Math.tanh(d * b), nm = Math.max(Math.tanh(d * (1 + b)) - t0, t0 - Math.tanh(d * (b - 1))); return (u) => (Math.tanh(d * (u + b)) - t0) / nm; };
 // A shaper with a movable bias: a DC offset added to its input pushes it off-centre (hot germanium, a starved battery,
 // a gate trim). The same offset's output is taken off again after it, so a knob move or the pedal starting up puts no
-// step through the coupling filters (no thump): only the signal feels the bias. bias(x, v) sets it (glides).
-function fzBiased(k, fn, over = '2x') {
-  const input = k.G(1), output = k.G(1), dc = k.constant(0), undo = k.constant(0), sh = k.curve(fn, over);
+// step through the coupling filters (no thump): only the signal feels the bias. bias(x, v) sets it (glides). reach:
+// kit.curve's ('soft' for a soft fn; a dead zone that runs linear to the rails keeps them where they are).
+function fzBiased(k, fn, over = '2x', reach = 1) {
+  const input = k.G(1), output = k.G(1), dc = k.constant(0), undo = k.constant(0), sh = k.curve(fn, over, 4096, reach);
   // (the undo goes through a straight-line shaper with the same oversampling: the same latency, so they cancel)
   dc.connect(input); k.chain(input, sh, output); k.chain(undo, k.curve((u) => u, over), output);
   return { input, output, bias(x, v) { x.to(dc.offset, v); x.to(undo.offset, -fn(Math.max(-1, Math.min(1, v)))); } };
@@ -1768,7 +1873,7 @@ pedalDef({
   worklets: { 'pfx-env': PFX.ENV },
   knobs: [['fuzz', 'FUZZ', 0, 10, 7], ['temp', 'TEMP', 0, 10, 5, 0, (v) => Math.round(4 + v * 4.2) + '°C'], ['level', 'VOLUME', 0, 10, 5]],
   build(c, k) {
-    const input = k.G(1), pre = k.G(1), ge = fzBiased(k, fzTanh(2.4, 0.18)), sag = k.G(0), sens = k.G(0), tone = k.F('lowpass', 4000, 0), level = k.G(1);
+    const input = k.G(1), pre = k.G(1), ge = fzBiased(k, fzTanh(2.4, 0.18), '2x', 'soft'), sag = k.G(0), sens = k.G(0), tone = k.F('lowpass', 4000, 0), level = k.G(1);
     const env = k.envelope({ attack: 0.003, release: 0.14 });
     k.chain(input, k.F('highpass', 70, 0), k.F('lowpass', 5200, 0), pre, ge.input); k.chain(ge.output, k.F('highpass', 28, 0), tone, level);
     if (env) { input.connect(env); env.connect(sens); sens.connect(pre.gain); env.connect(sag); sag.connect(ge.input); }
@@ -1857,8 +1962,9 @@ pedalDef({
   knobs: [['boost', 'BOOST', 0, 10, 6], ['oct', 'OCTAVE', 0, 10, 8], ['level', 'LEVEL', 0, 10, 5]],
   build(c, k) {
     const input = k.G(1), split = k.G(3), octG = k.G(1), plain = k.G(0), sum = k.G(1), boost = k.G(1), level = k.G(1);
-    // germanium diodes: a small knee before they conduct
-    const rect = k.curve((u) => Math.max(0, Math.abs(u) - 0.01), '4x');
+    // germanium diodes: a small knee before they conduct (and no ceiling: drawn out to ±3, a full-scale DI times the
+    // splitter's 3, where the plain curve stopped dead at ±1, -10 dBFS in)
+    const rect = k.curve((u) => Math.max(0, Math.abs(u) - 0.01), '4x', 4096, 3);
     k.chain(input, k.F('highpass', 90, 0), k.F('lowpass', 2600, 0), split);
     k.chain(split, rect, octG, sum); k.chain(split, plain, sum);
     k.chain(sum, k.F('highpass', 60, 0), boost, k.shaper(3.2, 0.1), k.F('highpass', 30, 0), k.F('lowpass', 5500, 0), level);
@@ -4088,31 +4194,6 @@ const TM_REV = `class SidewaysRev extends AudioWorkletProcessor {
 }
 registerProcessor('sideways-rev', SidewaysRev);`;
 
-// A two-tap delay-line pitch shifter (the shimmer's octave): each tap's delay sweeps at (1 - ratio) samples a sample,
-// so it reads at ratio times speed, and the taps take turns under a sine window. Grainy on its own; lovely in a reverb.
-const TM_PITCH = `class HaloPitch extends AudioWorkletProcessor {
-  static get parameterDescriptors() { return [{ name: 'ratio', defaultValue: 2, minValue: 0.25, maxValue: 4, automationRate: 'k-rate' }]; }
-  constructor() { super(); this.b = new Float32Array(16384); this.w = 0; this.ph = 0; this.W = Math.min(12000, Math.round(0.07 * sampleRate)); }
-  process(ins, outs, p) {
-    const o = outs[0][0], i = ins[0] && ins[0][0];
-    if (!o) return true;
-    const b = this.b, M = 16383, W = this.W, step = (1 - p.ratio[0]) / W;
-    let ph = this.ph, w = this.w;
-    for (let n = 0; n < o.length; n++) {
-      b[w] = i ? i[n] : 0;
-      ph += step; ph -= Math.floor(ph);
-      const q2 = ph + 0.5 - Math.floor(ph + 0.5);
-      const r1 = w - 2 - ph * W, a1 = Math.floor(r1), f1 = r1 - a1, x1 = b[a1 & M], y1 = b[(a1 + 1) & M];
-      const r2 = w - 2 - q2 * W, a2 = Math.floor(r2), f2 = r2 - a2, x2 = b[a2 & M], y2 = b[(a2 + 1) & M];
-      o[n] = 0.8 * ((x1 + (y1 - x1) * f1) * Math.sin(Math.PI * ph) + (x2 + (y2 - x2) * f2) * Math.sin(Math.PI * q2));
-      w = (w + 1) & M;
-    }
-    this.ph = ph; this.w = w;
-    return true;
-  }
-}
-registerProcessor('halojelly-pitch', HaloPitch);`;
-
 // A granular cloud: the input (and some of the cloud, fed back) goes into a few seconds of buffer; grains a GRAIN
 // long start at random points up to SMEAR back, each slightly detuned (and at high DRIFT sometimes an octave up or
 // down), panned at random under a Hann window. Seeded, so it's the same cloud every time.
@@ -4207,16 +4288,6 @@ const TM_FREEZE = `class FrostbiteFreeze extends AudioWorkletProcessor {
 }
 registerProcessor('frostbite-freeze', FrostbiteFreeze);`;
 
-// A reverb IR that rebuilds (off the audio thread's critical moment: once the knob settles) when its key changes.
-const tmIR = (k, conv, make) => {
-  let key = null, timer = 0;
-  return (next) => {
-    if (next === key) return;
-    key = next; clearTimeout(timer);
-    if (!conv.buffer) conv.buffer = make(); else timer = k.later(() => (conv.buffer = make()), 120);
-  };
-};
-
 /* ================================================================ time */
 
 // Tape Crab: one loop of tape, a record head and three playback heads at 1, 2 and 3 times the RATE. The record head
@@ -4228,7 +4299,7 @@ pedalDef({
   knobs: [['time', 'RATE', 0, 5, 1, 1, PFX.noteFmt], ['int', 'INTENSITY', 0, 10, 4], ['age', 'TAPE AGE', 0, 10, 4], ['mix', 'ECHO', 0, 14, 5],
     { key: 'heads', label: 'HEADS', opts: ['1', '1+2', '1+2+3'], def: 1 }, { key: 'tap', label: 'TAP', tap: true }],
   build(c, k) {
-    const input = k.G(1), rec = k.G(0.8), sat = k.curve((x) => Math.tanh(2.2 * x) / 2.2), sum = k.G(1);
+    const input = k.G(1), rec = k.G(0.8), sat = k.curve((x) => Math.tanh(2.2 * x) / 2.2, '2x', 4096, 'soft'), sum = k.G(1);
     const heads = [0, 1, 2].map(() => k.delay(4.2, 0.25)), hg = heads.map(() => k.G(0));
     const lp = k.F('lowpass', 5000, -3), hp = k.F('highpass', 110, -3), fb = k.G(0.3), wet = k.G(0);
     k.chain(input, rec, sat);
@@ -4259,7 +4330,7 @@ pedalDef({
   nod: 'the bucket-brigade chip delays: dark, warm and a bit seasick', blurb: 'Murky, wobbly repeats that sit behind you',
   knobs: [['time', 'TIME', 20, 600, 320, 1, tmMs], ['fb', 'REPEATS', 0, 10, 4], ['mix', 'MIX', 0, 10, 5], ['mod', 'MOD', 0, 10, 3]],
   build(c, k) {
-    const input = k.G(1), aa = k.F('lowpass', 2500, -3), sum = k.G(1), sat = k.curve((x) => Math.tanh(1.8 * x) / 1.8), dl = k.delay(0.7, 0.32);
+    const input = k.G(1), aa = k.F('lowpass', 2500, -3), sum = k.G(1), sat = k.curve((x) => Math.tanh(1.8 * x) / 1.8, '2x', 4096, 'soft'), dl = k.delay(0.7, 0.32);
     const rc = k.F('lowpass', 2500, -3), rc2 = k.F('lowpass', 3500, -3), hp = k.F('highpass', 80, -3), fb = k.G(0.3), wet = k.G(0);
     k.chain(input, aa, sum, sat, dl, rc, rc2, hp, wet); k.chain(hp, fb, sum);
     const lfo = k.lfo(0.8, 'triangle'), dep = k.G(0);
@@ -4347,7 +4418,7 @@ pedalDef({
   knobs: [['time', 'SLAP', 40, 220, 110, 1, tmMs], ['level', 'LEVEL', 0, 10, 5], ['tone', 'TONE', 0, 10, 5]],
   build(c, k) {
     const input = k.G(1), sum = k.G(1), dl = k.delay(0.3, 0.11), lp = k.F('lowpass', 3500, -3), hp = k.F('highpass', 160, -3), fb = k.G(0.1), wet = k.G(0);
-    k.chain(input, k.G(0.9), k.curve((x) => Math.tanh(1.6 * x) / 1.6), sum, dl, lp, hp, wet); k.chain(hp, fb, sum);
+    k.chain(input, k.G(0.9), k.curve((x) => Math.tanh(1.6 * x) / 1.6, '2x', 4096, 'soft'), sum, dl, lp, hp, wet); k.chain(hp, fb, sum);
     const wob = k.G(0.00025); k.chain(k.lfo(0.7), wob, dl.delayTime);
     return { input, output: wet, set(v, x) {
       x.to(dl.delayTime, v.time / 1000, 0.03);
@@ -4386,19 +4457,18 @@ pedalDef({
   },
 });
 
-// Lobster Plate: a studio plate. Dense straight away (no echoes first), bright, smooth.
+// Lobster Plate: a studio plate (VERB_TANK's Dattorro, at his size). Dense straight away (no echoes first), bright, smooth.
 pedalDef({
   id: 'lobsterplate', name: 'Lobster Plate', kind: 'PLATE REVERB', cat: 'ambient', where: 'post', trails: true, stereo: true,
   color: '#2a2a2e', ink: '#ff6b4a', look: { shape: 'rack', finish: 'brushed', knob: 'small', label: 'plate', led: '#ff3b30' },
   nod: 'the big steel studio plate hung in a back room', blurb: 'The shiny, dense studio reverb on classic vocals',
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 4], ['tone', 'TONE', 0, 10, 6], ['pre', 'PREDELAY', 0, 150, 20, 1, tmMs], ['mix', 'MIX', 0, 10, 3]],
   build(c, k) {
-    const input = k.G(1), pre = k.delay(0.2, 0.02), conv = k.convolver(), tone = k.F('lowpass', 8000, -3), wet = k.G(0);
-    k.chain(input, k.F('highpass', 180, -3), pre, conv, tone, wet);
-    let d = 4;
-    const ir = tmIR(k, conv, () => k.ir({ secs: 0.6 + d * 0.54, pre: 0.001, seed: 31 + Math.round(d * 10), tail: 1.15, damp: 0.06, darken: 0.45 }));
-    return { input, output: wet, set(v, x) {
-      d = v.decay; ir(d);
+    const input = k.G(1), pre = k.delay(0.2, 0.02), tank = verbTank(k, { algo: 'plate', pre: 0.001, bw: 0.06, early: 0.5, out: VERB_OUT.lobsterplate }), tone = k.F('lowpass', 8000, -3), wet = k.G(0);
+    if (tank) { tank.parameters.get('hf').value = 0.85; k.chain(input, k.F('highpass', 180, -3), pre, tank, tone, wet); }
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) x.to(tank.parameters.get('decay'), 0.6 + v.decay * 0.54); // 0.6 to 6 s
       x.to(pre.delayTime, v.pre / 1000);
       x.to(tone.frequency, 2500 * Math.pow(2, v.tone * 0.23)); // 2.5 to 12 kHz
       x.to(wet.gain, v.mix * 0.18);
@@ -4406,60 +4476,52 @@ pedalDef({
   },
 });
 
-// Kraken Hall: a big hall, or a cathedral. The IR gets early reflections off the walls and a slow build before its
-// long tail (a cathedral: further walls, a slower build, darker, 1.6 times as long).
+// Kraken Hall: a big hall, or a cathedral (VERB_TANK's ring of four). Early reflections off the walls first, a slow
+// build, a long tail; a cathedral's walls are further off, and it rings 1.6 times as long and darker.
 pedalDef({
   id: 'krakenhall', name: 'Kraken Hall', kind: 'HALL · CATHEDRAL', cat: 'ambient', where: 'post', trails: true, stereo: true, tail: 13,
   color: '#101a3a', ink: '#dfe6ff', look: { shape: 'wide', finish: 'sparkle', knob: 'chrome', label: 'stencil', led: '#8fa8ff', foot2: 'space' },
   nod: 'the huge concert-hall and cathedral programs of the big studio reverbs', blurb: 'A vast stone room: long, slow, enormous',
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['size', 'SIZE', 0, 10, 5], ['tone', 'TONE', 0, 10, 4], ['pre', 'PREDELAY', 0, 120, 30, 1, tmMs], ['mix', 'MIX', 0, 10, 3],
     { key: 'space', label: 'SPACE', opts: ['HALL', 'CATH'], def: 0 }],
   build(c, k) {
-    const input = k.G(1), pre = k.delay(0.15, 0.03), conv = k.convolver(), tone = k.F('lowpass', 5000, -3), wet = k.G(0);
-    k.chain(input, k.F('highpass', 150, -3), pre, conv, tone, wet);
-    let s = 5, cath = 0;
-    const make = () => {
-      const secs = (1.8 + 0.62 * s) * (cath ? 1.6 : 1), sr = k.sr, seed = 51 + Math.round(s * 10) + cath * 7;
-      const b = k.ir({ secs, pre: 0.004, seed, tail: 1.12, damp: cath ? 0.3 : 0.2, darken: cath ? 0.6 : 0.65 /* (damp + darken < 1, or the noise's filter blows up) */ });
-      const L = b.getChannelData(0), R = b.getChannelData(1), build = cath ? 0.09 : 0.05, rnd = k.rng(seed + 1);
-      // the slow build (a hall's tail swells in), then early reflections off the walls, alternating sides
-      for (let i = 0, n = Math.min(L.length, Math.round(sr * build * 6)); i < n; i++) { const g = 1 - Math.exp(-i / (sr * build)); L[i] *= g; R[i] *= g; }
-      for (let e = 0; e < 10; e++) {
-        const i = Math.round(sr * (0.006 + (e + 0.5 + rnd() * 0.4) * (cath ? 0.012 : 0.0075))), g = 0.35 * Math.exp(-e * 0.22) * (rnd() < 0 ? -1 : 1);
-        if (i < L.length) { (e & 1 ? R : L)[i] += g; (e & 1 ? L : R)[i] += g * 0.4; }
-      }
-      return b;
-    };
-    const ir = tmIR(k, conv, make);
-    return { input, output: wet, set(v, x) {
-      s = v.size; cath = v.space; ir(s + ':' + cath);
+    const input = k.G(1), pre = k.delay(0.15, 0.03), tank = verbTank(k, { algo: 'hall', scale: 1.3, pre: 0.004, bw: 0.25, early: 0.25, er: 0.3, out: VERB_OUT.krakenhall });
+    const tone = k.F('lowpass', 5000, -3), wet = k.G(0);
+    if (tank) k.chain(input, k.F('highpass', 150, -3), pre, tank, tone, wet);
+    const P = (n) => tank.parameters.get(n);
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) { x.to(P('decay'), (1.8 + 0.62 * v.size) * (v.space ? 1.6 : 1)); x.to(P('space'), v.space ? 1 : 0); x.to(P('hf'), v.space ? 0.7 : 0.8); } // (1.8 to 8 s, a cathedral 2.9 to 12.8)
       x.to(pre.delayTime, v.pre / 1000);
       x.to(tone.frequency, 1800 * Math.pow(2, v.tone * 0.25)); // 1.8 to 10 kHz
-      x.to(wet.gain, v.mix * 0.2);
+      x.to(wet.gain, v.mix * 0.2 * (v.space ? 1.17 : 1)); // (a cathedral 1.4 dB up: as much louder than the hall as its convolver was)
     } };
   },
 });
 
-// Halo Jelly: a shimmer. A reverb whose tail goes through an octave-up (or a fifth-up) pitch shifter and back into
-// itself, so it climbs as it rings, like an organ over your chord. Each trip goes up and the top filter lets it go.
+// the shimmer's gain into the tank at SHIMMER 10 (on a square root: 5 is where the octave's convolver had it, the tail
+// rising from 5 s at 125 Hz to 8 at 8 kHz; 10 blooms for a quarter of a minute and still dies, DECAY at 10 too)
+const HALO_OCT = 1.7, HALO_5TH = 1;
+// Halo Jelly: a shimmer. A reverb (VERB_TANK's hall) whose tail goes through an octave-up (or a fifth-up) pitch shifter
+// and back into itself, so it climbs as it rings, like an organ over your chord. Each trip goes up and the top filter
+// lets it go.
 pedalDef({
   id: 'halojelly', name: 'Halo Jelly', kind: 'SHIMMER REVERB', cat: 'ambient', where: 'post', trails: true, stereo: true, tail: 8,
   color: '#f5d8ef', ink: '#3a1238', look: { shape: 'wide', finish: 'sparkle', knob: 'cream', label: 'script', led: '#ffffff', foot2: 'intv' },
   nod: 'the octave-shimmer reverbs of the ambient and post-rock crowd', blurb: 'Choir-of-angels reverb that climbs an octave as it rings',
-  worklets: { 'halojelly-pitch': TM_PITCH },
+  worklets: { 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 5], ['shim', 'SHIMMER', 0, 10, 5], ['tone', 'TONE', 0, 10, 6], ['mix', 'MIX', 0, 10, 3.5],
     { key: 'intv', label: 'INTERVAL', opts: ['OCT', '5TH'], def: 0 }],
   build(c, k) {
-    const input = k.G(1), sum = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 7000, -3), wet = k.G(0), shim = k.G(0);
-    k.chain(input, k.F('highpass', 200, -3), sum, conv, tone, wet);
-    const ps = k.worklet('halojelly-pitch', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1], channelCount: 1, channelCountMode: 'explicit' });
-    if (ps) k.chain(conv, ps, k.F('highpass', 400, -3), k.F('lowpass', 7000, -3), shim, k.curve(Math.tanh), k.delay(0.1, 0.03), sum); // (tanh: a safety net) // (no worklet: a plain reverb)
-    let d = 5;
-    const ir = tmIR(k, conv, () => k.ir({ secs: 1.5 + d * 0.65, pre: 0.02, seed: 71 + Math.round(d * 10), tail: 1.1, damp: 0.1, darken: 0.5 }));
-    return { input, output: wet, node: ps, set(v, x) {
-      d = v.decay; ir(d);
-      if (ps) x.to(ps.parameters.get('ratio'), v.intv ? 1.5 : 2, 0.001);
-      x.to(shim.gain, v.shim * (v.intv ? 0.24 : 0.45)); // (measured: the loop stays under unity at 10 with DECAY at 10; a fifth stays in band longer)
+    const input = k.G(1), tank = verbTank(k, { algo: 'hall', scale: 1.1, pre: 0.02, bw: 0.1, early: 0.3, shimmer: true, out: VERB_OUT.halojelly }), tone = k.F('lowpass', 7000, -3), wet = k.G(0);
+    if (tank) { tank.parameters.get('hf').value = 0.8; k.chain(input, k.F('highpass', 200, -3), tank, tone, wet); }
+    const P = (n) => tank.parameters.get(n);
+    return { input, output: wet, node: tank, set(v, x) {
+      if (tank) {
+        x.to(P('decay'), 1.5 + v.decay * 0.65); // 1.5 to 8 s
+        x.to(P('ratio'), v.intv ? 1.5 : 2, 0.001);
+        x.to(P('shim'), Math.sqrt(v.shim / 10) * (v.intv ? HALO_5TH : HALO_OCT));
+      }
       x.to(tone.frequency, 2500 * Math.pow(2, v.tone * 0.25));
       x.to(wet.gain, v.mix * 0.14);
     } };
@@ -4500,7 +4562,7 @@ pedalDef({
   knobs: [['time', 'TIME', 0, 5, 2, 1, PFX.noteFmt], ['fb', 'FEEDBACK', 0, 10, 6], ['freq', 'FREQ', 0, 10, 5, 0, (v) => Math.round(250 * Math.pow(2, v * 0.45)) + ' Hz'],
     ['sweep', 'SWEEP', 0, 10, 5], ['rate', 'RATE', 0, 10, 4], ['mix', 'MIX', 0, 10, 4]],
   build(c, k) {
-    const input = k.G(1), sum = k.G(1), dl = k.delay(2.5, 0.375), filt = k.F('lowpass', 1200, 2), sat = k.curve((x) => Math.tanh(2 * x) / 2), fb = k.G(0.4), wet = k.G(0);
+    const input = k.G(1), sum = k.G(1), dl = k.delay(2.5, 0.375), filt = k.F('lowpass', 1200, 2), sat = k.curve((x) => Math.tanh(2 * x) / 2, '2x', 4096, 'soft'), fb = k.G(0.4), wet = k.G(0);
     k.chain(input, k.F('highpass', 120, -3), sum, dl, filt, sat, k.F('highpass', 90, -3), fb, sum);
     k.chain(sat, wet);
     const lfo = k.lfo(0.3, 'triangle'), dep = k.G(0);
@@ -4527,9 +4589,9 @@ pedalDef({
     { key: 'stop', label: 'MOTOR', opts: ['RUN', 'STOP'], def: 0 }],
   build(c, k) {
     const input = k.G(1), starve = c.createWaveShaper(), sum = k.G(1), dl = k.delay(2, 0.38), lp = k.F('lowpass', 2500, -3), hp = k.F('highpass', 180, -3);
-    const fb = k.G(0.3), sp = k.G(1), stopG = k.G(1), wet = k.G(0);
+    const fb = k.G(0.3), sp = k.G(1), stopG = k.G(1), wet = k.G(0), RS = 3; // (RS: the curve's reach, below)
     starve.oversample = '2x';
-    k.chain(input, starve, sum, dl, lp, hp, sp, stopG, wet); k.chain(hp, fb, sum);
+    k.chain(input, k.G(1 / RS), starve, sum, dl, lp, hp, sp, stopG, wet); k.chain(hp, fb, sum);
     // the clock wandering: two slow waves at unrelated rates and a flutter
     const wob = k.G(0), fl = k.G(0);
     k.chain(k.lfo(0.13), wob); k.chain(k.lfo(0.71, 'triangle'), wob); k.chain(k.lfo(5.3), fl);
@@ -4539,10 +4601,12 @@ pedalDef({
     k.chain(k.lfo(6.7, [1, 0, 0.33, 0, 0.2]), pulse, sp.gain);
     k.chain(k.lfo(0.23), slowD, pulse.gain);
     let batt = -1, stopped = null;
+    // (drawn over ±RS behind a 1/RS gain, as kit.curve's reach does: tanh is flat by 3, where the plain curve's clamp at
+    // ±1 was a corner with 42% of its slope left; three times the points, no further apart)
     const starveCurve = (s) => {
-      const N = 2048, cv = new Float32Array(N), dz = 0.03 * s, top = 1 - 0.6 * s;
+      const N = 6141, cv = new Float32Array(N), dz = 0.03 * s, top = 1 - 0.6 * s;
       for (let i = 0; i < N; i++) {
-        const x = (i / (N - 1)) * 2 - 1, a = Math.max(0, Math.abs(x) - dz) / (1 - dz), y = Math.sign(x) * a;
+        const x = RS * ((i / (N - 1)) * 2 - 1), a = Math.max(0, Math.abs(x) - dz) / (1 - dz), y = Math.sign(x) * a;
         cv[i] = y > 0 ? top * Math.tanh(y / top) : Math.tanh(y);
       }
       return cv;
@@ -4579,24 +4643,22 @@ pedalDef({
   },
 });
 
-// Frostbite Crab: a reverb with a freeze. HOLD grabs what's ringing and holds it for ever as a pad you play over (it
+// Frostbite Crab: a reverb (VERB_TANK's hall) with a freeze. HOLD grabs what's ringing and holds it for ever as a pad you play over (it
 // keeps going when the pedal is stomped off, too: only letting go of HOLD fades it).
 pedalDef({
   id: 'frostbite', name: 'Frostbite Crab', kind: 'FREEZE REVERB', cat: 'ambient', where: 'post', trails: true, stereo: true, drone: true,
   color: '#e9f7ff', ink: '#1b4a73', look: { shape: 'wide', finish: 'brushed', knob: 'chrome', label: 'stencil', led: '#35d4ff', foot2: 'hold' },
   nod: 'the infinite-sustain freeze pedals that hold a chord for ever', blurb: 'Freeze a chord into an endless pad, then solo over it',
-  worklets: { 'frostbite-freeze': TM_FREEZE },
+  worklets: { 'frostbite-freeze': TM_FREEZE, 'verb-tank': VERB_TANK },
   knobs: [['decay', 'DECAY', 0, 10, 5], ['tone', 'TONE', 0, 10, 5], ['mix', 'MIX', 0, 10, 3], ['pad', 'FREEZE', 0, 10, 6],
     { key: 'hold', label: 'HOLD', opts: ['OFF', 'HOLD'], def: 0 }],
   build(c, k) {
-    const input = k.G(1), conv = k.convolver(), tone = k.F('lowpass', 5000, -3), verb = k.G(0), pad = k.G(0), wet = k.G(1);
-    k.chain(input, k.F('highpass', 150, -3), conv, tone, verb, wet);
+    const input = k.G(1), tank = verbTank(k, { algo: 'hall', pre: 0.015, bw: 0.2, early: 0.3, out: VERB_OUT.frostbite }), tone = k.F('lowpass', 5000, -3), verb = k.G(0), pad = k.G(0), wet = k.G(1);
+    if (tank) { tank.parameters.get('hf').value = 0.8; k.chain(input, k.F('highpass', 150, -3), tank, tone, verb, wet); }
     const fz = k.worklet('frostbite-freeze', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 1, channelCountMode: 'explicit' });
     if (fz) { k.chain(tone, fz); k.chain(input, k.G(0.5), fz); k.chain(fz, pad, wet); }
-    let d = 5;
-    const ir = tmIR(k, conv, () => k.ir({ secs: 1 + d * 0.7, pre: 0.015, seed: 111 + Math.round(d * 10), tail: 1.15, damp: 0.2, darken: 0.6 }));
-    return { input, output: wet, node: fz, set(v, x) {
-      d = v.decay; ir(d);
+    return { input, output: wet, node: fz, tank, set(v, x) {
+      if (tank) x.to(tank.parameters.get('decay'), 1 + v.decay * 0.7); // 1 to 8 s
       if (fz) x.to(fz.parameters.get('hold'), v.hold, 0.001);
       x.to(tone.frequency, 1800 * Math.pow(2, v.tone * 0.25));
       x.to(verb.gain, v.mix * 0.2); x.to(pad.gain, v.pad * 0.12);
@@ -5950,58 +6012,58 @@ const PLUG_PRESETS = [
   { id: 'pinch', name: 'Three Chords', blurb: 'The go-to: tight, loud pop-punk power chords', tags: ['rhythm'], amp: 'punk',
     knobs: { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }, fx: { gate: { th: -62 } } },
   { id: 'webcam', name: 'Webcam Shred', blurb: '2006 bedroom solo: boosted, dotted 8ths, big room', tags: ['lead'], hot: 'Solo over the band', amp: 'lead',
-    knobs: { gain: 7, bass: 4.5, mid: 6, treble: 6, presence: 6, level: 5.2 },
+    knobs: { gain: 7, bass: 4.5, mid: 6, treble: 6, presence: 6, level: 5.6 },
     fx: { gate: { th: -66 }, drive: { drive: 2, tone: 6.5, level: 7 }, delay: { time: 2, fb: 4, mix: 4.5 }, verb: { decay: 5.5, tone: 5, mix: 3.5 } } },
   { id: 'pin77', name: "Safety Pin '77", blurb: 'Cranked British stack: raw, loud, mid-forward', tags: ['rhythm'], amp: 'plexi',
-    knobs: { gain: 7, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.7 }, fx: { gate: { th: -62 } } },
+    knobs: { gain: 7, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.8 }, fx: { gate: { th: -62 } } },
   { id: 'skate', name: 'Skate Rat', blurb: 'Bright, fast downpicking for kickflip punk', tags: ['rhythm'], amp: 'punk',
     knobs: { gain: 7.5, bass: 5.5, mid: 4, treble: 6.5, presence: 6, level: 5.6 }, fx: { gate: { th: -58 }, drive: { drive: 1, tone: 6, level: 6 } } },
   { id: 'pit', name: 'Pit Warning', blurb: 'Hardcore breakdown chug: boosted, gated, heavy', tags: ['rhythm', 'heavy'], amp: 'plexi',
-    knobs: { gain: 9, bass: 6.5, mid: 5, treble: 6, presence: 6, level: 5.1 }, fx: { gate: { th: -52 }, drive: { drive: 0, tone: 7, level: 8 } } },
+    knobs: { gain: 9, bass: 6.5, mid: 5, treble: 6, presence: 6, level: 5.6 }, fx: { gate: { th: -52 }, drive: { drive: 0, tone: 7, level: 8 } } },
   { id: 'kraken', name: 'Kraken Core', blurb: 'Scooped, huge metalcore with a tight low end', tags: ['rhythm', 'heavy'], amp: 'recto',
-    knobs: { gain: 7.5, bass: 5.5, mid: 4, treble: 6.5, presence: 6.5, level: 6 }, fx: { gate: { th: -50 }, drive: { drive: 0, tone: 6.5, level: 7 } } },
+    knobs: { gain: 7.5, bass: 5.5, mid: 4, treble: 6.5, presence: 6.5, level: 5.7 }, fx: { gate: { th: -50 }, drive: { drive: 0, tone: 6.5, level: 7 } } },
   { id: 'emo', name: 'Basement Emo', blurb: 'Clean arpeggios with a watery shimmer', tags: ['clean'], amp: 'clean',
-    knobs: { gain: 4, bass: 4.5, mid: 5.5, treble: 6, presence: 5.5, level: 7 },
+    knobs: { gain: 4, bass: 4.5, mid: 5.5, treble: 6, presence: 5.5, level: 7.2 },
     fx: { gate: { th: -80 }, chorus: { rate: 3, depth: 5, mix: 4 }, verb: { decay: 3, tone: 5, mix: 2.5 } } },
   { id: 'twinkle', name: 'Twinkle Tap', blurb: 'Midwest sparkle for tapped, noodly lines', tags: ['clean'], amp: 'jangle',
-    knobs: { gain: 3, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 7 },
+    knobs: { gain: 3, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 8.1 },
     fx: { gate: { th: -80 }, delay: { time: 1, fb: 2, mix: 2.5 }, verb: { decay: 4, tone: 6, mix: 3 } } },
   { id: 'surf', name: 'Wipeout Reef', blurb: 'Drippy spring-ish reverb and slapback', tags: ['clean'], amp: 'clean',
-    knobs: { gain: 5, bass: 4, mid: 5, treble: 7, presence: 6, level: 5.2 },
+    knobs: { gain: 5, bass: 4, mid: 5, treble: 7, presence: 6, level: 5.5 },
     fx: { gate: { th: -80 }, delay: { time: 0, fb: 0, mix: 4 }, verb: { decay: 4.5, tone: 7.5, mix: 5 } } },
   { id: 'jangle', name: 'Coral Jangle', blurb: 'Chimey indie strum with a little hair on it', tags: ['rhythm', 'clean'], amp: 'jangle',
-    knobs: { gain: 5, bass: 5, mid: 5, treble: 6, presence: 5.5, level: 6.4 }, fx: { gate: { th: -72 }, verb: { decay: 3, tone: 5, mix: 2 } } },
+    knobs: { gain: 5, bass: 5, mid: 5, treble: 6, presence: 5.5, level: 6.6 }, fx: { gate: { th: -72 }, verb: { decay: 3, tone: 5, mix: 2 } } },
   { id: 'ska', name: 'Upstroke Club', blurb: 'Choppy, bright offbeats that bounce', tags: ['rhythm', 'clean'], amp: 'clean',
-    knobs: { gain: 3, bass: 3.5, mid: 6, treble: 7, presence: 6.5, level: 6.7 }, fx: { gate: { th: -80 }, verb: { decay: 2, tone: 6, mix: 1.5 } } },
+    knobs: { gain: 3, bass: 3.5, mid: 6, treble: 7, presence: 6.5, level: 7.4 }, fx: { gate: { th: -80 }, verb: { decay: 2, tone: 6, mix: 1.5 } } },
   { id: 'crunch', name: 'Shack Crunch', blurb: 'Classic rock crunch; dig in and it growls', tags: ['rhythm'], amp: 'crunch',
     knobs: { gain: 6, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 5.8 }, fx: { gate: { th: -66 }, verb: { decay: 3, tone: 5, mix: 1.5 } } },
   { id: 'blues', name: 'Low Tide Blues', blurb: 'Edge of breakup, a nudge of drive, a little room', tags: ['lead', 'rhythm'], amp: 'crunch',
-    knobs: { gain: 4, bass: 5, mid: 6, treble: 5.5, presence: 5, level: 6.6 },
+    knobs: { gain: 4, bass: 5, mid: 6, treble: 5.5, presence: 5, level: 6.5 },
     fx: { gate: { th: -80 }, drive: { drive: 3, tone: 5, level: 6 }, verb: { decay: 3.5, tone: 5, mix: 2.5 } } },
   { id: 'siren', name: 'Siren Sustain', blurb: 'Singing legato lead that holds forever', tags: ['lead'], amp: 'lead',
-    knobs: { gain: 8, bass: 5, mid: 6.5, treble: 5.5, presence: 5.5, level: 5.7 },
+    knobs: { gain: 8, bass: 5, mid: 6.5, treble: 5.5, presence: 5.5, level: 6.1 },
     fx: { gate: { th: -70 }, delay: { time: 3, fb: 3, mix: 3 }, verb: { decay: 4, tone: 5, mix: 2.5 } } },
   { id: 'boost', name: 'Solo Stomp', blurb: 'The go-to, boosted: stomp it for the solo', tags: ['lead'], amp: 'punk',
-    knobs: { gain: 7, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 4.9 },
+    knobs: { gain: 7, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 5.4 },
     fx: { gate: { th: -60 }, drive: { drive: 5, tone: 6.5, level: 8 }, delay: { time: 1, fb: 2.5, mix: 2.5 } } },
   { id: 'stoner', name: 'Sea Sludge', blurb: 'Thick, doomy fuzz. Tune low, play slow', tags: ['heavy', 'rhythm'], amp: 'plexi',
-    knobs: { gain: 4, bass: 7, mid: 5.5, treble: 4.5, presence: 4.5, level: 7.4 },
+    knobs: { gain: 4, bass: 7, mid: 5.5, treble: 4.5, presence: 4.5, level: 6.8 },
     fx: { gate: { th: -76 }, fuzz: { sustain: 8, tone: 3, level: 5 }, verb: { decay: 4, tone: 4, mix: 2 } } },
   { id: 'gaze', name: 'Wall of Kelp', blurb: 'Fuzz, chorus and a reverb the size of the sea', tags: ['ambient', 'heavy'], amp: 'jangle',
-    knobs: { gain: 4, bass: 5, mid: 5, treble: 5, presence: 5, level: 5.8 },
+    knobs: { gain: 4, bass: 5, mid: 5, treble: 5, presence: 5, level: 6.3 },
     fx: { gate: { th: -72 }, fuzz: { sustain: 6, tone: 6, level: 5 }, chorus: { rate: 2, depth: 7, mix: 5 }, delay: { time: 3, fb: 5, mix: 3 }, verb: { decay: 9, tone: 4, mix: 7 } } },
   { id: 'lofi', name: 'Hermit Tapes', blurb: 'Trashy little practice amp, warbly as a tape', tags: ['rhythm'], amp: 'tiny',
     knobs: { gain: 5, bass: 5, mid: 5, treble: 5, presence: 4.5, level: 6.8 },
     fx: { gate: { th: -66 }, chorus: { rate: 1, depth: 6, mix: 4 }, verb: { decay: 3, tone: 3.5, mix: 2 } } },
   { id: 'swells', name: 'Trench Swells', blurb: 'Roll your volume in: an endless, glassy ocean', tags: ['ambient', 'clean'], amp: 'clean',
-    knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5.5, presence: 5, level: 7.2 },
+    knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5.5, presence: 5, level: 7.5 },
     fx: { gate: { on: false, th: -62 }, chorus: { rate: 1.5, depth: 5, mix: 4 }, delay: { time: 4, fb: 6, mix: 5 }, verb: { decay: 10, tone: 4, mix: 8 } } },
   // with a cab and mics of their own (amps.js: PLUG_CABS, PLUG_MICS)
   { id: 'studio', name: 'Studio Pair', blurb: 'A dynamic and a ribbon on a 4x12: the record-ready rhythm', tags: ['rhythm'], amp: 'punk',
-    knobs: { gain: 6.5, bass: 5, mid: 5.5, treble: 6, presence: 5.5, level: 5.7 }, fx: { gate: { th: -62 } },
+    knobs: { gain: 6.5, bass: 5, mid: 5.5, treble: 6, presence: 5.5, level: 5.9 }, fx: { gate: { th: -62 } },
     cab: 'g412', mic: { type: 'dyn', x: 0.26, y: -0.12, dist: 1, ang: 0, s: 0 }, mic2: { type: 'ribbon', x: 0.55, y: 0.2, dist: 2, ang: 0, s: 0, blend: 4, flip: false } },
   { id: 'phone', name: 'Long Distance', blurb: 'The intro down a phone line; stomp for the chorus', tags: ['clean'], amp: 'jangle',
-    knobs: { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4 }, fx: { gate: { th: -72 }, verb: { decay: 2, tone: 5, mix: 1.5 } }, cab: 'phone' },
+    knobs: { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.2 }, fx: { gate: { th: -72 }, verb: { decay: 2, tone: 5, mix: 1.5 } }, cab: 'phone' },
   { id: 'abyss', name: 'Deep Sea Bass', blurb: 'An octave down and fuzzed: a synth bass from your guitar', tags: ['heavy'], amp: 'abyss',
     knobs: { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }, fx: { gate: { th: -60 } } },
 ];
@@ -6357,18 +6419,18 @@ const PRESET_CSS = `
   presetBank({ id: 'punk', name: 'Three Chords & the Truth', blurb: "Punk and pop-punk, '76 to now: loud, fast, sincere", color: '#ff4fa3' }, [
     { id: 'pk-blitz', name: 'Blitzkrab Bop', blurb: 'All downstrokes into a cranked stack, no pedals, no mercy',
       nod: "'76 New York: a cheap sixties surf guitar straight into a cranked 100W plexi, downpicked", tags: ['rhythm'], amp: 'plexi',
-      knobs: { gain: 7.5, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 5.4 }, board: [g(-62), 'amp'] },
+      knobs: { gain: 7.5, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 5.7 }, board: [g(-62), 'amp'] },
     { id: 'pk-anarchy', name: 'Anarchy in the Crab', blurb: 'A clean amp cranked till it breaks, overdubbed thick',
       nod: "'77 London: a twin-humbucker single-cut into a flat-out American 2x12 combo, pushed by a boost", tags: ['rhythm'], amp: 'clean',
-      knobs: { gain: 8.5, bass: 5.5, mid: 6, treble: 6, presence: 5, level: 2.7 },
+      knobs: { gain: 8.5, bass: 5.5, mid: 6, treble: 6, presence: 5, level: 3.4 },
       board: [g(-62), { id: 'barnacle', boost: 8, voice: 1 }, 'amp', { id: 'lobsterplate', decay: 2, tone: 5, pre: 10, mix: 1.5 }] },
     { id: 'pk-london', name: 'London Clawing', blurb: 'Scratchy single-coil crunch with a dub echo on the side',
       nod: "'79 London: a single-coil T-style through a cranked British top-boost, dub delay on the offbeats", tags: ['rhythm'], amp: 'jangle',
-      knobs: { gain: 6.5, bass: 4.5, mid: 6, treble: 6.5, presence: 6, level: 5.1 },
+      knobs: { gain: 6.5, bass: 4.5, mid: 6, treble: 6.5, presence: 6, level: 5.2 },
       board: [g(-66), 'amp', { id: 'sirensquid', time: 2, fb: 4, freq: 5, sweep: 3, rate: 3, mix: 2.5 }] },
     { id: 'pk-holiday', name: 'Holiday in Crambodia', blurb: 'Surf-punk twang: tape echo and a splash of spring',
       nod: "'80 San Francisco: a bright single-coil through a clean American 2x12, tape echo slapping, a spring tank", tags: ['rhythm', 'lead'], amp: 'clean',
-      knobs: { gain: 6, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 5.6 },
+      knobs: { gain: 6, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 5.7 },
       board: [g(-66), 'amp', { id: 'tapecrab', time: 1, int: 3, age: 5, mix: 4, heads: 0 }, { id: 'springsquid', dwell: 5, tone: 6, mix: 3 }] },
     { id: 'pk-rise', name: 'Rise Abalone', blurb: 'Harsh, trebly hardcore: a rodent box into solid state',
       nod: "'81 LA hardcore: a hard-clipping distortion box into a flat solid-state amp, no mercy", tags: ['rhythm', 'heavy'], amp: 'jc',
@@ -6376,18 +6438,18 @@ const PRESET_CSS = `
       board: [g(-56), { id: 'ratfish', dist: 7, filter: 3, vol: 5 }, 'amp'] },
     { id: 'pk-clam', name: 'Come Out and Clam', blurb: 'SoCal skate punk: tight, fast, bright and gated',
       nod: "'94 SoCal: a Californian high-gain stack, gated hard for fast palm mutes, a boost in front", tags: ['rhythm'], amp: 'recto',
-      knobs: { gain: 6, bass: 5.5, mid: 5, treble: 6.5, presence: 6.5, level: 5.5 },
+      knobs: { gain: 6, bass: 5.5, mid: 5, treble: 6.5, presence: 6.5, level: 5.6 },
       board: [{ id: 'clamshut', th: -56, decay: 3, mode: 0 }, { id: 'seahorse', gain: 1.5, treble: 6, out: 7 }, 'amp'] },
     { id: 'pk-basket', name: 'Basket Crab', blurb: 'Hot-rodded plexi crunch: fat mids, bratty, loud', hot: "The '94 sound",
       nod: "'94 Bay Area: a single-humbucker S-style copy into a modded 100W plexi, big mids", tags: ['rhythm'], amp: 'friedman',
       knobs: { gain: 6, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.9 }, board: [g(-62), 'amp'] },
     { id: 'pk-dammit', name: 'Dammit Crab', blurb: 'Raw late-90s pop-punk: buzzy, bright, a little sloppy',
       nod: "'97 San Diego: a humbucker S-style, an orange distortion box into a British master-volume", tags: ['rhythm'], amp: 'punk',
-      knobs: { gain: 5.5, bass: 5, mid: 5, treble: 6.5, presence: 6, level: 5.2 },
+      knobs: { gain: 5.5, bass: 5, mid: 5, treble: 6.5, presence: 6, level: 5.6 },
       board: [g(-60), { id: 'roughy', tone: 6, level: 5, dist: 3 }, 'amp'] },
     { id: 'pk-small', name: 'All the Small Clawings', blurb: 'Big-budget pop-punk: tight, polished, two mics on a 4x12',
       nod: "'99 LA: a Californian high-gain stack and a studio pair on a British vintage 4x12, a big-money producer", tags: ['rhythm'], amp: 'recto',
-      knobs: { gain: 6.5, bass: 5, mid: 5.5, treble: 6, presence: 6, level: 5.6 },
+      knobs: { gain: 6.5, bass: 5, mid: 5.5, treble: 6, presence: 6, level: 5.3 },
       board: [g(-60), { id: 'seahorse', gain: 2, treble: 5.5, out: 6 }, 'amp', { id: 'coral', b100: 0, b220: -2, b500: -1, b1k: 2.5, b2k: 2, b5k: -1.5 }],
       cab: 'g412', mic: { type: 'dyn', x: 0.3, y: -0.1, dist: 1, ang: 0, s: 0 }, mic2: { type: 'ribbon', x: 0.5, y: 0.2, dist: 2, ang: 0, s: 0, blend: 4, flip: false } },
     { id: 'pk-tide', name: 'Tide of Your Life', blurb: 'The graduation strum: bright, squeezed, a little room',
@@ -6396,23 +6458,23 @@ const PRESET_CSS = `
       board: [g(-80), { id: 'squish', sustain: 5, attack: 5, tone: 6.5, level: 5 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 6, pre: 20, mix: 2.5 }] },
     { id: 'pk-sugar', name: "Sugar, We're Goin' Crab", blurb: 'Mid-2000s emo-pop crunch with a green-box push',
       nod: "'05 Chicago: a humbucker into a boutique high-gain lead head, nudged by a blue amp-like drive", tags: ['rhythm'], amp: 'slo',
-      knobs: { gain: 5.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 5.6 },
+      knobs: { gain: 5.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 5.8 },
       board: [g(-60), { id: 'bluetang', gain: 3, tone: 6, level: 6 }, 'amp'] },
     { id: 'pk-parade', name: 'The Black Crab Parade', blurb: 'Theatrical twin-guitar lead, harmonised in key',
       nod: "'06 New Jersey: a twin-humbucker single-cut lead into a hot-rodded stack, a harmoniser playing the 3rd", tags: ['lead'], amp: 'friedman',
-      knobs: { gain: 7, bass: 5, mid: 6.5, treble: 5.5, presence: 5.5, level: 6.2 },
+      knobs: { gain: 7, bass: 5, mid: 6.5, treble: 5.5, presence: 5.5, level: 6.3 },
       board: [g(-66), { id: 'seahorse', gain: 2, treble: 5, out: 7 }, { id: 'harmony', int: 0, dir: 0, mix: 6 }, 'amp', { id: 'mudshrimp', time: 380, fb: 3, mix: 3, mod: 2 }, { id: 'lobsterplate', decay: 5, tone: 5, pre: 30, mix: 2.5 }] },
     { id: 'pk-misery', name: 'Misery Crabness', blurb: 'Bouncy, bright late-2000s pop-punk; stabs that snap',
       nod: "'07 Tennessee: a bright British master-volume, a transparent drive, tight low end", tags: ['rhythm'], amp: 'punk',
-      knobs: { gain: 6, bass: 4.5, mid: 5.5, treble: 6.5, presence: 6.5, level: 5 },
+      knobs: { gain: 6, bass: 4.5, mid: 5.5, treble: 6.5, presence: 6.5, level: 5.1 },
       board: [g(-60), { id: 'clamocd', vol: 5, drive: 2, tone: 6.5, mode: 1 }, 'amp', { id: 'coral', b100: -1, b220: -2, b500: 0, b1k: 2, b2k: 2.5, b5k: 0 }] },
     { id: 'pk-downfall', name: 'Downfall of Us Crabs', blurb: 'Easycore: pop-punk choruses, then a breakdown',
       nod: "'09 Florida: a modern metal head, a tight boost and a chug gate for the drop-tuned parts", tags: ['rhythm', 'heavy'], amp: 'metal',
-      knobs: { gain: 6.5, bass: 6, mid: 4.5, treble: 6, presence: 6.5, level: 6.2 },
+      knobs: { gain: 6.5, bass: 6, mid: 4.5, treble: 6, presence: 6.5, level: 5.9 },
       board: [{ id: 'clamshut', th: -52, decay: 2, mode: 1 }, { id: 'hydra', drive: 0.5, tone: 6, level: 7, heads: 0 }, 'amp'] },
     { id: 'pk-pinching', name: 'Came Out Pinching', blurb: 'Revival-era crunch: warm, loud, honest, a bit of room',
       nod: "'13 Philadelphia: a thick British head with a transparent gold boost, a little room", tags: ['rhythm'], amp: 'orange',
-      knobs: { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 5.7 },
+      knobs: { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 5.9 },
       board: [g(-62), { id: 'seahorse', gain: 3.5, treble: 5.5, out: 6 }, 'amp', { id: 'krakenhall', size: 2, tone: 5, pre: 10, mix: 1.5, space: 0 }] },
   ]);
 }
@@ -6429,51 +6491,51 @@ const PRESET_CSS = `
   presetBank({ id: 'heavy', name: 'Riff Lords', blurb: 'Heavy, from the first doom riff to the djent chug', color: '#c0392b' }, [
     { id: 'hv-ironcrab', name: 'Iron Crab', blurb: 'The first doom riff: a treble booster into a cranked head',
       nod: "'70 Birmingham: a double-cut humbucker into a germanium treble booster and a cranked British 100W", tags: ['rhythm', 'heavy'], amp: 'plexi',
-      knobs: { gain: 6.5, bass: 5.5, mid: 6, treble: 5, presence: 5, level: 5.4 },
+      knobs: { gain: 6.5, bass: 5.5, mid: 6, treble: 5, presence: 5, level: 5.7 },
       board: [g(-64), { id: 'mantisboost', boost: 7, range: 0 }, 'amp'] },
     { id: 'hv-highway', name: 'Highway Starfish', blurb: 'Fast, snarling early-70s lead through a tape preamp',
       nod: "'72: a single-coil S-style through a tape deck used as a preamp, into a cranked 200W British head", tags: ['lead'], amp: 'plexi',
-      knobs: { gain: 7, bass: 4.5, mid: 6, treble: 6.5, presence: 6, level: 5.4 },
+      knobs: { gain: 7, bass: 4.5, mid: 6, treble: 6.5, presence: 6, level: 5.8 },
       board: [g(-66), { id: 'barnacle', boost: 6, voice: 2 }, 'amp', { id: 'tapecrab', time: 1, int: 2, age: 3, mix: 2.5, heads: 0 }] },
     { id: 'hv-breaking', name: 'Breaking the Claw', blurb: 'Twin-guitar British steel: crunchy, mid-heavy, proud',
       nod: "'80 Birmingham: a British master-volume head pushed by a green mid-hump overdrive", tags: ['rhythm', 'heavy'], amp: 'punk',
-      knobs: { gain: 6.5, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.1 },
+      knobs: { gain: 6.5, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.4 },
       board: [g(-62), { id: 'drive', drive: 2, tone: 6, level: 7 }, 'amp'] },
     { id: 'hv-shells', name: 'Run to the Shells', blurb: 'Galloping NWOBHM with a jet of flange on top',
       nod: "'82 London: a single-coil S-style into an early-80s master-volume stack, a grey flanger for the sheen", tags: ['rhythm', 'lead'], amp: 'punk',
-      knobs: { gain: 7, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 6.3 },
+      knobs: { gain: 7, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 6.4 },
       board: [g(-62), { id: 'clamocd', vol: 5, drive: 3, tone: 6, mode: 0 }, 'amp', { id: 'jetray', manual: 5, width: 3, speed: 2, regen: 3 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
     { id: 'hv-trawler', name: 'Crazy Trawler', blurb: 'Neoclassical 80s lead: distortion box, chorus, echo',
       nod: "'80: a hard-clipping distortion box into a plexi, a 10-band EQ, chorus and analogue echo", tags: ['lead'], amp: 'plexi',
-      knobs: { gain: 6, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.2 },
+      knobs: { gain: 6, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.5 },
       board: [g(-66), { id: 'ratfish', dist: 4, filter: 4, vol: 6 }, 'amp', { id: 'coral', b100: -2, b220: -1, b500: 1, b1k: 3, b2k: 2, b5k: -2 }, { id: 'chorus', rate: 2, depth: 4, mix: 3 }, { id: 'mudshrimp', time: 350, fb: 3, mix: 3, mod: 2 }] },
     { id: 'hv-limpets', name: 'Ride the Lightfish', blurb: 'Scooped mid-80s thrash: boosted, tight, all downpicks', hot: 'Downpick it',
       nod: "'86: a Californian lead head with a green mid-hump overdrive in front and the graphic EQ in a V", tags: ['rhythm', 'heavy'], amp: 'recto',
-      knobs: { gain: 6.5, bass: 6, mid: 4.5, treble: 6.5, presence: 6, level: 5.9 },
+      knobs: { gain: 6.5, bass: 6, mid: 4.5, treble: 6.5, presence: 6, level: 5.6 },
       board: [g(-56), { id: 'drive', drive: 0, tone: 6.5, level: 8 }, 'amp', { id: 'coral', b100: 3, b220: 0, b500: -5, b1k: -3, b2k: 2, b5k: 1 }] },
     { id: 'hv-brine', name: 'Raining Brine', blurb: 'Fast, nasty, fizzy thrash with a cream drive on',
       nod: "'86 LA: hot-rodded British 100W heads, a cream overdrive in front, tremolo-picked", tags: ['rhythm', 'heavy'], amp: 'friedman',
-      knobs: { gain: 7.5, bass: 5.5, mid: 5, treble: 6.5, presence: 6.5, level: 5.6 },
+      knobs: { gain: 7.5, bass: 5.5, mid: 5, treble: 6.5, presence: 6.5, level: 5.8 },
       board: [g(-60), { id: 'clamocd', vol: 6, drive: 2, tone: 7, mode: 1 }, 'amp'] },
     { id: 'hv-cowboys', name: 'Walk (Sideways)', blurb: 'Groove metal: scooped six-band EQ, squealing harmonics',
       nod: "'90 Texas: a solid-state high-gain head, a six-band EQ in a smile, a red pitch treadle", tags: ['rhythm', 'heavy'], amp: 'metal',
-      knobs: { gain: 7, bass: 6, mid: 4, treble: 6.5, presence: 6.5, level: 5.2 },
+      knobs: { gain: 7, bass: 6, mid: 4, treble: 6.5, presence: 6.5, level: 5.3 },
       board: [{ id: 'clamshut', th: -52, decay: 2, mode: 0 }, { id: 'whammerhead', on: false, pedal: 10, mode: 1 }, 'amp', { id: 'coral', b100: 3, b220: 1, b500: -6, b1k: -3, b2k: 2.5, b5k: 2 }] },
     { id: 'hv-freak', name: 'Freak on a Beach', blurb: 'Nu-metal: seven-string weight, scooped, bouncy',
       nod: "'98 Bakersfield: a Californian high-gain stack with the mids gone, an octave below for drop-A weight", tags: ['rhythm', 'heavy'], amp: 'recto',
-      knobs: { gain: 7, bass: 7, mid: 2.5, treble: 6, presence: 6, level: 6.1 },
+      knobs: { gain: 7, bass: 7, mid: 2.5, treble: 6, presence: 6, level: 5.9 },
       board: [{ id: 'clamshut', th: -52, decay: 3, mode: 1 }, { id: 'octopus', sub: 4, dry: 8, up: 0, up2: 0, tone: 5 }, 'amp'] },
     { id: 'hv-crust', name: 'My Crust', blurb: 'Metalcore: tight boost, big gate, huge melodic choruses',
       nod: "'06 Massachusetts: a boosted Californian high-gain head on a modern 4x12, gated tight, a plate on top", tags: ['rhythm', 'heavy'], amp: 'metal',
-      knobs: { gain: 6.5, bass: 5.5, mid: 5, treble: 6, presence: 6, level: 5.8 },
+      knobs: { gain: 6.5, bass: 5.5, mid: 5, treble: 6, presence: 6, level: 5.9 },
       board: [{ id: 'clamshut', th: -54, decay: 3, mode: 0 }, { id: 'seahorse', gain: 0.5, treble: 6, out: 8 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 5, pre: 25, mix: 1.2 }], cab: 'v412' },
     { id: 'hv-djent', name: 'Juggernautilus', blurb: 'Djent: one green-drive boost, razor gate, surgical chug',
       nod: "'15: an eight-string into a single green overdrive at zero drive, a modern head, a chug gate", tags: ['rhythm', 'heavy'], amp: 'metal',
-      knobs: { gain: 6, bass: 5, mid: 5.5, treble: 6, presence: 6.5, level: 5.8 },
+      knobs: { gain: 6, bass: 5, mid: 5.5, treble: 6, presence: 6.5, level: 5.7 },
       board: [{ id: 'clamshut', th: -50, decay: 1, mode: 1 }, { id: 'hydra', drive: 0, tone: 7, level: 8, heads: 0 }, 'amp', { id: 'coral', b100: -3, b220: -1, b500: 0, b1k: 1, b2k: 1.5, b5k: 0 }], cab: 'v412' },
     { id: 'hv-green', name: 'Green Marine', blurb: 'Desert stoner: silicon fuzz into a bass amp, tuned to C',
       nod: "'92 Palm Desert: a guitar tuned down, a silicon fuzz and a big bass amp's 4x10s", tags: ['rhythm', 'heavy'], amp: 'bassman',
-      knobs: { gain: 5, bass: 6.5, mid: 6, treble: 5, presence: 5, level: 6.2 },
+      knobs: { gain: 5, bass: 6.5, mid: 6, treble: 5, presence: 5, level: 6 },
       board: [g(-70), { id: 'pufferface', fuzz: 7, level: 5, voice: 1 }, 'amp'], cab: 'b410' },
     { id: 'hv-stone', name: 'Stone the Crab', blurb: 'Swampy NOLA sludge: thick doom fuzz, slow and mean',
       nod: "'95 New Orleans: a stoner-doom fuzz with the bass knob up into a fat boutique head", tags: ['rhythm', 'heavy'], amp: 'slo',
@@ -6495,16 +6557,16 @@ const PRESET_CSS = `
 presetBank({ id: 'rock', name: 'Classic Rock Radio', blurb: 'Sixties and seventies legends: less gain than you think', color: '#e2532b' }, [
   { id: 'cr-voodoo', name: 'Voodoo Crab', blurb: 'Wah, a round fuzz and a throbbing vibe, all turned up',
     nod: 'the late-60s psychedelic S-style: wah, a round germanium fuzz and a throbbing photocell vibe into cranked 100W stacks', tags: ['lead'], amp: 'plexi',
-    knobs: { gain: 6, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 6.3 },
+    knobs: { gain: 6, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 6.4 },
     board: [{ id: 'gate', th: -72 }, { id: 'wah', pos: 5, peak: 5, voice: 0 }, { id: 'urchinface', fuzz: 6, temp: 5, level: 6 }, { id: 'urchinvibe', speed: 4, depth: 6, mode: 0 }, 'amp',
       { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'cr-stairway', name: 'ClawWay to Heaven Solo', blurb: 'The 1971 fourth-album solo: warm, singing, a little room', hot: 'The solo everyone learns',
     nod: 'a single-coil T-style through a small cranked American combo on a 1x12: the 1971 fourth-album solo', tags: ['lead'], amp: 'crunch',
-    knobs: { gain: 7, bass: 4.5, mid: 6.5, treble: 6, presence: 5.5, level: 5.7 }, cab: 'a12',
+    knobs: { gain: 7, bass: 4.5, mid: 6.5, treble: 6, presence: 5.5, level: 6.2 }, cab: 'a12',
     board: [{ id: 'gate', th: -72 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 5, pre: 25, mix: 2 }] },
   { id: 'cr-numb', name: 'Comfortably Crab', blurb: 'The soaring solo: squeezed, fuzzed, echoing off the sky',
     nod: 'the late-70s prog solo: comp and a three-knob violet fuzz into a clean British 100W, digital delay, hall', tags: ['lead'], amp: 'hiwatt',
-    knobs: { gain: 4, bass: 5, mid: 5, treble: 6, presence: 5.5, level: 5.9 },
+    knobs: { gain: 4, bass: 5, mid: 5, treble: 6, presence: 5.5, level: 6 },
     board: [{ id: 'gate', th: -76 }, { id: 'squish', sustain: 5, attack: 4, tone: 5, level: 5 }, { id: 'fuzz', sustain: 6, tone: 5.5, level: 5 }, 'amp',
       { id: 'glassclaw', mode: 1, ms: 440, fb: 3.5, mix: 4 }, { id: 'krakenhall', size: 5, tone: 4, pre: 30, mix: 2.5 }] },
   { id: 'cr-shell', name: 'Highway to Shell', blurb: 'Low gain, loud amp: every chord rings out and bites',
@@ -6513,7 +6575,7 @@ presetBank({ id: 'rock', name: 'Classic Rock Radio', blurb: 'Sixties and seventi
     board: [{ id: 'gate', th: -66 }, 'amp'] },
   { id: 'cr-flood', name: 'Texas Flood Tide', blurb: 'Big strings, a green overdrive, a blackface on 10',
     nod: 'the 80s Texas blues S-style: a green mid-hump overdrive into a cranked blackface 4x10, a little spring', tags: ['lead', 'rhythm'], amp: 'clean',
-    knobs: { gain: 6.5, bass: 5, mid: 5, treble: 6.5, presence: 5.5, level: 4.5 }, cab: 'b410',
+    knobs: { gain: 6.5, bass: 5, mid: 5, treble: 6.5, presence: 5.5, level: 3.9 }, cab: 'b410',
     board: [{ id: 'gate', th: -72 }, { id: 'drive', drive: 2, tone: 5.5, level: 8 }, 'amp', { id: 'springsquid', dwell: 4, tone: 5, mix: 2 }] },
   { id: 'cr-woman', name: 'Sunshine of Your Clam', blurb: 'The woman tone: neck pickup, tone rolled off, singing',
     nod: 'the late-60s woman tone: double-cut humbucker, neck pickup, tone knob at zero, cranked plexi, a parked wah', tags: ['lead'], amp: 'plexi',
@@ -6521,12 +6583,12 @@ presetBank({ id: 'rock', name: 'Classic Rock Radio', blurb: 'Sixties and seventi
     board: [{ id: 'gate', th: -70 }, { id: 'stuckwah', pos: 3, peak: 4 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 4, pre: 20, mix: 1.5 }] },
   { id: 'cr-albacore', name: 'Sweet Home Albacore', blurb: 'Southern rock twin leads: a second guitar a third up',
     nod: '70s southern-rock twin leads: two twin-humbucker single-cuts a third apart through plexi stacks', tags: ['lead'], amp: 'plexi',
-    knobs: { gain: 6.5, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 5.9 },
+    knobs: { gain: 6.5, bass: 5, mid: 6.5, treble: 6, presence: 5.5, level: 6.4 },
     board: [{ id: 'gate', th: -70 }, { id: 'seahorse', gain: 2, treble: 5.5, out: 6.5 }, 'amp', { id: 'harmony', int: 0, dir: 0, mix: 6 },
       { id: 'mudshrimp', time: 300, fb: 2, mix: 2 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'cr-hardclam', name: "A Hard Clam's Night", blurb: 'Twelve-string jangle, squeezed flat and chiming',
     nod: 'the Brit-invasion twelve-string: electric 12 into a compressor and a British top-boost combo', tags: ['clean', 'rhythm'], amp: 'jangle',
-    knobs: { gain: 4, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 6.9 },
+    knobs: { gain: 4, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 7.5 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 6, attack: 3, tone: 5.5, level: 5 }, { id: 'octopus', sub: 0, dry: 7, up: 3, up2: 0, tone: 6 }, 'amp',
       { id: 'lobsterplate', decay: 2.5, tone: 5, pre: 15, mix: 1.5 }] },
   { id: 'cr-flash', name: "Jumpin' Crab Flash", blurb: 'Open-G riffs: bright, gappy crunch through a tweed',
@@ -6535,20 +6597,20 @@ presetBank({ id: 'rock', name: 'Classic Rock Radio', blurb: 'Sixties and seventi
     board: [{ id: 'gate', th: -68 }, { id: 'barnacle', boost: 3, voice: 1 }, 'amp'] },
   { id: 'cr-sultans', name: 'Sultans of Swim', blurb: 'Fingerpicked single-coils, clean and quacky, a bit of room',
     nod: 'the late-70s fingerpicked S-style, in-between pickups, a light comp into a clean blackface', tags: ['clean'], amp: 'clean',
-    knobs: { gain: 3.5, bass: 4.5, mid: 5.5, treble: 6.5, presence: 6, level: 5.1 },
+    knobs: { gain: 3.5, bass: 4.5, mid: 5.5, treble: 6.5, presence: 6, level: 5.5 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 3, attack: 5, tone: 5.5, level: 5 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 2 }] },
   { id: 'cr-brighton', name: 'Brighton Rockpool', blurb: 'Treble-boosted small amp and delays that harmonise',
     nod: 'the 70s homemade guitar: a treble booster into British top-boost combos, two long echoes in canon', tags: ['lead'], amp: 'jangle',
-    knobs: { gain: 7.5, bass: 5, mid: 6, treble: 5.5, presence: 5.5, level: 3.6 },
+    knobs: { gain: 7.5, bass: 5, mid: 6, treble: 5.5, presence: 5.5, level: 4 },
     board: [{ id: 'gate', th: -70 }, { id: 'mantisboost', boost: 7, range: 0 }, 'amp', { id: 'glassclaw', mode: 1, ms: 800, fb: 0, mix: 5 },
       { id: 'glassclaw', mode: 1, ms: 1600, fb: 0, mix: 5 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'cr-crabfaction', name: "Can't Get No Crabfaction", blurb: 'The brassy 1965 fuzz riff: like a horn section',
     nod: 'the brassy mid-60s fuzz-tone that stood in for the horns, into a clean combo', tags: ['rhythm', 'lead'], amp: 'clean',
-    knobs: { gain: 4, bass: 5, mid: 5.5, treble: 6, presence: 5.5, level: 6.5 },
+    knobs: { gain: 4, bass: 5, mid: 5.5, treble: 6, presence: 5.5, level: 6.6 },
     board: [{ id: 'gate', th: -70 }, { id: 'satisfishin', attack: 7, level: 5 }, 'amp', { id: 'lobsterplate', decay: 2.5, tone: 5, pre: 15, mix: 1.5 }] },
   { id: 'cr-filleted', name: "Won't Get Filleted Again", blurb: 'Windmill power chords: huge, loud British clean-crunch',
     nod: 'the early-70s windmill: a blue overdrive into British 100W heads with endless headroom', tags: ['rhythm'], amp: 'hiwatt',
-    knobs: { gain: 7, bass: 5.5, mid: 6, treble: 6.5, presence: 6, level: 3.1 },
+    knobs: { gain: 7, bass: 5.5, mid: 6, treble: 6.5, presence: 6, level: 3.6 },
     board: [{ id: 'gate', th: -66 }, { id: 'bluetang', gain: 4, tone: 5.5, level: 6 }, 'amp'] },
 ]);
 
@@ -6561,21 +6623,21 @@ presetBank({ id: 'rock', name: 'Classic Rock Radio', blurb: 'Sixties and seventi
 presetBank({ id: 'shred', name: 'Arena & Shred', blurb: 'Hair, tapping, dive bombs and rack chorus: the big stage', color: '#b44dff' }, [
   { id: 'sh-eruption', name: 'Shell Eruption', blurb: 'The brown sound: loose, singing, phased; tap away',
     nod: 'the late-70s tapping anthem: a striped hot-rod S-style, a little orange phaser, variac plexi and a tape echo', tags: ['lead'], amp: 'brown',
-    knobs: { gain: 7, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 6.0 },
+    knobs: { gain: 7, bass: 5, mid: 6, treble: 6.5, presence: 6, level: 6.1 },
     board: [{ id: 'gate', th: -68 }, { id: 'prawnphase', speed: 3 }, 'amp', { id: 'tapecrab', time: 1, int: 2, age: 3, mix: 3, heads: 0 },
       { id: 'lobsterplate', decay: 3.5, tone: 5, pre: 20, mix: 2 }] },
   { id: 'sh-gills', name: 'Gills, Gills, Gills', blurb: 'Sunset Strip hair metal: boosted, tight and loud',
     nod: 'mid-80s Sunset Strip: a British master-volume head boosted by a green overdrive, gated tight', tags: ['rhythm', 'heavy'], amp: 'punk',
-    knobs: { gain: 8, bass: 5.5, mid: 6, treble: 6.5, presence: 6.5, level: 4.6 },
+    knobs: { gain: 8, bass: 5.5, mid: 6, treble: 6.5, presence: 6.5, level: 5.2 },
     board: [{ id: 'clamshut', th: -56, decay: 4, mode: 0 }, { id: 'hydra', drive: 1, tone: 6, level: 8, heads: 0 }, 'amp'] },
   { id: 'sh-sunfish', name: 'Far Beyond the Sunfish', blurb: 'Neoclassical sweeps: a pushed plexi, echo and a hall',
     nod: 'the neoclassical Swede: scalloped S-style, yellow overdrive, 50W plexi, echo and hall', tags: ['lead'], amp: 'plexi',
-    knobs: { gain: 8, bass: 5, mid: 6.5, treble: 6, presence: 6, level: 5.0 },
+    knobs: { gain: 8, bass: 5, mid: 6.5, treble: 6, presence: 6, level: 5.4 },
     board: [{ id: 'gate', th: -68 }, { id: 'bluetang', gain: 6, tone: 6, level: 7 }, 'amp', { id: 'glassclaw', mode: 0, note: 3, fb: 3, mix: 3.5 },
       { id: 'krakenhall', size: 5, tone: 4, pre: 30, mix: 2.5 }] },
   { id: 'sh-algae', name: 'Surfing with the Algae', blurb: 'The instrumental hero lead: wah, orange distortion, echo',
     nod: 'the late-80s instrumental album lead: wah into an orange distortion box and a British head', tags: ['lead'], amp: 'punk',
-    knobs: { gain: 6, bass: 5, mid: 6, treble: 6, presence: 6, level: 6.3 },
+    knobs: { gain: 6, bass: 5, mid: 6, treble: 6, presence: 6, level: 6.5 },
     board: [{ id: 'gate', th: -68 }, { id: 'wah', pos: 6, peak: 6, voice: 1 }, { id: 'roughy', tone: 5.5, level: 6, dist: 6 }, 'amp',
       { id: 'glassclaw', mode: 0, note: 2, fb: 3, mix: 3 }, { id: 'lobsterplate', decay: 3.5, tone: 5, pre: 25, mix: 2 }] },
   { id: 'sh-sweetchild', name: "Sweet Child O' Crab", blurb: 'The intro lead: neck pickup, hot-rodded plexi, a halo',
@@ -6589,7 +6651,7 @@ presetBank({ id: 'shred', name: 'Arena & Shred', blurb: 'Hair, tapping, dive bom
       { id: 'glassclaw', mode: 0, note: 3, fb: 3, mix: 3 }, { id: 'krakenhall', size: 6, tone: 4, pre: 30, mix: 3 }] },
   { id: 'sh-cod', name: 'For the Love of Cod', blurb: 'Harmonised shred: one guitar plays twin leads', hot: 'Twin leads, one guitar',
     nod: 'the 90s shred rig: purple-glow lead head, intelligent harmonizer a third up, delay, hall', tags: ['lead'], amp: 'lead',
-    knobs: { gain: 7.5, bass: 5, mid: 6.5, treble: 6, presence: 6, level: 5.2 },
+    knobs: { gain: 7.5, bass: 5, mid: 6.5, treble: 6, presence: 6, level: 5.7 },
     board: [{ id: 'gate', th: -68 }, { id: 'hydra', drive: 1, tone: 5.5, level: 7, heads: 0 }, 'amp', { id: 'harmony', int: 0, dir: 0, mix: 5.5 },
       { id: 'glassclaw', mode: 0, note: 3, fb: 4, mix: 3.5 }, { id: 'krakenhall', size: 7, tone: 4, pre: 40, mix: 3 }] },
   { id: 'sh-limpets', name: 'Master of Limpets', blurb: 'Thrash lead: wah, a boosted high-gain head, tight',
@@ -6604,22 +6666,22 @@ presetBank({ id: 'shred', name: 'Arena & Shred', blurb: 'Hair, tapping, dive bom
       { id: 'glassclaw', mode: 0, note: 3, fb: 2, mix: 2 }] },
   { id: 'sh-rosanemone', name: 'Rosanemone', blurb: 'The 80s rack clean: squeezed, wide chorus, clean echo',
     nod: 'the 80s LA session rack: a compressor, a studio dimension chorus, a pristine digital delay', tags: ['clean'], amp: 'clean',
-    knobs: { gain: 4.5, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 5.5 },
+    knobs: { gain: 4.5, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 5.7 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 5, attack: 4, tone: 5.5, level: 5 }, 'amp', { id: 'mantis', mode: 3, mix: 6 },
       { id: 'glassclaw', mode: 1, ms: 480, fb: 3, mix: 3 }, { id: 'lobsterplate', decay: 3, tone: 5.5, pre: 20, mix: 2 }] },
   { id: 'sh-dover', name: 'Cliffs of Dover Sole', blurb: 'The violin lead: silky fuzz and drive, tape echo',
     nod: 'the 1990 instrumental: an S-style through a drive, a round germanium fuzz and a 50W plexi, tape echo', tags: ['lead'], amp: 'plexi',
-    knobs: { gain: 5, bass: 4.5, mid: 6, treble: 5, presence: 5, level: 6.8 },
+    knobs: { gain: 5, bass: 4.5, mid: 6, treble: 5, presence: 5, level: 6.5 },
     board: [{ id: 'gate', th: -70 }, { id: 'drive', drive: 3, tone: 5, level: 6 }, { id: 'urchinface', fuzz: 4, temp: 5, level: 6 }, 'amp',
       { id: 'tapecrab', time: 3, int: 3, age: 2, mix: 3, heads: 0 }, { id: 'krakenhall', size: 5, tone: 4, pre: 30, mix: 2 }] },
   { id: 'sh-prayer', name: "Livin' on a Prawn", blurb: 'The talk box: make your guitar say whoa-oh',
     nod: 'the mid-80s stadium talk box: a plastic tube, a British head and a lot of hairspray', tags: ['lead', 'rhythm'], amp: 'punk',
-    knobs: { gain: 6.5, bass: 5, mid: 6, treble: 6, presence: 6, level: 4.5 },
+    knobs: { gain: 6.5, bass: 5, mid: 6, treble: 6, presence: 6, level: 4.3 },
     board: [{ id: 'gate', th: -68 }, { id: 'hydra', drive: 2, tone: 5.5, level: 6, heads: 0 }, 'amp', { id: 'mollusc', vowel: 1, depth: 7, rate: 3, src: 1, peak: 5, mix: 9 },
       { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'sh-sugar', name: 'Pour Some Sugar on Reef', blurb: 'Glossy, squeezed, chorused hair-rock chords',
     nod: 'the late-80s mega-album: a headphone rack amp: squeezed, doubled with micro pitch, echo', tags: ['rhythm'], amp: 'punk',
-    knobs: { gain: 7, bass: 4.5, mid: 5, treble: 6, presence: 5.5, level: 5.7 },
+    knobs: { gain: 7, bass: 4.5, mid: 5, treble: 6, presence: 5.5, level: 5.9 },
     board: [{ id: 'gate', th: -64 }, { id: 'squish', sustain: 7, attack: 3, tone: 5, level: 5 }, 'amp', { id: 'clonecrab', cents: 7, dly: 12, mix: 5 },
       { id: 'glassclaw', mode: 0, note: 2, fb: 2, mix: 2.5 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 2 }] },
 ]);
@@ -6633,35 +6695,35 @@ presetBank({ id: 'shred', name: 'Arena & Shred', blurb: 'Hair, tapping, dive bom
 presetBank({ id: 'alt', name: '120 Minutes', blurb: 'Nineties alternative: flannel, fuzz and a pitch treadle', color: '#7fa65a' }, [
   { id: 'al-teen', name: 'Smells Like Crab Spirit', blurb: 'The quiet verse: watery chorus, drive waiting to stomp', tags: ['clean', 'rhythm'],
     nod: 'the 1991 grunge verse: a cheap chorus on a clean channel, the orange distortion waiting',
-    amp: 'clean', knobs: { gain: 4, bass: 5, mid: 4.5, treble: 6, presence: 5.5, level: 7 },
+    amp: 'clean', knobs: { gain: 4, bass: 5, mid: 4.5, treble: 6, presence: 5.5, level: 7.2 },
     board: [{ id: 'gate', th: -80 }, { id: 'roughy', on: false, dist: 7, tone: 5, level: 6 }, 'amp', { id: 'chorus', rate: 2, depth: 8, mix: 6 }, { id: 'verb', decay: 2.5, tone: 5, mix: 1.5 }] },
   { id: 'al-lithium', name: 'Lithium Ion Crab', blurb: 'The loud chorus: orange distortion into a hot preamp', tags: ['rhythm', 'heavy'],
     nod: 'the 1991 grunge chorus: the orange distortion box into a hot preamp, chorus left on',
-    amp: 'punk', knobs: { gain: 5, bass: 5.5, mid: 5, treble: 6, presence: 5.5, level: 5.4 },
+    amp: 'punk', knobs: { gain: 5, bass: 5.5, mid: 5, treble: 6, presence: 5.5, level: 5.7 },
     board: [{ id: 'gate', th: -60 }, { id: 'roughy', dist: 7, tone: 5, level: 6 }, 'amp', { id: 'chorus', rate: 2, depth: 6, mix: 3 }] },
   { id: 'al-touch', name: "Touch Me I'm Shrimp", blurb: 'Seattle sludge: a gnarly fuzz into a small valve amp', tags: ['rhythm', 'heavy'],
     nod: 'late-80s Seattle garage: a hard seventies fuzz into a small, cranked valve combo',
-    amp: 'crunch', knobs: { gain: 5, bass: 5.5, mid: 5.5, treble: 5.5, presence: 5, level: 5.7 },
+    amp: 'crunch', knobs: { gain: 5, bass: 5.5, mid: 5.5, treble: 5.5, presence: 5, level: 5.5 },
     board: [{ id: 'gate', th: -72 }, { id: 'submariner', fuzz: 8, sub: 3, level: 5, tone: 0 }, 'amp', { id: 'springsquid', dwell: 4, tone: 4, mix: 2 }] },
   { id: 'al-cherub', name: 'Cherub Rock Lobster', blurb: 'The fuzz wall: a violet fuzz, stacked and doubled to the sky', tags: ['heavy', 'rhythm'], hot: 'The wall of fuzz',
     nod: '1993 Chicago dream-pop-metal: an op-amp violet fuzz into a plexi, overdubbed dozens of times',
-    amp: 'plexi', knobs: { gain: 4.5, bass: 5.5, mid: 4.5, treble: 6, presence: 5.5, level: 5.8 },
+    amp: 'plexi', knobs: { gain: 4.5, bass: 5.5, mid: 4.5, treble: 6, presence: 5.5, level: 6 },
     board: [{ id: 'gate', th: -72 }, { id: 'fuzz', sustain: 8, tone: 6, level: 5 }, 'amp', { id: 'clonecrab', cents: 12, dly: 18, mix: 5 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'al-bullet', name: 'Butterfly Fins', blurb: 'Rat-a-tat fuzz: a buzzsaw chopped into sixteenths', tags: ['heavy'],
     nod: 'the mid-90s rage-in-a-cage single: a silicon fuzz, tremolo-picked, felt as a machine gun',
-    amp: 'plexi', knobs: { gain: 5, bass: 5.5, mid: 5, treble: 6, presence: 5.5, level: 5.8 },
+    amp: 'plexi', knobs: { gain: 5, bass: 5.5, mid: 5, treble: 6, presence: 5.5, level: 6 },
     board: [{ id: 'gate', th: -62 }, { id: 'pufferface', fuzz: 8, level: 5, voice: 1 }, 'amp', { id: 'jellypulse', rate: 5, depth: 8, shape: 2 }] },
   { id: 'al-sunfish', name: 'Black Hole Sunfish', blurb: 'Drop-D crunch through a spinning speaker: woozy', tags: ['rhythm'],
     nod: '1994 Seattle: a crunchy dropped-D riff through an organ rotary cabinet on slow',
-    amp: 'crunch', knobs: { gain: 4.5, bass: 5.5, mid: 5.5, treble: 5.5, presence: 5, level: 6.7 },
+    amp: 'crunch', knobs: { gain: 4.5, bass: 5.5, mid: 5.5, treble: 5.5, presence: 5, level: 6.3 },
     board: [{ id: 'gate', th: -70 }, 'amp', { id: 'spinlobster', speed: 0, ramp: 5, drive: 3, bal: 5, width: 7 }, { id: 'verb', decay: 3, tone: 4.5, mix: 1.5 }] },
   { id: 'al-killing', name: 'Killing in the Clam', blurb: 'The screaming solo: an octave-up treadle on a hot head', tags: ['lead'],
     nod: '1992 rap-metal solo: a red pitch-shift treadle an octave up into a British 50-watt head',
-    amp: 'punk', knobs: { gain: 6.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6 },
+    amp: 'punk', knobs: { gain: 6.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6.2 },
     board: [{ id: 'gate', th: -60 }, { id: 'whammerhead', pedal: 10, mode: 1 }, 'amp'] },
   { id: 'al-enemy', name: 'Know Your Anemone', blurb: 'Kill-switch stutter: the guitar chopped on and off', tags: ['lead'],
     nod: '90s rap-metal kill switch: one pickup off, a toggle flicked in time for a stuttering solo',
-    amp: 'punk', knobs: { gain: 6.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6.1 },
+    amp: 'punk', knobs: { gain: 6.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6.3 },
     board: [{ id: 'gate', th: -60 }, { id: 'drive', drive: 1, tone: 6, level: 7 }, 'amp', { id: 'clawchop', pat: 1, depth: 10, len: 5, st: 0 }] },
   { id: 'al-creep', name: "But I'm a Crab", blurb: 'Clean arpeggios, then the ka-chunk: the stab of fuzz', tags: ['rhythm', 'heavy'],
     nod: '1992 Oxford: a single-coil T-style through a black rodent distortion into a top-boost 2x12: the ka-chunk',
@@ -6669,11 +6731,11 @@ presetBank({ id: 'alt', name: '120 Minutes', blurb: 'Nineties alternative: flann
     board: [{ id: 'gate', th: -64 }, { id: 'ratfish', dist: 7, filter: 5, vol: 5 }, 'amp', { id: 'springsquid', dwell: 3, tone: 5, mix: 1.5 }] },
   { id: 'al-paranoid', name: 'Paranoid Anemone', blurb: 'The frantic solo: a fizzy rodent drive, bright and angry', tags: ['lead'],
     nod: 'the 1997 Oxford epic’s solo: a single-coil T-style and a rodent box cranked into a bright British combo',
-    amp: 'jangle', knobs: { gain: 6, bass: 4.5, mid: 6, treble: 7, presence: 6.5, level: 4.2 },
+    amp: 'jangle', knobs: { gain: 6, bass: 4.5, mid: 6, treble: 7, presence: 6.5, level: 4.5 },
     board: [{ id: 'gate', th: -62 }, { id: 'ratfish', dist: 9, filter: 3, vol: 5 }, { id: 'mantismid', freq: 1400, gain: 5, q: 5, level: 0 }, 'amp', { id: 'mudshrimp', time: 140, fb: 2, mix: 2.5, mod: 3 }] },
   { id: 'al-sayit', name: "Say It Ain't Shrimp", blurb: 'The sweater-song crunch: fat humbuckers, doubled', tags: ['rhythm'],
     nod: '1994 blue-album power pop: humbuckers into a Californian boutique crunch, tracked twice',
-    amp: 'punk', knobs: { gain: 6, bass: 5.5, mid: 6, treble: 5.5, presence: 5, level: 5.8 },
+    amp: 'punk', knobs: { gain: 6, bass: 5.5, mid: 6, treble: 5.5, presence: 5, level: 5.9 },
     board: [{ id: 'gate', th: -70 }, { id: 'fuzz', sustain: 5, tone: 5, level: 5 }, 'amp', { id: 'clonecrab', cents: 8, dly: 12, mix: 4 }] },
   { id: 'al-brine', name: 'Where Is My Brine', blurb: 'Surf-punk lead: bright, a hair of dirt, drippy spring', tags: ['lead', 'clean'],
     nod: 'late-80s Boston surf-punk: a simple lead through a crunchy amp and a drippy spring tank',
@@ -6681,12 +6743,12 @@ presetBank({ id: 'alt', name: '120 Minutes', blurb: 'Nineties alternative: flann
     board: [{ id: 'gate', th: -80 }, { id: 'seahorse', gain: 3, treble: 6, out: 6 }, 'amp', { id: 'springsquid', dwell: 6, tone: 6, mix: 4 }] },
   { id: 'al-riot', name: 'Teen Age Riptide', blurb: 'Noise rock: detuned, squealing, one step from feedback', tags: ['heavy'],
     nod: 'late-80s New York noise rock: an offset guitar in odd tunings, a dying fuzz, screaming',
-    amp: 'clean', knobs: { gain: 5, bass: 5, mid: 5, treble: 6.5, presence: 6, level: 5.1 },
+    amp: 'clean', knobs: { gain: 5, bass: 5, mid: 5, treble: 6.5, presence: 6, level: 5.3 },
     board: [{ id: 'gate', th: -70 }, { id: 'clawfactory', level: 5, gate: 1, comp: 6, drive: 7, stab: 6 }, { id: 'ringseal', freq: 7, lfo: 2, sweep: 3, mix: 2, wave: 0 }, 'amp',
       { id: 'jetray', manual: 4, width: 5, speed: 2, regen: 6 }] },
   { id: 'al-everlong', name: 'Everlobster', blurb: 'Arena crunch: big, doubled, dropped-D, on a 4x12', tags: ['rhythm'],
     nod: 'late-90s arena grunge: drop D through a Californian high-gain stack on low gain, a wall of doubles',
-    amp: 'recto', knobs: { gain: 5, bass: 5.5, mid: 5.5, treble: 6, presence: 6, level: 6 }, cab: 'v412',
+    amp: 'recto', knobs: { gain: 5, bass: 5.5, mid: 5.5, treble: 6, presence: 6, level: 6.2 }, cab: 'v412',
     board: [{ id: 'gate', th: -60 }, 'amp', { id: 'clonecrab', cents: 10, dly: 16, mix: 5 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'al-wonder', name: 'Wonderwhale', blurb: 'Britpop strum: a chime amp on the edge, a little drive', tags: ['rhythm'],
     nod: 'mid-90s Manchester Britpop: an acoustic-ish strum through a top-boost combo, a blue drive',
@@ -6703,7 +6765,7 @@ presetBank({ id: 'alt', name: '120 Minutes', blurb: 'Nineties alternative: flann
 presetBank({ id: 'indie', name: 'Basement Shows', blurb: 'Indie, shoegaze, emo twinkle and post-rock swells', color: '#e0729c' }, [
   { id: 'in-loveless', name: 'Loveless Lobster', blurb: 'Glide guitar: a warbling, backwards, bending haze', tags: ['ambient', 'heavy'],
     nod: '1991 glide guitar: the trem arm held while strumming, a reverse reverb and a fuzz',
-    amp: 'jangle', knobs: { gain: 4.5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 6 },
+    amp: 'jangle', knobs: { gain: 4.5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 6.3 },
     board: [{ id: 'gate', th: -76 }, { id: 'fuzz', sustain: 6, tone: 5, level: 5 }, { id: 'wobbleeel', rate: 3, depth: 6, wave: 0 }, 'amp',
       { id: 'seasick', wow: 6, flutter: 2, drift: 6, age: 3, mix: 10 }, { id: 'sideways', time: 3, fb: 4, mix: 6 }, { id: 'krakenhall', size: 6, tone: 4, pre: 20, mix: 3, space: 0 }] },
   { id: 'in-shallow', name: 'Only Shellow', blurb: 'The shoegaze roar: fuzz, bends and a reverb wall', tags: ['heavy', 'ambient'],
@@ -6718,11 +6780,11 @@ presetBank({ id: 'indie', name: 'Basement Shows', blurb: 'Indie, shoegaze, emo t
       { id: 'glassclaw', mode: 0, note: 2, ms: 450, fb: 5, mix: 4 }, { id: 'krakenhall', size: 8, tone: 3.5, pre: 40, mix: 5, space: 1 }] },
   { id: 'in-molt', name: 'Never Meant to Molt', blurb: 'Midwest twinkle: squeezed, bright, a little room', tags: ['clean'], hot: 'Twinkle, twinkle',
     nod: 'the 1999 Urbana emo record: a single-coil T-style in open tuning, a squishy comp, a sparkling clean 2x12',
-    amp: 'clean', knobs: { gain: 3, bass: 4, mid: 5, treble: 6.5, presence: 6, level: 6.5 },
+    amp: 'clean', knobs: { gain: 3, bass: 4, mid: 5, treble: 6.5, presence: 6, level: 7 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 5, attack: 4, tone: 6, level: 5 }, 'amp', { id: 'springsquid', dwell: 3, tone: 6, mix: 2 }] },
   { id: 'in-circles', name: 'In Crab Circles', blurb: 'The loud emo chorus: a blue drive into a clean amp', tags: ['rhythm'],
     nod: 'mid-90s Seattle emo: a blue amp-like drive pushing a clean American amp until it just breaks up',
-    amp: 'clean', knobs: { gain: 5, bass: 5, mid: 5.5, treble: 6, presence: 5.5, level: 3.5 },
+    amp: 'clean', knobs: { gain: 5, bass: 5, mid: 5.5, treble: 6, presence: 5.5, level: 3.8 },
     board: [{ id: 'gate', th: -72 }, { id: 'bluetang', gain: 6, tone: 5.5, level: 6 }, 'amp', { id: 'verb', decay: 3.5, tone: 5, mix: 2 }] },
   { id: 'in-fantastic', name: 'Crab Fantastic', blurb: 'Math-rock taps: glassy, compressed, no sag at all', tags: ['clean'],
     nod: 'the 2008 Oxford math-rock tapping: a squeezed signal into a Japanese solid-state 2x12',
@@ -6737,17 +6799,17 @@ presetBank({ id: 'indie', name: 'Basement Shows', blurb: 'Indie, shoegaze, emo t
       { id: 'tapecrab', time: 3, int: 2.6, age: 1, mix: 14, heads: 0, tap: 240 }, { id: 'lobsterplate', decay: 2, tone: 6, pre: 10, mix: 0.6 }] },
   { id: 'in-claw', name: 'Your Claw in Mine', blurb: 'The quiet build: swell each chord in under dotted echoes', tags: ['ambient', 'clean'],
     nod: '2003 Texas post-rock crescendo: volume swells, dotted-eighth delay, an octave shimmer',
-    amp: 'clean', knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5.5, presence: 5, level: 8.9 },
+    amp: 'clean', knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5.5, presence: 5, level: 9.2 },
     board: [{ id: 'gate', on: false, th: -80 }, { id: 'jellyswell', vol: 10, swell: 3, sens: 5 }, 'amp', { id: 'glassclaw', mode: 0, note: 2, ms: 450, fb: 5, mix: 5 },
       { id: 'halojelly', decay: 7, shim: 5, tone: 5, mix: 5, intv: 0 }] },
   { id: 'in-hoppi', name: 'Hoppípolyp', blurb: 'Bowed-guitar glacier: swells frozen into a pad', tags: ['ambient'],
     nod: 'late-90s Icelandic post-rock: a cello bow on a guitar, swelled into a frozen cathedral',
-    amp: 'hiwatt', knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5, presence: 5, level: 9.2 },
+    amp: 'hiwatt', knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5, presence: 5, level: 9.5 },
     board: [{ id: 'gate', on: false, th: -80 }, { id: 'jellyswell', vol: 10, swell: 4, sens: 5 }, 'amp', { id: 'frostbite', decay: 7, tone: 4, mix: 4, pad: 6, hold: 0 },
       { id: 'krakenhall', size: 8, tone: 3.5, pre: 50, mix: 4, space: 1 }] },
   { id: 'in-krill', name: 'Is This Krill', blurb: 'Spiky garage-revival rhythm: a small, bright, gritty amp', tags: ['rhythm'],
     nod: '2001 New York revival: a single-coil S-style into a small American combo, treble up, barely broken up',
-    amp: 'crunch', knobs: { gain: 5, bass: 3.5, mid: 6.5, treble: 7, presence: 6.5, level: 4.5 }, cab: 'a12',
+    amp: 'crunch', knobs: { gain: 5, bass: 3.5, mid: 6.5, treble: 7, presence: 6.5, level: 5 }, cab: 'a12',
     board: [{ id: 'gate', th: -68 }, { id: 'barnacle', boost: 4, voice: 2 }, 'amp'] },
   { id: 'in-brine', name: 'R U Brine?', blurb: 'The stomping riff: a fuzz pumping in time with the kit', tags: ['rhythm', 'heavy'],
     nod: '2012 Sheffield desert-rock riff: a fuzz into a loud orange head, locked to the drums',
@@ -6755,21 +6817,21 @@ presetBank({ id: 'indie', name: 'Basement Shows', blurb: 'Indie, shoegaze, emo t
     board: [{ id: 'gate', th: -64 }, { id: 'pumpfish', fuzz: 7, depth: 7, rate: 1, shape: 1 }, 'amp', { id: 'springsquid', dwell: 3, tone: 4.5, mix: 1.5 }] },
   { id: 'in-shear', name: 'Love Will Shear Us Apart', blurb: 'Post-punk gloom: thin, cold and swimming in chorus', tags: ['clean', 'rhythm'],
     nod: 'late-70s Manchester post-punk and its 2000s New York heirs: thin crunch drowned in chorus',
-    amp: 'jangle', knobs: { gain: 4.5, bass: 3.5, mid: 5, treble: 6.5, presence: 6, level: 6.2 },
+    amp: 'jangle', knobs: { gain: 4.5, bass: 3.5, mid: 5, treble: 6.5, presence: 6, level: 5.7 },
     board: [{ id: 'gate', th: -74 }, 'amp', { id: 'krillswarm', rate: 3, depth: 7, spread: 8, mix: 6 }, { id: 'mudshrimp', time: 280, fb: 3, mix: 2.5, mod: 4 },
       { id: 'lobsterplate', decay: 4, tone: 4, pre: 30, mix: 2.5 }] },
   { id: 'in-army', name: 'Fell in Love w/ a Krill', blurb: 'Garage-duo riffs: octave-down fuzz into a gritty little amp', tags: ['heavy', 'rhythm'],
     nod: '2003 Detroit garage: a hollow-body through a pitch treadle an octave down and a violet fuzz',
-    amp: 'crunch', knobs: { gain: 5, bass: 5, mid: 5.5, treble: 5.5, presence: 5, level: 6.1 },
+    amp: 'crunch', knobs: { gain: 5, bass: 5, mid: 5.5, treble: 5.5, presence: 5, level: 5.9 },
     board: [{ id: 'gate', th: -70 }, { id: 'whammerhead', pedal: 10, mode: 6 }, { id: 'fuzz', sustain: 7, tone: 5.5, level: 5 }, 'amp'] },
   { id: 'in-salad', name: 'Seaweed Salad Days', blurb: 'Slacker-pop chords: a lush chorus, lazy and a bit wonky', tags: ['clean'],
     nod: '2014 bedroom slacker pop: a cheap S-style, a vintage chorus, a four-track in the red',
-    amp: 'tape', knobs: { gain: 3.5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 7.2 },
+    amp: 'tape', knobs: { gain: 3.5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 7.1 },
     board: [{ id: 'gate', th: -80 }, 'amp', { id: 'chorus', rate: 1.5, depth: 7, mix: 5 }, { id: 'seasick', wow: 4, flutter: 2, drift: 4, age: 3, mix: 10 },
       { id: 'springsquid', dwell: 3, tone: 4, mix: 2 }] },
   { id: 'in-twin', name: 'Twin Fantasea', blurb: 'Laptop lo-fi: a crunchy tape, a dusty old record', tags: ['rhythm'],
     nod: 'the 2011 bedroom-recorded indie epic: a four-track in the red, dusty and small',
-    amp: 'tape', knobs: { gain: 6, bass: 5, mid: 5.5, treble: 5, presence: 4.5, level: 6.5 }, cab: 'box',
+    amp: 'tape', knobs: { gain: 6, bass: 5, mid: 5.5, treble: 5, presence: 4.5, level: 6.4 }, cab: 'box',
     board: [{ id: 'gate', th: -70 }, 'amp', { id: 'shellac', wow: 2, dust: 4, age: 3, slow: 0 }] },
 ]);
 
@@ -6782,29 +6844,29 @@ presetBank({ id: 'indie', name: 'Basement Shows', blurb: 'Indie, shoegaze, emo t
 presetBank({ id: 'grooves', name: 'Session Players', blurb: 'Every other gig: funk, surf, country, jazz, reggae', color: '#6fd6a0' }, [
   { id: 'gr-clucky', name: 'Get Clucky', blurb: 'Tight, bright, squeezed sixteenth-note scratch for disco', tags: ['rhythm', 'clean'], hot: 'Scratch along',
     nod: 'late-70s disco rhythm: a bright single-coil, compressed and DI-clean, all scratch', amp: 'clean',
-    knobs: { gain: 3, bass: 3.5, mid: 5.5, treble: 7, presence: 6.5, level: 6.5 },
+    knobs: { gain: 3, bass: 3.5, mid: 5.5, treble: 7, presence: 6.5, level: 7.1 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 6, attack: 2, tone: 6.5, level: 5 }, 'amp', { id: 'lobsterplate', decay: 2, tone: 6, pre: 10, mix: 1.5 }] },
   { id: 'gr-shakedown', name: 'Shakedown Reef', blurb: 'Pick hard and it quacks: envelope-filter funk', tags: ['rhythm', 'clean'],
     nod: 'late-70s jam-band funk: a clean combo with the envelope filter wide open', amp: 'clean',
-    knobs: { gain: 3.5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 6.5 },
+    knobs: { gain: 3.5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 6.6 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 5, attack: 3, tone: 5, level: 5 }, { id: 'quack', sens: 7, peak: 7, decay: 4, mode: 0, dir: 0, range: 0 }, 'amp',
       { id: 'springsquid', dwell: 4, tone: 5, mix: 2 }] },
   { id: 'gr-misirlou', name: 'Misirlobster', blurb: 'Machine-gun surf picking, loud and soaked in spring', tags: ['lead', 'clean'],
     nod: 'early-60s surf: heavy strings, a loud piggyback clean amp and an outboard spring tank', amp: 'clean',
-    knobs: { gain: 5.5, bass: 4, mid: 5, treble: 7.5, presence: 6, level: 4.7 },
+    knobs: { gain: 5.5, bass: 4, mid: 5, treble: 7.5, presence: 6, level: 4.9 },
     board: [{ id: 'gate', th: -80 }, 'amp', { id: 'springsquid', dwell: 7.5, tone: 7, mix: 5 }] },
   { id: 'gr-walk', name: "Walk Don't Crawl", blurb: 'Twangy instrumental melody, amp tremolo and a drip', tags: ['lead', 'clean'],
     nod: 'early-60s instrumental combos: a twangy lead line, the amp’s tremolo, spring reverb', amp: 'clean',
-    knobs: { gain: 4, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 6.5 },
+    knobs: { gain: 4, bass: 4.5, mid: 5, treble: 6.5, presence: 6, level: 6.8 },
     board: [{ id: 'gate', th: -80 }, 'amp', { id: 'jellypulse', rate: 3, depth: 3.5, shape: 0 }, { id: 'springsquid', dwell: 5, tone: 6, mix: 3.5 }] },
   { id: 'gr-country', name: 'Clawntry Boy', blurb: "Squashed, snappy chicken pickin' with a slapback", tags: ['lead', 'clean'],
     nod: 'Nashville T-style: bridge pickup, an orange squash comp, a clean 2x12 and a tape slap', amp: 'clean',
-    knobs: { gain: 4, bass: 4, mid: 5, treble: 7, presence: 6.5, level: 6.4 },
+    knobs: { gain: 4, bass: 4, mid: 5, treble: 7, presence: 6.5, level: 6.7 },
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 6.5, attack: 1.5, tone: 6.5, level: 5 }, { id: 'mantismid', freq: 2200, gain: 3, q: 3, level: 0 }, 'amp',
       { id: 'quiffcrab', time: 90, level: 3.5, tone: 6 }, { id: 'springsquid', dwell: 3, tone: 6, mix: 1.5 }] },
   { id: 'gr-rockabilly', name: 'Rock This Tank', blurb: 'Hollowbody twang on the edge of breakup, big slap', tags: ['rhythm', 'lead'],
     nod: 'early-80s rockabilly revival: a hollowbody into a tweed 4x10 and a tape slapback', amp: 'bassman',
-    knobs: { gain: 4.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6.8 },
+    knobs: { gain: 4.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 7 },
     board: [{ id: 'gate', th: -74 }, 'amp', { id: 'quiffcrab', time: 120, level: 5, tone: 5 }] },
   { id: 'gr-skank', name: 'One Claw', blurb: 'Choppy offbeat skank with a sound-system echo', tags: ['rhythm', 'clean'],
     nod: 'late-70s Kingston skank: bright and choppy, bass rolled off, a dub echo on the tail', amp: 'jc',
@@ -6813,7 +6875,7 @@ presetBank({ id: 'grooves', name: 'Session Players', blurb: 'Every other gig: fu
       { id: 'sirensquid', time: 2, fb: 5, freq: 6, sweep: 3, rate: 3, mix: 2.5 }, { id: 'springsquid', dwell: 4, tone: 6, mix: 2.5 }] },
   { id: 'gr-jazz', name: 'Autumn Reefs', blurb: 'Round, dark neck-pickup warmth for chord melody', tags: ['clean', 'lead'],
     nod: 'a big hollowbody on the neck pickup, tone rolled back, into a solid-state 1x15 combo', amp: 'jc',
-    knobs: { gain: 3.5, bass: 6.5, mid: 5.5, treble: 2.5, presence: 3, level: 8.8 }, cab: 'j15',
+    knobs: { gain: 3.5, bass: 6.5, mid: 5.5, treble: 2.5, presence: 3, level: 8.6 }, cab: 'j15',
     board: [{ id: 'gate', th: -85 }, { id: 'pearl', peak: 3, gain: 0, blend: 6, mode: 0 }, 'amp', { id: 'lobsterplate', decay: 3, tone: 3.5, pre: 20, mix: 2 }] },
   { id: 'gr-mannish', name: 'Mannish Buoy', blurb: 'A small tweed cranked all the way: Chicago grit', tags: ['rhythm', 'lead'],
     nod: '1950s Chicago electric blues: a little tweed amp flat out, a short slap off the wall', amp: 'bassman',
@@ -6821,11 +6883,11 @@ presetBank({ id: 'grooves', name: 'Session Players', blurb: 'Every other gig: fu
     board: [{ id: 'gate', th: -72 }, 'amp', { id: 'mudshrimp', time: 110, fb: 1, mix: 2.5, mod: 1 }, { id: 'springsquid', dwell: 4, tone: 5, mix: 1.5 }] },
   { id: 'gr-texas', name: 'Pride and Joyfish', blurb: 'Fat, stinging Texas blues: a green overdrive, a big combo', tags: ['lead'],
     nod: 'mid-80s Texas blues: heavy strings, a green overdrive into a big boutique combo', amp: 'dumble',
-    knobs: { gain: 4.5, bass: 5, mid: 6.5, treble: 5.5, presence: 5.5, level: 5.9 },
+    knobs: { gain: 4.5, bass: 5, mid: 6.5, treble: 5.5, presence: 5.5, level: 6.1 },
     board: [{ id: 'gate', th: -74 }, { id: 'hydra', drive: 2, tone: 6, level: 7, heads: 0 }, 'amp', { id: 'springsquid', dwell: 4, tone: 5, mix: 2 }] },
   { id: 'gr-motown', name: 'My Gill', blurb: 'Sweet 60s soul clean: squeezed, with a studio plate', tags: ['clean'],
     nod: '1960s Detroit session guitar: straight into the desk, a tube leveller and the plate', amp: 'clean',
-    knobs: { gain: 3, bass: 4.5, mid: 5.5, treble: 6.5, presence: 5.5, level: 6.6 },
+    knobs: { gain: 3, bass: 4.5, mid: 5.5, treble: 6.5, presence: 5.5, level: 7 },
     board: [{ id: 'gate', th: -80 }, 'amp', { id: 'pearl', peak: 5, gain: 1, blend: 8, mode: 0 }, { id: 'lobsterplate', decay: 3.5, tone: 6, pre: 20, mix: 2.5 }] },
   { id: 'gr-billie', name: 'Billie Clean', blurb: 'Glassy stereo-chorus scratch for 80s pop-funk', tags: ['rhythm', 'clean'],
     nod: 'early-80s pop-funk: a compressed single-coil through a stereo-chorus solid-state', amp: 'jc',
@@ -6833,12 +6895,12 @@ presetBank({ id: 'grooves', name: 'Session Players', blurb: 'Every other gig: fu
     board: [{ id: 'gate', th: -80 }, { id: 'squish', sustain: 5, attack: 3, tone: 6, level: 5 }, 'amp', { id: 'mantis', mode: 3, mix: 6 }, { id: 'glassclaw', mode: 0, note: 0, fb: 1.5, mix: 1.5 }] },
   { id: 'gr-wave', name: 'Wave Maker', blurb: 'Swelled chords, dotted eighths and a huge hall', tags: ['ambient', 'clean'],
     nod: 'modern worship ambient: a top-boost combo, auto swells, dotted-8th delay, a big hall', amp: 'jangle',
-    knobs: { gain: 4, bass: 4.5, mid: 5, treble: 6, presence: 5.5, level: 7.7 },
+    knobs: { gain: 4, bass: 4.5, mid: 5, treble: 6, presence: 5.5, level: 8.2 },
     board: [{ id: 'jellyswell', vol: 10, swell: 4, sens: 5 }, { id: 'seahorse', gain: 2, treble: 5.5, out: 6 }, 'amp',
       { id: 'glassclaw', mode: 0, note: 2, fb: 3.5, mix: 3.5 }, { id: 'krakenhall', size: 7, tone: 4, pre: 40, mix: 4.5, space: 0 }] },
   { id: 'gr-oye', name: 'Oye Como Crab', blurb: 'Singing, sustaining Latin-rock lead with a vocal mid', tags: ['lead'],
     nod: 'early-70s Latin rock: a humbucker into a hot boutique combo, sustain for days', amp: 'dumble',
-    knobs: { gain: 7.5, bass: 5, mid: 7, treble: 5.5, presence: 5, level: 5.8 },
+    knobs: { gain: 7.5, bass: 5, mid: 7, treble: 5.5, presence: 5, level: 6 },
     board: [{ id: 'gate', th: -72 }, 'amp', { id: 'mudshrimp', time: 380, fb: 2.5, mix: 2, mod: 3 }, { id: 'lobsterplate', decay: 4, tone: 5, pre: 20, mix: 2 }] },
 ]);
 
@@ -6880,7 +6942,7 @@ presetBank({ id: 'weird', name: 'The Deep End', blurb: 'Only here: wubs, chips, 
     board: [{ id: 'gate', th: -85 }, 'amp', { id: 'shellac', wow: 3, dust: 5, age: 7, slow: 0 }] },
   { id: 'dp-salad', name: 'Salad Bays', blurb: 'Lo-fi melody lines, wobbling like a sun-warped cassette', tags: ['clean', 'rhythm'],
     nod: '2010s slacker pop: a warbly vibrato guitar bounced to a tired four-track', amp: 'tape',
-    knobs: { gain: 4, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 7.4 },
+    knobs: { gain: 4, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 7.3 },
     board: [{ id: 'gate', th: -82 }, { id: 'wobbleeel', rate: 3, depth: 5, wave: 0 }, 'amp', { id: 'seasick', wow: 4, flutter: 2, drift: 4, age: 5, mix: 10 }] },
   { id: 'dp-ice', name: 'Ice Ice Crabby', blurb: 'Every chord freezes into a pad, kept in a fridge', tags: ['ambient'],
     nod: 'a freeze pedal holding each chord like a synth pad, through a speaker in an old fridge', amp: 'clean',
@@ -6888,11 +6950,11 @@ presetBank({ id: 'weird', name: 'The Deep End', blurb: 'Only here: wubs, chips, 
     board: ['amp', { id: 'frostbite', decay: 6, tone: 4, mix: 5, pad: 7, hold: 0 }, { id: 'lobsterplate', decay: 5, tone: 4, pre: 30, mix: 2.5 }] },
   { id: 'dp-harbour', name: 'Music for Reefs', blurb: 'Notes dissolve into a slow, drifting granular cloud', tags: ['ambient', 'clean'],
     nod: 'late-70s ambient records: slow loops and clouds of sound for a waiting room by the sea', amp: 'clean',
-    knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5, presence: 5, level: 9.3 },
+    knobs: { gain: 3, bass: 4.5, mid: 5, treble: 5, presence: 5, level: 9.6 },
     board: [{ id: 'jellyswell', vol: 10, swell: 3, sens: 5 }, 'amp', { id: 'planktoncloud', size: 6, smear: 7, drift: 4, decay: 6, mix: 5 }, { id: 'krakenhall', size: 8, tone: 4, pre: 40, mix: 4, space: 0 }] },
   { id: 'dp-hand', name: 'Your Fin in Mine', blurb: 'The loud climax: tremolo-pick the melody into a shimmer halo', tags: ['ambient', 'clean'],
     nod: '2000s post-rock crescendo: tremolo-picked melody, dotted delay, octave-up shimmer', amp: 'jangle',
-    knobs: { gain: 4.5, bass: 4.5, mid: 5, treble: 6, presence: 5.5, level: 6.4 },
+    knobs: { gain: 4.5, bass: 4.5, mid: 5, treble: 6, presence: 5.5, level: 6.8 },
     board: [{ id: 'gate', th: -82 }, 'amp', { id: 'glassclaw', mode: 0, note: 2, fb: 4, mix: 3 }, { id: 'halojelly', decay: 7, shim: 6, tone: 6, mix: 4.5, intv: 0 }] },
   { id: 'dp-night', name: 'Nightcrawl', blurb: 'A sawtooth synth lead out of your guitar: neon drive', tags: ['lead'],
     nod: '2010s synthwave: a sawtooth guitar-synth lead, ping-pong echo, a neon-lit hall', amp: 'jc',
@@ -6901,11 +6963,11 @@ presetBank({ id: 'weird', name: 'The Deep End', blurb: 'Only here: wubs, chips, 
       { id: 'krakenhall', size: 6, tone: 4, pre: 30, mix: 3, space: 0 }] },
   { id: 'dp-army', name: 'Seven Ocean Army', blurb: 'No bass player? One string, an octave down: a fat synth bass', tags: ['heavy', 'rhythm'],
     nod: '2000s garage blues: a pitch pedal an octave down into a fuzz, passing for a bass', amp: 'abyss',
-    knobs: { gain: 5, bass: 5, mid: 5.5, treble: 5.5, presence: 5, level: 5.8 },
+    knobs: { gain: 5, bass: 5, mid: 5.5, treble: 5.5, presence: 5, level: 5.9 },
     board: [{ id: 'gate', th: -62 }, { id: 'pufferface', fuzz: 5, level: 5, voice: 1 }, 'amp'] },
   { id: 'dp-phone', name: 'Krill Me Maybe', blurb: 'Your strum down a bad phone line, crackle and all', tags: ['clean'],
     nod: 'a bad line: a bubblegum-pop strum down a telephone, through a cable the dog chewed', amp: 'jangle',
-    knobs: { gain: 4, bass: 5, mid: 6, treble: 6, presence: 5, level: 7 }, cab: 'phone',
+    knobs: { gain: 4, bass: 5, mid: 6, treble: 6, presence: 5, level: 7.2 }, cab: 'phone',
     board: [{ id: 'gate', th: -82 }, { id: 'chewedcable', broke: 3, crackle: 4, hum: 2 }, 'amp'] },
   { id: 'dp-window', name: 'Windowlobster', blurb: 'Chopped, stuttered, pitch-shuffled at random: IDM', tags: ['ambient'],
     nod: 'late-90s IDM: a laptop chopping, stuttering and pitch-shuffling the guitar at random', amp: 'jc',
@@ -6941,7 +7003,7 @@ presetBank({ id: 'keys', name: 'Keys & Synths', blurb: 'For a keyboard on the in
     board: ['amp', { id: 'spinlobster', speed: 1, ramp: 6, drive: 3, bal: 5, width: 8 }] },
   { id: 'ky-suitcase', name: 'Suitcase Tines', blurb: 'Electric piano, panning left to right, a little chorus', tags: ['clean'],
     nod: 'the 1970s suitcase electric piano, its stereo vibrato walking the room', amp: 'di',
-    knobs: { gain: 5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 6.7 },
+    knobs: { gain: 5, bass: 5, mid: 5, treble: 5.5, presence: 5, level: 5.1 },
     board: ['amp', { id: 'sidestep', rate: 3, width: 7, shape: 0 }, { id: 'chorus', rate: 2, depth: 3, mix: 3 }, { id: 'lobsterplate', decay: 3, tone: 5, pre: 20, mix: 1.5 }] },
   { id: 'ky-wurli', name: 'Wurli Wobble', blurb: 'Reedy electric piano with the amp’s tremolo on', tags: ['clean'],
     nod: 'a reed electric piano in a school classroom, its built-in tremolo pulsing in eighths', amp: 'jangle',
@@ -6975,7 +7037,7 @@ presetBank({ id: 'keys', name: 'Keys & Synths', blurb: 'For a keyboard on the in
 presetBank({ id: 'bass', name: 'Low End Theory', blurb: 'For a bass on the input: punk pick to dub sub', color: '#6fa8ff' }, [
   { id: 'bs-basket', name: 'Longview Lobster', blurb: 'Punk bass with a pick: clank on top, a wall underneath', tags: ['rhythm'], hot: 'Bass starts here',
     nod: 'mid-90s pop punk: a split-coil bass, played with a pick, into an all-tube head on an eight-10 fridge', amp: 'whale',
-    knobs: { gain: 5.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6.1 },
+    knobs: { gain: 5.5, bass: 5, mid: 6, treble: 6, presence: 5.5, level: 6 },
     board: [{ id: 'gate', th: -72 }, 'amp'] },
   { id: 'bs-clammit', name: 'Clammit', blurb: 'Pop-punk growl: clean lows, a snarl blended on top', tags: ['rhythm'],
     nod: 'late-90s pop punk: a modern bass head blending its drive over the clean lows, loud in the chorus', amp: 'narwhal',
@@ -6983,36 +7045,36 @@ presetBank({ id: 'bass', name: 'Low End Theory', blurb: 'For a bass on the input
     board: [{ id: 'gate', th: -70 }, 'amp'] },
   { id: 'bs-reachout', name: "Reach Out I'll Be Shell", blurb: 'Flatwound thump: round, warm, no top at all', tags: ['rhythm', 'clean'],
     nod: '60s Detroit soul: flatwound strings, a foam mute under the bridge, the flip-top in a small room', amp: 'walrus',
-    knobs: { gain: 4.5, bass: 5.5, mid: 5.5, treble: 3, presence: 3.5, level: 6.6 },
+    knobs: { gain: 4.5, bass: 5.5, mid: 5.5, treble: 3, presence: 3.5, level: 6.9 },
     board: [{ id: 'gate', th: -84 }, 'amp'] },
   { id: 'bs-superreef', name: 'Super Reef', blurb: 'Thumb and pop: bright, scooped, squeezed flat', tags: ['rhythm', 'clean'],
     nod: 'late-70s slap funk: active pickups, a compressor on every pop, the mids scooped out', amp: 'walrus',
-    knobs: { gain: 4, bass: 6, mid: 4, treble: 7, presence: 7, level: 7.4 },
+    knobs: { gain: 4, bass: 6, mid: 4, treble: 7, presence: 7, level: 8 },
     board: [{ id: 'gate', th: -84 }, { id: 'squish', sustain: 6, attack: 2, tone: 7, level: 5 }, { id: 'coral', b100: 2, b220: 0, b500: -4, b1k: -2, b2k: 3, b5k: 3 }, 'amp'] },
   { id: 'bs-stiritsub', name: 'Stir It Sub', blurb: 'Dub sub: all bottom, the tone rolled off, a spring', tags: ['clean'],
     nod: '70s Kingston dub: a round bass with the tone knob off, the lows as loud as the room allows', amp: 'walrus',
-    knobs: { gain: 4, bass: 7, mid: 4.5, treble: 2, presence: 3, level: 6.3 },
+    knobs: { gain: 4, bass: 7, mid: 4.5, treble: 2, presence: 3, level: 7.6 },
     board: [{ id: 'gate', th: -84 }, 'amp', { id: 'springsquid', dwell: 4, tone: 3, mix: 1.5 }] },
   { id: 'bs-limpets', name: 'Orion Shell', blurb: 'Thrash clank: a pick, bright strings, distortion', tags: ['heavy', 'rhythm'],
     nod: '80s thrash bass: a pick, fresh roundwound strings and a distortion pedal, all clank and gallop', amp: 'narwhal',
-    knobs: { gain: 7.5, bass: 5.5, mid: 4.5, treble: 7, presence: 6.5, level: 4.7 },
+    knobs: { gain: 7.5, bass: 5.5, mid: 4.5, treble: 7, presence: 6.5, level: 4.8 },
     board: [{ id: 'gate', th: -60 }, 'amp'] },
   { id: 'bs-sweetkelp', name: 'Sweet Kelp', blurb: 'Stoner fuzz bass: thick, slow and very, very loud', tags: ['heavy'],
     nod: 'desert-rock bass: a fuzz pedal into a cranked tweed bass amp, tuned low, played slow', amp: 'sandbar',
-    knobs: { gain: 6, bass: 5.5, mid: 6, treble: 4.5, presence: 4.5, level: 6.7 },
+    knobs: { gain: 6, bass: 5.5, mid: 6, treble: 4.5, presence: 4.5, level: 6 },
     board: [{ id: 'gate', th: -76 }, { id: 'fuzz', sustain: 6, tone: 4, level: 5 }, 'amp'] },
   { id: 'bs-takeonsea', name: 'Take On Sea', blurb: 'Octave fuzz into a filter: an 80s synth bass', tags: ['rhythm'],
     nod: 'the 80s synth-bass line, faked on a real bass: octave-down fuzz into an envelope filter', amp: 'urchin',
-    knobs: { gain: 5, bass: 5, mid: 5, treble: 5, presence: 5, level: 5.9 },
+    knobs: { gain: 5, bass: 5, mid: 5, treble: 5, presence: 5, level: 5.7 },
     board: [{ id: 'gate', th: -70 }, { id: 'quack', sens: 5, peak: 6, decay: 3, mode: 0, dir: 0, range: 0 }, 'amp'] },
   { id: 'bs-solewhat', name: 'Sole What', blurb: 'Upright-ish: woody, warm, miked with a ribbon', tags: ['clean'],
     nod: 'late-50s modal jazz: an upright bass, a ribbon mic close to the f-hole, a little room', amp: 'walrus',
-    knobs: { gain: 3, bass: 5.5, mid: 6, treble: 3.5, presence: 3.5, level: 7.4 },
+    knobs: { gain: 3, bass: 5.5, mid: 6, treble: 3.5, presence: 3.5, level: 7.7 },
     cab: 'b115', mic: { type: 'ribbon', x: 0.55, y: 0, dist: 3, ang: 0, s: 0 },
     board: [{ id: 'gate', th: -84 }, 'amp', { id: 'lobsterplate', decay: 2.5, tone: 4, pre: 10, mix: 1.5 }] },
   { id: 'bs-kelpforest', name: 'A Kelp Forest', blurb: 'Post-punk: a pick up the neck, drenched in chorus', tags: ['rhythm'],
     nod: 'early-80s post punk: melodic bass high on the neck, a pick and a chorus pedal, the lead instrument', amp: 'whale',
-    knobs: { gain: 4.5, bass: 4.5, mid: 5.5, treble: 6.5, presence: 6, level: 6.5 },
+    knobs: { gain: 4.5, bass: 4.5, mid: 5.5, treble: 6.5, presence: 6, level: 6.3 },
     board: [{ id: 'gate', th: -72 }, 'amp', { id: 'chorus', rate: 3, depth: 6, mix: 5 }] },
 ]);
 
@@ -7022,7 +7084,7 @@ presetBank({ id: 'bass', name: 'Low End Theory', blurb: 'For a bass on the input
     PFX, PLUG_GATE, PFX_ENV, PFX_END, DELAY_NOTES, PEDAL_CATS, PEDAL_RANK, PEDAL_DEFS, PEDAL_LIST, pedalKnob, pfxGlide,
     boardClean, boardFromFx, boardDefault, boardEntry,
     // the amps, cabs and mics (amps.js)
-    PLUG_AMPS, PLUG_WORKLETS, PLUG_CABS, PLUG_AMP_BOX, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugAmp, plugCabNet, plugCabClean,
+    PLUG_AMPS, PLUG_CABS, PLUG_AMP_BOX, PLUG_AMP_SPEC, PLUG_AMP_IR, PLUG_IR_LV, PLUG_MICS, PLUG_MIC_DEFAULT, PLUG_MIC2_DEFAULT, plugCabNet, plugCabClean, plugCabDefault,
     // the presets (presets.js, presets/*.js)
     PLUG_PRESETS, PRESET_BANKS, PRESET_KNOBS, presetResolve, presetBanks, PLUG_DEFAULT,
   };
@@ -7039,7 +7101,6 @@ export const WORKLETS = {
   'bitreef-crush': new URL('./worklets/bitreef-crush.js', import.meta.url).href,
   'chewedcable-dsp': new URL('./worklets/chewedcable-dsp.js', import.meta.url).href,
   'clamshut-gate': new URL('./worklets/clamshut-gate.js', import.meta.url).href,
-  'clawd-amps': new URL('./worklets/clawd-amps.js', import.meta.url).href,
   'clawd-gate': new URL('./worklets/clawd-gate.js', import.meta.url).href,
   'clonecrab-shift': new URL('./worklets/clonecrab-shift.js', import.meta.url).href,
   'crabpeggio-arp': new URL('./worklets/crabpeggio-arp.js', import.meta.url).href,
@@ -7049,7 +7110,6 @@ export const WORKLETS = {
   'doubledory-adt': new URL('./worklets/doubledory-adt.js', import.meta.url).href,
   'eelslide-glide': new URL('./worklets/eelslide-glide.js', import.meta.url).href,
   'frostbite-freeze': new URL('./worklets/frostbite-freeze.js', import.meta.url).href,
-  'halojelly-pitch': new URL('./worklets/halojelly-pitch.js', import.meta.url).href,
   'hermit-harm': new URL('./worklets/hermit-harm.js', import.meta.url).href,
   'hermithold-sh': new URL('./worklets/hermithold-sh.js', import.meta.url).href,
   'iceberg-freeze': new URL('./worklets/iceberg-freeze.js', import.meta.url).href,
@@ -7074,5 +7134,6 @@ export const WORKLETS = {
   'submarine-div': new URL('./worklets/submarine-div.js', import.meta.url).href,
   'submariner-div': new URL('./worklets/submariner-div.js', import.meta.url).href,
   'tapesnail-vs': new URL('./worklets/tapesnail-vs.js', import.meta.url).href,
+  'verb-tank': new URL('./worklets/verb-tank.js', import.meta.url).href,
   'whammerhead-shift': new URL('./worklets/whammerhead-shift.js', import.meta.url).href,
 };

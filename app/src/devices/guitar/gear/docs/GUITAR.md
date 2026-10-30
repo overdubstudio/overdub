@@ -1,7 +1,9 @@
 <!-- Written for Claw'd-o-Matic, where the guitar gear began, and kept here with the code it documents (the developer's map of the Guitar Studio).
      In Overdub that code is ../code.js and ../looks.js, each one function scope whose sections keep these file names;
      names of that app's other files (app.js, plugin.js, web/, its storage keys) are its history, not Overdub's.
-     Overdub's device contract is docs/DEVICES.md. -->
+     Overdub's device contract is docs/DEVICES.md. In Overdub the amps' sound is a kernel (devices/guitar/voicings.js on
+     devices/builtin/amp-voiced.js): plugAmp, the Web Audio amp below, and its worklet (PLUG_WORKLETS) were retired on
+     2026-10-29; PLUG_AMPS, the cabs and mics (plugCabNet) are still read. -->
 # Live guitar
 
 Claw'd-o-Matic can take a real guitar (a DI into an audio interface) and play it with the synthesized band: through
@@ -186,12 +188,36 @@ tiny) to the weird ones (radio, bit, tape), Abyss (an octave down, through a wor
 keys). Each has a name, blurb, style, nod and tone (the wall's filter). A few optional fields (`crush`, `wow`, `sub`,
 a crossover) sit on a side route that's silent unless an amp asks for it, so the classic amps' path is untouched.
 
-**Cabs and mics** (`PLUG_CABS`, `PLUG_MICS`, `plugCabNet`; the view is `cabs.js`). With the amp's own cab and the
-default mic the cab is a straight wire (`{ custom: false }`), and nothing about the sound changes. Otherwise the cab's
-filters, then up to two mics: type (dynamic, ribbon, condenser, crystal), position on the cone, distance (0.5–24"),
-angle, and for the second a blend and a phase flip, delayed by the difference in distance. A trim worked out from the
-responses (plus a measured nudge) keeps every cab and mic level with the amp's own. `P.cab`, `P.mic`, `P.mic2` are
-written only when they're not the default.
+**Cabs and mics** (`PLUG_CABS`, `PLUG_MICS`, `plugCabNet`; the view is `cabs.js`). Two kinds of cab:
+
+- **Measured.** Six closed 4x12s, each recorded with its mic: `modern-close`, `modern-bright`, `modern-side`,
+  `modern-two`, `british-dynamic`, `british-side` (the Half Stack's six, the same file: `PLUG_IRS`, injected as
+  `env.CABS`). The amp's output is convolved with the cab's impulse response (`normalize` off; a trim worked out from
+  the IR's response against the amp's own designed cab, plus a measured nudge per amp in `PLUG_IR_LV`, keeps it level).
+  The mic is part of the measurement, so `P.mic` and `P.mic2` do nothing on a measured cab.
+- **Designed.** The amp's own (`own`: with the default mic a straight wire, `{ custom: false }`), and the others: the
+  cab's filters, then up to two mics: type (dynamic, ribbon, condenser, crystal), position on the cone, distance
+  (0.5–24"), angle, and for the second a blend and a phase flip, delayed by the difference in distance. A trim worked
+  out from the responses (plus a measured nudge) keeps every cab and mic level with the amp's own.
+
+**Which cab an amp plays when nobody chose one** is `PLUG_AMP_IR` (`plugCabDefault(id)`): every guitar amp has a
+measured 4x12. The British dynamic under Sea Glass, Coral Chime, Crab Shack, Shell Shock, Pinch Punk, Jellyfish and
+Brown Tide (`clean`, `jangle`, `crunch`, `plexi`, `punk`, `jc`, `brown`); the British side-address under Lighthouse
+(`hiwatt`); the two-mic modern under Siren Song, Pearl Diver, Rogue Wave and Driftwood (`lead`, `dumble`, `friedman`,
+`bassman`); the close modern under Kraken, Barracuda and Megalodon (`recto`, `slo`, `metal`; the Half Stack's default
+too); the modern side-address under Clownfish (`orange`). The bass amps and Abyss keep their own (a 4x12 gives up
+under 100 Hz), as do Hermit, Flotsam, the 8-Bit Crab and Beach Tape (the cab is the effect) and Straight In (no cab). At their default knobs each guitar amp reads within 0.2 LU of its own designed cab; what moves is
+the shape: fuller from 125 to 500 Hz (up to 9 dB on the high-gain heads), less under 90 Hz, and much less fizz above
+6 kHz.
+
+The bank loads when an amp first wants it. Until it's in, or on a server without it, an amp on a measured cab plays its
+own designed cab; when it lands, the amp moves onto the measured one in a 30 ms crossfade. An offline render waits for
+it (`rig.ready()` / `amp.ready()`). Switching between two measured cabs, or between a measured and a designed one, is a
+crossfade too; only a new amp or a change between two designed cabs takes the duck.
+
+`P.cab`, `P.mic`, `P.mic2` are written only when they're not the default: a rig with no `cab` plays the amp's default
+(measured, for a guitar amp), and choosing the amp's own designed cab on a guitar amp writes `cab: 'own'`. A cab id
+this version doesn't know is dropped (`plugCabClean`), and the amp plays its default.
 
 ## The features
 
@@ -277,6 +303,7 @@ rendered offline through the rig and then the band's own soft clip and trim.
 | each preset | −14 LUFS ±1 (a lead up to −12.5), true peak ≤ −1 dBFS | `plug-level.js` (`BANK=`) |
 | each pedal, on against off | drive and fuzz +0.5…+3 LU; the rest ±1.5 LU; the rig's true peak ≤ −1 dBFS | `pedal-check.js` |
 | each cab and mic setting | within ±1.5 LU of the amp's own cab | `cab-check.js` |
+| each guitar amp on its measured cab | within ±0.5 LU of its own designed cab, true peak ≤ −1 dBTP | Overdub's `tools/guitar-test.js` 4c |
 | each keys patch | −14 LUFS ±1, true peak ≤ −1 dBFS (`KY_TRIM`) | `keys-test.js` |
 | a loop played back | as loud as the live guitar, ±0.5 LU | `looper-test.js` |
 | a trade-fours answer | each bar within ±1.5 LU of the Lead lane's own blocks | `fours-test.js` |

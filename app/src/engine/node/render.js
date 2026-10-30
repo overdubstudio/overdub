@@ -50,7 +50,7 @@ import { makeDsp } from '../../kernel/dsp.js';
 import { getDevice, normParam, paramValues, seedOf } from '../../devices/registry.js';
 import '../../devices/builtin/index.js';
 import '../../devices/library/index.js'; // the house shelf of agent-built kernels (claude.*), which songs can use
-import '../../devices/guitar/index.js'; // registered so they are named and reported as graph devices, never run
+import '../../devices/guitar/index.js'; // the Guitar Studio: its kernel amps run; its graph pedals and amps are named and reported, never run
 import { cleanProject, songEnd as projectSongEnd } from '../../core/project.js';
 import { notesIn, audioIn, autoIn, lanesOf, mixGrid, GRID } from '../schedule.js';
 import { audibility, trackSpec, masterSpec, softClipCurve, SC_K, keyPlan } from '../strip.js';

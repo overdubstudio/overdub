@@ -7,17 +7,23 @@
 //   fx:core.stack:cab#7fd30c061e6b      Half Stack at its defaults: the close dynamic IR
 //   fx:core.cab#7fd30c061e6b            Iso Cab at its defaults
 //   fx:core.bassrig#7fd30c061e6b        Y Cable at its defaults, on the house's bass DI
-// (tools/stack-test.js, cab-test.js and bassrig-test.js render each in Node and in Chromium and hold them to these.)
+//   fx:amp.<id>#7fd30c061e6b            each guitar amp on the kernel engine (devices/guitar/voicings.js) at its defaults,
+//                                       on its default cab (a measured one, or its own designed one); a bass amp on the
+//                                       house's bass DI
+// (tools/stack-test.js, cab-test.js, bassrig-test.js and guitar-test.js render each in Node and in Chromium and hold them
+// to these.)
 import fs from 'node:fs';
 import { createProject } from '../app/src/core/project.js';
 import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
 import { kernelSpecs } from '../app/src/kernel/host.js';
 import { makeDsp } from '../app/src/kernel/dsp.js';
-import { paramValues } from '../app/src/devices/registry.js';
+import { paramValues, getDevice } from '../app/src/devices/registry.js';
 import { dataFor } from '../app/src/engine/node/data.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
 import { CABS_HASH, CAB_FILTER } from '../app/src/devices/builtin/amp-lib.js';
+import { AMP_VOICINGS } from '../app/src/devices/guitar/voicings.js';
+import '../app/src/devices/guitar/index.js';
 
 const STAMP = '2026-09-30T00:00:00.000Z';
 const META = { created: STAMP, modified: STAMP, authors: {} };
@@ -28,6 +34,33 @@ export const AMP_GOLDEN = {
   ['fx:core.stack:cab' + TAG]: '43844752e743f7dd47f5a117e72d241f084465e48aa4ddb2bdfb4bd9bd190467',
   ['fx:core.cab' + TAG]: '4348da3d328686a08bc0e8548753874b525688654708a0f6f0b4fbe1e14583aa',
   ['fx:core.bassrig' + TAG]: 'e6836096c6bfadeb756e8299e3f645cffbaad8d5e53e5fbdbcfae38c8b21ddea',
+  ['fx:amp.clean' + TAG]: '87e4776b58c908306517e8fa89317e4c94c87f5de00405aeeb639737f95d69bc',
+  ['fx:amp.plexi' + TAG]: 'db908e33ba5d6de361b43363f5452d0aaf72c0e3eb0279725d2286a26946f787',
+  ['fx:amp.recto' + TAG]: '958674145d4c2e102a8afa17822b3b085596eea33da15df94b74f097bc88fb69',
+  ['fx:amp.jangle' + TAG]: '0a50efb7a3bfa03a806791838edfdb2d41e28919e0d1d2dcc0436cdd7f5fce14',
+  ['fx:amp.hiwatt' + TAG]: '92af4772b4f73ed8e82cb163613a6c171dcee4a4a7395dec7a8d770849eb0faa',
+  ['fx:amp.orange' + TAG]: '317cb7b6fd4d6c96b86f5cb7952b421a36c78ff313e4edb2f29241556fd87e1c',
+  ['fx:amp.crunch' + TAG]: 'c430bc76d5f5b070dec4fc17b9715fc87eaf35f20542f593bcdb40455839cc3b',
+  ['fx:amp.bassman' + TAG]: '80f3e230b728be5141e383b438356b40a9da970a7716047a59e49dd8624673c9',
+  ['fx:amp.punk' + TAG]: '00c727b3e8fd65b7b2880a3946d763a62dd2d80506fe2131ffc06356173406b0',
+  ['fx:amp.brown' + TAG]: '91d3bd764d72237cedb2ff67157fac9b49dace0e5082a01688f312bd85d2a6bb',
+  ['fx:amp.friedman' + TAG]: '5dd6f331e0051396ab41be82d6d56d442ef5d7b42bf3c2bd89e7f5d5bed2fa95',
+  ['fx:amp.lead' + TAG]: '10f172a4958f563ec6237d34f1dfcb693d6bf18676ef21019e0efea6b52ec2e8',
+  ['fx:amp.dumble' + TAG]: 'be3eb1c34b75b7e66c3706ce2129a222bd7e84cc7927469a2ed408bae25e8507',
+  ['fx:amp.slo' + TAG]: 'a591b9a9651e84d561f601996a46a919de3e45fdd796938ec6e61910986c2811',
+  ['fx:amp.metal' + TAG]: 'eed86b201575637a76dc53e3a031e925874dd4a8fa9917d6390ce0deecf93c93',
+  ['fx:amp.jc' + TAG]: '7bcfd03238f167950bd736adf1e765df797ef75423328c21ac26d7ff9323d0c7',
+  ['fx:amp.tiny' + TAG]: '83aeec9ea678bf791f8bdaf6e5f425f9edbd142cc67da4dfda17bf8fc8e637a8',
+  ['fx:amp.radio' + TAG]: '2b89cfe969db34dfb907aa7baf1d41975dbb5faf1ffc3e251d8d985d04519cd3',
+  ['fx:amp.bit' + TAG]: 'f705e61107ff887670b90366c12da38bc16fe41d7b40510bfdd92a32b02ce0d2',
+  ['fx:amp.tape' + TAG]: '228b8b235584a293bf945103b4b496ab5342b0eea0fd02ea2e52c0fbeac3a5e3',
+  ['fx:amp.abyss' + TAG]: '1d09fe5f794939a862edb2807c2d5a1019fb29d14902bd7c627a66baddea39c0',
+  ['fx:amp.urchin' + TAG]: '66a285ccbb12532afcd290be09f46c6956b81facdb4e10953ebb2744750f5ada',
+  ['fx:amp.di' + TAG]: 'b709a74d8f3238e64a86cfe16e8fbad51bd8a817ba054e83e3562fb5462d7658',
+  ['fx:amp.whale' + TAG]: '718b8f58c9c5edb5553a88de71f48f7b2e58e082760b5b403c621769758e2022',
+  ['fx:amp.walrus' + TAG]: 'bb955881f5b2e680a1be9a070421253440d5da410251b7dacafaaacb6fe06a9c',
+  ['fx:amp.narwhal' + TAG]: '6443abb55c3bc5eeb5ff1920a62e855aad7651f145d592e476b1c74e82d8501b',
+  ['fx:amp.sandbar' + TAG]: 'cfd414abbfbb4db2c034d6daf519984e9deda358de43690892b858b5b2fc8898',
 };
 
 function scene(name, id, params, signal = 'strum') {
@@ -52,6 +85,7 @@ export function ampScenes() {
     { ...scene('fx:core.stack:cab' + TAG, 'core.stack', {}), data: { cabs: CABS_HASH } },
     { ...scene('fx:core.cab' + TAG, 'core.cab', {}), data: { cabs: CABS_HASH } },
     { ...scene('fx:core.bassrig' + TAG, 'core.bassrig', {}, 'bass'), data: { cabs: CABS_HASH } },
+    ...Object.keys(AMP_VOICINGS).map((id) => ({ ...scene('fx:amp.' + id + TAG, 'amp.' + id, {}, getDevice('amp.' + id).tone === 'bass' ? 'bass' : 'strum'), data: { cabs: CABS_HASH } })),
   ];
 }
 

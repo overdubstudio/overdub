@@ -426,7 +426,8 @@ function ampFace(def, vals, o, ps) {
   for (const el of amp.querySelectorAll('.amp-lg')) el.textContent = name;
   const panel = ps.filter((p) => p.group !== 'cab'), rest = ps.filter((p) => p.group === 'cab');
   const widgets = {};
-  const onInput = (p) => (v, commit) => { vals[p.key] = v; if (p.key === 'gain' || p.role === 'drive') dial(); o.onParam && o.onParam(p.key, v, { commit }); };
+  const onInput = (p) => (v, commit) => { vals[p.key] = v; if (p.key === 'gain' || p.role === 'drive') dial(); if (p.key === 'cab') cabMode(); o.onParam && o.onParam(p.key, v, { commit }); };
+  let cabMode = () => {};
   const knobsEl = amp.querySelector('.amp-knobs');
   for (const p of panel) {
     const el = makeControl(p, vals[p.key], { name, onInput: onInput(p) });
@@ -444,6 +445,22 @@ function ampFace(def, vals, o, ps) {
     for (const p of rest) {
       const el = makeControl(p, vals[p.key], { name, onInput: onInput(p) });
       strip.lastChild.appendChild(el); widgets[p.key] = el;
+    }
+    // a measured cab (the CAB param's measured opts: a guitar amp's default) has its mic in the measurement: the mic
+    // controls step aside for the line that says so, and come back with a designed cab
+    const cabP = rest.find((p) => p.key === 'cab');
+    if (cabP && Array.isArray(cabP.measured)) {
+      const note = document.createElement('p');
+      note.className = 'ewf-cabstrip-note';
+      note.textContent = 'A real 4x12 and the mic it was recorded with, so there’s no mic to move. A designed cab takes mics you place.';
+      strip.appendChild(note);
+      cabMode = () => {
+        const on = cabP.measured.includes(Math.round(+vals.cab));
+        for (const p of rest) if (p.key !== 'cab' && widgets[p.key]) widgets[p.key].hidden = on;
+        note.hidden = !on;
+        strip.classList.toggle('measured', on);
+      };
+      cabMode();
     }
     root.appendChild(strip);
   }
@@ -466,7 +483,7 @@ function ampFace(def, vals, o, ps) {
   const by = badge(o.by || def.by);
   if (by) root.appendChild(by);
   root.title = [def.blurb, def.nod ? `In the spirit of ${def.nod}.` : ''].filter(Boolean).join(' ');
-  return { el: root, widgets, setOn, meter, after: () => { dial(); meter(state.lvl); } };
+  return { el: root, widgets, setOn, meter, after: () => { dial(); meter(state.lvl); cabMode(); } };
 }
 
 /* ---- an instrument: a synth panel */
@@ -657,6 +674,8 @@ const OWN_CSS = `
 .ewf-cabstrip .ewf-menu select { max-width: 150px; }
 .ewf .ewf-menu { width: auto; }
 .ewf-cabstrip .kn { width: auto; min-width: 54px; }
+.ewf-cabstrip [hidden] { display: none !important; }
+.ewf-cabstrip-note { flex: 1 1 240px; margin: 0; font: 12.5px/1.4 var(--f-ui); color: var(--text-3, #7d766e); }
 .ewf-ampface .amp.small { width: min(100%, 600px); --kw: 38px; }
 .ewf-ampface.ewf-compact .amp.small { width: 100%; --kw: 30px; }
 .ewf-ampface.ewf-compact .amp-panel { flex-wrap: nowrap; justify-content: flex-start; }

@@ -1,17 +1,36 @@
 // The Guitar Studio in Overdub (devices/guitar, devices/graph.js + kit.js, ui/faces.js, gallery.html):
 //  1. registry: every pedal and amp in the gear (devices/guitar/gear/) is registered (ids kept: pedal.<id>, amp.<id>),
 //     none refused, and every rig's devices exist; rigOps dispatch through the real store. Every worklet the gear's code
-//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals and amps
-//     load theirs from those files.
+//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals load
+//     theirs from those files.
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
-//  3. bypass is exact: a sample of insert and trails pedals, off, equals the dry input to -90 dB.
+//  2d. the reverbs (Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly, Frostbite Crab: the 'verb-tank' worklet) build
+//     no convolver; each rings its DECAY's T60 at 1 kHz (±12%) at both ends and its default; its wet is as loud as the
+//     convolver's was (±0.75 LU); renders are the same sample for sample (another seed isn't); each costs at most a
+//     quarter more than a 4.5 s convolver measured alongside (half of it with nothing ringing); Halo Jelly all at 10 dies; Frostbite's HOLD holds; live, DECAY swept
+//     and stomps are click-free.
+//  3. bypass is exact: a sample of insert and trails pedals and a kernel amp, off, equals the dry input to -90 dB (lined
+//     up with its declared latency).
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
-//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
-//     plugAmp sample for sample (also with a cab and two mics).
+//     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP.
+//  4c. the measured cabs (gear/code.js PLUG_AMP_IR): the gear's six are Half Stack's (ids and names); every guitar amp
+//     defaults to one and the bass amps, Abyss, Hermit, Flotsam, the 8-Bit Crab, Beach Tape and Straight In to their own
+//     designed cab (sample for sample as before); each guitar amp's default sound at its default knobs reads as it did
+//     on its own cab within 0.5 LU (the band's loudness and BS.1770; the half-octave change is noted), in time with it,
+//     true peak under -1 dBTP; a saved rig without a cab plays the measured one and an explicit 'own' the designed one.
+//  4d. the amps on the kernel engine (devices/guitar/voicings.js; devices/builtin/amp-voiced.js), in Node and in
+//     Chromium: each renders finite and bit-exact twice, and with the bank held off plays its own designed cab exactly;
+//     held against what it was on the graph engine (tools/fixtures/amp-voices.json: its spectrum on its own cab, its
+//     drive, its aliasing, which must be 30 dB under the old amp's or under -100 dB) and its cost per block; Half Stack's
+//     own chain as a voicing reads as Half Stack; the golden scenes (tools/amp-scenes.js) in Node and Chromium alike;
+//     the kernel's cab and mics are the graph amps' native nodes on pink noise; and switching cabs live (among measured
+//     and designed ones) is click-free with no dip, on one amp at each rate and the odd ones.
 //  5. the rigs: every preset (but the keys bank's) through its whole chain lands at -14 LUFS ±1.5 (leads up to -12),
 //     true peak ≤ -1 dBTP: the pedals, the amp, the cab and the mics all came across.
 //  2b. automation: every pedal param that changes the sound before set()'s `at` is marked auto: false (no lane).
+//  2c. soft clippers: every WaveShaper a pedal builds that saturates has flattened by its clamp (at most ~1% of its
+//     slope at rest left there: devices/kit.js softReach), unless it's on HARD_CLAMP with why.
 //  6. live: stomping a few pedals on and off while a tone plays is click-free (the 10 ms crossfades).
 //  6b. live: a pedal and an amp built on and wired in a moment later (as a strip does) play through themselves from
 //     the first note, not their dry signal.
@@ -19,75 +38,101 @@
 //     built on a context whose clock moves 11.6 ms between reads, stomped before and after it's wired 25 ms later, says
 //     health().ok with its bypass gains at their targets, and nothing calls setValueCurveAtTime live; a device whose
 //     build throws rejects ready with 'threw' and plays the engine's stand-in with an 'error' report; a worklet module
-//     that fails once loads on the next build; assure() snaps a sabotaged dry gain; 50 amp swaps leave no wow
+//     that fails once loads on the next build; assure() snaps a kernel amp's sabotaged dry gain; 50 amp swaps leave no
 //     oscillator running.
 //  7. faces: gallery.html renders a face for every device with no page errors; knobs turn (keys, double-click reset),
 //     switches flip, footswitches stomp; screenshots at 1440 and 390 wide (tools/.out/gallery-*.png).
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
 import { open, tally, OUTDIR } from './pw.js';
+import { boot } from './guitar-page.js';
 import path from 'node:path';
+import fs from 'node:fs';
+import { run, goldenChecks, ampScenes } from './amp-scenes.js';
+import { halfOct, shape, thd, alias, sine } from './amp-measure.js';
+import { FIXTURE } from './amp-voices.js';
+import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
+import { getDevice } from '../app/src/devices/registry.js';
+import { AMP_VOICINGS } from '../app/src/devices/guitar/voicings.js';
+import { CAB_IDS as AMP_CABS, AMP_PARAMS as AMP_KNOBS } from '../app/src/devices/guitar/amps.js';
+import { AMP_VOICED } from '../app/src/devices/builtin/amp-voiced.js';
+import { kernel as kernelOf } from '../app/src/devices/builtin/lib.js';
+import stackDef from '../app/src/devices/builtin/stack.js';
+import '../app/src/devices/guitar/index.js';
 
 const t = tally('guitar');
 const FAST = process.env.FAST === '1';
 const ONLY = process.env.PEDALS ? process.env.PEDALS.split(',') : null;
 
-// In-page helpers (window.__gt): render a chain of devices offline, clawd-o-matic's loudness, the band's tail.
-const HELPERS = `
-  const G = await import('/app/src/devices/guitar/index.js');
-  const R = await import('/app/src/devices/registry.js');
-  const TS = await import('/app/src/audio/testsignals.js');
-  const M = await import('/app/src/audio/measure.js');
-  const SR = 48000;
-  // clawd-o-matic's loudness (vendor/pop-punk engine.js E.loudness: a +4 dB shelf at 1.5 kHz and a 38 Hz high-pass,
-  // designed at 44.1 kHz as it is there, mean square of both channels, no gating): the number its levels were set by
-  function clawdLufs(L, Rr, from = 0.5) {
-    const hs = () => { const sr = 44100, w = 2 * Math.PI * 1500 / sr, c = Math.cos(w), s = Math.sin(w), A = Math.pow(10, 4 / 40), sA = 2 * Math.sqrt(A) * (s / 2) * Math.SQRT2;
-      const b0 = A * (A + 1 + (A - 1) * c + sA), b1 = -2 * A * (A - 1 + (A + 1) * c), b2 = A * (A + 1 + (A - 1) * c - sA), a0 = A + 1 - (A - 1) * c + sA, a1 = 2 * (A - 1 - (A + 1) * c), a2 = A + 1 - (A - 1) * c - sA;
-      const f = { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, z1: 0, z2: 0 };
-      return (x) => { const y = f.b0 * x + f.z1; f.z1 = f.b1 * x - f.a1 * y + f.z2; f.z2 = f.b2 * x - f.a2 * y; return y; }; };
-    const hp = () => { const g = Math.tan(Math.PI * 38 / 44100), k = 1 / 0.5, a1 = 1 / (1 + g * (g + k)), a2 = g * a1, a3 = g * a2; let s1 = 0, s2 = 0;
-      return (x) => { const v3 = x - s2, v1 = a1 * s1 + a2 * v3, v2 = s2 + a2 * s1 + a3 * v3; s1 = 2 * v1 - s1; s2 = 2 * v2 - s2; return x - k * v1 - v2; }; };
-    const sl = hs(), sr = hs(), hl = hp(), hr = hp();
-    let ms = 0; const a = Math.round(from * SR), b = L.length;
-    for (let i = a; i < b; i++) { const l = hl(sl(L[i])), r = hr(sr(Rr[i])); ms += l * l + r * r; }
-    return -0.691 + 10 * Math.log10(ms / Math.max(1, b - a) + 1e-12);
-  }
-  // the band's master tail in clawd-o-matic (app.js): a soft clip at 4x and -1.5 dB
-  function tail(c) {
-    const clip = c.createWaveShaper(), n = 4096, cv = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 4 - 2, q = Math.abs(x), y = q <= 0.85 ? q : 0.85 + 0.15 * Math.tanh((q - 0.85) / 0.15); cv[i] = x < 0 ? -y : y; }
-    clip.curve = cv; clip.oversample = '4x';
-    const trim = c.createGain(); trim.gain.value = Math.pow(10, -1.5 / 20);
-    clip.connect(trim); return { input: clip, output: trim };
-  }
-  const inputs = {};
-  const input = (kind = 'di', secs = 8) => { const k = kind + secs; if (!inputs[k]) inputs[k] = kind === 'bass' ? TS.bassDI(secs, SR) : TS.diStrum(secs, SR); return inputs[k]; };
-  // render input through [{ device, params, on }] (offline, at bpm), optionally through the band's tail
-  async function render(chain, x, { band = false, bpm = 170, extra = 0, insts } = {}) {
-    const n = x.length + Math.round(extra * SR), c = new OfflineAudioContext(2, n, SR), src = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-    b.copyToChannel(x, 0); src.buffer = b;
-    let at = src;
-    const made = [];
-    for (let k = 0; k < chain.length; k++) {
-      const s = chain[k], inst = await R.instantiate(c, s.device, { uid: 'u' + k + '-' + s.device, params: s.params || {}, on: s.on !== false, bpm });
-      await inst.ready; made.push(inst);
-      at.connect(inst.input); at = inst.output;
-    }
-    if (band) { const tl = tail(c); at.connect(tl.input); at = tl.output; }
-    at.connect(c.destination); src.start(0);
-    const r = await c.startRendering();
-    for (const i of made) i.dispose();
-    if (insts) insts.push(...made);
-    return [r.getChannelData(0), r.getChannelData(1)];
-  }
-  const check = (chs) => { let pk = 0, bad = 0; for (const ch of chs) for (let i = 0; i < ch.length; i++) { const v = ch[i]; if (!Number.isFinite(v)) bad++; else if (Math.abs(v) > pk) pk = Math.abs(v); } return { bad, peak: 20 * Math.log10(pk + 1e-12) }; };
-  const tp = (chs) => Math.max(...chs.map((ch) => M.truePeak({ sampleRate: SR, numberOfChannels: 1, length: ch.length, getChannelData: () => ch })));
-  window.__gt = { G, R, TS, M, SR, clawdLufs, tail, input, render, check, tp };
-`;
 
-async function boot(page) {
-  await page.addScriptTag({ type: 'module', content: HELPERS });
-  await page.waitForFunction(() => window.__gt, null, { timeout: 30000 });
+// ---------------------------------------------------------------------------------------------------- 4d, in Node
+// The kernel amps through the KernelCore the worklet runs (tools/amp-scenes.js run), against the fixture.
+const KERNEL_AMPS = Object.keys(AMP_VOICINGS);
+// the spectrum gate is 3 dB rms and 6 at worst against the graph amp's; an amp whose real circuit is further off than
+// that (its voicing has no physical value left to close it: tools/amp-fit.js) is held to what it measured, and why.
+// The aliasing gate is 30 dB under the graph amp's (or under -100 dB); an amp at 4x whose GAIN 10 is as hot as Half
+// Stack's is held to what Half Stack does at 4x there instead (measured: -75.6, -70.6, -67.6 dB at 1, 2.5, 5 kHz)
+const FIT_GATE = {
+  plexi: { rms: 3.5, max: 6.5, why: "a 1959's stack at noon scoops 700 Hz-1.4 kHz deeper than the graph amp's voicing did (to -6 dB) and its bright channel sits 5 dB hotter at 2.8-5.6 kHz" },
+  recto: { alias: 25, why: "at GAIN 10 it's as hot as Half Stack's (THD 20 % at 196 Hz) and aliases as Half Stack does at 4x, within 6 dB" },
+  bit: { alias: 19, why: "a 4-bit DAC's steps aren't harmonics of the note: the measure reads the quantiser, 20-22 dB under the graph amp's" },
+  tape: { alias: -1.5, why: "the transport's wow puts sidebands round every note, which the measure counts; within 1.5 dB of the graph amp's, the same wow" },
+  abyss: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 5 dB under the graph amp, whose octave was the same' },
+  urchin: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 27 dB under the graph amp, whose octave was the same' },
+};
+{
+  const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps, own = AMP_CABS.indexOf('own'), x = diStrum(8, 48000), bass = bassDI(8, 48000);
+  const r1 = (v) => v.toFixed(1), stack = getDevice('core.stack');
+  for (const id of KERNEL_AMPS) {
+    const def = getDevice('amp.' + id), old = fx[id], V = AMP_VOICINGS[id];
+    // (a bass amp is heard as the fixture heard it: on the bass DI)
+    const xi = old.signal === 'bass' ? bass : x, xi2 = xi.subarray(0, 2 * 48000);
+    // finite and bit-exact; with the bank held off, a measured default is its own designed cab, exactly
+    const a = run(def, {}, xi2)[0], b = run(def, {}, xi2)[0], held = run(def, {}, xi2, xi2, { data: null })[0], heldOwn = run(def, { cab: own }, xi2, xi2, { data: null })[0];
+    let same = true, finite = true, exact = true;
+    for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) same = false; if (!Number.isFinite(a[i])) finite = false; if (held[i] !== heldOwn[i]) exact = false; }
+    t.ok(finite && same && exact && def.flavour === 'kernel' && def.exportable === false, `amp.${id} (${def.name}) is a kernel (${V.os}x, latency ${Math.round(def.latency * 48000)} samples; the graph amp's was ${old.latency}): finite, twice the same sample for sample, and with the bank held off its measured default is its own designed cab exactly; not a device file`);
+    // its voice against the graph amp's: the spectrum on its own cab (loudness matched, 100 Hz-8 kHz, half-octave),
+    // the drive (THD at 196 Hz, -18 dBFS), aliasing at GAIN 10 (to 16 kHz), the cost of a block (best of three)
+    const y = run(def, { cab: own }, xi)[0], sp = shape(halfOct(y), old.own.half), th = thd(run(def, { cab: own }, sine(196, -18, 2.5))[0]);
+    const tol = FIT_GATE[id] && FIT_GATE[id].rms ? FIT_GATE[id] : { rms: 3, max: 6 };
+    t.ok(sp.rms <= tol.rms && sp.max <= tol.max, `amp.${id}: its spectrum on its own cab is the graph amp's within ${r1(sp.rms)} dB rms, ${r1(sp.max)} dB at worst (allowed ${tol.rms} / ${tol.max}${tol.why ? ': ' + tol.why : ''}); new - old, 40 Hz to 14.5 kHz: ${sp.d.join(' ')}`);
+    // (under 0.02 % an amp is clean, and a ratio there is the measurement's floor, not its drive: as tools/amp-fit.js)
+    const floor = (v) => Math.max(0.02, v);
+    t.ok(Math.abs(Math.log(floor(th) / floor(old.thd))) <= Math.log(1.5), `amp.${id}: its drive is the graph amp's within x1.5 (THD at 196 Hz ${th.toFixed(3)} %, was ${old.thd} %${floor(th) === floor(old.thd) ? '; both under 0.02 %: clean' : ''})`);
+    const al = [1000, 2500, 5000].map((f) => ({ f, old: old.alias[f].to16k, now: alias(run(def, { cab: own, gain: 10 }, sine(f, -12, 2.5))[0], f, 16000) }));
+    const under = (FIT_GATE[id] && FIT_GATE[id].alias) || 30;
+    t.ok(al.every((q) => q.now <= Math.max(-100, q.old - under)), `amp.${id}: aliasing at GAIN 10 to 16 kHz ${al.map((q) => `${q.f / 1000} kHz ${r1(q.now)} dB (was ${r1(q.old)})`).join(', ')}: ${under} dB under the graph amp's, or under -100 dB${under !== 30 ? ' (' + FIT_GATE[id].why + ')' : ''}`);
+    // (Half Stack alongside, each time: a busy machine runs slower, and the budget is as much slower as Half Stack is
+    // than its 110 µs)
+    const us = [], hs = [], per = (t0) => ((performance.now() - t0) * 1000) / (xi2.length / 128);
+    for (let k = 0; k < 3; k++) {
+      let t0 = performance.now();
+      run(stack, {}, xi2);
+      hs.push(per(t0));
+      t0 = performance.now();
+      run(def, { cab: own }, xi2);
+      us.push(per(t0));
+    }
+    // (the budget at 4x is Half Stack's; at 2x and none, less; at 8x, half as much again: its stages run twice as many
+    // samples as at 4x, and the 8x amps measure 1.1-1.6 times Half Stack in one run)
+    const budget = V.os >= 8 ? 165 : V.os >= 4 ? 110 : 65, slow = Math.max(1, Math.min(...hs) / 110);
+    t.ok(Math.min(...us) <= 2 * budget * slow, `amp.${id}: ${Math.min(...us).toFixed(0)} µs a 128-frame block at ${V.os}x in Node (best of three; the budget is ${budget}${V.os === 4 ? ", Half Stack's" : V.os >= 8 ? ", 1.5 times Half Stack's" : ''}; held to twice that here, and Half Stack ran at ${Math.min(...hs).toFixed(0)} µs alongside: x${slow.toFixed(2)})`);
+  }
+  // Half Stack's own chain written as a voicing reads as Half Stack: its boost, gate and cab off, its knobs at noon
+  {
+    const P = { gate: -96, boost: 0, cab: 7, presence: 5, depth: 5, low_cut: 20, high_cut: 20000, level: 0, master: 5, sag: 0.3, gain: 6.5, bass: 5, mid: 5.5, treble: 6 };
+    const V = { os: 4, hp: 110, tight: null, chain: [['tri', 4, 0.12, 2.2, 35, 14000], ['pot'], ['tri', 12, 0.18, 1.6, 90, 9500], ['tri', 6, 0.32, 1.25, 40, 6800], ['stack'], ['gain', 20 * Math.log10(4)]],
+      pot: [-44, -4], bright: null, stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 }, pw: -6 + 2.2 * 5, sag: 0.3, xf: [45, 14000], depth: null, pres: [3500, 1.6] };
+    const hs = { id: 'test.hs-voiced', kind: 'effect', params: AMP_KNOBS.slice(0, 6), kernel: kernelOf(String.raw`${AMP_VOICED}
+const V = ${JSON.stringify(V)};
+return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latency: a.latency, process(L, R, n, P) { a.set(P); for (let i = 0; i < n; i++) { const y = a.tick(0.5 * (L[i] + R[i])); L[i] = y; R[i] = y; } } }; } };`) };
+    const p = { gain: 6.5, bass: 5, mid: 5.5, treble: 6, presence: 5 };
+    const a = run(hs, p, x)[0], b = run(stackDef, P, x)[0], sp = shape(halfOct(a), halfOct(b)), ta = thd(run(hs, p, sine(196, -18, 2.5))[0]), tb = thd(run(stackDef, P, sine(196, -18, 2.5))[0]);
+    t.ok(sp.rms <= 0.5 && Math.abs(ta / tb - 1) <= 0.1, `Half Stack's chain as a voicing reads as Half Stack: spectrum within ${sp.rms.toFixed(2)} dB rms (${sp.max.toFixed(2)} at worst), THD ${ta.toFixed(1)} % against ${tb.toFixed(1)} %`);
+  }
+  // the golden scenes, in Node (pinned) and Chromium (sample for sample)
+  const names = ampScenes().map((q) => q.name).filter((n) => n.startsWith('fx:amp.'));
+  if (names.length) await goldenChecks(t, names, ['/app/src/devices/guitar/index.js']);
 }
 
 // ---------------------------------------------------------------------------------------------------- audio
@@ -126,7 +171,7 @@ async function boot(page) {
   const wl = await page.evaluate(async () => {
     const { G, R } = window.__gt;
     const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
-    const src = { 'clawd-amps': G.gear.PLUG_WORKLETS };
+    const src = {};
     for (const [n, w] of Object.entries(G.gear.PFX.worklets)) src[n] = w.src;
     const diff = [], files = Object.values(WORKLETS);
     for (const [n, s] of Object.entries(src)) {
@@ -258,61 +303,432 @@ async function boot(page) {
   if (inexact.length) t.note(`not bit-exact under load: ${inexact.map(([id, d]) => id.split('.')[1] + ' ' + d.toExponential(1)).join(', ')}`);
   t.ok(det.every(([, d]) => d <= 1e-4), `renders are deterministic (twice the same to -80 dB; ${det.length - inexact.length}/${det.length} sample for sample)`);
 
+  // 2c. soft clippers (devices/kit.js softReach, docs PEDALS.md "The kit"). A WaveShaperNode clamps its input to its
+  // curve: past the ends it holds the end value, so a soft clipper whose curve is still climbing there (tanh at a small
+  // drive, drawn only over ±1) turns into a hard clip the moment it's driven past them. Every WaveShaper every pedal
+  // builds, at its defaults: one that saturates (monotonic, and at least 5% shallower at both ends than at rest) must
+  // have no more than SOFT of its slope at rest left at its clamp (the slope one point in from each end against the
+  // slope across the middle; 5% over the rule for the sampling), unless HARD_CLAMP names it with why. Curves that don't
+  // saturate (a dead zone, a rectifier, a fold, a map that steepens, a straight line) aren't judged.
+  const HARD_CLAMP = {
+    quack: "a control map, not audio: the envelope soft-limited to 1, the top of the filter's sweep, where it's meant to stop",
+    pistolshrimp: "control maps, not audio: the pick's envelope to the clipper's gain, which stop at the top of SNAP's range",
+  };
+  const soft = await page.evaluate(async ({ only, hard }) => {
+    const { R } = window.__gt, { SOFT } = await import('/app/src/devices/kit.js');
+    const proto = BaseAudioContext.prototype, make = proto.createWaveShaper, made = [];
+    const out = { n: 0, curves: 0, judged: 0, bad: [], excused: [], worst: { id: '', r: 0 } };
+    proto.createWaveShaper = function () { const n = make.call(this); made.push(n); return n; };
+    try {
+      for (const d of R.listDevices().filter((q) => q.id.startsWith('pedal.') && (!only || only.includes(q.pedal)))) {
+        made.length = 0;
+        const c = new OfflineAudioContext(2, 128, 48000), inst = await R.instantiate(c, d.id, { uid: 'sc', params: {}, on: true, bpm: 120 });
+        await inst.ready;
+        out.n++;
+        made.forEach((n, j) => {
+          const cv = n.curve;
+          if (!cv || cv.length < 5) return;
+          out.curves++;
+          const N = cv.length, m = (N - 1) >> 1, s0 = N % 2 ? (cv[m + 1] - cv[m - 1]) / 2 : cv[m + 1] - cv[m], sg = Math.sign(s0);
+          const lo = (cv[1] - cv[0]) * sg, hi = (cv[N - 1] - cv[N - 2]) * sg, a0 = Math.abs(s0);
+          let mono = a0 > 0;
+          for (let i = 1; mono && i < N; i++) if ((cv[i] - cv[i - 1]) * sg < -1e-7) mono = false;
+          if (!mono || !(lo < 0.95 * a0 && hi < 0.95 * a0)) return;
+          out.judged++;
+          const r = Math.max(lo, hi) / a0, at = `${d.pedal}#${j} ${(r * 100).toFixed(1)}%`;
+          if (r > out.worst.r && !hard[d.pedal]) out.worst = { id: at, r };
+          if (r > SOFT * 1.05) (hard[d.pedal] ? out.excused : out.bad).push(at);
+        });
+        inst.dispose();
+      }
+    } finally { proto.createWaveShaper = make; }
+    return out;
+  }, { only: ONLY, hard: HARD_CLAMP });
+  t.ok(soft.n >= (ONLY ? 1 : 100) && !soft.bad.length, `${soft.judged} of the ${soft.curves} WaveShaper curves in ${soft.n} pedals saturate, and each has flattened by its clamp (≤ ~1% of its slope at rest left there; worst ${soft.worst.id || 'none'})${soft.bad.length ? "; still climbing at the clamp (a hard clip when driven past it: give it reach 'soft'): " + soft.bad.join(', ') : ''}`);
+  const stale = Object.keys(HARD_CLAMP).filter((id) => (!ONLY || ONLY.includes(id)) && !soft.excused.some((e) => e.startsWith(id + '#')));
+  t.ok(!stale.length, `HARD_CLAMP excuses only curves that need it: ${soft.excused.join(', ') || 'none'}${stale.length ? '; nothing to excuse in ' + stale.join(' ') : ''}`);
+
   // 3. bypass exact
   const byp = await page.evaluate(async () => {
     const { R, render, input } = window.__gt, x = input('di', 2);
     const ins = ['pedal.gate', 'pedal.drive', 'pedal.fuzz', 'pedal.quack', 'pedal.chorus', 'pedal.whammerhead', 'pedal.bitreef', 'amp.punk'];
-    const tr = ['pedal.delay', 'pedal.verb', 'pedal.tapecrab', 'pedal.halojelly', 'pedal.iceberg', 'pedal.frostbite'].filter((id) => R.getDevice(id) && R.getDevice(id).trails);
+    const tr = ['pedal.delay', 'pedal.verb', 'pedal.lobsterplate', 'pedal.krakenhall', 'pedal.tapecrab', 'pedal.halojelly', 'pedal.iceberg', 'pedal.frostbite'].filter((id) => R.getDevice(id) && R.getDevice(id).trails);
     const out = [];
     for (const id of ins.concat(tr)) {
-      const r = await render([{ device: id, on: false }], x);
-      let d = 0; for (let i = 0; i < x.length; i++) d = Math.max(d, Math.abs(r[0][i] - x[i]), Math.abs(r[1][i] - x[i]));
+      // (a device with latency is its dry input that much later, bypassed: a kernel amp lines its dry path up)
+      const dv = R.getDevice(id), r = await render([{ device: id, on: false }], x), L = dv.flavour === 'kernel' ? Math.round((+dv.latency || 0) * 48000) : 0;
+      let d = 0; for (let i = 0; i < x.length; i++) { const v = i < L ? 0 : x[i - L]; d = Math.max(d, Math.abs(r[0][i] - v), Math.abs(r[1][i] - v)); }
       out.push({ id, trails: !!R.getDevice(id).trails, db: 20 * Math.log10(d + 1e-12) });
     }
     return out;
   });
   t.ok(byp.every((b) => b.db <= -90), `bypass is exact (off = dry, worst ${Math.max(...byp.map((b) => b.db)).toFixed(0)} dB) for ${byp.filter((b) => !b.trails).length} insert and ${byp.filter((b) => b.trails).length} trails devices${byp.some((b) => b.db > -90) ? ': ' + byp.filter((b) => b.db > -90).map((b) => b.id + ' ' + b.db.toFixed(0)).join(' ') : ''}`);
 
+  // 2d. the reverbs (pedals/00-classic.js VERB_TANK: Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly, Frostbite
+  // Crab). They were convolvers on a generated noise tail; now each is the 'verb-tank' worklet, and each must ring as
+  // long as its DECAY says (the T60 the convolver's tail was drawn with), sit as loud as the convolver did, play the
+  // same every time, never click when DECAY moves or it's stomped, and cost no more than the convolver did.
+  // OLD: each one's wet loudness (clawd-o-matic's, the DI strum at its defaults and DECAY at 10, the pedal alone) as
+  // the convolver measured, the day it went. Undertow (a reverse or gated room under a second long, where a convolver
+  // is the cheapest exact way) and Plankton Cloud (a fixed room after the grains) keep theirs.
+  const REVERBS = {
+    verb: { decay: 'decay', T: [0.4, 0.36], old: [-34.71, -31.47] },
+    lobsterplate: { decay: 'decay', T: [0.6, 0.54], old: [-35.74, -31.96] },
+    krakenhall: { decay: 'size', T: [1.8, 0.62], old: [-32.71, -30.35] },
+    halojelly: { decay: 'decay', T: [1.5, 0.65], old: [-30.93, -26.65], at: { shim: 0 } },
+    frostbite: { decay: 'decay', T: [1, 0.7], old: [-32.85, -29.88] },
+  };
+  const rvIds = Object.keys(REVERBS).filter((id) => !ONLY || ONLY.includes(id));
+  if (rvIds.length) {
+    const rv = await page.evaluate(async ({ ids, spec }) => {
+      const { R, render, input, clawdLufs, SR } = window.__gt;
+      // RBJ band-pass, twice (the 1 kHz octave); T30 from the Schroeder curve of both channels (or T20, if the floor's
+      // too near)
+      const bandpass = (x, fc) => {
+        const w = (2 * Math.PI * fc) / SR, al = Math.sin(w) / (2 * 1.414), a0 = 1 + al, b0 = al / a0, a1 = (-2 * Math.cos(w)) / a0, a2 = (1 - al) / a0;
+        let y = Float64Array.from(x);
+        for (let pass = 0; pass < 2; pass++) { let x1 = 0, x2 = 0, y1 = 0, y2 = 0; const o = new Float64Array(y.length); for (let i = 0; i < y.length; i++) { const v = b0 * y[i] - b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = y[i]; y2 = y1; y1 = v; o[i] = v; } y = o; }
+        return y;
+      };
+      const t60 = (hs) => {
+        const n = hs[0].length, edc = new Float64Array(n); let s = 0;
+        for (let i = n - 1; i >= 0; i--) { s += hs[0][i] * hs[0][i] + hs[1][i] * hs[1][i]; edc[i] = s; }
+        const db = (i) => 10 * Math.log10(edc[i] / edc[0] + 1e-300);
+        const fit = (lo, hi) => {
+          let a = -1, b = -1;
+          for (let i = 0; i < n; i++) { const d = db(i); if (a < 0 && d <= lo) a = i; if (d <= hi) { b = i; break; } }
+          if (a < 0 || b < 0) return null;
+          let sx = 0, sy = 0, sxx = 0, sxy = 0, k = 0;
+          for (let i = a; i <= b; i += 4) { const t = i / SR, d = db(i); sx += t; sy += d; sxx += t * t; sxy += t * d; k++; }
+          return -60 / ((k * sxy - sx * sy) / (k * sxx - sx * sx));
+        };
+        return fit(-5, -35) || fit(-5, -25);
+      };
+      const out = { convolvers: {}, rt: [], level: [], det: [], cost: [], loud: [] };
+      // no convolver left in them (and the two that keep one)
+      const proto = BaseAudioContext.prototype, mk = proto.createConvolver, mkW = window.AudioWorkletNode;
+      let nc = 0, tanks = 0;
+      proto.createConvolver = function () { nc++; return mk.call(this); };
+      window.AudioWorkletNode = class extends mkW { constructor(c, name, o) { super(c, name, o); if (name === 'verb-tank') tanks++; } };
+      try {
+        for (const id of ids.concat(['undertow', 'planktoncloud'])) {
+          nc = 0; tanks = 0;
+          const c = new OfflineAudioContext(2, 128, SR), inst = await R.instantiate(c, 'pedal.' + id, { uid: 'cv', on: true });
+          await inst.ready; inst.dispose();
+          out.convolvers[id] = [nc, tanks];
+        }
+      } finally { proto.createConvolver = mk; window.AudioWorkletNode = mkW; }
+      // T60, in the 1 kHz octave, at DECAY's ends and its default (Halo Jelly with no shimmer; Kraken Hall a cathedral too)
+      for (const id of ids) {
+        const s = spec[id], d = R.getDevice('pedal.' + id), p = d.params.find((q) => q.key === s.decay);
+        const T = (v) => s.T[0] + s.T[1] * v, cases = [p.min, p.def, p.max].map((v) => [{ ...s.at, [s.decay]: v }, T(v)]);
+        if (id === 'krakenhall') cases.push([{ size: p.max, space: 1 }, T(p.max) * 1.6]);
+        for (const [params, want] of cases) {
+          const n = Math.round((want + 1.5) * SR), x = new Float32Array(n); x[2400] = 0.5;
+          const y = await render([{ device: 'pedal.' + id, params: { ...params, mix: 10 } }], x);
+          const hs = [0, 1].map((ch) => bandpass(y[ch].map((v, i) => (v - x[i]) / 0.5), 1000));
+          out.rt.push({ id, params, want, got: t60(hs) });
+        }
+      }
+      // loudness: the wet alone on the DI strum, at defaults and DECAY at 10, against the convolver's
+      const strum = input('di', 6);
+      for (const id of ids) {
+        const s = spec[id], d = R.getDevice('pedal.' + id), p = d.params.find((q) => q.key === s.decay);
+        for (const [k, params] of [{}, { [s.decay]: p.max }].entries()) {
+          const y = await render([{ device: 'pedal.' + id, params }], strum, { extra: 2 });
+          const wet = [0, 1].map((ch) => y[ch].map((v, i) => v - (strum[i] || 0)));
+          out.level.push({ id, at: k ? s.decay + ' 10' : 'defaults', got: clawdLufs(wet[0], wet[1]), was: s.old[k] });
+        }
+      }
+      // the same every time; and two copies (two seeds) aren't the same
+      const x2 = input('di', 2);
+      for (const id of ids) {
+        const a = await render([{ device: 'pedal.' + id }], x2), b = await render([{ device: 'pedal.' + id }], x2);
+        let dd = 0, ds = 0, e = 0;
+        for (let ch = 0; ch < 2; ch++) for (let i = 0; i < a[ch].length; i++) dd = Math.max(dd, Math.abs(a[ch][i] - b[ch][i]));
+        const c = new OfflineAudioContext(2, x2.length, SR), src = c.createBufferSource(), buf = c.createBuffer(1, x2.length, SR);
+        buf.copyToChannel(x2, 0); src.buffer = buf;
+        const other = await R.instantiate(c, 'pedal.' + id, { uid: 'another-' + id, on: true }); await other.ready;
+        src.connect(other.input); other.output.connect(c.destination); src.start(0);
+        const o = await c.startRendering(); other.dispose();
+        for (let i = 0; i < x2.length; i++) { const q = o.getChannelData(0)[i] - a[0][i]; ds += q * q; e += (a[0][i] - x2[i]) ** 2; }
+        out.det.push({ id, d: dd, seeds: 10 * Math.log10(ds / (e + 1e-30) + 1e-30) });
+      }
+      // what one costs, offline: 10 s of the strum through it, less a bare render (best of three); and on, with nothing
+      // coming in and nothing ringing. Against what they were, measured alongside (the machine may be busy): a
+      // ConvolverNode on a 4.5 s stereo room (kit.ir), Kraken Hall's at its defaults
+      const x10 = input('di', 10), z = new Float32Array(x10.length), blocks = x10.length / 128;
+      const time = async (chain, x) => { const t0 = performance.now(); await render(chain, x); return performance.now() - t0; };
+      const conv = async () => {
+        const t0 = performance.now(), c = new OfflineAudioContext(2, x10.length, SR), src = c.createBufferSource(), b = c.createBuffer(1, x10.length, SR);
+        b.copyToChannel(x10, 0); src.buffer = b;
+        const { makeKit } = await import('/app/src/devices/kit.js'), k = makeKit(c, { uid: 'ref' }), cv = k.convolver(k.ir({ secs: 4.5, pre: 0.03 }));
+        src.connect(cv); cv.connect(c.destination); src.start(0);
+        await c.startRendering(); k.release();
+        return performance.now() - t0;
+      };
+      let ref = Infinity;
+      for (const id of ids) {
+        let bare = Infinity, on = Infinity, idle = Infinity;
+        for (let k = 0; k < 3; k++) { bare = Math.min(bare, await time([], x10)); ref = Math.min(ref, ((await conv()) - bare) * 1000 / blocks); on = Math.min(on, await time([{ device: 'pedal.' + id }], x10)); idle = Math.min(idle, await time([{ device: 'pedal.' + id }], z)); }
+        out.cost.push({ id, us: ((on - bare) * 1000) / blocks, idle: ((idle - bare) * 1000) / blocks });
+      }
+      out.ref = ref;
+      // everything up: Halo Jelly's shimmer at 10 with DECAY and MIX at 10 (the convolver's ran away to +3 dBFS) blooms
+      // and dies; Frostbite's HOLD holds what was ringing
+      const tailDb = (y, a, b) => { let s = 0; for (let ch = 0; ch < 2; ch++) for (let i = Math.round(a * SR); i < Math.round(b * SR); i++) s += y[ch][i] * y[ch][i]; return 10 * Math.log10(s / ((b - a) * SR) + 1e-30); };
+      const x3 = input('di', 3);
+      if (ids.includes('halojelly')) {
+        for (const intv of [0, 1]) {
+          const y = await render([{ device: 'pedal.halojelly', params: { shim: 10, decay: 10, mix: 10, intv } }], x3, { extra: 22 });
+          let pk = 0, bad = 0; for (const ch of y) for (const v of ch) { if (!Number.isFinite(v)) bad++; else pk = Math.max(pk, Math.abs(v)); }
+          let top = -Infinity; for (let s = 0; s < 24; s++) top = Math.max(top, tailDb(y, s, s + 1));
+          out.loud.push({ id: 'halojelly ' + (intv ? '5TH' : 'OCT') + ' all at 10', peak: 20 * Math.log10(pk + 1e-12), bad, fall: top - tailDb(y, 24, 25) });
+        }
+      }
+      if (ids.includes('frostbite')) {
+        // (HOLD pressed 2.5 s in, while the strum rings, and kept down; or never)
+        const hold = async (h) => {
+          const c = new OfflineAudioContext(2, 12 * SR, SR), src = c.createBufferSource(), b = c.createBuffer(1, x3.length, SR);
+          b.copyToChannel(x3, 0); src.buffer = b;
+          const inst = await R.instantiate(c, 'pedal.frostbite', { uid: 'hold', on: true, params: { decay: 0 } }); await inst.ready;
+          src.connect(inst.input); inst.output.connect(c.destination); src.start(0);
+          const v = R.paramValues(R.getDevice('pedal.frostbite'), { decay: 0 });
+          inst.set({ ...v, hold: h }, { at: 2.5 });
+          const o = await c.startRendering(); inst.dispose();
+          return [o.getChannelData(0), o.getChannelData(1)];
+        };
+        const held = await hold(1), free = await hold(0);
+        out.freeze = { held: tailDb(held, 11, 12) - tailDb(held, 5, 6), free: tailDb(free, 11, 12) - tailDb(held, 5, 6) };
+      }
+      return out;
+    }, { ids: rvIds, spec: REVERBS }).catch((e) => ({ err: String(e) }));
+    if (rv.err) t.ok(false, 'the reverbs: ' + rv.err);
+    else {
+      const cv = Object.entries(rv.convolvers);
+      t.ok(rvIds.every((id) => rv.convolvers[id][0] === 0 && rv.convolvers[id][1] === 1), `${rvIds.length} reverbs build no convolver, one 'verb-tank' each: ${rvIds.join(' ')}; ${cv.filter(([id]) => !rvIds.includes(id)).map(([id, [n]]) => `${id} keeps ${n}`).join(', ')}`);
+      for (const r of rv.rt) {
+        t.ok(r.got != null && Math.abs(r.got / r.want - 1) <= 0.12, `${('pedal.' + r.id).padEnd(18)} ${JSON.stringify(r.params).padEnd(22)} rings ${r.got != null ? r.got.toFixed(2) : '?'} s at 1 kHz (T60 ${r.want.toFixed(2)} s ±12%)`);
+      }
+      for (const l of rv.level) t.ok(Math.abs(l.got - l.was) <= 0.75, `${('pedal.' + l.id).padEnd(18)} wet at ${l.at}: ${l.got.toFixed(1)} LUFS, the convolver's ${l.was.toFixed(1)} (±0.75 LU)`);
+      t.ok(rv.det.every((d) => d.d === 0 && d.seeds > -40), `the reverbs play the same every time, sample for sample, and two copies don't move in lockstep (another seed differs by about as much as the wet itself: ${rv.det.map((d) => d.id + ' ' + d.seeds.toFixed(0) + ' dB').join(', ')})${rv.det.some((d) => d.d) ? '; not exact: ' + rv.det.filter((d) => d.d).map((d) => d.id + ' ' + d.d.toExponential(1)).join(' ') : ''}`);
+      // (a block is 2667 µs of sound at 48 kHz; on a quiet machine the convolvers cost 15 to 31 µs, the tanks 12 to 18)
+      t.ok(rv.cost.every((c) => c.us <= 1.25 * rv.ref && c.idle <= 0.5 * rv.ref), `each reverb costs at most a quarter more than a convolver on a 4.5 s room (${rv.ref.toFixed(1)} µs a 128-frame block offline, measured alongside), and at most half of it with nothing ringing: ${rv.cost.map((c) => `${c.id} ${c.us.toFixed(1)} (${c.idle.toFixed(1)})`).join(', ')}`);
+      for (const l of rv.loud) t.ok(!l.bad && l.peak < -1 && l.fall >= 30, `${l.id}: peaks at ${l.peak.toFixed(1)} dBFS and dies (${l.fall.toFixed(0)} dB down 21 s after the strum)`);
+      if (rv.freeze) t.ok(Math.abs(rv.freeze.held) < 3 && rv.freeze.free < -40, `Frostbite's HOLD, pressed while a chord rings, holds it (from 6 s to 12 s, ${rv.freeze.held >= 0 ? '+' : ''}${rv.freeze.held.toFixed(1)} dB; never pressed, it's gone by then: ${Math.max(-120, rv.freeze.free).toFixed(0)} dB)`);
+    }
+
+    // live: DECAY swept (and Kraken's SPACE flipped) under a tone, and the pedal stomped, click-free
+    const rvLive = await page.evaluate(async (ids) => {
+      const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+      await c.resume();
+      const REC = `class GtRec4 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
+        process(i) { const a = i[0] && i[0][0], b = i[0] && i[0][1]; if (a && this.on) this.port.postMessage([a.slice(0), (b || a).slice(0)]); return this.on; } } registerProcessor('gt-rec4', GtRec4);`;
+      await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const res = [];
+      for (const id of ids) {
+        const d = R.getDevice('pedal.' + id), key = id === 'krakenhall' ? 'size' : 'decay';
+        const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
+        const inst = await R.instantiate(c, d.id, { uid: 'rvlive-' + id, on: true, params: { mix: 8 } }); await inst.ready;
+        const rec = new AudioWorkletNode(c, 'gt-rec4', { channelCount: 2, channelCountMode: 'explicit' }), blocks = [];
+        rec.port.onmessage = (e) => blocks.push(e.data);
+        g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
+        const t0 = c.currentTime, marks = [];
+        await sleep(700);
+        const moves = [10, 0, 7, 2, 10, 0, 5].map((v) => ({ [key]: v, mix: 8 }));
+        if (id === 'krakenhall') moves.push({ space: 1, mix: 8 }, { space: 0, mix: 8 });
+        for (const m of moves) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.set(m, { at }); await sleep(220); }
+        for (let k = 0; k < 4; k++) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.setOn(k % 2 === 1, at); await sleep(260); }
+        rec.port.postMessage('stop'); o.stop(); await sleep(60);
+        inst.dispose(); g.disconnect(); rec.disconnect();
+        const n = blocks.reduce((s, b) => s + b[0].length, 0), ys = [new Float32Array(n), new Float32Array(n)]; let p = 0;
+        for (const b of blocks) { ys[0].set(b[0], p); ys[1].set(b[1], p); p += b[0].length; }
+        const sr = c.sampleRate, near = new Uint8Array(n);
+        for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.06) * sr)); i++) near[i] = 1;
+        let steady = 0, at = 0;
+        for (const y of ys) for (let i = Math.round(0.4 * sr); i < n - 256; i++) { const d2 = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]); if (near[i]) at = Math.max(at, d2); else steady = Math.max(steady, d2); }
+        res.push({ id, ratio: at / Math.max(steady, 1e-9), moves: moves.length, secs: n / sr });
+      }
+      await c.close();
+      return res;
+    }, rvIds);
+    for (const l of rvLive) t.ok(l.ratio < 1.6 && l.secs > 3, `live, ${('pedal.' + l.id).padEnd(18)} with its ${l.id === 'krakenhall' ? 'SIZE (and SPACE)' : 'DECAY'} moved ${l.moves} times under a tone and stomped 4 times is click-free (second difference at the moves ${l.ratio.toFixed(2)}× the steady sound's)`);
+  }
+
   // 4. the amps
   const amps = await page.evaluate(async () => {
-    const { G, R, render, input, clawdLufs, check, tp, M, SR } = window.__gt, out = [];
+    const { R, render, input, clawdLufs, check, tp, M, SR } = window.__gt, out = [];
     for (const d of R.listDevices({ cat: 'amp' }).filter((x) => x.id.startsWith('amp.'))) {
       const bass = d.tone === 'bass', x = input(bass ? 'bass' : 'di', 8);
       const r = await render([{ device: d.id }], x, { band: true });
       const buf = { sampleRate: SR, numberOfChannels: 2, length: r[0].length, getChannelData: (i) => r[i] };
       out.push({ id: d.id, name: d.name, bass, lufs: clawdLufs(r[0], r[1]), bs1770: M.lufs(buf), tp: tp(r), ...check(r) });
     }
-    // the same as the gear's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
-    const same = [];
-    const studio = G.gear.presetResolve(G.gear.PLUG_PRESETS.find((p) => p.id === 'studio'));
-    for (const [id, S] of [['punk', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['abyss', { gain: 7, bass: 4, mid: 6, treble: 5, presence: 6, level: 5 }], ['punk', studio], ['jangle', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
-      const x = input('di', 2), P = Object.assign({}, S, { amp: id }); delete P.board;
-      const a = await render([{ device: 'amp.' + id, params: G.ampParams(P) }], x);
-      const { loadWorklet } = await import('/app/src/devices/kit.js');
-      const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
-      // (exact: the settings the device hands plugAmp; the preset's own: within its mic position's rounding)
-      const run = async (Q) => {
-        const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-        b.copyToChannel(x, 0); s.buffer = b;
-        if (G.gear.PLUG_AMPS[id].sub) c.__clawdAmpWorklets = await loadWorklet(c, 'clawd-amps', WORKLETS['clawd-amps']);
-        const amp = G.gear.plugAmp(c); amp.set(Q);
-        s.connect(amp.input); amp.output.connect(c.destination); s.start(0);
-        const o = await c.startRendering();
-        let d = 0; for (let ch = 0; ch < 2; ch++) { const y = o.getChannelData(ch); for (let i = 0; i < y.length; i++) d = Math.max(d, Math.abs(a[ch][i] - y[i])); }
-        return d;
-      };
-      const def = R.getDevice('amp.' + id);
-      same.push({ id: id + (P.cab ? '+' + P.cab : '') + (P.mic2 ? '+2 mics' : ''), d: await run(G.ampSettings(id, R.paramValues(def, G.ampParams(P)))), dPreset: await run(P) });
-    }
-    return { out, same };
+    return { out };
   });
   for (const a of amps.out) {
     const okLevel = Math.abs(a.lufs + 14) <= 0.75;
     t.ok(!a.bad && okLevel && a.tp <= -1, `${a.id.padEnd(12)} ${a.name.padEnd(13)} ${a.lufs.toFixed(1)} LUFS (BS.1770 ${a.bs1770.toFixed(1)}), TP ${a.tp.toFixed(1)} dBTP${a.bass ? ' (bass DI)' : ''}${a.bad ? ' NaN!' : ''}`);
   }
-  t.ok(amps.same.every((s) => s.d < 1e-6), `the amp devices are the gear's plugAmp, to -120 dB: ${amps.same.map((s) => s.id + ' ' + (s.d ? (20 * Math.log10(s.d)).toFixed(0) + ' dB' : 'exact')).join(', ')}`);
-  const worstPreset = Math.max(...amps.same.map((s) => s.dPreset));
-  t.ok(worstPreset < 1e-3, `a preset's amp settings come across within ${(20 * Math.log10(worstPreset + 1e-12)).toFixed(0)} dBFS (a mic's x, y on the cone become one radius, as the sound only hears the radius; plugCabClean rounds x and y)`);
+
+  // 4c. the measured cabs
+  const irs = await page.evaluate(async () => {
+    const { G, R, render, input, clawdLufs, tp, check, M, SR } = window.__gt;
+    const AL = await import('/app/src/devices/builtin/amp-lib.js');
+    const A = await import('/app/src/devices/guitar/amps.js');
+    const g = G.gear, own = G.CAB_IDS.indexOf('own');
+    const measured = G.CAB_IDS.filter(A.isMeasured);
+    const ids = { same: JSON.stringify(measured) === JSON.stringify(AL.CAB_IDS) && measured.every((id, i) => g.PLUG_CABS[id].name === AL.CAB_NAMES[i] && g.PLUG_CABS[id].ir === i),
+      first: G.CAB_IDS.indexOf(measured[0]), designed: G.CAB_IDS.length - measured.length };
+    // half-octave bands, 63 Hz to 11.3 kHz: averaged Hann periodograms (8192 points) of the left channel, dB
+    const bands = []; for (let f = 63; f < 12000; f *= Math.SQRT2) bands.push(f);
+    const spec = (x) => {
+      const N = 8192, w = new Float64Array(N); for (let i = 0; i < N; i++) w[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N);
+      const P = new Float64Array(N / 2); let fr = 0;
+      for (let st = SR; st + N <= x.length; st += N / 2) {
+        const re = new Float64Array(N), im = new Float64Array(N); for (let i = 0; i < N; i++) re[i] = x[st + i] * w[i];
+        for (let i = 1, j = 0; i < N; i++) { let b = N >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; } }
+        for (let len = 2; len <= N; len <<= 1) { const a = (-2 * Math.PI) / len, wr = Math.cos(a), wi = Math.sin(a); for (let i = 0; i < N; i += len) { let cr = 1, ci = 0; for (let k = 0; k < len / 2; k++) { const u = i + k, v = u + len / 2, vr = re[v] * cr - im[v] * ci, vi = re[v] * ci + im[v] * cr; re[v] = re[u] - vr; im[v] = im[u] - vi; re[u] += vr; im[u] += vi; const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t; } } }
+        for (let k = 0; k < N / 2; k++) P[k] += re[k] * re[k] + im[k] * im[k];
+        fr++;
+      }
+      return bands.map((fc) => { let e = 0; for (let k = Math.round((fc * Math.pow(2, -0.25) * N) / SR); k < Math.round((fc * Math.pow(2, 0.25) * N) / SR); k++) e += P[k]; return 10 * Math.log10(e / fr + 1e-20); });
+    };
+    // the lag (samples) that best lines b up with a, within ±64
+    const lag = (a, b) => { let best = 0, bv = -Infinity; for (let L = -64; L <= 64; L++) { let s = 0; for (let i = SR; i < SR * 3; i++) s += a[i] * b[i + L]; if (s > bv) { bv = s; best = L; } } return best; };
+    const rows = [];
+    for (const d of R.listDevices({ cat: 'amp' }).filter((x) => x.id.startsWith('amp.'))) {
+      const id = d.id.slice(4), def = d.params.find((p) => p.key === 'cab').def, bass = d.tone === 'bass';
+      const row = { id: d.id, cab: G.CAB_IDS[def], want: g.PLUG_AMP_IR[id] || 'own', data: !!d.data };
+      if (row.cab === 'own') {
+        // the amps that keep their own: the default is the designed cab, sample for sample
+        const x = input(bass ? 'bass' : 'di', 2), a = await render([{ device: d.id }], x), b = await render([{ device: d.id, params: { cab: own } }], x);
+        let dd = 0; for (let i = 0; i < a[0].length; i++) dd = Math.max(dd, Math.abs(a[0][i] - b[0][i]));
+        rows.push({ ...row, exact: dd === 0 });
+        continue;
+      }
+      const x = input(bass ? 'bass' : 'di', 8);
+      const nb = await render([{ device: d.id }], x, { band: true }), ob = await render([{ device: d.id, params: { cab: own } }], x, { band: true });
+      const n = await render([{ device: d.id }], x), o = await render([{ device: d.id, params: { cab: own } }], x);
+      const buf = (r) => ({ sampleRate: SR, numberOfChannels: 2, length: r[0].length, getChannelData: (i) => r[i] });
+      const sn = spec(n[0]), so = spec(o[0]), dl = M.lufs(buf(n)) - M.lufs(buf(o));
+      rows.push({ ...row, clawd: clawdLufs(nb[0], nb[1]) - clawdLufs(ob[0], ob[1]), bs: dl, tp: tp(n), tpOwn: tp(o), lag: lag(o[0], n[0]), bad: check(n).bad,
+        sp: sn.map((v, i) => Math.round(v - so[i] - dl)) });
+    }
+    // a saved rig: no cab is the amp's default (measured); 'own' written is its own designed cab, and comes back as it
+    const rec = G.ampParams({ amp: 'recto', gain: 6 }), ownP = G.ampParams({ amp: 'recto', cab: 'own' });
+    const saved = { none: !('cab' in rec), ownIdx: ownP.cab === own, back: G.ampSettings('recto', R.paramValues(R.getDevice('amp.recto'), ownP)).cab === 'own',
+      dflt: !('cab' in G.ampSettings('recto', R.paramValues(R.getDevice('amp.recto'), {}))), clean: JSON.stringify(g.plugCabClean({ amp: 'recto', cab: 'own' })) === '{"cab":"own"}' && JSON.stringify(g.plugCabClean({ amp: 'whale', cab: 'own' })) === '{}',
+      older: !g.PLUG_CABS['not-a-cab'] && JSON.stringify(g.plugCabClean({ amp: 'recto', cab: 'not-a-cab' })) === '{}' };
+    return { ids, rows, saved };
+  });
+  t.ok(irs.ids.same && irs.ids.first === irs.ids.designed, `the gear's measured cabs are Half Stack's six, ids and names, after the ${irs.ids.designed} designed ones (every CAB index before them unchanged)`);
+  const wantOk = irs.rows.every((r) => r.cab === r.want && r.data);
+  t.ok(wantOk, `every amp's CAB default is its PLUG_AMP_IR cab, and every amp names the bank as data (any CAB can be a measured one); the measured defaults: ${irs.rows.filter((r) => r.cab !== 'own').map((r) => r.id.slice(4) + ' ' + r.cab).join(', ')}`);
+  const keep = irs.rows.filter((r) => r.cab === 'own');
+  t.ok(keep.length === 11 && keep.every((r) => r.exact), `${keep.length} amps keep their own designed cab, sample for sample as before: ${keep.map((r) => r.id.slice(4)).join(' ')}`);
+  for (const r of irs.rows.filter((x) => x.cab !== 'own')) {
+    t.ok(!r.bad && Math.abs(r.clawd) <= 0.5 && Math.abs(r.bs) <= 0.5 && r.tp <= -1 && Math.abs(r.lag) <= 16,
+      `${r.id.padEnd(12)} on ${r.cab.padEnd(15)} as loud as on its own cab: ${r.clawd >= 0 ? '+' : ''}${r.clawd.toFixed(2)} LU (BS.1770 ${r.bs >= 0 ? '+' : ''}${r.bs.toFixed(2)}), TP ${r.tpOwn.toFixed(1)} -> ${r.tp.toFixed(1)} dBTP, ${r.lag} samples apart`);
+  }
+  t.note(`the change, measured cab against its own (half-octave bands from 63 Hz to 11.3 kHz, dB, loudness matched):\n${irs.rows.filter((r) => r.sp).map((r) => '    ' + r.id.slice(4).padEnd(9) + r.sp.map((v) => String(v).padStart(4)).join('')).join('\n')}`);
+  const sv = irs.saved;
+  t.ok(sv.none && sv.ownIdx && sv.back && sv.dflt && sv.clean && sv.older, `a saved rig without a cab plays the amp's default (measured); 'own' saved is CAB 0 and comes back as 'own' (designed); a cab id from later is dropped, the amp's default`);
+
+
+  // 4d, in Chromium: the kernel's cab and mics against the graph amps' own nodes (as the retired plugAmp's apply() set
+  // them from plugCabNet: the designed cab's six filters, each mic's align delay, seven filters and four room taps,
+  // the measured IR in a ConvolverNode), on pink noise
+  const kcab = await page.evaluate(async () => {
+    const { G, R, TS, SR } = window.__gt;
+    const A = await import('/app/src/devices/guitar/amps.js'), AV = await import('/app/src/devices/builtin/amp-voiced.js');
+    const { kernel } = await import('/app/src/devices/builtin/lib.js'), { CABS_HASH } = await import('/app/src/devices/builtin/amp-lib.js');
+    const { loadData } = await import('/app/src/kernel/data.js'), { decodeOdk } = await import('/app/src/kernel/odk.js');
+    const bank = decodeOdk(await loadData(CABS_HASH)), g = G.gear, dB = (d) => Math.pow(10, d / 20), x = TS.pinkNoise(3, SR, { db: -18 });
+    const cabDef = (id) => ({ id: 'test.kcab-' + id, name: 'cab', kind: 'effect', cat: 'amp', params: A.AMP_PARAMS, data: { cabs: CABS_HASH },
+      kernel: kernel(String.raw`${AV.AMP_VOICED}${AV.AMP_CAB}
+const V = ${JSON.stringify(A.ampVoice(id, { os: 4 }))}, T = ${JSON.stringify(A.cabTables())};
+return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && data.cabs, V, T); let buf = new Float64Array(128);
+  return { process(L, R, n, P) { cab.set(P); for (let i = 0; i < n; i++) buf[i] = 0.5 * (L[i] + R[i]); cab.process(buf, n); for (let i = 0; i < n; i++) { L[i] = buf[i]; R[i] = buf[i]; } } }; } };`) });
+    const nativeCab = (c, id, P) => {
+      const N = g.plugCabNet(id, P, SR), F = (type, f, q, gn) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; n.Q.value = q; if (gn != null) n.gain.value = gn; return n; };
+      const G1 = (v) => { const n = c.createGain(); n.gain.value = v; return n; }, input = G1(1), out = G1(1);
+      if (N.ir != null) {
+        const conv = c.createConvolver(), s = bank.samples[N.ir], b = c.createBuffer(1, s.ch[0].length, SR);
+        b.copyToChannel(Float32Array.from(s.ch[0], (v) => v * ((+s.gain || 1) / 8388608)), 0); conv.normalize = false; conv.buffer = b;
+        const tr = G1(dB(N.trim)); input.connect(conv); conv.connect(tr); tr.connect(out);
+        return { input, out, N };
+      }
+      const cb = N.custom ? N.cab : g.PLUG_AMPS[id].cab;
+      const cab = [F('highpass', cb[0], 0.7), F('peaking', cb[1][0], cb[1][1], cb[1][2]), F('peaking', cb[2][0], cb[2][1], cb[2][2]), F('peaking', cb[3][0], cb[3][1], cb[3][2]), F('lowpass', cb[4][0], cb[4][1]), F('lowpass', cb[5], 0.6)];
+      input.connect(cab[0]); for (let i = 0; i < 5; i++) cab[i].connect(cab[i + 1]);
+      if (!N.custom) { cab[5].connect(out); return { input, out, N }; }
+      const micOut = G1(dB(N.trim)); micOut.connect(out);
+      for (const X of N.mics) {
+        const align = c.createDelay(0.01), f = X.f.map(([t, hz, q, gn]) => F(t, hz, q, gn)), sum = G1(1), mix = G1(X.gain);
+        align.delayTime.value = X.delay; cab[5].connect(align); align.connect(f[0]); for (let i = 0; i < 6; i++) f[i].connect(f[i + 1]); f[6].connect(sum);
+        for (const [t, gn] of X.taps) { const d = c.createDelay(0.2), gg = G1(gn); d.delayTime.value = t; f[6].connect(d); d.connect(gg); gg.connect(sum); }
+        sum.connect(mix); mix.connect(micOut);
+      }
+      return { input, out, N };
+    };
+    const render = async (build) => {
+      const c = new OfflineAudioContext(2, x.length, SR), s = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
+      b.copyToChannel(x, 0); s.buffer = b;
+      const node = await build(c); s.connect(node.input); node.out.connect(c.destination); s.start(0);
+      const o = await c.startRendering(); if (node.dispose) node.dispose();
+      return o.getChannelData(0);
+    };
+    const ix = (k) => A.CAB_IDS.indexOf(k), mi = (k) => A.MIC_IDS.indexOf(k), out = [];
+    for (const [id, p] of [['recto', {}], ['clean', { cab: 0 }], ['punk', { cab: ix('g412') }], ['clean', { cab: 0, micpos: 0.8, micdist: 6, micang: 20 }], ['plexi', { cab: ix('horn'), mic: mi('cond') }],
+      ['recto', { cab: ix('v412'), mic2: 1 + mi('ribbon'), blend: 4, flip: 1, mic2dist: 3 }], ['jangle', { cab: ix('phone'), mic: mi('crystal'), mic2: 1 + mi('kick'), mic2pos: 1.2 }]]) {
+      const def = cabDef(id), P = G.ampSettings(id, R.paramValues(def, p));
+      const k = await render(async (c) => { const inst = await R.instantiate(c, def, { uid: 'kc', params: p, on: true }); await inst.ready; return { input: inst.input, out: inst.output, dispose: () => inst.dispose() }; });
+      const N = g.plugCabNet(id, P, SR), n = await render(async (c) => nativeCab(c, id, P));
+      let d = 0, e = 0;
+      for (let i = 4800; i < x.length; i++) { d += (k[i] - n[i]) ** 2; e += n[i] ** 2; }
+      out.push({ what: `${id} ${N.ir != null ? 'IR ' + N.ir : N.custom ? (N.cab === g.PLUG_AMPS[id].cab ? 'own' : 'designed') + ' + ' + N.mics.length + ' mic' + (N.mics.length > 1 ? 's' : '') : 'own'}`, db: 10 * Math.log10(d / e) });
+    }
+    return out;
+  });
+  t.ok(kcab.length === 7 && kcab.every((r) => r.db <= -80), `the kernel's cab and mics are the graph amps' native nodes on pink noise (the difference against them): ${kcab.map((r) => `${r.what} ${r.db.toFixed(0)} dB`).join(', ')}`);
+
+  // 4d, live: switching a kernel amp's cabs while it plays (measured, its own, measured, a designed 4x12 with its
+  // mic, measured): click-free, and no dip
+  const kLive = await page.evaluate(async (KA) => {
+    const { R, G } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+    await c.resume();
+    const REC = `class GtRec4 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
+      process(i) { const x = i[0] && i[0][0]; if (x && this.on) this.port.postMessage(x.slice(0)); return this.on; } } registerProcessor('gt-rec4', GtRec4);`;
+    await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms)), ix = (id) => G.CAB_IDS.indexOf(id), res = [];
+    for (const id of KA) {
+      const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
+      const inst = await R.instantiate(c, 'amp.' + id, { uid: 'k-live-' + id, on: true }); await inst.ready;
+      const rec = new AudioWorkletNode(c, 'gt-rec4'), blocks = [];
+      rec.port.onmessage = (e) => blocks.push(e.data);
+      g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
+      const t0 = c.currentTime, marks = [];
+      await sleep(400);
+      for (const cab of [ix('british-dynamic'), ix('own'), ix('modern-two'), ix('g412'), ix('modern-close')]) { marks.push(c.currentTime + 0.01 - t0); inst.set({ cab }); await sleep(450); }
+      rec.port.postMessage('stop'); o.stop(); await sleep(60);
+      inst.dispose(); g.disconnect(); rec.disconnect();
+      const n = blocks.reduce((s, b) => s + b.length, 0), y = new Float32Array(n); let p = 0; for (const b of blocks) { y.set(b, p); p += b.length; }
+      const sr = 48000, d2 = new Float32Array(n); for (let i = 2; i < n; i++) d2[i] = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]);
+      const near = new Uint8Array(n);
+      for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.12) * sr)); i++) near[i] = 1;
+      let steady = 0, at = 0;
+      for (let i = Math.round(0.15 * sr); i < n - 256; i++) { if (near[i]) at = Math.max(at, d2[i]); else steady = Math.max(steady, d2[i]); }
+      const W = 240, rms = (a) => { let s = 0; for (let i = a; i < a + W; i++) s += y[i] * y[i]; return Math.sqrt(s / W); };
+      let lo = Infinity, ref = 0, k = 0;
+      for (let a = Math.round(0.15 * sr); a + W < n - 256; a += W) { const r = rms(a); if (near[a]) lo = Math.min(lo, r); else { ref += r; k++; } }
+      res.push({ id, ratio: at / Math.max(steady, 1e-9), dip: 20 * Math.log10(lo / (ref / Math.max(1, k)) + 1e-12), secs: n / sr });
+    }
+    await c.close();
+    return res;
+  }, ['clean', 'recto', 'tiny', 'di', 'tape', 'abyss', 'whale']); // (one at each rate, 2x, 4x, 8x and none, the wow, the octave, a bass amp)
+  for (const r of kLive) t.ok(r.ratio < 1.6 && r.dip > -12 && r.secs > 2, `live, amp.${r.id} switching cabs (measured, its own, measured, a designed 4x12 with its mic, measured) is click-free (${r.ratio.toFixed(2)}× the steady sound's second difference) and never dips (quietest 5 ms ${r.dip.toFixed(1)} dB)`);
 
   // 5. the rigs, end to end
   if (!FAST) {
@@ -422,7 +838,7 @@ async function boot(page) {
     const P = AudioParam.prototype, curve = P.setValueCurveAtTime;
     let curves = 0;
     P.setValueCurveAtTime = function (...a) { curves++; return curve.apply(this, a); };
-    const ids = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id)).map((d) => d.id), bad = [];
+    const ids = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id)).map((d) => d.id), bad = [], L = await import('/app/src/devices/lifecycle.js');
     const src = c.createOscillator(), g = c.createGain(), sink = c.createGain();
     src.frequency.value = 196; g.gain.value = 0.25; sink.gain.value = 0; src.connect(g); sink.connect(c.destination); src.start();
     for (let k = 0; k < ids.length; k += 16) {
@@ -433,12 +849,15 @@ async function boot(page) {
         await sleep(25);
         g.connect(inst.input); inst.output.connect(sink);
         await sleep(150);
-        let h = inst.health();
+        // (a kernel amp has no health() of its own: the host's bypass is the worklet node's, and lifecycle.js healthOf
+        // says it's ok unless it's a stand-in)
+        const health = () => (typeof inst.health === 'function' ? inst.health() : { ...L.healthOf(inst), dry: 0, wet: 1, want: { dry: 0, wet: 1 } });
+        let h = health();
         const near = (x, y) => Math.abs(x - y) <= 1e-3 * Math.max(1, Math.abs(y));
         if (!h.ok || !near(h.dry, h.want.dry) || !near(h.wet, h.want.wet)) bad.push(`${id} unwired-stomp ${JSON.stringify(h)}`);
         inst.setOn(false); await sleep(60); inst.setOn(true); // (and once it's playing)
         await sleep(150);
-        h = inst.health();
+        h = health();
         if (!h.ok || !near(h.dry, h.want.dry) || !near(h.wet, h.want.wet)) bad.push(`${id} wired-stomp ${JSON.stringify(h)}`);
         try { g.disconnect(inst.input); } catch { /* gone */ }
         inst.dispose(); inst.dispose();
@@ -449,9 +868,9 @@ async function boot(page) {
     // assure(): the dry gain put back to 1 under an amp that's on (what Chrome 156 left) is seen, and snapped
     const gains = [], mk = c.createGain;
     c.createGain = function () { const n = mk.call(c); gains.push(n); return n; };
-    const amp = await R.instantiate(c, 'amp.recto', { uid: 'sabotage', on: true }); await amp.ready;
+    const amp = await R.instantiate(c, 'amp.recto', { uid: 'sabotage', on: true }); await amp.ready; // (a kernel amp: the host's bypass gains)
     c.createGain = mk;
-    const dry = gains[2]; // (graph.js: in, out, dry, wet)
+    const dry = gains.find((n) => n.gain.value === 0); // (kernel/host.js: out, input, feed, wet, dry; on, only the dry is shut)
     await sleep(30);
     dry.gain.cancelScheduledValues(0); dry.gain.value = 1;
     const before = amp.health(), snapped = amp.assure(), after = amp.health(), again = amp.assure();
@@ -501,7 +920,7 @@ async function boot(page) {
       out.second = await b.ready.then(() => 'resolved', (e) => failureCode(e));
       out.gateNode = !!(b.device && b.device.node);
       b.dispose();
-      // 50 amp swaps: each one's wow oscillator stops with it
+      // 50 amp swaps: nothing an amp starts outlives it (the graph amps' wow oscillator didn't, once: docs/DEVICES.md)
       const running = new Set(), mkOsc = c.createOscillator;
       c.createOscillator = function () { const o = mkOsc.call(c), st = o.start, sp = o.stop; o.start = (...x) => { running.add(o); return st.apply(o, x); }; o.stop = (...x) => { running.delete(o); return sp.apply(o, x); }; return o; };
       const amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.')).map((d) => d.id);
@@ -520,7 +939,7 @@ async function boot(page) {
   });
   t.ok(fail.code === 'threw' && fail.standIn && fail.reported.length > 0, `a device whose build throws rejects ready with 'threw' (${fail.code}), and the engine plays its stand-in (${fail.standIn}) and says so (${fail.reported[0] || 'no error report'})`);
   t.ok(fail.first === 'worklet' && fail.second === 'resolved' && fail.gateNode, `the Snapper with its worklet failing to load once is a 'worklet' failure (${fail.first}), and the next build loads it (${fail.second}, gate ${fail.gateNode ? 'in' : 'missing'})`);
-  t.ok(fail.whileOne === 1 && fail.after === 0, `50 amp swaps leave only the playing amp's wow oscillator running (${fail.whileOne}), and none once it's gone (${fail.after})`);
+  t.ok(fail.whileOne === 0 && fail.after === 0, `50 amp swaps leave no oscillator running, while the last one plays (${fail.whileOne}) or once it's gone (${fail.after}): a kernel amp starts none`);
 
   t.ok(!errors.length, `no page errors in the audio checks${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   await close();

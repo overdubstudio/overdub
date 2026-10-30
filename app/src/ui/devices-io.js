@@ -19,11 +19,13 @@ export const FILE_EXT = '.overdub-device.json';
 const DEF_KEYS = ['id', 'name', 'kind', 'cat', 'blurb', 'nod', 'request', 'by', 'version', 'look', 'tail', 'trails', 'drone', 'poly', 'where', 'demo', 'presets'];
 const PARAM_KEYS = ['key', 'label', 'min', 'max', 'def', 'curve', 'unit', 'role', 'desc', 'opts', 'step'];
 
-export const exportable = (def) => !!def && typeof def.kernel === 'string' && !def.build;
+// (a kernel the studio keeps to itself, exportable: false, isn't either: the guitar amps on the kernel engine, which
+// play the studio's own cabs and gear)
+export const exportable = (def) => !!def && typeof def.kernel === 'string' && !def.build && def.exportable !== false;
 
 // The file for a def (a registry def or a project DeviceSource): only data, no functions.
 export function toDeviceFile(def, { exportedBy } = {}) {
-  if (!exportable(def)) throw new Error(`${def?.name || def?.id || 'this device'} is built from Web Audio nodes, not a kernel, so it can't be exported as a file`);
+  if (!exportable(def)) throw new Error(def && def.exportable === false ? `${def.name || def.id} is part of the studio's guitar gear, so it can't be exported as a file` : `${def?.name || def?.id || 'this device'} is built from Web Audio nodes, not a kernel, so it can't be exported as a file`);
   const device = {};
   for (const k of DEF_KEYS) if (def[k] !== undefined && def[k] !== null && !(k === 'presets' && !def[k].length)) device[k] = JSON.parse(JSON.stringify(def[k]));
   device.params = (def.params || []).map((p) => {

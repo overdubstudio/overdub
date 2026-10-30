@@ -7,7 +7,7 @@
     "v8": "13.6.233.17-node.49",
     "arch": "arm64",
     "platform": "darwin",
-    "date": "2026-10-27"
+    "date": "2026-10-29"
   },
   "scenes": {
     "inst:core.poly": {
@@ -683,6 +683,276 @@
       "lufs": -23.52,
       "truePeak": -12.38,
       "peak": -13
+    },
+    "fx:amp.clean#7fd30c061e6b": {
+      "sha256": "87e4776b58c908306517e8fa89317e4c94c87f5de00405aeeb639737f95d69bc",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -9.72,
+      "peak": -9.88,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.plexi#7fd30c061e6b": {
+      "sha256": "db908e33ba5d6de361b43363f5452d0aaf72c0e3eb0279725d2286a26946f787",
+      "frames": 576000,
+      "lufs": -18.54,
+      "truePeak": -14.09,
+      "peak": -14.09,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.recto#7fd30c061e6b": {
+      "sha256": "958674145d4c2e102a8afa17822b3b085596eea33da15df94b74f097bc88fb69",
+      "frames": 576000,
+      "lufs": -18.53,
+      "truePeak": -13.11,
+      "peak": -13.11,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.jangle#7fd30c061e6b": {
+      "sha256": "0a50efb7a3bfa03a806791838edfdb2d41e28919e0d1d2dcc0436cdd7f5fce14",
+      "frames": 576000,
+      "lufs": -18.47,
+      "truePeak": -11.04,
+      "peak": -11.11,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.hiwatt#7fd30c061e6b": {
+      "sha256": "92af4772b4f73ed8e82cb163613a6c171dcee4a4a7395dec7a8d770849eb0faa",
+      "frames": 576000,
+      "lufs": -18.51,
+      "truePeak": -9.96,
+      "peak": -9.99,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.orange#7fd30c061e6b": {
+      "sha256": "317cb7b6fd4d6c96b86f5cb7952b421a36c78ff313e4edb2f29241556fd87e1c",
+      "frames": 576000,
+      "lufs": -18.63,
+      "truePeak": -11.74,
+      "peak": -11.78,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.crunch#7fd30c061e6b": {
+      "sha256": "c430bc76d5f5b070dec4fc17b9715fc87eaf35f20542f593bcdb40455839cc3b",
+      "frames": 576000,
+      "lufs": -18.42,
+      "truePeak": -11.5,
+      "peak": -11.62,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.bassman#7fd30c061e6b": {
+      "sha256": "80f3e230b728be5141e383b438356b40a9da970a7716047a59e49dd8624673c9",
+      "frames": 576000,
+      "lufs": -18.22,
+      "truePeak": -10.37,
+      "peak": -10.37,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.punk#7fd30c061e6b": {
+      "sha256": "00c727b3e8fd65b7b2880a3946d763a62dd2d80506fe2131ffc06356173406b0",
+      "frames": 576000,
+      "lufs": -18.49,
+      "truePeak": -13.44,
+      "peak": -13.48,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.brown#7fd30c061e6b": {
+      "sha256": "91d3bd764d72237cedb2ff67157fac9b49dace0e5082a01688f312bd85d2a6bb",
+      "frames": 576000,
+      "lufs": -18.59,
+      "truePeak": -14.38,
+      "peak": -14.43,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.friedman#7fd30c061e6b": {
+      "sha256": "5dd6f331e0051396ab41be82d6d56d442ef5d7b42bf3c2bd89e7f5d5bed2fa95",
+      "frames": 576000,
+      "lufs": -18.54,
+      "truePeak": -14.01,
+      "peak": -14.05,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.lead#7fd30c061e6b": {
+      "sha256": "10f172a4958f563ec6237d34f1dfcb693d6bf18676ef21019e0efea6b52ec2e8",
+      "frames": 576000,
+      "lufs": -18.46,
+      "truePeak": -13.65,
+      "peak": -13.65,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.dumble#7fd30c061e6b": {
+      "sha256": "be3eb1c34b75b7e66c3706ce2129a222bd7e84cc7927469a2ed408bae25e8507",
+      "frames": 576000,
+      "lufs": -18.37,
+      "truePeak": -11.86,
+      "peak": -11.86,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.slo#7fd30c061e6b": {
+      "sha256": "a591b9a9651e84d561f601996a46a919de3e45fdd796938ec6e61910986c2811",
+      "frames": 576000,
+      "lufs": -18.86,
+      "truePeak": -13.14,
+      "peak": -13.15,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.metal#7fd30c061e6b": {
+      "sha256": "eed86b201575637a76dc53e3a031e925874dd4a8fa9917d6390ce0deecf93c93",
+      "frames": 576000,
+      "lufs": -18.59,
+      "truePeak": -13.05,
+      "peak": -13.08,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.jc#7fd30c061e6b": {
+      "sha256": "7bcfd03238f167950bd736adf1e765df797ef75423328c21ac26d7ff9323d0c7",
+      "frames": 576000,
+      "lufs": -18.52,
+      "truePeak": -7.35,
+      "peak": -7.35,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.tiny#7fd30c061e6b": {
+      "sha256": "83aeec9ea678bf791f8bdaf6e5f425f9edbd142cc67da4dfda17bf8fc8e637a8",
+      "frames": 576000,
+      "lufs": -18.31,
+      "truePeak": -14.99,
+      "peak": -15.01,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.radio#7fd30c061e6b": {
+      "sha256": "2b89cfe969db34dfb907aa7baf1d41975dbb5faf1ffc3e251d8d985d04519cd3",
+      "frames": 576000,
+      "lufs": -18.27,
+      "truePeak": -14.89,
+      "peak": -14.9,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.bit#7fd30c061e6b": {
+      "sha256": "f705e61107ff887670b90366c12da38bc16fe41d7b40510bfdd92a32b02ce0d2",
+      "frames": 576000,
+      "lufs": -18.5,
+      "truePeak": -15.45,
+      "peak": -15.51,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.tape#7fd30c061e6b": {
+      "sha256": "228b8b235584a293bf945103b4b496ab5342b0eea0fd02ea2e52c0fbeac3a5e3",
+      "frames": 576000,
+      "lufs": -18.27,
+      "truePeak": -10.73,
+      "peak": -10.73,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.abyss#7fd30c061e6b": {
+      "sha256": "1d09fe5f794939a862edb2807c2d5a1019fb29d14902bd7c627a66baddea39c0",
+      "frames": 576000,
+      "lufs": -18.28,
+      "truePeak": -11.41,
+      "peak": -11.43,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.urchin#7fd30c061e6b": {
+      "sha256": "66a285ccbb12532afcd290be09f46c6956b81facdb4e10953ebb2744750f5ada",
+      "frames": 576000,
+      "lufs": -18.38,
+      "truePeak": -7.84,
+      "peak": -7.85,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.di#7fd30c061e6b": {
+      "sha256": "b709a74d8f3238e64a86cfe16e8fbad51bd8a817ba054e83e3562fb5462d7658",
+      "frames": 576000,
+      "lufs": -18.3,
+      "truePeak": -6.24,
+      "peak": -7.71,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.whale#7fd30c061e6b": {
+      "sha256": "718b8f58c9c5edb5553a88de71f48f7b2e58e082760b5b403c621769758e2022",
+      "frames": 576000,
+      "lufs": -18.47,
+      "truePeak": -9.61,
+      "peak": -9.61,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.walrus#7fd30c061e6b": {
+      "sha256": "bb955881f5b2e680a1be9a070421253440d5da410251b7dacafaaacb6fe06a9c",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -7.28,
+      "peak": -7.28,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.narwhal#7fd30c061e6b": {
+      "sha256": "6443abb55c3bc5eeb5ff1920a62e855aad7651f145d592e476b1c74e82d8501b",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -7.35,
+      "peak": -7.35,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.sandbar#7fd30c061e6b": {
+      "sha256": "cfd414abbfbb4db2c034d6daf519984e9deda358de43690892b858b5b2fc8898",
+      "frames": 576000,
+      "lufs": -18.39,
+      "truePeak": -8.17,
+      "peak": -8.19,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
     }
   }
 }

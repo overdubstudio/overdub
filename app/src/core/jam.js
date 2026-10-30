@@ -485,7 +485,7 @@ export const JAM_STYLES = {
       rows: { kick: 'X.......X.......', snare: '....X.......X...', hat: 'x.x.x.x.x.x.x.x.' }, alt: { kick: 'X.......X.....x.' },
       fill: { from: 12, rows: { snare: 'x.x.', tom3: '...' } }, crash: 'after' },
     guitar: { params: DI_NECK, tone: 'blues' },
-    gain: { chords: -3.3, bass: -6.6, drums: -4.8, guitar: -1 },
+    gain: { chords: -3.3, bass: -6.6, drums: -4.8, guitar: 3.6 },
   },
   funk: {
     label: 'Funk', blurb: 'a two-chord vamp: sixteenth hats, ghost notes, stabs on the e-piano', key: { root: 'E', scale: 'minor' }, tempo: 104,
@@ -510,7 +510,7 @@ export const JAM_STYLES = {
       rows: { kick: 'X.....x.X.......', snare: '....X.......X...', hat: 'x.x.x.x.x.x.x.x.' }, alt: { kick: 'X.....x.X.x.....' },
       fill: { from: 12, rows: { kick: 'x...', snare: 'xx..', tom1: '..x.', tom3: '...X' } }, crash: 'start' },
     guitar: { params: DI_CLEAN, tone: 'jangle' },
-    gain: { chords: -7.3, bass: -5.7, drums: -5.3, guitar: 3.7 },
+    gain: { chords: -7.3, bass: -5.7, drums: -5.3, guitar: 5.4 },
   },
   ballad: {
     label: 'Ballad', blurb: 'broken piano chords, strings, a half-time kit', key: { root: 'C', scale: 'major' }, tempo: 68,
@@ -519,7 +519,7 @@ export const JAM_STYLES = {
     chords: { ...STYLES.ballad.chords }, bass: { ...STYLES.ballad.bass }, drums: { ...STYLES.ballad.drums },
     pad: { name: 'Strings', device: 'core.strings', params: { attack: 0.6, release: 1.2, bright: 0.45, vibrato: 0.45, ensemble: 0.5, width: 0.6, hall: 0.35 }, register: [55, 76] },
     guitar: { params: DI_NECK, tone: 'siren' },
-    gain: { chords: -1.6, bass: -8.5, drums: -6.2, pad: -8, guitar: 2 },
+    gain: { chords: -1.6, bass: -8.5, drums: -6.2, pad: -8, guitar: 1.7 },
   },
   neosoul: {
     label: 'Neo-soul', blurb: 'lazy drums, ninth chords on the electric piano, a round bass', key: { root: 'Eb', scale: 'major' }, tempo: 78,
@@ -571,7 +571,7 @@ export const JAM_STYLES = {
       rows: { kick: 'X..xX..xX..xX..x', rim: 'x..x..x...x..x..', hat: 'xoxoxoxoxoxoxoxo' }, alt: { rim: '..x..x...x..x...' },
       fill: { from: 16, rows: {} }, crash: 'none' },
     guitar: { params: DI_NYLON, tone: 'gr-jazz' },
-    gain: { chords: 2, bass: -6.9, drums: -9.4, guitar: -0.3 },
+    gain: { chords: 2, bass: -6.9, drums: -9.4, guitar: 0.4 },
   },
   lofi: {
     label: 'Lo-fi', blurb: 'dusty Rhodes sevenths, a lazy swung beat, a warm round bass', key: { root: 'F', scale: 'major' }, tempo: 80,
@@ -579,7 +579,7 @@ export const JAM_STYLES = {
     progs: { a: 'ii7 V7 Imaj7 vi7', b: 'IVmaj7 V7 iii7 vi7' }, form: [['A', 'a'], ['A', 'a'], ['B', 'b'], ['A', 'a']],
     chords: { ...STYLES.lofi.chords }, bass: { ...STYLES.lofi.bass }, drums: { ...STYLES.lofi.drums },
     guitar: { params: DI_NECK, tone: 'in-salad' },
-    gain: { chords: -4.8, bass: -10, drums: -2.4, guitar: -1.2 },
+    gain: { chords: -4.8, bass: -10, drums: -2.4, guitar: 0 },
   },
   rock: {
     label: 'Classic rock', blurb: 'driving eighths, power chords and a big backbeat', key: { root: 'E', scale: 'mixolydian' }, tempo: 116,
@@ -587,7 +587,7 @@ export const JAM_STYLES = {
     progs: { verse: 'I bVII IV I', chorus: 'IV V IV V' }, form: [['Verse', 'verse'], ['Verse', 'verse'], ['Chorus', 'chorus'], ['Verse', 'verse']],
     chords: { ...STYLES.rock.chords }, bass: { ...STYLES.rock.bass }, drums: { ...STYLES.rock.drums },
     guitar: { params: DI_CLEAN, tone: 'crunch' },
-    gain: { chords: -6.1, bass: -8.3, drums: -6.2, guitar: 1.2 },
+    gain: { chords: -6.1, bass: -8.3, drums: -6.2, guitar: 1.9 },
   },
 };
 export const JAM_STYLE_IDS = Object.keys(JAM_STYLES);

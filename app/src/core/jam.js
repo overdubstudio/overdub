@@ -510,7 +510,7 @@ export const JAM_STYLES = {
       rows: { kick: 'X.....x.X.......', snare: '....X.......X...', hat: 'x.x.x.x.x.x.x.x.' }, alt: { kick: 'X.....x.X.x.....' },
       fill: { from: 12, rows: { kick: 'x...', snare: 'xx..', tom1: '..x.', tom3: '...X' } }, crash: 'start' },
     guitar: { params: DI_CLEAN, tone: 'jangle' },
-    gain: { chords: -7.3, bass: -5.7, drums: -5.3, guitar: 3.7 },
+    gain: { chords: -7.3, bass: -5.7, drums: -5.3, guitar: 5.4 },
   },
   ballad: {
     label: 'Ballad', blurb: 'broken piano chords, strings, a half-time kit', key: { root: 'C', scale: 'major' }, tempo: 68,

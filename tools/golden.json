@@ -713,6 +713,36 @@
       "data": {
         "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
       }
+    },
+    "fx:amp.jangle#7fd30c061e6b": {
+      "sha256": "0a50efb7a3bfa03a806791838edfdb2d41e28919e0d1d2dcc0436cdd7f5fce14",
+      "frames": 576000,
+      "lufs": -18.47,
+      "truePeak": -11.04,
+      "peak": -11.11,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.hiwatt#7fd30c061e6b": {
+      "sha256": "92af4772b4f73ed8e82cb163613a6c171dcee4a4a7395dec7a8d770849eb0faa",
+      "frames": 576000,
+      "lufs": -18.51,
+      "truePeak": -9.96,
+      "peak": -9.99,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
+    },
+    "fx:amp.orange#7fd30c061e6b": {
+      "sha256": "317cb7b6fd4d6c96b86f5cb7952b421a36c78ff313e4edb2f29241556fd87e1c",
+      "frames": 576000,
+      "lufs": -18.63,
+      "truePeak": -11.74,
+      "peak": -11.78,
+      "data": {
+        "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
+      }
     }
   }
 }

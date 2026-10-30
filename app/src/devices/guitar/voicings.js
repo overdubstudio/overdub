@@ -81,4 +81,40 @@ export const AMP_VOICINGS = {
     stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 500e-12, C2: 22e-9, C3: 22e-9 },
     pw: -4, sag: 0.3, xf: [20.094, 13000], depth: [73.913, 4], pres: [4000, 1.6], trim: -26.84,
   },
+  // Coral Chime: an AC30 Top Boost: V1 -> VOLUME (a bright cap) -> the top boost's ECC83, its cathode follower into
+  // the stack (50 pF, 22 nF, 22 nF; treble 1M, bass 1M, a fixed 10k to ground where a mid pot would be, 100k slope:
+  // the Vox has no MIDDLE, so ours is a gentle bell after it) -> the long-tailed pair -> four EL84s, cathode biased
+  // (class A: the bias's even harmonics) on a tube rectifier's sag. Fitted: within 2.0 dB rms of the graph amp (3.3 at
+  // worst), the same THD (3.9 %). Its VOLUME has the real taper: at 0 it's 8 LU quieter than the graph amp's was.
+  jangle: {
+    os: 4, hp: 96, tight: null,
+    chain: [['tri', 1.2, 0.1, 2.2, 26, 6430.042], ['pot'], ['tri', 6, 0.16, 1.7, 78, 6250], ['gain', -1], ['stack'], ['gain', 14], ['tri', 1.2, 0.05, 1.3, 50.7, 6250]],
+    pot: [-36, 0], bright: [100, 1e6],
+    stack: { R1: 1e6, R2: 1e6, R3: 10e3, R4: 100e3, C1: 50e-12, C2: 22e-9, C3: 22e-9, m: 0.999 }, midk: [900, 0.8, 0.8],
+    pw: 4, pwb: 0.2, sag: 0.55, xf: [86.4, 15870], depth: null, pres: [4200, 1.6], trim: -9.21, irLv: -0.55,
+  },
+  // Lighthouse: a DR103: V1 -> VOLUME -> V2 -> the passive Baxandall with its mid rheostat (treble 250k, bass 1M, mid
+  // 25k; 220 pF, 4.7 nF, 10 nF, 100 nF), a cathode follower's makeup -> the long-tailed pair -> four EL34s on a
+  // solid-state rectifier and a big transformer: no sag, a deep low end. The DR103's published stack values vary;
+  // these sit inside them (low confidence on C3 and C4). Fitted: within 2.3 dB rms (4.2 at worst): 4-6 dB less at
+  // 60-110 Hz and 4 dB more at 1.8-2.8 kHz than the graph amp, with the input's coupling and the speaker's bump at
+  // their limits. The same THD (1.1 %).
+  hiwatt: {
+    os: 4, hp: 20.094, tight: null,
+    chain: [['tri', 1.5, 0.08, 2.2, 5.387, 7233.797], ['pot'], ['tri', 5, 0.12, 1.8, 6.375, 4018.776], ['gain', -1], ['stack'], ['gain', 10], ['tri', 1.2, 0.04, 1.3, 30, 4018.776]],
+    pot: [-30, 0], bright: [112.245, 1e6],
+    stack: { net: 'james', R1: 250e3, R2: 1e6, R3: 25e3, R4: 33e3, R5: 220e3, R6: 4.7e3, RL: 1e6, C1: 220e-12, C2: 4.7e-9, C3: 10e-9, C4: 100e-9 },
+    pw: 6.5, sag: 0, xf: [23.148, 10586.011], depth: [136.879, 4], pres: [3500, 1.6], trim: -2.81,
+  },
+  // Clownfish: an OR120-style head: V1 -> GAIN -> two more stages, hot -> the stack (470 pF, 47 nF, 47 nF; treble
+  // 250k, bass 1M, mid 25k, slope 56k: the big caps are its low mids) -> a pair of EL34s, a touch of bias. Low
+  // confidence on the circuit (the graph amp's nod is a type, not a model). Fitted: within 2.0 dB rms (4.1 at worst,
+  // 4 dB under it at 450 Hz); the same THD (38.8 %).
+  orange: {
+    os: 4, hp: 95.04, tight: null,
+    chain: [['tri', 6.104, 0.15, 2.2, 5.387, 4186.225], ['pot'], ['tri', 8, 0.25, 1.6, 7.968, 4050.926], ['tri', 5, 0.25, 1.5, 8.287, 4166.667], ['gain', -1], ['stack'], ['gain', 15], ['tri', 1.5, 0.08, 1.3, 13.655, 8000]],
+    pot: [-36, 0], bright: null,
+    stack: { R1: 250e3, R2: 1e6, R3: 25e3, R4: 56e3, C1: 470e-12, C2: 47e-9, C3: 47e-9 },
+    pw: 6, pwb: 0.06, sag: 0.4, xf: [64.8, 10000], depth: [90, 2], pres: [3000, 1.6], trim: -16.48, irLv: 0.95,
+  },
 };

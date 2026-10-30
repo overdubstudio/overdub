@@ -103,12 +103,13 @@ for (const name of ['inst:core.drums', 'fx:core.verb', 'demo', ...all.filter((s)
   t.ok(again === fresh[name].sha256, `${name}: a second render is bit-identical`);
 }
 
-// the demo: graph devices reported and bypassed, nothing else touched
+// the demo: its graph devices (the guitar's pedals) reported and bypassed, nothing else touched; its amp (a kernel)
+// renders
 {
   const r = renders.get('demo');
   const graph = r.warnings.filter((w) => w.kind === 'graph').map((w) => w.device).sort();
-  t.ok(graph.join() === 'amp.jangle,pedal.chorus,pedal.gate' && r.warnings.length === 3, `demo: the guitar's graph devices are reported (${graph.join(', ')}) and nothing else (${r.warnings.length} warnings)`);
-  t.ok(r.skipped.inserts.length === 3 && r.skipped.tracks.length === 0, `demo: ${r.skipped.inserts.length} inserts bypassed, ${r.skipped.tracks.length} tracks skipped`);
+  t.ok(graph.join() === 'pedal.chorus,pedal.gate' && r.warnings.length === 2, `demo: the guitar's graph devices are reported (${graph.join(', ')}) and nothing else (${r.warnings.length} warnings): its amp, amp.jangle, is a kernel and renders`);
+  t.ok(r.skipped.inserts.length === 2 && r.skipped.tracks.length === 0, `demo: ${r.skipped.inserts.length} inserts bypassed, ${r.skipped.tracks.length} tracks skipped`);
   t.ok(fresh.demo.lufs > -12 && fresh.demo.lufs < -9 && fresh.demo.truePeak <= -0.9, `demo: ${fresh.demo.lufs} LUFS, ${fresh.demo.truePeak} dBTP (the mix was set by measurement at about -10.6 LUFS, -1.2 dBTP)`);
   let threw = null;
   try { renderSong(all.find((x) => x.name === 'demo').project, { to: 1, graph: 'error' }); } catch (e) { threw = e.message; }

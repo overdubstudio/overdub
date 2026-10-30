@@ -78,12 +78,9 @@ export function tmbCoefs(bass, mid, treble, fs, out) {
 // The amp's kernel text: needs lib.js's prelude (svf, onepole, dcblock, dbg, clamp, glide) before it. Defines
 // makeAmp(sr, dsp) -> { set(P), tick(x) (one sample at the host's rate in, one out: gate, tight, then the oversampled
 // chain), latency }. CAB_LIB defines makeCab(sr, dsp, bank) -> { set(cab, now?), process(x, n) (in place), plays(cab) }.
-export const AMP_LIB = String.raw`
-${tmbAnalog.toString()}
-${tmbCoefs.toString()}
-// the 2x stage inside the 4x one, for QUALITY 8X: a 7-tap half-band [c3, 0, c1, 1/2, c1, 0, c3] up and down (3 samples
+// the 2x stage inside the 4x one, for QUALITY 8X (and a voiced amp at 8x, amp-voiced.js): a 7-tap half-band [c3, 0, c1, 1/2, c1, 0, c3] up and down (3 samples
 // of delay each way at 8x), c1 = 9/32, c3 = -1/32
-function over2(fn) {
+export function over2(fn) {
   const C1 = 9 / 32, C3 = -1 / 32;
   let u1 = 0, u2 = 0, u3 = 0, a1 = 0, b1 = 0, b2 = 0, b3 = 0;
   const f = (u) => {
@@ -98,6 +95,11 @@ function over2(fn) {
   f.prime = (u, y) => { u1 = u2 = u3 = u; a1 = b1 = b2 = b3 = y; };
   return f;
 }
+
+export const AMP_LIB = String.raw`
+${tmbAnalog.toString()}
+${tmbCoefs.toString()}
+${over2.toString()}
 
 // The oversampled chain at rate fs: boost, three triodes, the tone stack, the power amp. set(P) once a block; tick(x)
 // per oversampled sample, its state in plain locals (one-poles as y += k (x - y); a high-pass is x minus that).

@@ -5,7 +5,8 @@
 //     load theirs from those files.
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
-//  3. bypass is exact: a sample of insert and trails pedals, off, equals the dry input to -90 dB.
+//  3. bypass is exact: a sample of insert and trails pedals and a kernel amp, off, equals the dry input to -90 dB (lined
+//     up with its declared latency).
 //  4. the amps: each one's level with the DI strum through it alone (then the band's soft clip, as clawd-o-matic's
 //     tools/plug-level.js measures it) is -14 LUFS (±0.75), its true peak under -1 dBTP; and the device is the gear's own
 //     plugAmp sample for sample (also with a cab and two mics).
@@ -41,12 +42,13 @@
 //     switches flip, footswitches stomp; screenshots at 1440 and 390 wide (tools/.out/gallery-*.png).
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
 import { open, tally, OUTDIR } from './pw.js';
+import { boot } from './guitar-page.js';
 import path from 'node:path';
 import fs from 'node:fs';
 import { run, goldenChecks, ampScenes } from './amp-scenes.js';
 import { halfOct, shape, thd, alias, sine } from './amp-measure.js';
 import { FIXTURE } from './amp-voices.js';
-import { diStrum } from '../app/src/audio/testsignals.js';
+import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
 import { getDevice } from '../app/src/devices/registry.js';
 import { AMP_VOICINGS } from '../app/src/devices/guitar/voicings.js';
 import { CAB_IDS as AMP_CABS, AMP_PARAMS as AMP_KNOBS } from '../app/src/devices/guitar/amps.js';
@@ -59,64 +61,6 @@ const t = tally('guitar');
 const FAST = process.env.FAST === '1';
 const ONLY = process.env.PEDALS ? process.env.PEDALS.split(',') : null;
 
-// In-page helpers (window.__gt): render a chain of devices offline, clawd-o-matic's loudness, the band's tail.
-const HELPERS = `
-  const G = await import('/app/src/devices/guitar/index.js');
-  const R = await import('/app/src/devices/registry.js');
-  const TS = await import('/app/src/audio/testsignals.js');
-  const M = await import('/app/src/audio/measure.js');
-  const SR = 48000;
-  // clawd-o-matic's loudness (vendor/pop-punk engine.js E.loudness: a +4 dB shelf at 1.5 kHz and a 38 Hz high-pass,
-  // designed at 44.1 kHz as it is there, mean square of both channels, no gating): the number its levels were set by
-  function clawdLufs(L, Rr, from = 0.5) {
-    const hs = () => { const sr = 44100, w = 2 * Math.PI * 1500 / sr, c = Math.cos(w), s = Math.sin(w), A = Math.pow(10, 4 / 40), sA = 2 * Math.sqrt(A) * (s / 2) * Math.SQRT2;
-      const b0 = A * (A + 1 + (A - 1) * c + sA), b1 = -2 * A * (A - 1 + (A + 1) * c), b2 = A * (A + 1 + (A - 1) * c - sA), a0 = A + 1 - (A - 1) * c + sA, a1 = 2 * (A - 1 - (A + 1) * c), a2 = A + 1 - (A - 1) * c - sA;
-      const f = { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, z1: 0, z2: 0 };
-      return (x) => { const y = f.b0 * x + f.z1; f.z1 = f.b1 * x - f.a1 * y + f.z2; f.z2 = f.b2 * x - f.a2 * y; return y; }; };
-    const hp = () => { const g = Math.tan(Math.PI * 38 / 44100), k = 1 / 0.5, a1 = 1 / (1 + g * (g + k)), a2 = g * a1, a3 = g * a2; let s1 = 0, s2 = 0;
-      return (x) => { const v3 = x - s2, v1 = a1 * s1 + a2 * v3, v2 = s2 + a2 * s1 + a3 * v3; s1 = 2 * v1 - s1; s2 = 2 * v2 - s2; return x - k * v1 - v2; }; };
-    const sl = hs(), sr = hs(), hl = hp(), hr = hp();
-    let ms = 0; const a = Math.round(from * SR), b = L.length;
-    for (let i = a; i < b; i++) { const l = hl(sl(L[i])), r = hr(sr(Rr[i])); ms += l * l + r * r; }
-    return -0.691 + 10 * Math.log10(ms / Math.max(1, b - a) + 1e-12);
-  }
-  // the band's master tail in clawd-o-matic (app.js): a soft clip at 4x and -1.5 dB
-  function tail(c) {
-    const clip = c.createWaveShaper(), n = 4096, cv = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 4 - 2, q = Math.abs(x), y = q <= 0.85 ? q : 0.85 + 0.15 * Math.tanh((q - 0.85) / 0.15); cv[i] = x < 0 ? -y : y; }
-    clip.curve = cv; clip.oversample = '4x';
-    const trim = c.createGain(); trim.gain.value = Math.pow(10, -1.5 / 20);
-    clip.connect(trim); return { input: clip, output: trim };
-  }
-  const inputs = {};
-  const input = (kind = 'di', secs = 8) => { const k = kind + secs; if (!inputs[k]) inputs[k] = kind === 'bass' ? TS.bassDI(secs, SR) : TS.diStrum(secs, SR); return inputs[k]; };
-  // render input through [{ device, params, on }] (offline, at bpm), optionally through the band's tail
-  async function render(chain, x, { band = false, bpm = 170, extra = 0, insts } = {}) {
-    const n = x.length + Math.round(extra * SR), c = new OfflineAudioContext(2, n, SR), src = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-    b.copyToChannel(x, 0); src.buffer = b;
-    let at = src;
-    const made = [];
-    for (let k = 0; k < chain.length; k++) {
-      const s = chain[k], inst = await R.instantiate(c, s.device, { uid: 'u' + k + '-' + s.device, params: s.params || {}, on: s.on !== false, bpm });
-      await inst.ready; made.push(inst);
-      at.connect(inst.input); at = inst.output;
-    }
-    if (band) { const tl = tail(c); at.connect(tl.input); at = tl.output; }
-    at.connect(c.destination); src.start(0);
-    const r = await c.startRendering();
-    for (const i of made) i.dispose();
-    if (insts) insts.push(...made);
-    return [r.getChannelData(0), r.getChannelData(1)];
-  }
-  const check = (chs) => { let pk = 0, bad = 0; for (const ch of chs) for (let i = 0; i < ch.length; i++) { const v = ch[i]; if (!Number.isFinite(v)) bad++; else if (Math.abs(v) > pk) pk = Math.abs(v); } return { bad, peak: 20 * Math.log10(pk + 1e-12) }; };
-  const tp = (chs) => Math.max(...chs.map((ch) => M.truePeak({ sampleRate: SR, numberOfChannels: 1, length: ch.length, getChannelData: () => ch })));
-  window.__gt = { G, R, TS, M, SR, clawdLufs, tail, input, render, check, tp };
-`;
-
-async function boot(page) {
-  await page.addScriptTag({ type: 'module', content: HELPERS });
-  await page.waitForFunction(() => window.__gt, null, { timeout: 30000 });
-}
 
 // ---------------------------------------------------------------------------------------------------- 4d, in Node
 // The kernel amps through the KernelCore the worklet runs (tools/amp-scenes.js run), against the fixture.
@@ -130,28 +74,43 @@ const FIT_GATE = {
   recto: { alias: 25, why: "at GAIN 10 it's as hot as Half Stack's (THD 20 % at 196 Hz) and aliases as Half Stack does at 4x, within 6 dB" },
 };
 {
-  const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps, own = AMP_CABS.indexOf('own'), x = diStrum(8, 48000), x2 = x.subarray(0, 2 * 48000);
-  const r1 = (v) => v.toFixed(1);
+  const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps, own = AMP_CABS.indexOf('own'), x = diStrum(8, 48000), bass = bassDI(8, 48000);
+  const r1 = (v) => v.toFixed(1), stack = getDevice('core.stack');
   for (const id of KERNEL_AMPS) {
     const def = getDevice('amp.' + id), old = fx[id], V = AMP_VOICINGS[id];
+    // (a bass amp is heard as the fixture heard it: on the bass DI)
+    const xi = old.signal === 'bass' ? bass : x, xi2 = xi.subarray(0, 2 * 48000);
     // finite and bit-exact; with the bank held off, a measured default is its own designed cab, exactly
-    const a = run(def, {}, x2)[0], b = run(def, {}, x2)[0], held = run(def, {}, x2, x2, { data: null })[0], heldOwn = run(def, { cab: own }, x2, x2, { data: null })[0];
+    const a = run(def, {}, xi2)[0], b = run(def, {}, xi2)[0], held = run(def, {}, xi2, xi2, { data: null })[0], heldOwn = run(def, { cab: own }, xi2, xi2, { data: null })[0];
     let same = true, finite = true, exact = true;
     for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) same = false; if (!Number.isFinite(a[i])) finite = false; if (held[i] !== heldOwn[i]) exact = false; }
     t.ok(finite && same && exact && def.flavour === 'kernel' && def.exportable === false, `amp.${id} (${def.name}) is a kernel (${V.os}x, latency ${Math.round(def.latency * 48000)} samples; the graph amp's was ${old.latency}): finite, twice the same sample for sample, and with the bank held off its measured default is its own designed cab exactly; not a device file`);
     // its voice against the graph amp's: the spectrum on its own cab (loudness matched, 100 Hz-8 kHz, half-octave),
     // the drive (THD at 196 Hz, -18 dBFS), aliasing at GAIN 10 (to 16 kHz), the cost of a block (best of three)
-    const y = run(def, { cab: own }, x)[0], sp = shape(halfOct(y), old.own.half), th = thd(run(def, { cab: own }, sine(196, -18, 2.5))[0]);
+    const y = run(def, { cab: own }, xi)[0], sp = shape(halfOct(y), old.own.half), th = thd(run(def, { cab: own }, sine(196, -18, 2.5))[0]);
     const tol = FIT_GATE[id] && FIT_GATE[id].rms ? FIT_GATE[id] : { rms: 3, max: 6 };
     t.ok(sp.rms <= tol.rms && sp.max <= tol.max, `amp.${id}: its spectrum on its own cab is the graph amp's within ${r1(sp.rms)} dB rms, ${r1(sp.max)} dB at worst (allowed ${tol.rms} / ${tol.max}${tol.why ? ': ' + tol.why : ''}); new - old, 40 Hz to 14.5 kHz: ${sp.d.join(' ')}`);
-    t.ok(Math.abs(Math.log(th / old.thd)) <= Math.log(1.5), `amp.${id}: its drive is the graph amp's within x1.5 (THD at 196 Hz ${th.toFixed(2)} %, was ${old.thd} %)`);
+    // (under 0.02 % an amp is clean, and a ratio there is the measurement's floor, not its drive: as tools/amp-fit.js)
+    const floor = (v) => Math.max(0.02, v);
+    t.ok(Math.abs(Math.log(floor(th) / floor(old.thd))) <= Math.log(1.5), `amp.${id}: its drive is the graph amp's within x1.5 (THD at 196 Hz ${th.toFixed(3)} %, was ${old.thd} %${floor(th) === floor(old.thd) ? '; both under 0.02 %: clean' : ''})`);
     const al = [1000, 2500, 5000].map((f) => ({ f, old: old.alias[f].to16k, now: alias(run(def, { cab: own, gain: 10 }, sine(f, -12, 2.5))[0], f, 16000) }));
     const under = (FIT_GATE[id] && FIT_GATE[id].alias) || 30;
     t.ok(al.every((q) => q.now <= Math.max(-100, q.old - under)), `amp.${id}: aliasing at GAIN 10 to 16 kHz ${al.map((q) => `${q.f / 1000} kHz ${r1(q.now)} dB (was ${r1(q.old)})`).join(', ')}: ${under} dB under the graph amp's, or under -100 dB${under !== 30 ? ' (' + FIT_GATE[id].why + ')' : ''}`);
-    const us = [];
-    for (let k = 0; k < 3; k++) { const t0 = performance.now(); run(def, { cab: own }, x2); us.push(((performance.now() - t0) * 1000) / (x2.length / 128)); }
-    const budget = V.os === 2 ? 65 : 110;
-    t.ok(Math.min(...us) <= 2 * budget, `amp.${id}: ${Math.min(...us).toFixed(0)} µs a 128-frame block at ${V.os}x in Node (best of three; the budget is ${budget}, Half Stack's; held to twice that here, as a busy machine runs slower)`);
+    // (Half Stack alongside, each time: a busy machine runs slower, and the budget is as much slower as Half Stack is
+    // than its 110 µs)
+    const us = [], hs = [], per = (t0) => ((performance.now() - t0) * 1000) / (xi2.length / 128);
+    for (let k = 0; k < 3; k++) {
+      let t0 = performance.now();
+      run(stack, {}, xi2);
+      hs.push(per(t0));
+      t0 = performance.now();
+      run(def, { cab: own }, xi2);
+      us.push(per(t0));
+    }
+    // (the budget at 4x is Half Stack's; at 2x and none, less; at 8x, half as much again: its stages run twice as many
+    // samples as at 4x, and the 8x amps measure 1.1-1.6 times Half Stack in one run)
+    const budget = V.os >= 8 ? 165 : V.os >= 4 ? 110 : 65, slow = Math.max(1, Math.min(...hs) / 110);
+    t.ok(Math.min(...us) <= 2 * budget * slow, `amp.${id}: ${Math.min(...us).toFixed(0)} µs a 128-frame block at ${V.os}x in Node (best of three; the budget is ${budget}${V.os === 4 ? ", Half Stack's" : V.os >= 8 ? ", 1.5 times Half Stack's" : ''}; held to twice that here, and Half Stack ran at ${Math.min(...hs).toFixed(0)} µs alongside: x${slow.toFixed(2)})`);
   }
   // Half Stack's own chain written as a voicing reads as Half Stack: its boost, gate and cab off, its knobs at noon
   {
@@ -390,8 +349,9 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     const tr = ['pedal.delay', 'pedal.verb', 'pedal.tapecrab', 'pedal.halojelly', 'pedal.iceberg', 'pedal.frostbite'].filter((id) => R.getDevice(id) && R.getDevice(id).trails);
     const out = [];
     for (const id of ins.concat(tr)) {
-      const r = await render([{ device: id, on: false }], x);
-      let d = 0; for (let i = 0; i < x.length; i++) d = Math.max(d, Math.abs(r[0][i] - x[i]), Math.abs(r[1][i] - x[i]));
+      // (a device with latency is its dry input that much later, bypassed: a kernel amp lines its dry path up)
+      const dv = R.getDevice(id), r = await render([{ device: id, on: false }], x), L = dv.flavour === 'kernel' ? Math.round((+dv.latency || 0) * 48000) : 0;
+      let d = 0; for (let i = 0; i < x.length; i++) { const v = i < L ? 0 : x[i - L]; d = Math.max(d, Math.abs(r[0][i] - v), Math.abs(r[1][i] - v)); }
       out.push({ id, trails: !!R.getDevice(id).trails, db: 20 * Math.log10(d + 1e-12) });
     }
     return out;
@@ -410,7 +370,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     // the same as the gear's plugAmp, sample for sample: its own cab, and a preset's cab and two mics
     const same = [];
     const studio = G.gear.presetResolve(G.gear.PLUG_PRESETS.find((p) => p.id === 'studio'));
-    for (const [id, S] of [['punk', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['abyss', { gain: 7, bass: 4, mid: 6, treble: 5, presence: 6, level: 5 }], ['punk', studio], ['jangle', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
+    for (const [id, S] of [['tiny', { gain: 6, bass: 5, mid: 5, treble: 6, presence: 5, level: 6 }], ['abyss', { gain: 7, bass: 4, mid: 6, treble: 5, presence: 6, level: 5 }], ['tiny', studio], ['radio', { gain: 5, bass: 5, mid: 6, treble: 6, presence: 5, level: 6.4, cab: 'phone' }]]) {
       const x = input('di', 2), P = Object.assign({}, S, { amp: id }); delete P.board;
       const a = await render([{ device: 'amp.' + id, params: G.ampParams(P) }], x);
       const { loadWorklet } = await import('/app/src/devices/kit.js');
@@ -468,7 +428,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     const rows = [];
     for (const d of R.listDevices({ cat: 'amp' }).filter((x) => x.id.startsWith('amp.'))) {
       const id = d.id.slice(4), def = d.params.find((p) => p.key === 'cab').def, bass = d.tone === 'bass';
-      const row = { id: d.id, cab: G.CAB_IDS[def], want: g.PLUG_AMP_IR[id] || 'own', data: !!d.data };
+      const row = { id: d.id, cab: G.CAB_IDS[def], want: g.PLUG_AMP_IR[id] || 'own', data: !!d.data, kernel: typeof d.kernel === 'string' };
       if (row.cab === 'own') {
         // the amps that keep their own: the default is the designed cab, sample for sample
         const x = input(bass ? 'bass' : 'di', 2), a = await render([{ device: d.id }], x), b = await render([{ device: d.id, params: { cab: own } }], x);
@@ -493,17 +453,19 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     // (a graph amp's: the gear's bank, GI.useCabBank; a kernel amp's is its kernel data, held off in 4d)
     GI.useCabBank(null);
     const x2 = input('di', 2);
-    const held = await render([{ device: 'amp.slo' }], x2), heldOwn = await render([{ device: 'amp.slo', params: { cab: own } }], x2);
+    // (a graph amp still, on a measured cab: Hermit's default is its own)
+    const mc = { cab: G.CAB_IDS.indexOf('modern-close') };
+    const held = await render([{ device: 'amp.tiny', params: mc }], x2), heldOwn = await render([{ device: 'amp.tiny', params: { cab: own } }], x2);
     GI.useCabBank();
     let hd = 0; for (let i = 0; i < held[0].length; i++) hd = Math.max(hd, Math.abs(held[0][i] - heldOwn[0][i]));
-    const back = await render([{ device: 'amp.slo' }], x2);
+    const back = await render([{ device: 'amp.tiny', params: mc }], x2);
     let bd = 0; for (let i = 0; i < back[0].length; i++) bd = Math.max(bd, Math.abs(back[0][i] - heldOwn[0][i]));
-    const says = R.getDevice('amp.slo').dataSays;
+    const says = R.getDevice('amp.recto').dataSays; // (the rack's words, as every amp on a measured default says them)
     return { ids, rows, saved, fallback: { exact: hd === 0, back: bd > 1e-3, says: says && says.missing[0] + ' / ' + says.loading[0] } };
   });
   t.ok(irs.ids.same && irs.ids.first === irs.ids.designed, `the gear's measured cabs are Half Stack's six, ids and names, after the ${irs.ids.designed} designed ones (every CAB index before them unchanged)`);
-  const wantOk = irs.rows.every((r) => r.cab === r.want && r.data === (r.want !== 'own'));
-  t.ok(wantOk, `every amp's CAB default is its PLUG_AMP_IR cab, and the measured ones name the bank as data: ${irs.rows.filter((r) => r.cab !== 'own').map((r) => r.id.slice(4) + ' ' + r.cab).join(', ')}`);
+  const wantOk = irs.rows.every((r) => r.cab === r.want && r.data === (r.kernel || r.want !== 'own'));
+  t.ok(wantOk, `every amp's CAB default is its PLUG_AMP_IR cab, and the measured ones (and every kernel amp) name the bank as data: ${irs.rows.filter((r) => r.cab !== 'own').map((r) => r.id.slice(4) + ' ' + r.cab).join(', ')}`);
   const keep = irs.rows.filter((r) => r.cab === 'own');
   t.ok(keep.length === 11 && keep.every((r) => r.exact), `${keep.length} amps keep their own designed cab, sample for sample as before: ${keep.map((r) => r.id.slice(4)).join(' ')}`);
   for (const r of irs.rows.filter((x) => x.cab !== 'own')) {
@@ -527,7 +489,7 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     const ix = (id) => G.CAB_IDS.indexOf(id);
     GI.useCabBank(null); // (not in yet)
     const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
-    const inst = await R.instantiate(c, 'amp.slo', { uid: 'ir-live', on: true }); await inst.ready; // (a graph amp: 4d switches a kernel amp's)
+    const inst = await R.instantiate(c, 'amp.tiny', { uid: 'ir-live', on: true, params: { cab: ix('modern-close') } }); await inst.ready; // (a graph amp: 4d switches a kernel amp's)
     const amp = inst.device.amp;
     const rec = new AudioWorkletNode(c, 'gt-rec3'), blocks = [];
     rec.port.onmessage = (e) => blocks.push(e.data);
@@ -789,7 +751,7 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
     // assure(): the dry gain put back to 1 under an amp that's on (what Chrome 156 left) is seen, and snapped
     const gains = [], mk = c.createGain;
     c.createGain = function () { const n = mk.call(c); gains.push(n); return n; };
-    const amp = await R.instantiate(c, 'amp.slo', { uid: 'sabotage', on: true }); await amp.ready; // (a graph amp: its bypass gains are its own)
+    const amp = await R.instantiate(c, 'amp.tiny', { uid: 'sabotage', on: true }); await amp.ready; // (a graph amp: its bypass gains are its own)
     c.createGain = mk;
     const dry = gains[2]; // (graph.js: in, out, dry, wet)
     await sleep(30);

@@ -121,7 +121,7 @@ return {
       process(L, R, n, P) {
         amp.set(P);
         cab.set(P);
-        const g = dbg(V.trim + (clamp(P.level, 0, 10) - 5) * 3 - 3);
+        const g = dbg((V.trim || 0) + (clamp(P.level, 0, 10) - 5) * 3 - 3);
         if (buf.length < n) buf = new Float64Array(n);
         for (let i = 0; i < n; i++) buf[i] = amp.tick(0.5 * (L[i] + R[i]));
         cab.process(buf, n);
@@ -145,7 +145,9 @@ export function ampDevice(id, voicing = AMP_VOICINGS[id]) {
       // (the measured cabs' bank, whichever cab is its default: any CAB can be a measured one)
       data: { cabs: CABS_HASH }, dataSays: AMP_CAB_SAYS,
       look: { amp: id, style: A.style },
-      latency: (V.os === 2 ? 23 : 28) / 48000, // (the oversampler's: dsp.oversample2x 23 samples, oversample4x 27.5)
+      // (the oversampler's: dsp.oversample2x 23 samples, oversample4x 27.5 (and with the 2x inside it, at 8x), none at
+      // 1x; and a tape's wow, 1.5 x its depth)
+      latency: ((V.os === 1 ? 0 : V.os === 2 ? 23 : 28) + (V.wow ? Math.round(1.5 * V.wow[0] * 48) : 0)) / 48000,
       tail: 0.25, // (the stadium horn's slap)
       kernel: ampKernel(id, voicing),
     };

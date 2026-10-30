@@ -7,8 +7,9 @@
 //   fx:core.stack:cab#7fd30c061e6b      Half Stack at its defaults: the close dynamic IR
 //   fx:core.cab#7fd30c061e6b            Iso Cab at its defaults
 //   fx:core.bassrig#7fd30c061e6b        Y Cable at its defaults, on the house's bass DI
-//   fx:amp.<id>#7fd30c061e6b            each guitar amp on the kernel engine (devices/guitar/voicings.js) at its defaults:
-//                                       its default cab is a measured one
+//   fx:amp.<id>#7fd30c061e6b            each guitar amp on the kernel engine (devices/guitar/voicings.js) at its defaults,
+//                                       on its default cab (a measured one, or its own designed one); a bass amp on the
+//                                       house's bass DI
 // (tools/stack-test.js, cab-test.js, bassrig-test.js and guitar-test.js render each in Node and in Chromium and hold them
 // to these.)
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ import { createProject } from '../app/src/core/project.js';
 import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
 import { kernelSpecs } from '../app/src/kernel/host.js';
 import { makeDsp } from '../app/src/kernel/dsp.js';
-import { paramValues } from '../app/src/devices/registry.js';
+import { paramValues, getDevice } from '../app/src/devices/registry.js';
 import { dataFor } from '../app/src/engine/node/data.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
@@ -60,7 +61,7 @@ export function ampScenes() {
     { ...scene('fx:core.stack:cab' + TAG, 'core.stack', {}), data: { cabs: CABS_HASH } },
     { ...scene('fx:core.cab' + TAG, 'core.cab', {}), data: { cabs: CABS_HASH } },
     { ...scene('fx:core.bassrig' + TAG, 'core.bassrig', {}, 'bass'), data: { cabs: CABS_HASH } },
-    ...Object.keys(AMP_VOICINGS).map((id) => ({ ...scene('fx:amp.' + id + TAG, 'amp.' + id, {}), data: { cabs: CABS_HASH } })),
+    ...Object.keys(AMP_VOICINGS).map((id) => ({ ...scene('fx:amp.' + id + TAG, 'amp.' + id, {}, getDevice('amp.' + id).tone === 'bass' ? 'bass' : 'strum'), data: { cabs: CABS_HASH } })),
   ];
 }
 

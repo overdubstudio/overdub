@@ -16,6 +16,8 @@ import {
   ampCabWeights,
   ampCabResp,
   ampCabNet,
+  jamesNet,
+  bilin,
 } from '../../app/src/devices/builtin/amp-voiced.js';
 import { tmbAnalog, CABS_HASH, CAB_IDS as IR_IDS } from '../../app/src/devices/builtin/amp-lib.js';
 import { gear } from '../../app/src/devices/guitar/index.js';
@@ -82,6 +84,62 @@ describe('the tone stack from its netlist', () => {
       Math.abs(B[0] - 1) < 1e-9 && Math.abs(B[1]) < 1e-12 && Math.abs(A[1] - 1e-3) < 1e-12,
       `${[...B]} / ${[...A]}`,
     );
+  });
+});
+
+describe('the other tone stacks', () => {
+  test('the bilinear transform at any order is the TMB’s written-out third-order one', () => {
+    const s = ampStack(tmbNet({ R1: 250e3, R2: 1e6, R3: 25e3, R4: 47e3, C1: 470e-12, C2: 22e-9, C3: 22e-9 })),
+      B = new Float64Array(4),
+      A = new Float64Array(4),
+      GB = new Float64Array(4),
+      GA = new Float64Array(4);
+    s.analog({ t: potLin(6), m: potLin(5.5), l: potAud(5) }, B, A);
+    const c = 2 * 192000,
+      c2 = c * c,
+      c3 = c2 * c;
+    const B0 = B[0] + B[1] * c + B[2] * c2 + B[3] * c3,
+      B1 = 3 * B[0] + B[1] * c - B[2] * c2 - 3 * B[3] * c3,
+      B2 = 3 * B[0] - B[1] * c - B[2] * c2 + 3 * B[3] * c3,
+      B3 = B[0] - B[1] * c + B[2] * c2 - B[3] * c3;
+    const A0 = 1 + A[1] * c + A[2] * c2 + A[3] * c3,
+      A1 = 3 + A[1] * c - A[2] * c2 - 3 * A[3] * c3,
+      A2 = 3 - A[1] * c - A[2] * c2 + 3 * A[3] * c3,
+      A3 = 1 - A[1] * c + A[2] * c2 - A[3] * c3;
+    bilin(B, A, 3, c, GB, GA);
+    const want = [B0 / A0, B1 / A0, B2 / A0, B3 / A0, 1, A1 / A0, A2 / A0, A3 / A0],
+      got = [...GB, ...GA];
+    for (let i = 0; i < 8; i++)
+      assert.ok(Math.abs(got[i] - want[i]) <= 1e-12 * Math.max(1, Math.abs(want[i])), `${i}: ${got[i]} vs ${want[i]}`);
+  });
+  test('the James stack: TREBLE lifts the top, BASS the bottom, MIDDLE the middle', () => {
+    const s = ampStack(
+        jamesNet({
+          R1: 250e3,
+          R2: 1e6,
+          R3: 25e3,
+          R4: 100e3,
+          R5: 220e3,
+          R6: 4.7e3,
+          RL: 1e6,
+          C1: 220e-12,
+          C2: 4.7e-9,
+          C3: 4.7e-9,
+          C4: 47e-9,
+        }),
+      ),
+      B = new Float64Array(5),
+      A = new Float64Array(5);
+    assert.equal(s.order, 4);
+    const at = (t, m, b, f) => {
+      s.analog({ t: potLin(t), m: potLin(m), l: potAud(b) }, B, A);
+      return mag(B, A, f);
+    };
+    assert.ok(at(10, 5, 5, 8000) - at(0, 5, 5, 8000) > 20, 'treble');
+    assert.ok(at(5, 5, 10, 50) - at(5, 5, 0, 50) > 15, 'bass');
+    assert.ok(at(5, 10, 5, 250) - at(5, 0, 5, 250) > 3, 'middle');
+    for (const f of [20, 200, 2000, 20000])
+      assert.ok(Number.isFinite(at(10, 10, 10, f)) && Number.isFinite(at(0, 0, 0, f)), 'finite at the ends');
   });
 });
 

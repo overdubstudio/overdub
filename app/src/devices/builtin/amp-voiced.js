@@ -15,7 +15,11 @@
 //                  b0.. and a0.. (a0 = 1) in real s; .order is k.
 //   tmbNet(c)      the Fender / Marshall TMB (Yeh & Smith's Bassman circuit, as Half Stack's closed form): C1 the
 //                  treble cap, C2 the bass cap, C3 the mid cap, R1 the treble pot, R2 the bass pot (a rheostat), R3 the
-//                  mid pot (C3 on its wiper), R4 the slope resistor. It matches tmbAnalog to 1e-9 dB (test/unit).
+//                  mid pot (C3 on its wiper), R4 the slope resistor. It matches tmbAnalog to 1e-9 dB (test/unit). With
+//                  c.m (0..1) the mid is a fixed resistor, not a pot (the Vox top boost's 10k: m 1).
+//   jamesNet(c)    the passive Baxandall (James) with a mid rheostat under its bass network, the British 100-watt's:
+//                  C1 into the treble pot R1, C2 under it to ground; R4 into the bass pot R2 (C3 across its top half, C4
+//                  its bottom), the mid R3 (+ R6) to ground under it, R5 from its wiper to the output, RL the load.
 //   potLin, potAud a pot's position (knob 0..10 -> 0..1) with a whisker at each end: linear, or an audio taper (Half
 //                  Stack's bass)
 //   waCoefs(type, f0, Q, G, sr, o)  a Web Audio BiquadFilterNode's coefficients, the spec's formulas (lowpass and
@@ -24,7 +28,7 @@
 //
 // AMP_VOICED (kernel text; needs lib.js's prelude) defines makeVoiced(sr, dsp, V) -> { latency, set(P), tick(x) }: one
 // host-rate sample in, the amp before its cab out. V, the voicing:
-//   os       2 or 4: the oversampling the stages run at (a clean amp needs less)
+//   os       2, 4 or 8: the oversampling the stages run at (a clean amp needs less; 8, a hard clip driven square)
 //   hp       the input's coupling high-pass (Hz, second order, Butterworth)
 //   tight    [Hz, dB <= 0]: a low shelf before the first stage (its cathode bypass cap, partial), or null
 //   chain    the stages in order, at the oversampled rate:
@@ -35,14 +39,30 @@
 //                                           cap across its top (strong turned down, gone at full, as on the real one)
 //              ['stack']                    the tone stack: stack = { R1, R2, R3, R4, C1, C2, C3 } (the TMB)
 //              ['gain', dB]                 a fixed gain (a cathode follower, a stack's insertion loss made up)
+//              ['ss', g, bias, hp, lp]      a solid-state stage: an op-amp or transistor driven g times into its rails
+//                                           (a hard clip, biased off centre, first-order ADAA), non-inverting, then hp, lp
+//              ['xover', w]                 a starved class-B pair's crossover: a soft dead zone w wide around zero
+//              ['crush', bits]              a quantiser (a game console's DAC): 2^bits steps over +-1
+//              ['sub', dB, Hz, Q]           an octave down (an analog divider: a flip-flop on the input's rising
+//                                           crossings, as loud as the note), through a resonant low-pass, added in
+//              ['blend', Hz, dB]            the clean lows (the input, low-passed twice at Hz) added in beside the
+//                                           driven path (a modern bass amp's)
+//            stack (a netlist: { net: 'tmb' | 'james', parts }; m, when set, the mid wiper fixed there: a circuit with
+//            no MIDDLE pot, as a top boost's 10k to ground) or eq: an active tone circuit's shelves and bell,
+//            [[bass Hz, dB at noon], [mid Hz, Q, dB at noon], [treble Hz, dB at noon], dB a step] (solid-state amps)
 //   pw, sag  the power amp: drive (dB) into a symmetric soft clip whose headroom sag (0..1) lowers on sustained loud
 //            playing (the supply's envelope, 8 ms in, 180 ms out), made up after so small signals pass at unity
 //   xf       [hp, lp]: the output transformer's band (Hz), at the oversampled rate (what the stages make up there
 //            never reaches the decimator's edge)
 //   depth    [Hz, dB >= 0]: the speaker's resonance through the feedback loop, a bell (or null)
 //   pres     [Hz, dB a step]: PRESENCE, a high shelf, (presence - 5) * step dB (the graph amps': 1.6)
+//   pwb      the power amp's bias (0 symmetric, a push-pull pair; up to 0.4 for a class-A or cathodyne one's even
+//            harmonics), optional
+//   midk     [Hz, Q, dB a step]: MIDDLE on an amp whose circuit has no mid control: a gentle bell after the stack
+//   wow      [ms, Hz]: a tape transport's wow, a delay swinging +-ms around 1.5 ms (LFO from zero), at the host rate
+//   os 1     no oversampling and no latency (a clean line in)
 // What the stages invert is turned back at the end, so an amp is in phase with its DI.
-import { cabSin, cabResample } from './amp-lib.js';
+import { cabSin, cabResample, over2 } from './amp-lib.js';
 
 export function ampStack(net) {
   const N = net.nodes.length, idx = (n) => (n === 'in' ? -1 : n === 'gnd' ? -2 : net.nodes.indexOf(n)), out = idx(net.out);
@@ -129,6 +149,26 @@ export function tmbNet(c) {
     ],
   };
 }
+export function jamesNet(c) {
+  const R1 = c.R1, R2 = c.R2, R3 = c.R3, R4 = c.R4, R5 = c.R5, R6 = c.R6, RL = c.RL, C1 = c.C1, C2 = c.C2, C3 = c.C3, C4 = c.C4;
+  return {
+    nodes: ['ta', 'o', 'tb', 'b1', 'bw', 'b2'], out: 'o',
+    parts: [
+      ['C', 'in', 'ta', () => C1],
+      ['R', 'ta', 'o', (k) => R1 * (1 - k.t)],
+      ['R', 'o', 'tb', (k) => R1 * k.t],
+      ['C', 'tb', 'gnd', () => C2],
+      ['R', 'in', 'b1', () => R4],
+      ['R', 'b1', 'bw', (k) => R2 * (1 - k.l) + 100],
+      ['C', 'b1', 'bw', () => C3],
+      ['R', 'bw', 'b2', (k) => R2 * k.l],
+      ['C', 'bw', 'b2', () => C4],
+      ['R', 'b2', 'gnd', (k) => R3 * k.m + R6],
+      ['R', 'bw', 'o', () => R5],
+      ['R', 'o', 'gnd', () => RL],
+    ],
+  };
+}
 export function potLin(v) { const k = v < 0 ? 0 : v > 10 ? 1 : v / 10; return 0.001 + 0.998 * k; }
 export function potAud(v) { const k = v < 0 ? 0 : v > 10 ? 1 : v / 10; return 0.001 + 0.999 * (Math.exp(3.4 * k) - 1) / (Math.exp(3.4) - 1); }
 export function waCoefs(type, f0, Q, G, sr, o) {
@@ -153,9 +193,33 @@ export function waCoefs(type, f0, Q, G, sr, o) {
   return o;
 }
 
+// an analog transfer function of order n (b, a: from s^0, a[0] = 1) to digital by the bilinear transform s = c (1 - q)
+// / (1 + q): B, A (q^0.., A[0] = 1), for any order (the TMB's own third-order path is written out in voiced())
+export function bilin(b, a, n, c, B, A) {
+  const P = new Float64Array(n + 1), T = new Float64Array(n + 1);
+  B.fill(0); A.fill(0);
+  for (let j = 0; j <= n; j++) {
+    // (1 - q)^j (1 + q)^(n - j)
+    P.fill(0); P[0] = 1;
+    for (let i = 0; i < n; i++) {
+      const sg = i < j ? -1 : 1;
+      T.fill(0);
+      for (let k = 0; k <= i; k++) { T[k] += P[k]; T[k + 1] += sg * P[k]; }
+      for (let k = 0; k <= n; k++) P[k] = T[k];
+    }
+    const cj = Math.pow(c, j), bj = (b[j] || 0) * cj, aj = (a[j] || 0) * cj;
+    for (let k = 0; k <= n; k++) { B[k] += bj * P[k]; A[k] += aj * P[k]; }
+  }
+  const a0 = A[0];
+  for (let k = 0; k <= n; k++) { B[k] /= a0; A[k] /= a0; }
+}
+
 export const AMP_VOICED = String.raw`
 ${ampStack}
 ${tmbNet}
+${jamesNet}
+${bilin}
+${over2}
 ${potLin}
 ${potAud}
 ${waCoefs}
@@ -185,11 +249,23 @@ function voiced(V, fs, host) {
       return y;
     };
   }
+  // a solid-state stage's rails: a hard clip, and its first-order ADAA
+  const clip1 = (u) => (u > 1 ? 1 : u < -1 ? -1 : u), clipF = (u) => (u > 1 ? u - 0.5 : u < -1 ? -u - 0.5 : 0.5 * u * u);
+  function adaaClip(b) {
+    let u1 = b, F1 = clipF(b);
+    return (u) => { const F = clipF(u), d = u - u1, y = d > 1e-7 || d < -1e-7 ? (F - F1) / d : clip1(0.5 * (u + u1)); u1 = u; F1 = F; return y; };
+  }
   // GAIN: the pot (glided per sample, 2 ms) and its bright cap (a first-order shelf, by the bilinear transform)
   let pot = 1, sPot = 1, bz = 0, bb0 = 1, bb1 = 0, ba1 = 0, first = true;
   const kS = 1 - Math.exp(-1 / (0.002 * fs));
   // the tone stack, third order (transposed direct form II), its coefficients set per block when a knob moved
-  const solver = V.stack ? ampStack(tmbNet(V.stack)) : null, SB = new Float64Array(4), SA = new Float64Array(4);
+  const solver = V.stack ? ampStack(V.stack.net === 'james' ? jamesNet(V.stack) : tmbNet(V.stack)) : null, SB = new Float64Array(6), SA = new Float64Array(6);
+  const SN = solver ? solver.order : 0, GB = new Float64Array(SN + 1), GA = new Float64Array(SN + 1), GZ = new Float64Array(SN + 1);
+  const fixM = V.stack && V.stack.m != null ? V.stack.m : null;
+  // an active tone circuit (V.eq): its bass shelf, mid bell and treble shelf, at fs
+  const eqF = V.eq ? [biquad(), biquad(), biquad()] : null, eqC = new Float64Array(5);
+  // the stage input (the oversampled DI), for what the chain adds back in (the octave, the clean lows)
+  let x0 = 0;
   let t0 = 1, t1 = 0, t2 = 0, t3 = 0, ta1 = 0, ta2 = 0, ta3 = 0, z1 = 0, z2 = 0, z3 = 0, lb = NaN, lm = NaN, lt = NaN;
   const steps = [], flush = [];
   let inv = 1;
@@ -201,17 +277,55 @@ function voiced(V, fs, host) {
       flush.push(() => { c = fl(c); m = fl(m); });
       inv = -inv;
     } else if (b[0] === 'pot') steps.push((x) => { const y = bb0 * x + bz; bz = bb1 * x - ba1 * y; return y * sPot; });
-    else if (b[0] === 'stack') steps.push((v) => { const z = t0 * v + z1; z1 = t1 * v - ta1 * z + z2; z2 = t2 * v - ta2 * z + z3; z3 = t3 * v - ta3 * z; return z; });
-    else if (b[0] === 'gain') { const g = dbg(b[1]); steps.push((x) => x * g); }
+    else if (b[0] === 'stack' && eqF) steps.push((v) => eqF[2].tick(eqF[1].tick(eqF[0].tick(v))));
+    else if (b[0] === 'stack' && SN === 3) steps.push((v) => { const z = t0 * v + z1; z1 = t1 * v - ta1 * z + z2; z2 = t2 * v - ta2 * z + z3; z3 = t3 * v - ta3 * z; return z; });
+    else if (b[0] === 'stack') {
+      steps.push((v) => { const z = GB[0] * v + GZ[0]; for (let j = 1; j < SN; j++) GZ[j - 1] = GB[j] * v - GA[j] * z + GZ[j]; GZ[SN - 1] = GB[SN] * v - GA[SN] * z; return z; });
+      flush.push(() => { for (let j = 0; j < SN; j++) GZ[j] = fl(GZ[j]); });
+    } else if (b[0] === 'gain') { const g = dbg(b[1]); steps.push((x) => x * g); }
+    else if (b[0] === 'ss') {
+      const g = b[1], B = b[2], s = adaaClip(B), T = clip1(B), kc = k1p(b[3]), km = k1p(b[4]);
+      let c = 0, m = 0;
+      steps.push((x) => { const y = s(g * x + B) - T; c += kc * (y - c); m += km * (y - c - m); return m; });
+      flush.push(() => { c = fl(c); m = fl(m); });
+    } else if (b[0] === 'xover') { const w = b[1]; steps.push((x) => x - 0.9 * w * Math.tanh(x / w)); }
+    else if (b[0] === 'crush') { const L = Math.pow(2, b[1] - 1); steps.push((x) => { const q = Math.round(x * L) / L; return q > 1 ? 1 : q < -1 ? -1 : q; }); }
+    else if (b[0] === 'sub') {
+      // the divider (Abyss's ClawdOctave, at fs): two low-passes so the fundamental rules the crossings, a flip-flop with
+      // hysteresis on each rising one, as loud as the note (a follower), its edges rounded; then its own low-pass
+      const co = new Float64Array(5), l1 = biquad(), l2 = biquad(), f = biquad(), g = dbg(b[1]);
+      l1.set(waCoefs('lowpass', 180, -3, 0, fs, co)); l2.set(waCoefs('lowpass', 180, -3, 0, fs, co)); f.set(waCoefs('lowpass', b[2], b[3], 0, fs, co));
+      const att = 1 - Math.exp(-1 / (0.002 * fs)), rel = 1 - Math.exp(-1 / (0.15 * fs)), sm = 1 - Math.exp(-TAU * 2500 / fs);
+      let env = 0, hi = false, flip = 1, ys = 0;
+      steps.push((y) => {
+        const x = l2.tick(l1.tick(x0)), a = x < 0 ? -x : x;
+        env += (a - env) * (a > env ? att : rel);
+        const th = 0.45 * env + 1e-5;
+        if (!hi && x > th) { hi = true; flip = -flip; } else if (hi && x < -th) hi = false;
+        const e = env > 3e-4 ? env : (env * env) / 3e-4;
+        ys += (flip * e - ys) * sm;
+        return y + g * f.tick(ys);
+      });
+      flush.push(() => { env = fl(env); ys = fl(ys); l1.flush(); l2.flush(); f.flush(); });
+    } else if (b[0] === 'blend') {
+      const co = new Float64Array(5), l1 = biquad(), l2 = biquad(), g = dbg(b[2]);
+      l1.set(waCoefs('lowpass', b[1], -3, 0, fs, co)); l2.set(waCoefs('lowpass', b[1], -3, 0, fs, co));
+      steps.push((y) => y + g * l2.tick(l1.tick(x0)));
+      flush.push(() => { l1.flush(); l2.flush(); });
+    }
   }
   const NS = steps.length;
   // the power amp: a DC block, then the drive into a symmetric soft clip whose headroom sag lowers
   const pwIn = dbg(V.pw), pwOut = 1 / pwIn, sagAmt = V.sag * 0.45 / 1.5, eA = 1 - Math.exp(-1 / (0.008 * fs)), eR = 1 - Math.exp(-1 / (0.18 * fs));
-  const s4 = adaa(1, 0), OS = Math.round(fs / host), kDc = k1p(8), kOh = k1p(V.xf[0]), kOl = k1p(V.xf[1]);
+  const pb = V.pwb || 0, s4 = adaa(1, pb), P0 = pb ? tri(pb, 1) : 0, OS = Math.round(fs / host), kDc = k1p(8), kOh = k1p(V.xf[0]), kOl = k1p(V.xf[1]);
   let env = 0, h = 1, ih = 1, hn = 0, dc = 0, oh = 0, ol = 0;
   // at the host's rate: depth and presence
-  const co = new Float64Array(5), dep = biquad(), pres = biquad();
-  let lastP = NaN;
+  const co = new Float64Array(5), dep = biquad(), pres = biquad(), midB = biquad();
+  let lastP = NaN, lastM = NaN;
+  // tape wow (V.wow: [ms, Hz]): a delay line read 1.5 ms +- ms back, swung by a sine from zero phase
+  const WL = V.wow ? Math.ceil((2.6 * V.wow[0] * host) / 1000) + 4 : 0, wb = WL ? new Float64Array(WL) : null;
+  const wD = WL ? (1.5 * V.wow[0] * host) / 1000 : 0, wA = WL ? (V.wow[0] * host) / 1000 : 0, wI = WL ? (TAU * V.wow[1]) / host : 0;
+  let wp = 0, wph = 0;
   if (V.depth && V.depth[1]) dep.set(waCoefs('peaking', V.depth[0], 0.8, V.depth[1], host, co));
   return {
     set(P) {
@@ -225,9 +339,21 @@ function voiced(V, fs, host) {
         bb0 = nb0 / na0 / a; bb1 = nb1 / na0 / a; ba1 = na1 / na0;
       }
       if (first) { sPot = pot; first = false; }
-      if (solver && (P.bass !== lb || P.mid !== lm || P.treble !== lt)) {
+      if (eqF && (P.bass !== lb || P.mid !== lm || P.treble !== lt)) {
         lb = P.bass; lm = P.mid; lt = P.treble;
-        solver.analog({ t: potLin(lt), m: potLin(lm), l: potAud(lb) }, SB, SA);
+        const e = V.eq, st = e[3];
+        eqF[0].set(waCoefs('lowshelf', e[0][0], 0, e[0][1] + (clamp(lb, 0, 10) - 5) * st, fs, eqC));
+        eqF[1].set(waCoefs('peaking', e[1][0], e[1][1], e[1][2] + (clamp(lm, 0, 10) - 5) * st, fs, eqC));
+        eqF[2].set(waCoefs('highshelf', e[2][0], 0, e[2][1] + (clamp(lt, 0, 10) - 5) * st, fs, eqC));
+      }
+      if (solver && SN !== 3 && (P.bass !== lb || P.mid !== lm || P.treble !== lt)) {
+        lb = P.bass; lm = P.mid; lt = P.treble;
+        solver.analog({ t: potLin(lt), m: fixM != null ? fixM : potLin(lm), l: potAud(lb) }, SB, SA);
+        bilin(SB, SA, SN, 2 * fs, GB, GA);
+      }
+      if (solver && SN === 3 && (P.bass !== lb || P.mid !== lm || P.treble !== lt)) {
+        lb = P.bass; lm = P.mid; lt = P.treble;
+        solver.analog({ t: potLin(lt), m: fixM != null ? fixM : potLin(lm), l: potAud(lb) }, SB, SA);
         // bilinear: s = c (1 - 1/z) / (1 + 1/z), c = 2 fs
         const c = 2 * fs, c2 = c * c, c3 = c2 * c, b0 = SB[0], b1 = SB[1], b2 = SB[2], b3 = SB[3], a1 = SA[1], a2 = SA[2], a3 = SA[3];
         const B0 = b0 + b1 * c + b2 * c2 + b3 * c3, B1 = 3 * b0 + b1 * c - b2 * c2 - 3 * b3 * c3, B2 = 3 * b0 - b1 * c - b2 * c2 + 3 * b3 * c3, B3 = b0 - b1 * c + b2 * c2 - b3 * c3;
@@ -235,14 +361,17 @@ function voiced(V, fs, host) {
         t0 = B0 / A0; t1 = B1 / A0; t2 = B2 / A0; t3 = B3 / A0; ta1 = A1 / A0; ta2 = A2 / A0; ta3 = A3 / A0;
       }
       if (P.presence !== lastP) { lastP = P.presence; pres.set(waCoefs('highshelf', V.pres[0], 0, (clamp(P.presence, 0, 10) - 5) * V.pres[1], host, co)); }
+      if (V.midk && P.mid !== lastM) { lastM = P.mid; midB.set(waCoefs('peaking', V.midk[0], V.midk[1], (clamp(P.mid, 0, 10) - 5) * V.midk[2], host, co)); }
       // (a long silence decays the state toward subnormals, which some CPUs crawl through)
       for (let i = 0; i < flush.length; i++) flush[i]();
       bz = fl(bz); dc = fl(dc); env = fl(env); oh = fl(oh); ol = fl(ol);
       if (fl(z1) === 0 && fl(z2) === 0 && fl(z3) === 0) z1 = z2 = z3 = 0;
-      dep.flush(); pres.flush();
+      dep.flush(); pres.flush(); midB.flush();
+      if (eqF) for (const f of eqF) f.flush();
     },
     tick(x) {
       sPot += kS * (pot - sPot);
+      x0 = x;
       let y = x;
       for (let i = 0; i < NS; i++) y = steps[i](y);
       dc += kDc * (y - dc);
@@ -250,31 +379,45 @@ function voiced(V, fs, host) {
       const a = y < 0 ? -y : y;
       env += (a > env ? eA : eR) * (a - env);
       if (--hn <= 0) { hn = OS; h = 1 - sagAmt * (env > 1.5 ? 1.5 : env); ih = 1 / h; }
-      y = h * s4(y * ih) * pwOut;
+      y = pb ? h * (s4(y * ih + pb) - P0) * pwOut : h * s4(y * ih) * pwOut;
       oh += kOh * (y - oh); ol += kOl * (y - oh - ol);
       return ol;
     },
-    post(y) { return pres.tick(dep.tick(y)) * inv; },
+    post(y) {
+      if (WL) {
+        if (++wp === WL) wp = 0;
+        wb[wp] = y;
+        wph += wI; if (wph > TAU) wph -= TAU;
+        const d = wD + wA * Math.sin(wph), i = Math.floor(d), fr = d - i;
+        let a = wp - i; if (a < 0) a += WL;
+        let b = a - 1; if (b < 0) b += WL;
+        y = wb[a] + (wb[b] - wb[a]) * fr;
+      }
+      if (V.midk) y = midB.tick(y);
+      return pres.tick(dep.tick(y)) * inv;
+    },
   };
 }
 function makeVoiced(sr, dsp, V) {
-  const OSF = V.os === 2 ? 2 : 4, os = OSF === 2 ? dsp.oversample2x() : dsp.oversample4x(), c = voiced(V, sr * OSF, sr), tick = (u) => c.tick(u);
+  // (8x: the 4x stage with Half Stack's 2x half-band inside it, for a solid-state stage driven square)
+  const OSF = V.os === 1 ? 1 : V.os === 2 ? 2 : V.os === 8 ? 8 : 4, os = OSF === 1 ? null : OSF === 2 ? dsp.oversample2x() : dsp.oversample4x(), c = voiced(V, sr * OSF, sr);
+  const tick = OSF === 8 ? over2((u) => c.tick(u)) : (u) => c.tick(u);
   const hp = svf(sr).set(V.hp, 0.7071), tight = V.tight && V.tight[1] ? svf(sr).shelfLo(V.tight[0], 0.7071, V.tight[1]) : null;
   return {
-    latency: Math.ceil(os.latency),
+    latency: (os ? Math.ceil(os.latency) : 0) + (V.wow ? Math.round((1.5 * V.wow[0] * sr) / 1000) : 0),
     set(P) { c.set(P); },
     tick(x) {
       hp.tick(x);
       let u = hp.hp;
       if (tight) u = tight.eq(u);
       if (u < 1e-30 && u > -1e-30) u = 0;
-      return c.post(os.process(u, tick));
+      return c.post(os ? os.process(u, tick) : c.tick(u));
     },
   };
 }
 `;
 
-// The cab, as the gear's amps had it (devices/guitar/gear/code.js plugAmp and plugCabNet), in the kernel:
+// The cab, as the gear's graph amps had it (gear/code.js plugAmp and plugCabNet), in the kernel:
 //   ampCabWeights(spec, sr, cab)  what a cab's trim weighs it by: 480 points log-spaced from 40 Hz to 16 kHz, the amp's
 //                  spectrum before its cab (spec: half-octave dB, the gear's PLUG_AMP_SPEC) through K-weighting, and the
 //                  amp's own designed cab's energy over them (e0)
@@ -306,7 +449,7 @@ export function ampCabWeights(spec, sr, cab) {
   W.e0 = e0;
   return W;
 }
-// a designed cab's six filters, as the gear's plugAmp sets them
+// a designed cab's six filters, as the gear's graph amps set them
 export function cabFilters(cb) {
   return [['highpass', cb[0], 0.7, 0], ['peaking', cb[1][0], cb[1][1], cb[1][2]], ['peaking', cb[2][0], cb[2][1], cb[2][2]], ['peaking', cb[3][0], cb[3][1], cb[3][2]],
     ['lowpass', cb[4][0], cb[4][1], 0], ['lowpass', cb[5], 0.6, 0]];

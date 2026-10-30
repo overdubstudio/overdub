@@ -7,8 +7,10 @@
 //   the GAIN pot's bottom (-60 to -12 dB at 0; full up it passes all of it, 0 dB, so its bright cap is gone there); the
 //   bright cap (100 pF to 5 nF); the power amp's drive (-12 to +12 dB) and sag (0 to 0.6); the transformer's band (20
 //   to 90 Hz, 10 to 20 kHz: the speaker rolls the top off, and that's the cab's); the speaker's resonance (70 to 140
-//   Hz, 0 to +4 dB: a bump, never a dip); the input's coupling (20 to 150 Hz); a partly bypassed cathode (100 to 700
-//   Hz, -12 to 0 dB: a cut, never a boost); presence's corner (3 to 5 kHz).
+//   Hz, 0 to +4 dB: a bump, never a dip); the input's coupling (20 to 300 Hz); a partly bypassed cathode (100 to 700
+//   Hz, -12 to 0 dB: a cut, never a boost); presence's corner (2 to 5 kHz). A solid-state stage's drive (0.5 to 200
+//   times: an op-amp's), its coupling and its low-pass (2 to 20 kHz); a power amp's bias (0 to 0.4); an active tone
+//   circuit's centres (+-6 dB of where the voicing puts them); an octave's or a clean blend's level (-6 to +12 dB).
 // Nothing else: no EQ the circuit doesn't have, so what's left of the difference is the circuit's and is reported.
 // The score, at the gear's default knobs on the amp's own designed cab: the half-octave spectrum's difference from
 // the old amp's over 100 Hz-8 kHz, loudness matched (rms + 0.3 x its worst band; the bands outside it, 40-70 Hz and
@@ -25,7 +27,7 @@ import { run } from './amp-scenes.js';
 import { halfOct, shape, thd, sine, clawdLufs, SR } from './amp-measure.js';
 import { FIXTURE } from './amp-voices.js';
 import { lufs } from '../app/src/audio/measure.js';
-import { diStrum } from '../app/src/audio/testsignals.js';
+import { diStrum, bassDI } from '../app/src/audio/testsignals.js';
 import { ampDevice, CAB_IDS } from '../app/src/devices/guitar/amps.js';
 import { AMP_VOICINGS } from '../app/src/devices/guitar/voicings.js';
 
@@ -40,21 +42,30 @@ export function freeValues(v) {
   v.chain.forEach((b, i) => {
     if (b[0] === 'tri') {
       K.push(['g' + i, ...at(b, 1), 'mul', 1.25, 0.5, 60], ['hp' + i, ...at(b, 4), 'mul', 1.3, 5, 400], ['lp' + i, ...at(b, 5), 'mul', 1.2, 4000, 20000]);
+    } else if (b[0] === 'ss') {
+      K.push(['g' + i, ...at(b, 1), 'mul', 1.25, 0.5, 200], ['hp' + i, ...at(b, 3), 'mul', 1.3, 5, 400], ['lp' + i, ...at(b, 4), 'mul', 1.2, 2000, 20000]);
     } else if (b[0] === 'gain' && b[1] > 0) K.push(['gain' + i, ...at(b, 1), 'add', 1, 0, 30]);
+    else if (b[0] === 'sub') K.push(['sub' + i, ...at(b, 1), 'add', 1, -6, 12]);
+    else if (b[0] === 'blend') K.push(['blend' + i, ...at(b, 2), 'add', 1, -6, 12]);
   });
-  K.push(['pot0', ...at(v.pot, 0), 'add', 2, -60, -12]); // (turned full up, a pot passes all of it: pot[1] is 0 dB)
+  // (turned full up, a pot passes all of it: pot[1] is 0 dB; a clean line in's GAIN is an input trim, not a pot: fixed)
+  if (v.pot[0] <= -12) K.push(['pot0', ...at(v.pot, 0), 'add', 2, -60, -12]);
   if (v.bright) K.push(['bright', ...at(v.bright, 0), 'mul', 1.4, 100, 5000]);
-  K.push(['pw', ...at(v, 'pw'), 'add', 1.5, -12, 12], ['sag', ...at(v, 'sag'), 'add', 0.05, 0, 0.6]);
+  // (a clean line in, no oversampling, has no power amp to drive: its pw only keeps the clip out of the way)
+  if (v.os !== 1) K.push(['pw', ...at(v, 'pw'), 'add', 1.5, -12, 12], ['sag', ...at(v, 'sag'), 'add', 0.05, 0, 0.6]);
   K.push(['xfhp', ...at(v.xf, 0), 'mul', 1.2, 20, 90], ['xflp', ...at(v.xf, 1), 'mul', 1.15, 10000, 20000]);
   if (v.depth) K.push(['depth', ...at(v.depth, 1), 'add', 0.5, 0, 4], ['depthHz', ...at(v.depth, 0), 'mul', 1.15, 70, 140]);
-  K.push(['hp', ...at(v, 'hp'), 'mul', 1.2, 20, 150], ['presHz', ...at(v.pres, 0), 'mul', 1.1, 3000, 5000]);
+  K.push(['hp', ...at(v, 'hp'), 'mul', 1.2, 20, 300], ['presHz', ...at(v.pres, 0), 'mul', 1.1, 2000, 5000]);
+  if (v.pwb != null) K.push(['pwb', ...at(v, 'pwb'), 'add', 0.04, 0, 0.4]);
+  // an active tone circuit's own centres (a solid-state amp's EQ is its circuit: where it sits at noon, +-6 dB)
+  if (v.eq) { const e0 = v.eq.map((b) => (Array.isArray(b) ? b.slice() : b)); K.push(['eqB', ...at(v.eq[0], 1), 'add', 1, e0[0][1] - 6, e0[0][1] + 6], ['eqM', ...at(v.eq[1], 2), 'add', 1, e0[1][2] - 6, e0[1][2] + 6], ['eqT', ...at(v.eq[2], 1), 'add', 1, e0[2][1] - 6, e0[2][1] + 6]); }
   if (v.tight) K.push(['tight', ...at(v.tight, 1), 'add', 1, -12, 0], ['tightHz', ...at(v.tight, 0), 'mul', 1.2, 100, 700]);
   return K;
 }
 
 export function scorer(id) {
   const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps[id];
-  const x8 = diStrum(8, SR), x4 = x8.subarray(0, 4 * SR), s196 = sine(196, -18, 1.6);
+  const x8 = fx.signal === 'bass' ? bassDI(8, SR) : diStrum(8, SR), x4 = x8.subarray(0, 4 * SR), s196 = sine(196, -18, 1.6);
   const old = { half: fx.own.half, thd: fx.thd, g0: fx.travel.gain[0].lufs - fx.travel.base.lufs, g10: fx.travel.gain[10].lufs - fx.travel.base.lufs };
   return (v) => {
     const def = ampDevice(id, v), y = run(def, { cab: OWN }, x8)[0], sp = shape(halfOct(y), old.half), t = thd(run(def, { cab: OWN }, s196)[0]);
@@ -70,7 +81,7 @@ export function scorer(id) {
 // strum, the fixture's def.clawd; tools/guitar-test.js 4 reads them both at -14 on the house's plug level)
 export function trimFor(id, v) {
   const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps[id];
-  const def = ampDevice(id, { ...v, trim: 0 }), y = run(def, {}, diStrum(8, SR))[0];
+  const def = ampDevice(id, { ...v, trim: 0 }), y = run(def, {}, fx.signal === 'bass' ? bassDI(8, SR) : diStrum(8, SR))[0];
   return Math.round((fx.def.clawd - clawdLufs(y)) * 100) / 100;
 }
 

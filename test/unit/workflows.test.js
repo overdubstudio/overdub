@@ -68,3 +68,41 @@ test('the check itself: what it refuses and what it lets through', () => {
   assert.deepEqual(check('on:\n  pull_request:\njobs:\n  a:\n    runs-on: ubuntu-latest\n'), []);
   assert.throws(() => check(`name: x\n${job}`), /no top-level on/);
 });
+
+// A step's default shell is `bash -e`, without pipefail, so `a | tee b` exits with tee's status: a failing `a` goes
+// green, the jobs that need it go ahead, and if: failure() steps never run. `shell: bash` (the explicit form) is
+// `bash --noprofile --norc -eo pipefail {0}`, which is what a step piping into tee must say.
+function maskedTees(yml) {
+  const lines = yml.split('\n').filter((l) => !/^\s*#/.test(l));
+  const steps = lines
+    .join('\n')
+    .split(/^\s*- (?=name:|uses:|run:|id:)/m)
+    .slice(1);
+  return steps
+    .filter((s) => /\|\s*tee\b/.test(s) && !/^\s*shell: bash\s*$/m.test(s) && !/pipefail/.test(s))
+    .map((s) => /name: (.+)/.exec(s)?.[1] ?? s.split('\n')[0]);
+}
+
+test('no step lets tee hide the failure of what it pipes', () => {
+  for (const f of fs.readdirSync(WORKFLOWS).filter((n) => /\.ya?ml$/.test(n)))
+    assert.deepEqual(
+      maskedTees(fs.readFileSync(path.join(WORKFLOWS, f), 'utf8')),
+      [],
+      `${f}: steps that mask a failure`,
+    );
+});
+
+test('the tee check itself: what it refuses and what it lets through', () => {
+  const step = (extra) =>
+    `steps:\n  - name: suite\n    ${extra}run: node a.js | tee -a out\n  - name: next\n    run: ls\n`;
+  assert.deepEqual(maskedTees(step('')), ['suite']);
+  assert.deepEqual(maskedTees(step('shell: bash\n    ')), []);
+  assert.deepEqual(maskedTees(step('shell: bash -eo pipefail {0}\n    ')), []);
+  assert.deepEqual(maskedTees('steps:\n  - name: a\n    run: |\n      set -o pipefail\n      x | tee y\n'), []);
+  assert.deepEqual(maskedTees('steps:\n  - name: a\n    run: |\n      x | tee y\n'), ['a']);
+  // a comment is not a step, and a shell on the next step doesn't cover this one
+  assert.deepEqual(maskedTees('steps:\n  # x | tee y\n  - name: a\n    run: ls\n'), []);
+  assert.deepEqual(maskedTees('steps:\n  - name: a\n    run: x | tee y\n  - name: b\n    shell: bash\n    run: ls\n'), [
+    'a',
+  ]);
+});

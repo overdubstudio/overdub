@@ -93,12 +93,12 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts playwright-core@1.62.0
           npx --no-install playwright-core install chromium chromium-headless-shell webkit firefox
 
-      # One suite at a time: the real-time checks (stack-monitor's latency, the lamps that step with the song) miss their
-      # deadlines with three browser suites sharing the machine. Slower (about twice run-all's default), but the point
-      # of this machine is that those checks mean something.
+      # Three suites at a time, run-all's default. The real-time checks (stack-monitor's latency, the lamps that step
+      # with the song) can miss their deadlines with the machine shared, and run-all runs any suite that failed once more
+      # on its own, so a miss from load costs a retry and a real break still fails. One at a time took over an hour.
+      # shell: bash is what brings pipefail: the default shell would take tee's exit status and pass a failed run.
       - name: The end-to-end suite
-        env:
-          PAR: '1'
+        shell: bash
         run: node tools/run-all.js | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the screenshots and logs of a failed run

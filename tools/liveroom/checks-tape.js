@@ -211,7 +211,7 @@ async function guitarRoom(T, ctx) {
   const BPM = 120;
   const probe = await openRoom('/app/', { ready: false });
   let sr = 48000;
-  try { sr = await probe.E(async () => { const c = new AudioContext(); const r = c.sampleRate; await c.close(); return r; }); } finally { await probe.close(); }
+  try { sr = await fakeCaptureRate(probe.context, probe.base); } finally { await probe.close(); }
   // (three passes of the riff from bar 1, then the band rolls on)
   const fake = session({ bpm: BPM, lead: 5, tail: 8, sr, parts: [{ kind: 'riff', riff: RIFF, bar: 1, passes: 3, seed: 21 }] });
   const room = await openRoom('/app/?room', { fake, name: 'gr-tape' });

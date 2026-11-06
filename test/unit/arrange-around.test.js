@@ -402,11 +402,10 @@ test('a seed shorter than a bar gets a band that short', () => {
   }
 });
 test('a clip longer than MAX_BEATS is refused at once', () => {
-  const t0 = performance.now();
+  // (that it is refused quickly, under 50 ms, is timed in tools/arrange-around-test.js)
   const r = arrangeAround({ length: 65536, style: 'pop', notes: parseNotes('C4@0:1 E4@1:1') });
-  const ms = performance.now() - t0;
   T.ok(
-    MAX_BEATS === 1024 && r.error && /16,384 bars long; a band is built over up to 256 bars/.test(r.error) && ms < 50,
-    `a 16,384-bar clip is refused in ${ms.toFixed(1)} ms: "${r.error}"`,
+    MAX_BEATS === 1024 && r.error && /16,384 bars long; a band is built over up to 256 bars/.test(r.error),
+    `a 16,384-bar clip is refused: "${r.error}"`,
   );
 });

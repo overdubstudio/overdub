@@ -29,7 +29,8 @@ of overdub-devices at the pinned commit. The preview can still be deployed from 
 
 `DRY_RUN=1` before a script prints what it would do and calls nothing: `DRY_RUN=1 deploy/deploy.sh --skip-tests`,
 `DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`, `DRY_RUN=1 deploy/relay/deploy.sh`,
-`DRY_RUN=1 deploy/analytics/setup.sh`. `tools/analytics-test.js` runs them dry with a stub `aws` and checks the plans.
+`DRY_RUN=1 deploy/analytics/setup.sh`. `test/unit/deploy-sites.test.js` runs `deploy/analytics/setup.sh` dry with a stub `aws` and checks the plan;
+`tools/analytics-test.js` runs the whole dry `deploy/deploy.sh` (live and `--next`).
 
 ## The live site
 

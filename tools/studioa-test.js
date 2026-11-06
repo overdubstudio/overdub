@@ -337,7 +337,7 @@ if (process.env.CPU !== '0') {
 }
 
 // ================================================================================================ the device check
-// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs core.drumroom through it in Chromium's worklet)
+// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs core.drumroom at its defaults through checkDevice in Chromium's worklet and only notes its warnings; its presets and kits are not run there)
 {
   console.log('the device check (Node)');
   const { checkDeviceNode } = await import('../app/src/engine/node/check.js');

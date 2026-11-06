@@ -709,15 +709,11 @@ test('limits: arrangement ops cannot amplify', () => {
   const clip = r0.created.c;
   const before = canon(s.get());
   const loops = (n, mode = 'loop') => Array(n).fill({ type: 'clip.repeat', clip, times: 64, mode });
-  let t0 = Date.now();
+  // (that both refusals come back quickly is wall clock, and is timed in tools/arrangement-test.js)
   const l3 = s.dispatch(loops(3), { by: 'mcp:x' });
   T.ok(
-    !l3.ok &&
-      /a song runs up to beat 8,192/.test(l3.error) &&
-      /×32 fits/.test(l3.error) &&
-      canon(s.get()) === before &&
-      Date.now() - t0 < 500,
-    `loop ×64 three times in one call is refused, nothing changed, in ${Date.now() - t0} ms: "${(l3.error || '').slice(0, 140)}"`,
+    !l3.ok && /a song runs up to beat 8,192/.test(l3.error) && /×32 fits/.test(l3.error) && canon(s.get()) === before,
+    `loop ×64 three times in one call is refused, nothing changed: "${(l3.error || '').slice(0, 140)}"`,
   );
   const l4 = s.dispatch(loops(4), { by: 'mcp:x' });
   T.ok(!l4.ok && canon(s.get()) === before, 'four is refused the same way');
@@ -784,11 +780,10 @@ test('limits: arrangement ops cannot amplify', () => {
     `copies are held to the song's notes: "${(cp.error || '').slice(0, 140)}"`,
   );
   // section.duplicate onto itself doubles its clips each time: it stops at the clip limit, quickly, and rolls back
-  t0 = Date.now();
   const dup = s.dispatch(Array(16).fill({ type: 'section.duplicate', section: 'A', to: 0 }), { by: 'mcp:x' });
   T.ok(
-    !dup.ok && /song holds up to 4,096/.test(dup.error) && canon(s.get()) === before && Date.now() - t0 < 3000,
-    `16 self-duplicates (65,536 clips) stop at ${LIMITS.clips.toLocaleString('en-US')} clips and roll back, in ${Date.now() - t0} ms: "${(dup.error || '').slice(0, 120)}"`,
+    !dup.ok && /song holds up to 4,096/.test(dup.error) && canon(s.get()) === before,
+    `16 self-duplicates (65,536 clips) stop at ${LIMITS.clips.toLocaleString('en-US')} clips and roll back: "${(dup.error || '').slice(0, 120)}"`,
   );
   // time.insert: no billion-beat songs
   const ins = s.dispatch({ type: 'time.insert', at: 0, length: 1e9 }, { by: 'mcp:x' });

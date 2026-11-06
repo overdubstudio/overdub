@@ -10,6 +10,8 @@
 // demo is rendered in both, so the preview and the canonical render are held to agree (PARITY).
 // Screenshots of each in the arranger (1440 wide, one page that visits them all) and of the Song menu's Demos list land
 // in tools/.out/.
+// (The Node render runs kernels in the Node renderer, not the AudioWorklet. Chromium's worklet runs each registered device
+// at its defaults, in tools/sounds-test.js, which only notes the check's warnings; the demos' presets and kits no longer run there.)
 // Their devices are the studio's own code: every demo opens with nothing held (devices/trust.js), from the shelf or
 // from a link someone else made of it.
 import fs from 'node:fs';

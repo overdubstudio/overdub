@@ -15,6 +15,25 @@ const T = tally('arrangement');
 const canon = (x) => JSON.stringify({ ...x, meta: null }, (k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((kk) => [kk, v[kk]])) : v));
 const near = (a, b) => Math.abs(a - b) < 1e-3;
 
+// The limits answer quickly (wall clock, so timed here and not in test/unit: this runner retries a suite alone when
+// load made it fail). An outside agent can't freeze the tab with loop ×64 three times, or 16 self-duplicates.
+{
+  const { LIMITS } = await import('../app/src/core/project.js');
+  const s = createStore(createProject({ title: 'L' }));
+  const r0 = s.dispatch([
+    { type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } },
+    { type: 'clip.add', track: '$k', ref: 'c', clip: { start: 0, length: 4, notes: 'C4@0:1 E4@1:1 G4@2:1 C5@3:1' } },
+    { type: 'section.add', ref: 's', section: { name: 'A', start: 0, length: 4 } },
+  ], { by: 'you' });
+  const before = canon(s.get());
+  let t0 = Date.now();
+  const l3 = s.dispatch(Array(3).fill({ type: 'clip.repeat', clip: r0.created.c, times: 64, mode: 'loop' }), { by: 'mcp:x' });
+  T.ok(!l3.ok && /a song runs up to beat 8,192/.test(l3.error) && canon(s.get()) === before && Date.now() - t0 < 500, `loop ×64 three times in one call is refused, nothing changed, in ${Date.now() - t0} ms`);
+  t0 = Date.now();
+  const dup = s.dispatch(Array(16).fill({ type: 'section.duplicate', section: 'A', to: 0 }), { by: 'mcp:x' });
+  T.ok(!dup.ok && /song holds up to 4,096/.test(dup.error) && canon(s.get()) === before && Date.now() - t0 < 3000, `16 self-duplicates (65,536 clips) stop at ${LIMITS.clips.toLocaleString('en-US')} clips and roll back, in ${Date.now() - t0} ms`);
+}
+
 /* ================================================================== a small song, in Node */
 // 4/4 at 120 bpm (half a second a beat). Verse 0–16, Chorus 16–32, Outro 32–40; the loop over the Chorus.
 function song() {
@@ -318,6 +337,13 @@ T.ok(['section.duplicate', 'section.move', 'time.insert', 'time.remove', 'clip.r
     return { x: lw.left + (f.clip.start + d) * z.pxPerBeat - sc.scrollLeft, y: lw.top + row * z.trackH - sc.scrollTop + z.trackH / 2 };
   }, [clipId, dx]);
   const bass = await E(() => { const t = window.overdub.store.get().tracks.find((x) => x.name === 'Bass'); return { id: t.id, clip: t.clips[0].id, start: t.clips[0].start, length: t.clips[0].length, n: t.clips.length }; });
+  // an outside agent can't freeze the tab: loop ×64 three times (5,242,880 notes on the demo's bass before the limits), answered quickly
+  // (wall clock, so here and not in test/unit)
+  {
+    const pre0 = await snapshot(), n0 = await E(() => window.overdub.store.history.length), t1 = Date.now();
+    const amp = await E((c) => window.overdub.tools.run('apply_ops', { ops: Array(3).fill({ type: 'clip.repeat', track: 'Bass', clip: c, times: 64, mode: 'loop' }), label: 'longer' }, { by: 'mcp:evil' }), bass.clip);
+    T.ok(amp.error && amp.nothing_changed && /up to/.test(amp.error) && (await snapshot()) === pre0 && (await E(() => window.overdub.store.history.length)) === n0 && Date.now() - t1 < 3000, `apply_ops with loop ×64 three times comes back an error, nothing changed, in ${Date.now() - t1} ms: "${(amp.error || '').slice(0, 120)}"`);
+  }
   pt = await clipAt(bass.clip);
   await page.mouse.click(pt.x, pt.y, { button: 'right' });
   await page.waitForTimeout(150);

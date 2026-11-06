@@ -254,7 +254,7 @@ if (process.env.CPU !== '0') {
 }
 
 // ------------------------------------------------------------------------------------------------ the device check (Node)
-// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs every built-in through checkDevice in Chromium's worklet)
+// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs each registered device at its defaults through checkDevice in Chromium's worklet, and only notes its warnings; presets and kits are not run there)
 {
   console.log('checkDevice in a child process (full mode)');
   const { checkDeviceNode } = await import('../app/src/engine/node/check.js');

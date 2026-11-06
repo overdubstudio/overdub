@@ -517,14 +517,9 @@ test('cost', () => {
   for (let b = 1; b <= 8; b++)
     Object.assign(p, { [`b${b}_on`]: 1, [`b${b}_type`]: b === 1 ? 5 : b === 8 ? 8 : 0, [`b${b}_gain`]: 3 });
   const x = sine(440, 4, 0.3);
-  render({ ...p, out_auto: 1 }, x); // (warm the JIT)
-  const t0 = performance.now();
-  render({ ...p, out_auto: 1 }, x);
-  const ms = performance.now() - t0;
-  ok(
-    (ms / 4000) * 100 < 5,
-    `all eight bands on (two of them 48 dB cuts) with auto gain: 4 s in ${ms.toFixed(1)} ms in Node, ${(ms / 40).toFixed(2)}% of real time (the device check warns at 25%)`,
-  );
+  // (the cost, under 5% of real time, is wall clock and is timed in tools/eq-test.js)
+  const [L] = render({ ...p, out_auto: 1 }, x);
+  ok(L.every(Number.isFinite), 'all eight bands on (two of them 48 dB cuts) with auto gain render 4 s and stay finite');
 });
 
 test('agents: the banded plan adjust uses', () => {

@@ -27,8 +27,8 @@ test("a syntax error's line, in bounded time", async () => {
     `syntax errors keep their lines: 22, ${big.r.line} (16,000 lines in), ${mid.r.line} (mid-file)`,
   );
   assert.ok(
-    big.ms < 500 && mid.ms < 500 && huge.ms < 500 && huge.r.line === null && /SyntaxError/.test(huge.r.error),
-    `a 16,000-line kernel with a late error parses in ${Math.round(big.ms)} ms; past 256 KB the error comes without a line (${Math.round(huge.ms)} ms)`,
+    huge.r.line === null && /SyntaxError/.test(huge.r.error),
+    'past 256 KB the error comes without a line (how fast it parses is timed in tools/kernel-test.js)',
   );
 });
 
@@ -46,8 +46,8 @@ test('a long run of spaces parses in linear time', async () => {
     lead = time(run + 'export default ' + ok),
     tail = time(ok + ' ;\n\t;  ' + run);
   assert.ok(
-    mid.r.ok && lead.r.ok && tail.r.ok && Math.max(mid.ms, lead.ms, tail.ms) < 400,
-    `a kernel with a 250,000-space run parses in ${Math.round(Math.max(mid.ms, lead.ms, tail.ms))} ms wherever the run is (one of 256 KB took about 45 s), and the trailing ; still goes`,
+    mid.r.ok && lead.r.ok && tail.r.ok,
+    'a kernel with a 250,000-space run parses wherever the run is, and the trailing ; still goes (how fast is timed in tools/kernel-test.js)',
   );
 });
 

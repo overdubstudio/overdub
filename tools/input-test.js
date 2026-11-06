@@ -13,9 +13,63 @@ import fs from 'node:fs';
 import { hits, median } from '../app/src/input/latency.js';
 import * as LAT from '../app/src/input/latency.js';
 import { noteName } from '../app/src/core/music.js';
+import { createPitchTracker, segment } from '../app/src/input/pitch.js';
+import { render as renderVoice, makePhrase } from './hum-bench.js';
+import { SR, workletScope, RIFF2, session, restoreWorkletNode } from '../test/unit/_tape-kit.js';
 
 const T = tally('input');
 const AUDIOIN = await import('../app/src/input/audioin.js');
+
+// Wall clock, in Node: the checks of input/pitch.js and the rolling tape that compare a time to a limit. They are timed
+// here and not in test/unit because this runner retries a suite alone when load made it fail; test/unit has no retry.
+{
+  // hum live: 128-sample blocks, decoded every 240 ms, under 2 ms of work per 10 ms frame
+  const au = renderVoice(makePhrase(4, { seed: 5 }));
+  const tr = createPitchTracker({ sr: au.sr });
+  const t0 = performance.now();
+  for (let i = 0; i < au.x.length; i += 128) {
+    tr.push(au.x.subarray(i, Math.min(au.x.length, i + 128)));
+    tr.trace();
+    if ((i / 128) % 90 === 0) { tr.decode(); segment(tr.frames); }
+  }
+  const usFrame = ((performance.now() - t0) * 1000) / tr.n;
+  T.ok(usFrame < 2000, `hum live: ${Math.round(usFrame)} µs of work per 10 ms frame, decodes included (${(usFrame / 100).toFixed(1)}% of real time)`);
+}
+{
+  // the rolling tape: a quantum in well under its time (60 µs of its 2.67 ms), a minute of audio rolled at a time
+  const sc = workletScope(SR);
+  const proc = sc.make(SR * 60);
+  proc.port.postMessage = () => {};
+  let seed = 3;
+  const blocks = Array.from({ length: 375 }, () => {
+    const q = new Float32Array(128);
+    for (let i = 0; i < 128; i++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; q[i] = (seed / 4294967296 * 2 - 1) * 0.3; }
+    return [[q]];
+  });
+  const roll = (n) => { for (let k = 0; k < n; k++) { proc.process(blocks[k % 375]); sc.scope.currentFrame += 128; } };
+  roll(20000); // (warm: compiled)
+  let best = Infinity;
+  for (let tries = 0; tries < 3; tries++) {
+    const t0 = process.hrtime.bigint();
+    roll(22500);
+    best = Math.min(best, Number(process.hrtime.bigint() - t0) / 22500 / 1000);
+  }
+  T.ok(best < 60, `the tape takes a quantum in well under its time (${best.toFixed(2)} µs of its ${((128 / SR) * 1e6).toFixed(0)}; limit 60)`);
+}
+{
+  // a minute of tape is read in slices: the page is never held up for long
+  const s = await session({ riff: RIFF2, passes: 13 });
+  let last = performance.now(), worst = 0, ticks = 0;
+  const iv = setInterval(() => { const n = performance.now(); worst = Math.max(worst, n - last); last = n; ticks++; }, 1);
+  const t0 = performance.now();
+  const sel = await s.tape.select();
+  const total = performance.now() - t0;
+  clearInterval(iv);
+  worst = Math.max(worst, performance.now() - last);
+  s.tape.stop();
+  restoreWorkletNode();
+  T.ok(sel.why === 'repeat' && ticks >= 4 && worst < total / 2, `a minute of tape is read in slices: ${ticks} timer ticks over ${total.toFixed(0)} ms, the longest wait ${worst.toFixed(1)} ms`);
+}
 
 // A plucked string, made of its harmonics (so its pitch is exact): a pluck's comb on them, the high ones dying first.
 function pluck(buf, sr, midi, t0, dur, { cents = 0, amp = 0.25, rng }) {

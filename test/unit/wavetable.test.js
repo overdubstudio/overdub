@@ -2,7 +2,7 @@
 // a meaning, in prefixed groups; 40 presets across the families; no product names in its copy) and the tables (one
 // source: the kernel carries wavetables.js's lightTables verbatim and what plays is what the page draws; every frame
 // finite and peak-normalised; each band limit empty above its harmonics; the AKWF bank is the pinned one; the
-// closed-form spectra against the waves themselves). Moved from tools/wavetable-test.js.
+// closed-form spectra against the waves themselves). Moved from tools/wavetable-test.js (the build-time check, wall clock, stayed there).
 import { test } from 'node:test';
 import crypto from 'node:crypto';
 import { T as tally } from './_t.js';
@@ -110,8 +110,7 @@ test('the tables: one source, band limits, the AKWF bank, the closed-form spectr
   );
   let worstPk = 0,
     nan = 0,
-    worstOut = -Infinity,
-    ms = 0;
+    worstOut = -Infinity;
   const outOfBand = (T0, o, m) => {
     const n = LT.MN[m],
       re = new Float64Array(n),
@@ -128,11 +127,9 @@ test('the tables: one source, band limits, the AKWF bank, the closed-form spectr
     return 10 * Math.log10(out / inb + 1e-30);
   };
   for (let ti = 0; ti < TABLE_NAMES.length; ti++) {
-    const st = LT.store(),
-      t0 = performance.now();
+    const st = LT.store();
     st.start(ti, 0.5);
     while (st.step());
-    ms = Math.max(ms, performance.now() - t0);
     for (let f = 0; f < LT.F; f++) {
       const o = f * LT.FS;
       let pk = 0;
@@ -152,10 +149,6 @@ test('the tables: one source, band limits, the AKWF bank, the closed-form spectr
   t.ok(
     worstOut < -120,
     `each band limit holds nothing above its harmonics (worst ${fmt(worstOut)} dB out of band, mips 0 / 3 / 6 / 9)`,
-  );
-  t.ok(
-    ms < 60,
-    `a whole table builds in ${fmt(ms)} ms (49 frames x 11 band limits; the kernel spreads it, four frames a block)`,
   );
   t.ok(LT.F * LT.FS * 4 <= 2.9e6, `a table holds ${fmt((LT.F * LT.FS * 4) / 1e6, 2)} MB`);
   // the AKWF bank: the pinned bytes, each wave's spectrum its own cycle's (an independent DFT), on a frame of its own

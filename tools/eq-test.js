@@ -9,9 +9,35 @@
 // device only; an agent's move flashing the node; the keys and the screen reader's words; the phone sheet and two
 // fingers); get_device and adjust on it; no page errors.
 //   node tools/eq-test.js        screenshots: tools/.out/eq-*.png
+import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
+import { kernelSpecs } from '../app/src/kernel/host.js';
+import { makeDsp } from '../app/src/kernel/dsp.js';
+import { getDevice, paramValues } from '../app/src/devices/registry.js';
+import '../app/src/devices/builtin/index.js';
 import { open, tally } from './pw.js';
 
 const T = tally('eq');
+
+// The cost of the kernel in Node, wall clock: 4 s of audio through all eight bands, in 128-frame blocks, under 5% of
+// real time. (Timed here, not in test/unit: this runner retries a suite alone when load made it fail.)
+{
+  const SR = 48000, def = getDevice('core.eq8');
+  const K = kernelCore(SR, makeDsp(SR), kernelCompiler);
+  const p = {};
+  for (let b = 1; b <= 8; b++) Object.assign(p, { [`b${b}_on`]: 1, [`b${b}_type`]: b === 1 ? 5 : b === 8 ? 8 : 0, [`b${b}_gain`]: 3 });
+  const x = new Float32Array(SR * 4);
+  for (let i = 0; i < x.length; i++) x[i] = 0.3 * Math.sin((2 * Math.PI * 440 * i) / SR);
+  const render = () => {
+    const values = paramValues(def, { ...p, out_auto: 1 });
+    const c = new K({ source: def.kernel, kind: 'effect', params: kernelSpecs(def), values, seed: 1, transport: { bpm: 120, playing: true, beat: 0, time: 0 } }, () => {});
+    c.msg({ type: 'params', values, jump: true });
+    const iL = new Float32Array(128), bL = new Float32Array(128), bR = new Float32Array(128);
+    for (let f = 0; f < x.length; f += 128) { iL.set(x.subarray(f, f + 128)); c.block(iL, iL, bL, bR, f); }
+  };
+  render(); // (warm the JIT)
+  const t0 = performance.now(); render(); const ms = performance.now() - t0;
+  T.ok(ms / 4000 * 100 < 5, `all eight bands on (two of them 48 dB cuts) with auto gain: 4 s in ${ms.toFixed(1)} ms in Node, ${(ms / 40).toFixed(2)}% of real time (the device check warns at 25%)`);
+}
 const ok = T.ok;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

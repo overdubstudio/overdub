@@ -1,10 +1,20 @@
 // Checks for "Build a band around it": its agent tool and Sketch's Band button (app/src/agent/arrange-tool.js). The
 // arranger itself (app/src/core/arrange.js) is checked in Node by test/unit/arrange-around.test.js.
 //   node tools/arrange-around-test.js      (screenshots: tools/.out/band-picker.png, tools/.out/band-in.png)
+import { arrangeAround, MAX_BEATS } from '../app/src/core/arrange.js';
+import { parseNotes } from '../app/src/core/music.js';
 import { open, tally } from './pw.js';
 
 const T = tally('arrange-around');
 const MEL4 = 'E4@0:0.5 D4@0.5:0.5 C4@1:1 E4@2:1 G4@3:1 A4@4:1.5 G4@5.5:0.5 E4@6:1 D4@7:1 C4@8:0.5 D4@8.5:0.5 E4@9:1 G4@10:2 A4@12:1 G4@13:1 E4@14:1 D4@15:0.5 C4@15.5:0.5';
+
+/* ================================================================== refused at once (wall clock, so here and not in test/unit) */
+{
+  const t0 = performance.now();
+  const r = arrangeAround({ length: 65536, style: 'pop', notes: parseNotes('C4@0:1 E4@1:1') });
+  const ms = performance.now() - t0;
+  T.ok(MAX_BEATS === 1024 && r.error && /16,384 bars long; a band is built over up to 256 bars/.test(r.error) && ms < 50, `a 16,384-bar clip is refused in ${ms.toFixed(1)} ms: "${r.error}"`);
+}
 
 /* ================================================================== in the studio */
 {

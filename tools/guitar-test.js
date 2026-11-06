@@ -26,8 +26,32 @@
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
 import { open, tally, OUTDIR } from './pw.js';
 import path from 'node:path';
+import * as riffs from '../app/src/ui/liveroom/riffs-db.js';
 
 const t = tally('guitar');
+
+// The riff library on its memory side (no IndexedDB, as Node runs it): 2,000 riffs, then a page, a search through all
+// of them and the facets each under 150 ms. Wall clock, so here and not in test/unit (this runner retries a suite alone
+// when load made it fail). The IndexedDB side is timed in tools/liveroom/checks-library.js.
+{
+  const tiny = { sr: 48000, channels: [new Float32Array(480)] };
+  for (let i = 0; i < 2000; i++) {
+    const r = await riffs.add({ audio: tiny, tempo: 90 + (i % 80), beats: 4, name: i === 1234 ? 'Needle' : '',
+      tuning: ['standard', 'drop-c', 'drop-b'][i % 3], song: { id: 'p_' + (i % 40), title: i % 40 ? 'Song ' + (i % 40) : 'Untitled' },
+      starred: i % 25 === 0, at: 2e12 + i * 1000 });
+    if (!r.ok) throw new Error(r.error);
+  }
+  let t0 = performance.now();
+  await riffs.list({ limit: 50 });
+  const tPage = performance.now() - t0;
+  t0 = performance.now();
+  await riffs.list({ q: 'needle' });
+  const tSearch = performance.now() - t0;
+  t0 = performance.now();
+  await riffs.facets();
+  const tFacets = performance.now() - t0;
+  t.ok(tPage < 150 && tSearch < 150 && tFacets < 150, `2,000 riffs in memory: page ${tPage.toFixed(1)} ms, search ${tSearch.toFixed(1)} ms, facets ${tFacets.toFixed(1)} ms (each under 150)`);
+}
 const FAST = process.env.FAST === '1';
 const ONLY = process.env.PEDALS ? process.env.PEDALS.split(',') : null;
 

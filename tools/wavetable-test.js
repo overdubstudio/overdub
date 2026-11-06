@@ -43,7 +43,8 @@ import { kernelSpecs } from '../app/src/kernel/host.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const t = tally('wavetable');
-import { ID, SR, BEAT, def, mtof, dB, fmt, T, CLEAN, project, play, held } from '../test/unit/_wavetable-kit.js';
+import { TABLE_NAMES } from '../app/src/devices/builtin/wavetables.js';
+import { ID, SR, BEAT, LT, def, mtof, dB, fmt, T, CLEAN, project, play, held } from '../test/unit/_wavetable-kit.js';
 
 // (run as a child of the allocation check, with --trace-gc: the kernel through the worklet's own KernelCore, notes
 // held, 20,000 blocks after a warm-up; 'null' is a kernel that does nothing, given the same params)
@@ -353,6 +354,21 @@ if (process.env.GC !== '0') {
   t.ok(first <= base + 1 && flare <= base + 1 && leak <= base + 1, `garbage collections over 53 s of audio: a do-nothing kernel ${base}, First Light ${first}, Lens Flare ${flare}, Light Leak ${leak} (the kernel adds none)`);
 }
 
+/* ------------------------------------------------------------------------------------------------ table build time */
+// (wall clock, so here: this runner retries a suite alone when load made it fail; test/unit has no retry)
+if (process.env.CPU !== '0') {
+  console.log('table build time');
+  let ms = 0;
+  for (let ti = 0; ti < TABLE_NAMES.length; ti++) {
+    const st = LT.store(),
+      t0 = performance.now();
+    st.start(ti, 0.5);
+    while (st.step());
+    ms = Math.max(ms, performance.now() - t0);
+  }
+  t.ok(ms < 60, `a whole table builds in ${ms.toFixed(1)} ms (49 frames x 11 band limits; the kernel spreads it, four frames a block)`);
+}
+
 /* ------------------------------------------------------------------------------------------------ CPU and memory */
 if (process.env.CPU !== '0') {
   console.log('CPU and memory');
@@ -377,8 +393,9 @@ if (process.env.CPU !== '0') {
 }
 
 /* ------------------------------------------------------------------------------------------------ the device check */
-// (in a child process: checkDeviceNode gives checkDevice's answer; the worklet realm is covered by tools/sounds-test.js,
-// and the face, a control for each param at 390 px, by tools/wavetable-ui-test.js)
+// (in a child process: checkDeviceNode gives checkDevice's answer; Chromium's worklet runs only the defaults, in
+// tools/sounds-test.js (checkDevice, warnings only noted); the presets are not run there. The face, a control for each
+// param at 390 px, is tools/wavetable-ui-test.js)
 {
   console.log('the device check (Node)');
   const { checkDeviceNode } = await import('../app/src/engine/node/check.js');

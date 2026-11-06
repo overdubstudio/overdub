@@ -8,6 +8,21 @@ import { dataPath } from '../app/src/engine/node/data.js';
 
 const T = tally('kernel');
 
+// ------------------------------------------------------------------ parse time (Node, wall clock)
+// Timed here, not in test/unit: this runner retries a suite alone when load made it fail; test/unit has no retry.
+{
+  const { kernelCompiler } = await import('../app/src/kernel/worklet.js');
+  const { parse } = kernelCompiler({ dsp: {}, console: null });
+  const time = (src) => { const t0 = performance.now(); const r = parse(src); return { r, ms: performance.now() - t0 }; };
+  const late = (n) => '({ create() { return { process() {} }; },\n' + 'a: 1,\n'.repeat(n) + '@ })';
+  const big = time(late(16000)), huge = time(late(60000));
+  const mid = time('({ create() { return { process() {} }; },\n' + 'a: 1,\n'.repeat(3000) + 'b: ,\n' + 'c: 1,\n'.repeat(3000) + '})');
+  T.ok(big.ms < 500 && mid.ms < 500 && huge.ms < 500 && huge.r.line === null && /SyntaxError/.test(huge.r.error), `a 16,000-line kernel with a late error parses in ${Math.round(big.ms)} ms; past 256 KB the error comes without a line (${Math.round(huge.ms)} ms)`);
+  const ok = '({ create() { return { process() {} }; } })', run = ' '.repeat(250000);
+  const m2 = time(ok + run + '/* end */'), lead = time(run + 'export default ' + ok), tail = time(ok + ' ;\n\t;  ' + run);
+  T.ok(m2.r.ok && lead.r.ok && tail.r.ok && Math.max(m2.ms, lead.ms, tail.ms) < 400, `a kernel with a 250,000-space run parses in ${Math.round(Math.max(m2.ms, lead.ms, tail.ms))} ms wherever the run is (one of 256 KB took about 45 s), and the trailing ; still goes`);
+}
+
 // ------------------------------------------------------------------ the Node check measures what a child renders (Node)
 // In Node a kernel shares the process it runs in, and could rewrite the report or print its own. checkDeviceNode runs
 // it in a child process that sends back samples only, and measures them here. Each kernel below fails the check on

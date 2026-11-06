@@ -647,7 +647,6 @@ test('hum: the hard cases', async () => {
     const au = renderVoice(makePhrase(4, { seed: 5 }));
     const tr = createPitchTracker({ sr: au.sr });
     let lastSegs = [];
-    const t0 = performance.now();
     for (let i = 0; i < au.x.length; i += 128) {
       tr.push(au.x.subarray(i, Math.min(au.x.length, i + 128)));
       tr.trace();
@@ -656,7 +655,6 @@ test('hum: the hard cases', async () => {
         lastSegs = segment(tr.frames);
       }
     }
-    const usFrame = ((performance.now() - t0) * 1000) / tr.n;
     tr.decode();
     lastSegs = segment(tr.frames);
     const off = hear(au.x, au.sr).segs;
@@ -665,10 +663,7 @@ test('hum: the hard cases', async () => {
         JSON.stringify(off.map((g) => [g.p, Math.round(g.t0 * 100)])),
       `hum live: 128-sample blocks, decoded as it goes, end on the offline notes (${lastSegs.length} notes)`,
     );
-    assert.ok(
-      usFrame < 2000,
-      `hum live: ${Math.round(usFrame)} µs of work per 10 ms frame, decodes included (${(usFrame / 100).toFixed(1)}% of real time)`,
-    );
+    // (the work per 10 ms frame, under 2000 µs, is wall clock and is timed in tools/input-test.js)
     // and the per-frame path allocates nothing: a warm tracker takes 4 s of audio without the heap growing
     v8.setFlagsFromString('--expose-gc');
     const gc = vm.runInNewContext('gc');

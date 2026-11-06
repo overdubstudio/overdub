@@ -4,6 +4,7 @@
 // and raises no errors of its own.
 import { open, tally } from './pw.js';
 import { renderSong } from '../app/src/engine/node/render.js';
+import { renderGaps } from './render-gaps.js';
 import { measure } from '../app/src/audio/measure.js';
 import { demoProject } from '../app/src/core/demo.js';
 import { getDevice } from '../app/src/devices/registry.js';
@@ -20,17 +21,23 @@ for (const tr of p.tracks) {
 const t0 = performance.now();
 const buf = renderSong(p, { from: 0, to: 32 });
 const ms = Math.round(performance.now() - t0);
+// renderSong reports a device it could not play (a track skipped, an insert bypassed); graph pedals and amps are bypassed by design
+const gaps = [renderGaps(buf)];
+
 const mix = measure({ sr: buf.sr, channels: buf.channels });
 const tracks = {};
 for (const tr of p.tracks) {
   if (!tr.clips.length) continue;
   const b = renderSong(p, { from: 0, to: 32, tracks: [tr.id] });
+  gaps.push(renderGaps(b));
   const m = measure({ sr: b.sr, channels: b.channels });
   tracks[tr.name] = { lufs: +m.lufs.toFixed(1), tp: +m.truePeak.toFixed(1) };
 }
 const r = { missing, secs: buf.length / buf.sr, ms, lufs: +mix.lufs.toFixed(1), tp: +mix.truePeak.toFixed(1), lra: +(mix.lra ?? 0).toFixed(1), bands: mix.bands, key: mix.key, tracks };
 console.log('  ..   ' + JSON.stringify(r));
 t.ok(r.missing.length === 0, 'every device in the demo resolves ' + r.missing.join(', '));
+const left = gaps.flatMap((g) => g.fatal), byDesign = [...new Set(gaps.flatMap((g) => g.graph))];
+t.ok(left.length === 0, 'the Node render leaves out no device the studio would play' + (left.length ? ': ' + left.join('; ') : ` (graph pedals and amps are bypassed in Node by design: ${byDesign.join(', ') || 'none here'})`));
 t.ok(r.secs > 20, `renders ${r.secs.toFixed(1)} s in ${r.ms} ms`);
 t.ok(r.lufs >= -12 && r.lufs <= -9.5, `the mix is ${r.lufs} LUFS (-12..-9.5)`);
 for (const [name, m] of Object.entries(r.tracks)) if (name !== 'Fireflies') t.ok(m.lufs >= -19 && m.lufs <= -13, `${name} sits at ${m.lufs} LUFS (-19..-13)`);

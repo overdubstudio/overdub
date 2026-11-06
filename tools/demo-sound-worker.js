@@ -7,6 +7,7 @@
 import { parentPort } from 'node:worker_threads';
 import { demoById } from '../app/src/core/demo.js';
 import { renderSong } from '../app/src/engine/node/render.js';
+import { renderGaps } from './render-gaps.js';
 import { measure } from '../app/src/audio/measure.js';
 
 parentPort.on('message', ({ n, id, track, sections }) => {
@@ -15,6 +16,8 @@ parentPort.on('message', ({ n, id, track, sections }) => {
     const t0 = performance.now();
     const buf = renderSong(p, track == null ? { from: 0, to: p.loop.end } : { from: 0, to: p.loop.end, tracks: [p.tracks[track].id] });
     const ms = Math.round(performance.now() - t0);
+    const gaps = renderGaps(buf).fatal;
+    if (gaps.length) throw new Error(`${id}${track == null ? '' : ' track ' + track}: the Node render left a device out (the studio would play it): ${gaps.join('; ')}`);
     if (track == null) {
       parentPort.postMessage({ n, ok: { secs: +(buf.length / buf.sr).toFixed(1), ms, mix: measure(buf) } });
       return;

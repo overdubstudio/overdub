@@ -14,17 +14,24 @@ export const plainDevice = (id) => ({
 });
 
 // -> app, with .toasts and .events (what ui.toast and ui.emit were given) beside the usual pieces.
-//   getDevice: the registry's lookup;  setup: ops dispatched as 'you' into the new store;  project: a song to start from;
+//   getDevice: the registry's lookup;  devices: the whole registry module, for tools that list devices;  setup: ops dispatched as 'you' into the new store;  project: a song to start from;
 //   extras: 'transforms' / 'arrangement', the tool installers beyond installTools;  props: anything else the app
 //   carries (share, trust, ...)
-export function fakeApp({ getDevice = plainDevice, setup = null, project = null, extras = [], props = {} } = {}) {
+export function fakeApp({
+  getDevice = plainDevice,
+  devices = { getDevice },
+  setup = null,
+  project = null,
+  extras = [],
+  props = {},
+} = {}) {
   const store = createStore(project, { getDevice });
   if (setup) store.dispatch(setup, { by: 'you' });
   const toasts = [];
   const events = [];
   const app = {
     store,
-    devices: { getDevice },
+    devices,
     ui: { emit: (n, x) => events.push([n, x]), toast: (x) => toasts.push(x) },
     toasts,
     events,

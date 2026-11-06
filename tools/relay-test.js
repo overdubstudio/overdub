@@ -7,7 +7,8 @@
 // old sessions, links and addresses age out; no log line carries a token, a secret or a session id; a browser that
 // kept a token from before the secret gets a new pair; the page's policy allows the relay; the deploy reads the origin
 // secret from Parameter Store. And the protocol's edges (sessions, batches, notifications, versions), CORS and the tab
-// reconnecting mid-session. Fake tabs (Node) cover the cases a real tab is too slow or too polite for.
+// reconnecting mid-session. Fake tabs (Node) cover the cases a real tab is too slow or too polite for. (Which origins
+// ?relay= counts on, relayOverride, is test/unit/relay-override.test.js.)
 //
 //   node tools/relay-test.js
 import crypto from 'node:crypto';
@@ -761,13 +762,6 @@ try {
   // and, for someone who had Connect on, point this tab at whatever answers on that port: there it is ignored.
   {
     const s = studio = await open('/app/', { query: 'new' });
-    const pure = await s.page.evaluate(async () => {
-      const { relayOverride: o } = await import('/app/src/agent/remote.js');
-      if (!o) return 'no relayOverride';
-      return [o('?relay=http://127.0.0.1:8787', 'localhost'), o('?relay=http://localhost:8787/x', '127.0.0.1'), o('?relay=https://relay.example', 'localhost'),
-        o('?relay=http://127.0.0.1:8787', 'overdubstudio.com'), o('?relay=http://localhost:8787', 'overdub.example'), o('?relay=javascript:alert(1)', 'localhost'), o('', 'localhost')];
-    });
-    t.ok(JSON.stringify(pure) === JSON.stringify(['http://127.0.0.1:8787', 'http://localhost:8787', 'https://relay.example', null, null, null, null]), `?relay= counts only on a local studio (localhost, 127.0.0.1): ${JSON.stringify(pure)}`);
     // the live site, played by a made-up origin served from the local server (nothing leaves this machine). Its
     // app/site-config.json is the one given, or the local server's when none is
     const PUB = 'https://overdub.example';

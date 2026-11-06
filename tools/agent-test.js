@@ -1019,6 +1019,10 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(ap.summary === '+Scribble Strip · Bass' && words.chips.some((x) => /\+Scribble Strip/.test(x)) && words.card.includes('Keys: + Snapper, threshold -80 dB'), `fresh6: the chip says "+Scribble Strip", the take card "threshold -80 dB", not device ids and param keys (${ap.summary}; ${words.chips.join(' | ')}; ${words.card.join(' | ')})`);
   // a phone: the name still wraps in its margin
   await page.setViewportSize({ width: 390, height: 844 });
+  // crossing to phone width closes the side panes (ui/shell.js), and that comes with the next frame, after
+  // setViewportSize has returned: the pane opens once the width has landed, or a slow frame shuts it again
+  await page.waitForFunction(() => window.innerWidth === 390);
+  await page.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))));
   await page.evaluate(() => { window.overdub.ui.setOpen('right', true); window.overdub.ui.show('agent'); });
   await page.waitForTimeout(500);
   const m2 = await margin();

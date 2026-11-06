@@ -1,30 +1,12 @@
 // The panes in Liner notes (design/LINER-NOTES-KIT.md): Sketch, the browser, the rack, the mixer, Notes, Beat, the
-// inspector and Reference. Static: no sparkle, no stripe, no pill in their own CSS. In the studio: Sketch's ways in are
+// inspector and Reference. In the studio (the static source checks, no sparkle, stripe or pill, are test/unit/panes-static.test.js): Sketch's ways in are
 // words (the open one in display italic), its takes are numbered rows signed "tapped by you", Keep is the one primary,
 // the tap grid draws your raw taps as ticks; bylines replace the badges; selection is reverse print; the agent pointing
 // is crop marks; empty states are a sentence and a button.
-import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { open, tally, OUTDIR } from './pw.js';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
 const T = tally('panes');
-const FILES = ['sketch', 'browser', 'rack', 'mixer', 'pianoroll', 'drumgrid', 'inspector', 'reference'];
-
-/* ---------------------------------------------------------------- static */
-for (const f of FILES) {
-  const src = fs.readFileSync(path.join(HERE, '../app/src/ui', f + '.js'), 'utf8');
-  const cssStart = src.lastIndexOf('= `');
-  const cssSrc = cssStart > 0 ? src.slice(cssStart) : '';
-  T.ok(!/icon\('sparkle'/.test(src), `${f}.js calls no sparkle icon`);
-  T.ok(!/inset\s+-?\d+(\.\d+)?px\s+0\s+0\s/.test(cssSrc) && !/inset 0 -\d+px 0 var\(--ae\)/.test(cssSrc), `${f}.js's CSS draws no inset stripe`);
-  T.ok(!/border-radius:\s*99px/.test(cssSrc), `${f}.js's CSS has no 99px pill`);
-  T.ok(!/span\.badge-(agent|human)'?\s*,\s*authorName|h\(`span\.badge-/.test(src), `${f}.js signs with byline(), not a badge span`);
-}
-const sk = fs.readFileSync(path.join(HERE, '../app/src/ui/sketch.js'), 'utf8');
-T.ok(!/fillStyle = cs\.human; g\.fillRect\(x, y, 2\.5, hh\)/.test(sk), 'Sketch\'s rolls draw no warm left edge on notes (a warm outline instead)');
-T.ok(!/animation: sk-pulse/.test(sk) && !/@keyframes sk-pulse/.test(sk), 'Sketch has no pulsing dot');
 
 /* ---------------------------------------------------------------- studio */
 const errs = [];

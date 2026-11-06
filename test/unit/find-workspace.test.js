@@ -2,10 +2,11 @@
 // browser: decideView in Node (the full studio for everyone and nothing written down; ?view=simple and ?view=round for
 // that load only; a saved simple view is read as full ("merged"); a storage that throws is survived) and the registry
 // (its ids, groups, titles and purposes are the ones in the spec, word for word; each panel feature maps to its panel;
-// every feature has search words and says where it is). That every mapped panel is one the studio registers, and
-// everything else, is in the browser: tools/find-test.js.
+// every feature has search words and says where it is), and workspace.js's own words and look, read as source. That
+// every mapped panel is one the studio registers, and everything else, is in the browser: tools/find-test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { FEATURES } from '../../app/src/ui/workspace.js';
 
 const T = { ok: (cond, msg) => (assert.ok(cond, msg), !!cond) };
@@ -178,5 +179,27 @@ test('decideView', async () => {
   T.ok(
     !threw8 && v8 === 'full',
     `storage that throws (a private window, blocked site data) doesn't throw (${threw8 || v8})`,
+  );
+});
+
+test('the copy: workspace.js carries the spec’s words and draws none of the old look', () => {
+  const ws = fs.readFileSync(new URL('../../app/src/ui/workspace.js', import.meta.url), 'utf8');
+  const want = [
+    'Find anything',
+    'Every panel is here. Type what you’re after: mixer, loop, tempo, piano roll.',
+    'Nothing called that. Ask Claude where it is.',
+    'One studio now: everything’s on screen, and Find (⌘K) gets you anywhere.',
+    'Go to',
+    'Ask Claude: “',
+    'Full studio',
+  ];
+  const miss = want.filter((w) => !ws.includes(w));
+  T.ok(
+    !miss.length,
+    `workspace.js carries the spec's words${miss.length ? ' (missing: ' + miss.map((m) => `"${m}"`).join(', ') + ')' : ''}`,
+  );
+  T.ok(
+    !/✨|sparkle|border-left:\s*[2-9]px|inset\s+\d+px\s+0\s+0|border-radius:\s*(99|50%|\d{2,}px)/.test(ws),
+    'Find draws no sparkles, no coloured left border and no pills',
   );
 });

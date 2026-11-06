@@ -4,6 +4,7 @@
 //   - decideView in Node (moved to test/unit/find-workspace.test.js): the full studio for everyone and nothing written down; ?view=simple and ?view=round for that
 //     load only; a saved simple view is read as full ("merged"); a storage that throws is survived
 //   - the registry (word for word in test/unit/find-workspace.test.js; here, that every mapped panel is one the studio registers)
+//   - the words and the look in workspace.js's source (moved to test/unit/find-workspace.test.js)
 //   - a person's browser (no webdriver), clean: the full studio, no .ws-off-* class and no hiding stylesheet, Find in
 //     view and no Simple view, More or Full studio button; the Browser and the Inspector wait behind B
 //   - someone who had the simple view saved: the full studio, and one line saying so, once
@@ -17,7 +18,6 @@
 //   - a phone: no sideways scroll; the Song menu has Find anything
 //   - the keys that moved on 2 October say so once, in one line, for all of them
 //   node tools/find-test.js      (screenshots: tools/.out/find-*.png)
-import fs from 'node:fs';
 import path from 'node:path';
 import { open, tally, OUTDIR } from './pw.js';
 
@@ -281,15 +281,6 @@ try {
       });
       T.ok(r && !r.hit.length, `${w} px wide, All off (${r?.k.join('–')}) meets nothing in the top bar${r?.hit.length ? ' (under ' + r.hit.join(', ') + ')' : ''}`);
     }
-  });
-
-  /* ---------------------------------------------------------------- the copy */
-  await section('copy', async () => {
-    const ws = fs.readFileSync(new URL('../app/src/ui/workspace.js', import.meta.url), 'utf8');
-    const want = ['Find anything', 'Every panel is here. Type what you’re after: mixer, loop, tempo, piano roll.', 'Nothing called that. Ask Claude where it is.', 'One studio now: everything’s on screen, and Find (⌘K) gets you anywhere.', 'Go to', 'Ask Claude: “', 'Full studio'];
-    const miss = want.filter((w) => !ws.includes(w));
-    T.ok(!miss.length, `workspace.js carries the spec's words${miss.length ? ' (missing: ' + miss.map((m) => `"${m}"`).join(', ') + ')' : ''}`);
-    T.ok(!/✨|sparkle|border-left:\s*[2-9]px|inset\s+\d+px\s+0\s+0|border-radius:\s*(99|50%|\d{2,}px)/.test(ws), 'Find draws no sparkles, no coloured left border and no pills');
   });
 
   /* ---------------------------------------------------------------- the agent */

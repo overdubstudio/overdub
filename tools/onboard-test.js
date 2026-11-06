@@ -8,11 +8,10 @@
 //     sets; the beat goes on a track of its own (Taps), never into Night Shift's drums, and "Play keys over it" records
 //     on a new track (Tune), never muting or covering the song's chords
 //   - the toast after each take stays off the detail pane (the Takes list's Hear, Keep and Agent) and off the tour card
-//   - the cards speak plainly: no "Now the overdub." or "That's an overdub." as a headline
+//   - (the cards speak plainly, no "Now the overdub." or "That's an overdub." as a headline: test/unit/onboard-copy.test.js)
 //   - the simple view: a first visit in a person's browser (no webdriver) opens simple on the blank sheet with no coach
 //     and no welcome card; ?coach still starts the tour there, and Tap a beat still starts the first minute
 //   node tools/onboard-test.js      (screenshots: tools/.out/onboard-*.png)
-import fs from 'node:fs';
 import { open, tally } from './pw.js';
 
 const T = tally('onboard');
@@ -440,13 +439,6 @@ try {
     await pg.evaluate(() => { const o = window.overdub; o.start?.close?.(); o.engine.stop?.(); });
     await ctx.close();
   }
-
-  /* ================================================================ plain words */
-  const copy = (() => {
-    const src = fs.readFileSync(new URL('../app/src/ui/onboard.js', import.meta.url), 'utf8');
-    return { now: /title\('Now the overdub\.'\)/.test(src), thats: /title\('That’s an overdub\.'\)/.test(src), pick: /title\('Pick a take\.'\)/.test(src), capture: /Capture is always on/.test(src) };
-  })();
-  T.ok(!copy.now && !copy.thats && !copy.pick && !copy.capture, `no tour headline is jargon ("Now the overdub.", "That’s an overdub.", "Pick a take.") and no "Capture is always on" (${JSON.stringify(copy)})`);
 
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);

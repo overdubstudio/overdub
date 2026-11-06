@@ -1,10 +1,12 @@
 // The panes in Liner notes (design/LINER-NOTES-KIT.md), read as source: no sparkle, no inset stripe, no pill, a byline
-// and not a badge. Moved intact from the static part of tools/panes-test.js; the panes in the studio stay there.
+// and not a badge, and the arranger's code no stripe, pill, sparkle or glow. Moved intact from the static parts of
+// tools/panes-test.js and tools/arrange-test.js; the panes and the arranger in the studio stay there.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checks } from './helpers/check.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FILES = ['sketch', 'browser', 'rack', 'mixer', 'pianoroll', 'drumgrid', 'inspector', 'reference'];
@@ -34,4 +36,24 @@ test("Sketch's rolls and dot", () => {
     "Sketch's rolls draw no warm left edge on notes (a warm outline instead)",
   );
   assert.ok(!/animation: sk-pulse/.test(sk) && !/@keyframes sk-pulse/.test(sk), 'Sketch has no pulsing dot');
+});
+
+test('the arranger carries no stripe, pill, sparkle, author edge or glow', () => {
+  const T = checks();
+  for (const f of ['arranger', 'arrange-kit']) {
+    const src = fs.readFileSync(path.join(HERE, '../../app/src/ui', f + '.js'), 'utf8');
+    T.ok(
+      !/inset\s+\d+(\.\d+)?px\s+0\s+0/.test(src) && !/99px|border-radius:\s*50%/.test(src),
+      `${f}: no stripe (inset Npx 0 0) and no pill (99px, 50%)`,
+    );
+    T.ok(
+      !/✦/.test(src) && !/'MUTED'/.test(src) && !/ar-auth|ar-welcome-edge|cool edge/.test(src),
+      `${f}: no ✦, no MUTED tag, no author edge`,
+    );
+    T.ok(
+      !/@keyframes ar-(pulse|flash)|Math\.sin\(now|shadowBlur = \d+ \* /.test(src),
+      `${f}: no pulse, no flash glow, no shimmer`,
+    );
+  }
+  T.done();
 });

@@ -114,3 +114,9 @@ test('a live deploy waits on the unit tests: run-all has a suite that runs them'
   assert.match(fs.readFileSync(path.join(tools, 'unit-test.js'), 'utf8'), /test\/unit\/\*\.test\.js/);
   assert.match(fs.readFileSync(path.join(WORKFLOWS, 'deploy-live.yml'), 'utf8'), /node tools\/run-all\.js/);
 });
+
+test('a live deploy fails on a browser that will not launch, rather than skipping it', () => {
+  const yml = fs.readFileSync(path.join(WORKFLOWS, 'deploy-live.yml'), 'utf8');
+  const step = yml.slice(yml.indexOf('- name: The end-to-end suite'), yml.indexOf('- name: Keep the screenshots'));
+  assert.match(step, /REQUIRE_ALL: '1'/);
+});

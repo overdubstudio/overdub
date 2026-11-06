@@ -6,10 +6,17 @@
 //
 // Only a full run (no suites named) of a clean tree says anything: a run that left suites out, or ran edits that
 // aren't in the commit, would vouch for code nobody pushed. A run with a failing suite says "failure", so the pull
-// request shows the last run, good or bad. A suite that failed beside others and passed when run again alone (run-all
-// marks it retried) counts as passed, and the description names it, so a check that keeps needing it is seen.
+// request shows the last run, good or bad. A real-time suite that failed beside others and passed when run again alone
+// (run-all marks it retried) counts as passed, and the description names it, so a check that keeps needing it is seen.
 
 export const CONTEXT = 'suites';
+
+// The suites whose checks hold to the wall clock (live meters, the scheduler), which can miss with three suites sharing
+// the machine: run-all gives these, and only these, a second go alone. Everywhere else a failure is a wrong result, and
+// a wrong result that shows up once is still wrong: it stops the run. Adding a suite here hides its intermittent
+// failures from a live deploy, so fix the check first.
+export const REAL_TIME = new Set(['jam-test.js']);
+export const mayRetry = (file) => REAL_TIME.has(file);
 
 export function suiteStatus({ results, only = [], dirty = false, sha = '', host = '' }) {
   if (only.length) return { ok: false, why: `only a full run is posted (this one named ${only.join(', ')})` };

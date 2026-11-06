@@ -1,7 +1,7 @@
 // The house riff writer [core]: a riff for a section of the song, for a guitarist to read as tab and play over it.
 // Deterministic and seeded (no Math.random): the same song, section, style, difficulty and seed give the same riff, and
 // "Another" is the next seed. Pure (no DOM): the Jam room's tab lane (ui/tabs.js), the suggest_riff tool
-// (agent/tabs-tool.js) and the demo agent all write with it, and tools/tabs-test.js holds it to what it says.
+// (agent/tabs-tool.js) and the demo agent all write with it, and test/unit/tabs.test.js holds it to what it says.
 //
 // How a riff is made. The section's chords and key come from the chord timeline (core/jam.js); the riff covers its first
 // 1-4 bars (the section's own harmonic cycle, two bars at least, unless asked). A style is a set of one-bar motifs,

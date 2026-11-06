@@ -942,8 +942,8 @@ To drive it, as an agent or by hand:
 ## For agents
 
 Everything below is `KERNEL_GUIDE` from `app/src/kernel/guide.js`, word for word: the agent layer puts it in the
-agent's context. Both examples in it pass `checkDevice` with no warnings (`tools/kernel-test.js` checks that, and that
-the guide names every `dsp` function and no others).
+agent's context. Both examples in it pass `checkDevice` with no warnings (`tools/kernel-test.js` checks that), and the
+guide names every `dsp` function and no others (`test/unit/kernel-guide.test.js` checks that).
 
 A device is a definition plus a kernel: the source of ONE JavaScript expression that evaluates to an object. It runs
 in an AudioWorklet and gets `dsp` (below) and nothing else: no DOM, fetch, Date or timers; Math.random throws. The

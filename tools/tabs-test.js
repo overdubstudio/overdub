@@ -40,7 +40,7 @@ const warmIn = (page, t, s, half = 9) => page.evaluate(([t, s, half]) => {
   for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - hr) < 40 && Math.abs(d[i + 1] - hg) < 40 && Math.abs(d[i + 2] - hb) < 40) n++;
   return n;
 }, [t, s, half]);
-if (process.env.NODE_ONLY !== '1') {
+{
   const { page, errors, close } = await boot();
   const E = (fn, arg) => page.evaluate(fn, arg);
   // (the pictures leave out the toasts, so the lane under them shows)
@@ -345,7 +345,7 @@ E |----------------|----------------|`;
 }
 
 /* ============================================================================ 7. a phone */
-if (process.env.NODE_ONLY !== '1') {
+{
   const { page, errors, close } = await boot({ width: 390, height: 844 });
   const E = (fn, arg) => page.evaluate(fn, arg);
   await page.setViewportSize({ width: 390, height: 844 });

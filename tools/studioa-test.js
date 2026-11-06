@@ -25,8 +25,9 @@
 //   levels      the GM drum phrase at house level (-18.5..-13.5 LUFS) at true peak <= -1 dBTP, every kit and preset
 //               within -20..-13 LUFS and <= -1 dBTP
 //   CPU         a busy groove (16th hats, a fill, three cymbals ringing) in CPU time against Gobo Kit's on the same notes
-//   Chromium    checkDevice (kernel/check.js) passes with no warnings at the defaults (full mode) and on every kit and
-//               preset (quick), with its declared latency where the onset lands
+//   device check  checkDevice (kernel/check.js, run by checkDeviceNode in a child process) passes with no warnings at the
+//               defaults (full mode) and on every kit and preset (quick), with its declared latency where the onset lands
+//   Chromium    the studio boots with the kit and raises no errors of its own
 //
 //   node tools/studioa-test.js            NODE_ONLY=1 skips Chromium
 import crypto from 'node:crypto';
@@ -380,34 +381,39 @@ if (process.env.CPU !== '0') {
   t.ok(mine <= gobo * 1.25, `a busy groove (${N.length} notes: 16th hats, a fill every other bar, crash, ride and china ringing) costs ${fmt(mine / (secs * 10), 2)}% of a core, Gobo Kit ${fmt(gobo / (secs * 10), 2)}% (x${fmt(mine / gobo, 2)}; budget x1.25)`);
 }
 
+// ================================================================================================ the device check
+// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs core.drumroom through it in Chromium's worklet)
+{
+  console.log('the device check (Node)');
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const { summarize } = await import('../app/src/kernel/check.js');
+  const { getDevice } = await import('../app/src/devices/registry.js');
+  const run = async (over, quick) => {
+    const d = getDevice('core.drumroom');
+    const def = { ...d, params: d.params.map((p) => (p.key in over ? { ...p, def: over[p.key] } : p)) };
+    const r = await checkDeviceNode(def, { quick });
+    return { ok: r.ok, warnings: r.warnings, errors: r.errors, s: summarize(r), lat: r.latency };
+  };
+  const full = await run({}, false);
+  t.ok(full.ok && !full.warnings.length, `checkDevice at the defaults (full mode): ${full.s}`);
+  t.ok(full.lat && full.lat.samples === full.lat.declared && full.lat.declared > 0, `the onset lands where the declared latency says (${full.lat && full.lat.samples} / ${full.lat && full.lat.declared} samples: the limiter's look-ahead)`);
+  for (const pr of kit.presets) {
+    const r = await run(pr.params, true);
+    t.ok(r.ok && !r.warnings.length, `checkDevice (quick) with preset ${pr.name}: ${r.s}`);
+  }
+  for (const k of [1, 2, 3, 4]) {
+    const r = await run({ kit: k }, true);
+    t.ok(r.ok && !r.warnings.length, `checkDevice (quick) on kit ${KITS[k]}: ${r.s}`);
+  }
+}
 // ================================================================================================ Chromium
+// (the studio boots with the kit and raises no errors of its own)
 if (!process.env.NODE_ONLY) {
-  console.log('the device check in Chromium');
+  console.log('the studio boots with the kit in Chromium');
   const { open } = await import('./pw.js');
   const { page, errors, close } = await open('/app/');
   try {
-    // the builtins register during boot (main.js imports them before it sets window.overdub): wait for that, as the
-    // other device tests do, instead of racing it from the load event
     await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
-    const run = (over, quick) => page.evaluate(async ({ over, quick }) => {
-      const { getDevice } = await import('/app/src/devices/registry.js');
-      const { checkDevice, summarize } = await import('/app/src/kernel/check.js');
-      const d = getDevice('core.drumroom');
-      const def = { ...d, params: d.params.map((p) => (p.key in over ? { ...p, def: over[p.key] } : p)) };
-      const r = await checkDevice(def, { quick });
-      return { ok: r.ok, warnings: r.warnings, errors: r.errors, s: summarize(r), lat: r.latency };
-    }, { over, quick });
-    const full = await run({}, false);
-    t.ok(full.ok && !full.warnings.length, `checkDevice at the defaults (full mode): ${full.s}`);
-    t.ok(full.lat && full.lat.samples === full.lat.declared && full.lat.declared > 0, `the onset lands where the declared latency says (${full.lat && full.lat.samples} / ${full.lat && full.lat.declared} samples: the limiter's look-ahead)`);
-    for (const pr of kit.presets) {
-      const r = await run(pr.params, true);
-      t.ok(r.ok && !r.warnings.length, `checkDevice (quick) with preset ${pr.name}: ${r.s}`);
-    }
-    for (const k of [1, 2, 3, 4]) {
-      const r = await run({ kit: k }, true);
-      t.ok(r.ok && !r.warnings.length, `checkDevice (quick) on kit ${KITS[k]}: ${r.s}`);
-    }
     const mine = errors.filter((e) => /drumroom|builtin/.test(e));
     t.ok(!mine.length, `no page errors from the kit${mine.length ? ': ' + mine.join(' | ') : ''}`);
   } finally { await close(); }

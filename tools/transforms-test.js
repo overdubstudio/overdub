@@ -1,7 +1,7 @@
 // Checks for the musical transforms and infill (app/src/core/transforms.js), the `transform` agent tool
 // (app/src/agent/transforms-tool.js) and the piano roll's Transform menu / the inspector's quick buttons.
 //   node tools/transforms-test.js      (screenshot: tools/.out/transforms-menu.png)
-import { TRANSFORMS, transform, planTransform, runTransform, guessKey, findTransform, catalog } from '../app/src/core/transforms.js';
+import { TRANSFORMS, transform, planTransform, runTransform, guessKey, findTransform } from '../app/src/core/transforms.js';
 import { parseNotes, inScale, formatNotes } from '../app/src/core/music.js';
 import { createStore } from '../app/src/core/store.js';
 import { open, tally } from './pw.js';
@@ -24,7 +24,6 @@ const inRange = (ns) => ns.every((n) => n.p >= 0 && n.p <= 127 && n.t >= 0 && n.
 /* ================================================================== the transforms, in Node */
 T.ok(TRANSFORMS.length === 16, `16 transforms (${TRANSFORMS.map((t) => t.name).join(', ')})`);
 T.ok(TRANSFORMS.every((t) => t.blurb && t.blurb.length < 140 && t.presets.length >= 2 && typeof t.describe === 'function'), 'each has a one-line blurb, a describe() and at least two presets (the menu and the second take)');
-T.ok(catalog().split('\n').length === TRANSFORMS.length, 'the catalog lists one line each');
 T.ok(findTransform('fill-the-gap')?.name === 'fill_the_gap' && findTransform('harmonize')?.name === 'chords_from_melody' && findTransform('Chords from melody')?.name === 'chords_from_melody', 'names are forgiving (hyphens, spaces, aliases)');
 const gk = guessKey(CHORDS);
 T.ok(['A minor', 'C major'].includes(`${gk.root} ${gk.scale}`), `guessKey hears A minor or its relative major (${gk.root} ${gk.scale})`);

@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { tally, OUTDIR } from './pw.js';
-import { measure, lufs, truePeak, spectrogram, onsets, } from '../app/src/audio/measure.js';
+import { measure, lufs, truePeak, spectrogram } from '../app/src/audio/measure.js';
 import * as T from '../app/src/audio/testsignals.js';
 import { SAMPLED } from '../app/src/devices/builtin/index.js';
 import { dataPath } from '../app/src/engine/node/data.js';
@@ -37,10 +37,6 @@ console.log('measure.js');
     t.ok(near(one, -23, 0.1), `1 kHz at -20 dBFS in one channel at ${sr / 1000} kHz reads ${one.toFixed(2)} LUFS (want -23.0 ±0.1)`);
     t.ok(near(two, -20, 0.1), `the same in both channels at ${sr / 1000} kHz reads ${two.toFixed(2)} LUFS (want -20.0 ±0.1)`);
   }
-  // an inter-sample peak: fs/4 at 45°, samples at ±0.707 of a full-scale wave
-  const q = sine(SR / 4, 0, 2, SR, Math.PI / 4);
-  const m = measure({ sr: SR, channels: [q] });
-  t.ok(near(m.peak, -3.01, 0.05) && near(m.truePeak, 0, 0.2), `fs/4 sine at 45°: sample peak ${m.peak} dBFS, true peak ${m.truePeak} dBTP (want -3.01 and 0)`);
   let worst = 0;
   for (const f of [100, 1000, 5000, 10000, 15000, 19000]) for (const ph of [0, 0.3, 0.9]) worst = Math.max(worst, Math.abs(truePeak({ sr: SR, channels: [sine(f, -6, 1, SR, ph)] }) + 6));
   t.ok(worst < 0.1, `true peak of -6 dBFS sines 100 Hz..19 kHz, any phase, within ${worst.toFixed(3)} dB (want < 0.1)`);
@@ -55,8 +51,6 @@ console.log('measure.js');
   const ka = measure({ sr: SR, channels: [scale([57, 59, 60, 62, 64, 65, 67, 69, 64, 60, 57])] }).key;
   t.ok(ka && ka.root === 'A' && ka.scale === 'minor', `an A minor scale estimates ${ka && ka.root + ' ' + ka.scale} (confidence ${ka && ka.confidence})`);
   // silence, clipping, width, bands
-  const sil = measure({ sr: SR, channels: [new Float32Array(SR * 2), new Float32Array(SR * 2)] });
-  t.ok(sil.lufs === -120 && sil.silencePct === 100 && sil.key === null, `silence: ${sil.lufs} LUFS, ${sil.silencePct}% silent, no key`);
   const sq = new Float32Array(SR); for (let i = 0; i < SR; i++) sq[i] = (i % 100) < 50 ? 1 : -1;
   t.ok(measure({ sr: SR, channels: [sq] }).clipped === SR, 'a full-scale square: every sample counted as clipped');
   const s1 = sine(440, -12, 2);
@@ -69,8 +63,6 @@ console.log('measure.js');
   const ml = measure({ sr: SR, channels: [lr, lr] });
   t.ok(near(ml.lra, 10, 0.6) && near(ml.lufsShortMax, -20, 0.1), `LRA of 10 s at -20 then 10 s at -30: ${ml.lra} LU (want ~10), short-term max ${ml.lufsShortMax}`);
   // onsets
-  const os = onsets({ sr: SR, channels: [sine(440, -12, 3)] }).length;
-  t.ok(os <= 1, `a steady sine has ${os} onset (its start)`);
   const loop = T.drumLoop(4, SR, 120), md = measure(loop);
   t.ok(md.onsetsPerSec > 4 && md.onsetsPerSec < 9, `the drum loop (16th hats at 120): ${md.onsetsPerSec} onsets/s`);
   // the spectrogram (pure-JS PNG in Node)

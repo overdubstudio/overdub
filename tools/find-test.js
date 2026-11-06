@@ -1,9 +1,9 @@
 // One studio and Find anything [find] (app/src/ui/workspace.js, the registry and ui.workspace; app/src/ui/workspace-view.js,
 // which view a load opens in). Nothing is put away by default: everyone gets the full studio, and Find (⌘K) reaches
 // any panel, any key's action, any sound and the guide's pages.
-//   - decideView in Node: the full studio for everyone and nothing written down; ?view=simple and ?view=round for that
+//   - decideView in Node (moved to test/unit/find-workspace.test.js): the full studio for everyone and nothing written down; ?view=simple and ?view=round for that
 //     load only; a saved simple view is read as full ("merged"); a storage that throws is survived
-//   - the registry: its ids, groups, titles and purposes are the ones in the spec, word for word (Find's Go to index)
+//   - the registry (word for word in test/unit/find-workspace.test.js; here, that every mapped panel is one the studio registers)
 //   - a person's browser (no webdriver), clean: the full studio, no .ws-off-* class and no hiding stylesheet, Find in
 //     view and no Simple view, More or Full studio button; the Browser and the Inspector wait behind B
 //   - someone who had the simple view saved: the full studio, and one line saying so, once
@@ -24,7 +24,6 @@ import { open, tally, OUTDIR } from './pw.js';
 const T = tally('find');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allowed|fonts\.g|Failed to load resource|getUserMedia|NotAllowedError|NotFoundError/i.test(e);
-const KEY = 'overdub:workspace';
 // a section that throws is a failure with its reason, and the rest still run
 const section = async (name, fn) => { try { await fn(); } catch (e) { T.ok(false, `${name}: ran to the end (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); } };
 
@@ -54,8 +53,6 @@ const SPEC = [
   ['Layout', 'panes', 'Pane buttons', 'Buttons to show and hide the side and bottom panes.'],
 ];
 const PANEL_OF = { notes: 'pianoroll', beat: 'drumgrid', grooves: 'grooves', jam: 'jam', devices: 'rack', browser: 'browser', mixer: 'mixer', compare: 'reference', history: 'history', details: 'inspector' };
-const curly = (s) => s.replace(/'/g, '’');   // the studio sets apostrophes curly
-const same = (a, b) => a === b || a === curly(b);
 
 /* ======================================================================== in the page */
 // the workspace's buttons, by their words, wherever they sit (the top bar, or the end of the agent pane's tab row)
@@ -81,43 +78,6 @@ const findInfo = () => {
     heads: [...box.querySelectorAll('.ws-head')].map((x) => x.textContent.trim()), none: box.querySelector('.ws-none')?.textContent.trim() || null,
     rows: [...box.querySelectorAll('[role=option]')].map((x) => ({ kind: x.dataset.kind, ws: x.dataset.ws, title: x.querySelector('.ws-row-t')?.textContent.trim(), key: x.querySelector('.ws-row-key')?.textContent.trim() || null, on: x.getAttribute('aria-selected') === 'true' })) };
 };
-
-/* ======================================================================== decideView, in Node */
-await section('decideView', async () => {
-  let mod = null;
-  try { mod = await import('../app/src/ui/workspace-view.js'); } catch (e) { T.ok(false, `app/src/ui/workspace-view.js loads in Node (${e.message})`); }
-  const decideView = mod?.decideView;
-  T.ok(typeof decideView === 'function', 'workspace-view.js exports decideView, a pure function Node can call');
-  if (typeof decideView !== 'function') return;
-  const mem = (init = {}) => {
-    const data = new Map(Object.entries(init).map(([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)]));
-    return { data, getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => { data.set(k, String(v)); }, removeItem: (k) => { data.delete(k); }, key: (i) => [...data.keys()][i] ?? null, get length() { return data.size; } };
-  };
-  const dv = (search, storage, webdriver) => decideView({ search, storage, webdriver });
-  const clean = dv('', mem(), false), cleanWd = dv('', mem(), true);
-  T.ok(clean.view === 'full' && !clean.persist && cleanWd.view === 'full', `a clean browser opens the full studio, with or without webdriver, and nothing is written down (${JSON.stringify(clean)})`);
-  for (const k of ['overdub:layout', 'overdub:welcomed', 'overdub:project']) {
-    const r = dv('', mem({ [k]: k === 'overdub:welcomed' ? '1' : '{}' }), false);
-    T.ok(r.view === 'full', `a browser with ${k} opens the full studio (${r.view})`);
-  }
-  const merged = dv('', mem({ [KEY]: { v: 1, view: 'simple', added: { mixer: 'you' } } }), false);
-  T.ok(merged.view === 'full' && merged.from === 'merged' && !merged.persist, `a saved simple view is read as full, from "merged" (${JSON.stringify(merged)})`);
-  const savedFull = dv('', mem({ [KEY]: { v: 1, view: 'full', added: {} } }), false);
-  T.ok(savedFull.view === 'full', 'a saved full is kept');
-  const url = dv('?view=simple', mem({ [KEY]: { v: 1, view: 'full' } }), false);
-  T.ok(url.view === 'simple' && !url.persist && url.from === 'url', `?view=simple opens the simple view for that load only, for one release (${JSON.stringify(url)})`);
-  const round = dv('?view=round', mem(), false);
-  T.ok(round.view === 'simple' && round.round === true && !round.persist, `?view=round is the Round prototype over the simple view, for that load only (${JSON.stringify(round)})`);
-  const odd = dv('?view=wide', mem(), false);
-  T.ok(odd.view === 'full', `an unknown ?view is ignored (${odd.view})`);
-  let v7 = null, threw = null;
-  try { v7 = dv('', mem({ [KEY]: 'not json' }), false).view; } catch (e) { threw = e.message; }
-  T.ok(!threw && v7 === 'full', `an unreadable saved layout doesn't throw (${threw || v7})`);
-  const broken = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }, removeItem() {}, key: () => null, length: 0 };
-  let v8 = null, threw8 = null;
-  try { v8 = dv('', broken, false).view; } catch (e) { threw8 = e.message; }
-  T.ok(!threw8 && v8 === 'full', `storage that throws (a private window, blocked site data) doesn't throw (${threw8 || v8})`);
-});
 
 /* ======================================================================== the studio */
 const s = await open('/app/', { width: 1440, height: 900 });
@@ -148,13 +108,6 @@ try {
 
   /* ---------------------------------------------------------------- the registry */
   await section('registry', async () => {
-    const F = await S.E(() => (window.overdub.ui.workspace?.FEATURES || []).map((f) => ({ id: f.id, group: f.group, title: f.title, purpose: f.purpose, the: !!f.the, aliases: f.aliases || [], panels: f.panels || [], where: f.where || '' })));
-    T.ok(F.length === SPEC.length, `the registry has the spec's ${SPEC.length} features (${F.length}: ${F.map((f) => f.id).join(', ')})`);
-    const off = SPEC.filter(([g, id, t, p]) => { const f = F.find((x) => x.id === id); return !f || f.group !== g || !same(f.title, t) || !same(f.purpose, p); }).map(([, id]) => id);
-    T.ok(!off.length, `each feature's id, group, title and purpose are the spec's, word for word${off.length ? ' (not: ' + off.join(', ') + ')' : ''}`);
-    const panelsOff = Object.entries(PANEL_OF).filter(([id, panel]) => !F.find((x) => x.id === id)?.panels.includes(panel)).map(([id, panel]) => `${id} → ${panel}`);
-    T.ok(!panelsOff.length, `the panel features map to their panels${panelsOff.length ? ' (not: ' + panelsOff.join(', ') + ')' : ''}`);
-    T.ok(F.every((f) => f.aliases.length && f.where.length > 6), 'every feature has search words and says where it is');
     const missing = await S.E((ids) => ids.filter((id) => !window.overdub.ui.panels?.has?.(id)), Object.values(PANEL_OF));
     T.ok(!missing.length, `every mapped panel is a panel the studio registers${missing.length ? ' (missing: ' + missing.join(', ') + ')' : ''}`);
   });

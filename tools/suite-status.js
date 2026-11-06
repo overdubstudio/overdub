@@ -27,3 +27,12 @@ export function suiteStatus({ results, only = [], dirty = false, sha = '', host 
   // GitHub keeps 140 characters of a status's description
   return { ok: true, state: bad.length ? 'failure' : 'success', description: description.slice(0, 140) };
 }
+
+// The lines of a failed suite worth printing: its FAIL lines first, then anything else that reads as an error. A passing
+// check is left out even when it says "no page errors", or twelve of those would use up the list before the FAIL.
+export function failureLines(out, max = 12) {
+  const lines = out.split('\n');
+  const fails = lines.filter((l) => /^\s*FAIL /.test(l));
+  const others = lines.filter((l) => /FAIL|Error|error/.test(l) && !/^\s*(FAIL|ok) /.test(l));
+  return [...fails, ...others].slice(0, max);
+}

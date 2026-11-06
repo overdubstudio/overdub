@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTEXT, suiteStatus } from './suite-status.js';
+import { CONTEXT, failureLines, suiteStatus } from './suite-status.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -68,7 +68,7 @@ await Promise.all(Array.from({ length: Math.min(PAR, queue.length) }, async () =
     const r = await run(f);
     results.push(r);
     console.log(`${r.code === 0 ? 'PASS' : 'FAIL'}  ${f.padEnd(24)} ${String(r.oks).padStart(4)} ok ${String(r.fails).padStart(3)} failed  ${r.secs}s`);
-    if (r.code !== 0) console.log(r.out.split('\n').filter((l) => /FAIL|Error|error/.test(l)).slice(0, 12).map((l) => '      ' + l).join('\n'));
+    if (r.code !== 0) console.log(failureLines(r.out).map((l) => '      ' + l).join('\n'));
     // a suite that exits non-zero without a FAIL line crashed or was killed: its last lines say how
     if (r.code !== 0 && !r.fails) console.log(`      (exit ${r.code}${r.signal ? ', ' + r.signal : ''}, no FAIL line; its last lines:)\n` + r.out.trimEnd().split('\n').slice(-30).map((l) => '      | ' + l).join('\n'));
   }
@@ -80,7 +80,7 @@ await Promise.all(Array.from({ length: Math.min(PAR, queue.length) }, async () =
 for (const r of results.filter((x) => x.code !== 0)) {
   const again = await run(r.file);
   console.log(`${again.code === 0 ? 'PASS' : 'FAIL'}  ${r.file.padEnd(24)} ${String(again.oks).padStart(4)} ok ${String(again.fails).padStart(3)} failed  ${again.secs}s  (run again, alone)`);
-  if (again.code !== 0) console.log(again.out.split('\n').filter((l) => /FAIL|Error|error/.test(l)).slice(0, 12).map((l) => '      ' + l).join('\n'));
+  if (again.code !== 0) console.log(failureLines(again.out).map((l) => '      ' + l).join('\n'));
   results[results.indexOf(r)] = { ...again, retried: true };
 }
 const bad = results.filter((r) => r.code !== 0);

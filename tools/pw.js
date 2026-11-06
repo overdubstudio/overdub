@@ -72,6 +72,27 @@ export async function openUrl(url, { width = 1440, height = 900, headed = !!proc
 // init: a script run in the page before any of its own (context.addInitScript, so on every navigation too): a
 // function, [function, arg], or the script's text. A check uses it to stand something in for the browser before the
 // studio boots (a stored setting, a wrapped API).
+// The rate Chromium's fake mic captures at. It follows the machine's real input, and with none (the Mac mini) falls back
+// to 44100 while the AudioContext runs at the output's 48000, so everything the fake says arrives resampled: peaks move
+// by half a dB and no sample is the file's. Measured once per run, on a page of this server (getUserMedia needs one).
+let captureRate = null;
+export async function fakeCaptureRate(context, base) {
+  if (captureRate) return captureRate;
+  const page = await context.newPage();
+  await page.goto(base + '/', { waitUntil: 'commit' });
+  captureRate = await page.evaluate(async () => {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const t = s.getAudioTracks()[0], r = t.getSettings().sampleRate;
+    t.stop();
+    return r;
+  });
+  await page.close();
+  return captureRate;
+}
+
+// A page with a fake mic runs its contexts at the fake's rate, so what the fake says reaches the studio untouched.
+const pinContextRate = (rate) => `{ const N = window.AudioContext; window.AudioContext = class AudioContext extends N { constructor(o = {}) { super({ sampleRate: ${Number(rate)}, ...o }); } }; }`;
+
 export async function open(route = '/app/', { width = 1440, height = 900, headed = !!process.env.HEADED, fakeAudio = null, query = '', init = null } = {}) {
   await ready;
   const srv = await startServer({ port: 0, quiet: true });
@@ -81,6 +102,7 @@ export async function open(route = '/app/', { width = 1440, height = 900, headed
   const exe = headed ? undefined : findChromium();
   const browser = await pw.chromium.launch({ headless: !headed, executablePath: exe, args });
   const context = await browser.newContext({ viewport: { width, height }, permissions: ['microphone'] });
+  if (fakeAudio) await context.addInitScript({ content: pinContextRate(await fakeCaptureRate(context, srv.url)) });
   if (init) {
     if (typeof init === 'string') await context.addInitScript({ content: init });
     else if (Array.isArray(init)) await context.addInitScript(init[0], init[1]);

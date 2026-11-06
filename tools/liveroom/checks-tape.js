@@ -32,6 +32,7 @@
 //  11. leaving the room stops the tape it started; no console or page errors
 import { openRoom, alignCount, history, press } from './harness.js';
 import { session } from './fake.js';
+import { fakeCaptureRate } from '../pw.js';
 
 export const name = 'tape';
 export const pages = true;
@@ -49,10 +50,10 @@ export async function run(T, ctx) {
 }
 
 async function rolling(T, ctx) {
-  // the context's rate on this machine (the output device's), so the fake needs no resampling on its way in
+  // the fake mic's rate on this machine (pw.js pins the page's context to it), so the fake needs no resampling on its way in
   const probe = await openRoom('/app/', { ready: false });
   let sr = 48000;
-  try { sr = await probe.E(async () => { const c = new AudioContext(); const r = c.sampleRate; await c.close(); return r; }); } finally { await probe.close(); }
+  try { sr = await fakeCaptureRate(probe.context, probe.base); } finally { await probe.close(); }
   const fake = session({ bpm: BPM, lead: 5, tail: 8, sr, parts: [{ kind: 'riff', riff: RIFF, bar: 1, passes: 2, seed: 21 }] });
   const src = fake.wav.channels[0], bar1 = fake.timeline.bar1;
   // the 16-bit samples the file holds (fake.js writeWav's rounding)

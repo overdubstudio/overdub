@@ -273,6 +273,8 @@ try {
     // the scripts, dry: a stub aws comes first on PATH and there are no credentials, so nothing here reaches AWS
     const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'next-dry-'));
     fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    // and a stub gzip: compressing every kit (about 1 GB) was 97% of a dry deploy, and nothing goes up to need it
+    fs.writeFileSync(path.join(stub, 'gzip'), '#!/bin/sh\necho "gzip was called: $*" >&2\nexit 97\n', { mode: 0o755 });
     const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', NEXT_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
     // DEPLOY_ENV=/dev/null: the scripts would otherwise read deploy/.env;
     // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from REF's deploy/live-config.json;
@@ -281,7 +283,7 @@ try {
     // checks the shelf's part)
     for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF',
       'LIVE_DISTRIBUTION', 'LOCAL_LIVE_DEPLOY', 'GITHUB_ACTIONS']) delete env[k];
-    // 600 s each: a dry deploy still gzips every kit (about 1 GB), which took over 120 s with the machine busy
+    // 600 s each: a dry deploy still hashes and unpacks every kit (about 1 GB)
     const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; const r = spawnSync('bash', [path.join(ROOT, script), ...args], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 600000 }); return { status: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
     const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
 
@@ -319,6 +321,7 @@ try {
     const next = run('deploy/deploy.sh', '--skip-tests', '--next', 'HEAD~1');
     const live = run('deploy/deploy.sh', '--skip-tests');
     t.ok(clean(next) && clean(live), `deploy/deploy.sh with DRY_RUN=1, live and --next HEAD~1, runs without calling AWS (exit ${live.status}, ${next.status})`);
+    t.ok(!/gzip was called/.test(next.out + live.out), 'a dry deploy compresses no kit (it says what would go up, and sends nothing)');
     t.ok(new RegExp(`^next: ${ref} \\(HEAD~1\\)`, 'm').test(next.out) && /\+ aws s3 sync \S+ s3:\/\/next\.overdubstudio\.com --only-show-errors --delete/.test(next.out)
       && /\+ aws cloudfront create-invalidation --distribution-id \S+ --paths \/\*/.test(next.out) && !/s3:\/\/overdubstudio\.com/.test(next.out),
       `deploy --next ships the named ref (${ref}) to the preview bucket only, and invalidates`);

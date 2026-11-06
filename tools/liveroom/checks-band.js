@@ -37,6 +37,7 @@ import { sha256 } from '../../app/src/engine/node/io.js';
 import { measure, lufs } from '../../app/src/audio/measure.js';
 import { checkTargets, TARGETS } from '../../app/src/audio/targets.js';
 import { run as runAmp, metalDI, guitarBands } from '../amp-scenes.js';
+import { createHash } from 'node:crypto';
 import { riffDI, riffOf, SR } from './fake.js';
 import { roomSong, clean, stem, fixtureRiff, readFixtures, bareSong } from './band-scene.js';
 import { open } from '../pw.js';
@@ -289,7 +290,13 @@ export async function run(T, ctx) {
   /* ---------------------------------------------------------------------------------------------- 8. the amp */
   {
     const def = getDevice('core.stack'), norm = (x, db) => { let pk = 0; for (const v of x) pk = Math.max(pk, Math.abs(v)); return x.map((v) => (v * 10 ** (db / 20)) / pk); };
-    const dis = ['chords', 'chug'].map((k) => norm(metalDI(k), REF_PEAK)), loud = (params, x) => lufs({ sr: SR, channels: [runAmp(def, params, x)[0]] });
+    const dis = ['chords', 'chug'].map((k) => norm(metalDI(k), REF_PEAK));
+    // (the same samples through the same params are the same render: the checks below ask for many of them twice)
+    const heard = new Map(), loud = (params, x) => {
+      const key = `${JSON.stringify(params)} ${createHash('sha256').update(x).digest('hex')}`;
+      if (!heard.has(key)) heard.set(key, lufs({ sr: SR, channels: [runAmp(def, params, x)[0]] }));
+      return heard.get(key);
+    };
     const ref = dis.map((x) => loud(rigChain('modern')[0].params, x));
     const off = Object.keys(RIGS).map((id) => ({ id, d: dis.map((x, k) => loud(rigChain(id)[0].params, x) - ref[k]) }));
     T.ok(off.every((o) => Math.abs(o.d[0] + o.d[1]) / 2 <= 0.25 && o.d.every((d) => Math.abs(d) <= 0.75)), `every rig comes out as loud as Modern (and so as the place's first), within a quarter dB on the two DIs together (${off.map((o) => `${RIGS[o.id].name} ${o.d.map(f1).join('/')}`).join(', ')} dB)`);
@@ -378,7 +385,7 @@ export async function run(T, ctx) {
       T.ok(Math.abs(steps.simpler + 2) <= 0.75 && Math.abs(steps.busier - 2) <= 0.75 && Math.abs(steps.softer + 2) <= 0.75 && Math.abs(steps.louder - 2) <= 0.75,
         `${P.name}, each step moves the drums about 2 LU (from ${n1(dz)} LUFS): Simpler ${f1(steps.simpler)}, Busier ${f1(steps.busier)}, Softer ${f1(steps.softer)}, Louder ${f1(steps.louder)}`);
       // determinism: the same song renders the same samples twice
-      const a = sha256(renderSong(S.p, { from: 0, to: 16, tail: 0.5, assets: S.assets })), b = sha256(renderSong(roomSong('metal').p, { from: 0, to: 16, tail: 0.5, assets: S.assets }));
+      const a = sha256(renderSong(S.p, { from: 0, to: 16, tail: 0.5, assets: S.assets })), b = sha256(renderSong(roomSong('metal', { fresh: true }).p, { from: 0, to: 16, tail: 0.5, assets: S.assets }));
       T.ok(a === b, `the same song (built again from the same takes) renders the same samples (${a.slice(0, 12)})`);
     }
   }

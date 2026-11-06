@@ -23,7 +23,7 @@ import { levelVerdict, tuningsFor, tuningName, leanLine } from '../../app/src/ui
 import { LINES } from '../../app/src/core/liveroom/lines/soundcheck.js';
 import { sticksSamples, clickSamples, STICKS, CLICK } from '../../app/src/engine/click.js';
 import { SR, riffDI, mix, session } from './fake.js';
-import { openRoom } from './harness.js';
+import { openRoom, atOnce } from './harness.js';
 
 export const name = 'input';
 export const pages = true;
@@ -38,8 +38,8 @@ export async function run(T, ctx) {
   const part = process.env.PART || '';
   node(T);
   if (!ctx.pages) return;
-  if (!part || part === 'soundcheck') { await soundcheck(T, ctx); await together(T); }
-  if (!part || part === 'deck') await deckPage(T, ctx);
+  // (three browsers that share nothing, side by side; each makes its fake before its first await: harness.js atOnce)
+  await atOnce(T, [...(!part || part === 'soundcheck' ? [(T) => soundcheck(T, ctx), (T) => together(T)] : []), ...(!part || part === 'deck' ? [(T) => deckPage(T, ctx)] : [])]);
 }
 
 /* ------------------------------------------------------------------ 1. Node */

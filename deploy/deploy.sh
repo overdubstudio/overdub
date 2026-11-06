@@ -230,10 +230,12 @@ trap 'rm -rf "$STAGE" "$PIN" "$KITTMP"' EXIT
 for name in $HAVE; do
   for ext in odkz odk; do
     if [ -z "$DRY" ] && aws s3api head-object --bucket "$BUCKET" --key "app/kits/$name.$ext" >/dev/null 2>&1; then echo "kit $name.$ext: already up"; continue; fi
-    gzip -9 -n -c "app/kits/$name.$ext" > "$KITTMP/$name.$ext"
+    # a dry run plans the upload without compressing: nothing reads the copy, and gzip -9 was nearly all of its time
+    [ -n "$DRY" ] || gzip -9 -n -c "app/kits/$name.$ext" > "$KITTMP/$name.$ext"
     x aws s3 cp "$KITTMP/$name.$ext" "s3://$BUCKET/app/kits/$name.$ext" --only-show-errors \
       --content-type 'application/octet-stream' --content-encoding gzip --cache-control 'public, max-age=31536000, immutable'
-    echo "uploaded kit $name.$ext ($(du -h "$KITTMP/$name.$ext" | cut -f1) gzipped)"
+    if [ -n "$DRY" ]; then echo "dry run: kit $name.$ext goes up gzipped"
+    else echo "uploaded kit $name.$ext ($(du -h "$KITTMP/$name.$ext" | cut -f1) gzipped)"; fi
   done
 done
 

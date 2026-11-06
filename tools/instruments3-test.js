@@ -15,7 +15,7 @@
 //             tenor at E3, AH and EH); vibrato in the pitch track at 4.5-6.5 Hz; an M onset starts quieter and darker
 //             than the vowel; a D onset has its burst (energy over 2.5 kHz in the first 40 ms)
 //
-// Then each passes checkDevice (kernel/check.js, full mode) in Chromium with no warnings.
+// Then each passes checkDevice (kernel/check.js, full mode, run by checkDeviceNode in a child process) with no warnings.
 //   node tools/instruments3-test.js            NODE_ONLY=1 skips the browser, CPU=0 the timing
 import crypto from 'node:crypto';
 import { tally } from './pw.js';
@@ -253,27 +253,32 @@ if (process.env.CPU !== '0') {
   for (const id of IDS) { const cap = BUDGET[id] ?? 6; t.ok(best[id] * scale <= cap, `${id}: 16 held voices at ${fmt(best[id] * scale, 2)}% of a core (budget ${cap}%)`); }
 }
 
-// ------------------------------------------------------------------------------------------------ the device check, in Chromium
+// ------------------------------------------------------------------------------------------------ the device check (Node)
+// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs every built-in through checkDevice in Chromium's worklet)
+{
+  console.log('checkDevice in a child process (full mode)');
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const { summarize } = await import('../app/src/kernel/check.js');
+  const { getDevice } = await import('../app/src/devices/registry.js');
+  for (const id of IDS) {
+    const def = getDevice(id);
+    const rep = await checkDeviceNode(def);
+    const r = { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed, hash: def.hash, lufs: rep.level?.lufs, deltaLU: rep.level?.deltaLU, truePeak: rep.truePeak, cpu: rep.cpu?.pct, tail: rep.tail?.seconds };
+    t.ok(r.ok, `${id}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);
+    t.ok(!r.warnings.length, `${id}: no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
+    t.ok(!(r.failed && r.failed.length), `${id}: every param at min and max renders (worst raw peak ${r.worst} dBFS)`);
+    const r1 = (x) => (x == null ? x : Math.round(x * 10) / 10);
+    if (process.env.REPORT) console.log(`  ${JSON.stringify(id)}: ${JSON.stringify({ hash: r.hash, kind: 'instrument', ok: r.ok, lufs: r1(r.lufs), deltaLU: r1(r.deltaLU), truePeak: r1(r.truePeak), cpu: r1(r.cpu), tail: r1(r.tail), warnings: r.warnings.length })},`);
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ the faces, in Chromium
 if (!process.env.NODE_ONLY) {
-  console.log('checkDevice in Chromium (full mode)');
+  console.log('the faces and the page, in Chromium');
   const { open } = await import('./pw.js');
   const { page, errors, close } = await open('/app/');
   try {
-    for (const id of IDS) {
-      const r = await page.evaluate(async (id) => {
-        const { getDevice } = await import('/app/src/devices/registry.js');
-        const { checkDevice, summarize } = await import('/app/src/kernel/check.js');
-        await import('/app/src/devices/builtin/index.js');
-        const def = getDevice(id);
-        const rep = await checkDevice(def);
-        return { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed, hash: def.hash, lufs: rep.level?.lufs, deltaLU: rep.level?.deltaLU, truePeak: rep.truePeak, cpu: rep.cpu?.pct, tail: rep.tail?.seconds };
-      }, id);
-      t.ok(r.ok, `${id}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);
-      t.ok(!r.warnings.length, `${id}: no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
-      t.ok(!(r.failed && r.failed.length), `${id}: every param at min and max renders (worst raw peak ${r.worst} dBFS)`);
-      const r1 = (x) => (x == null ? x : Math.round(x * 10) / 10);
-      if (process.env.REPORT) console.log(`  ${JSON.stringify(id)}: ${JSON.stringify({ hash: r.hash, kind: 'instrument', ok: r.ok, lufs: r1(r.lufs), deltaLU: r1(r.deltaLU), truePeak: r1(r.truePeak), cpu: r1(r.cpu), tail: r1(r.tail), warnings: r.warnings.length })},`);
-    }
+    await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
     // the faces fit a phone
     await page.setViewportSize({ width: 390, height: 844 });
     const faces = await page.evaluate(async (ids) => {

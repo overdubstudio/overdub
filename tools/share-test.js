@@ -9,7 +9,8 @@
 //      doesn't trust are held (not registered, silent or bypassed, none of their code on the audio thread) and the
 //      banner asks; Keep them off keeps them held (and the song asks again next time), Make it yours keeps what was
 //      decided, Play them plays them with no reload and the same link doesn't ask again; the first run of this version
-//      trusts the songs this browser kept, once, and the links it made before then.
+//      trusts the songs this browser kept, once, and the links it made before then. (The trusted set in Node, SHA-256,
+//      the once-only migration and heldIn, is test/unit/trust-set.test.js.)
 //   4. "Take one", the coach: off under webdriver unless forced; each step advances on the real action (the
 //      transport, the capture log, Keep, the demo agent's cards, a pick), skip and close remembered.
 //   node tools/share-test.js      (screenshots: tools/.out/share-*.png)
@@ -435,31 +436,6 @@ const probe = (page) => page.evaluate(async () => {
 });
 const tap = async (page, sel) => { const el = await page.$(sel); if (!el) return false; await el.click(); await page.waitForTimeout(250); return true; };
 const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).hash;
-{
-  // the trusted set in Node: SHA-256 as node:crypto has it, a migration that runs once, the studio's own code trusted
-  // without being stored, and what a song holds
-  const tr = await import('../app/src/devices/trust.js').catch(() => null);
-  const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); } }; };
-  if (!tr) T.ok(false, 'devices/trust.js is there');
-  else {
-    const texts = ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'a'.repeat(64), 'a'.repeat(119), 'Café ☕ 東京 🎹', MARK_INST, 'x'.repeat(256 * 1024)];
-    T.ok(texts.every((s) => tr.sha256(s) === sha(s)), `sha256 is SHA-256 of the UTF-8 text, as node:crypto has it (${texts.length} texts, 0 to 256 KB)`);
-    const st = mem();
-    const t1 = tr.createTrust({ storage: st, shipped: () => ['SHIPPED'] });
-    const m1 = t1.migrate([{ devices: { a: { kernel: 'KERNEL-1' } } }, null, { devices: [] }]);
-    const t2 = tr.createTrust({ storage: st, shipped: () => ['SHIPPED'] });
-    const m2 = t2.migrate([{ devices: { b: { kernel: 'KERNEL-2' } } }]);
-    const kept = JSON.parse(st.getItem(tr.TRUST_KEY)).sha256;
-    T.ok(m1.ran && m1.added === 1 && !m2.ran && t2.trusts('KERNEL-1') && !t2.trusts('KERNEL-2') && t2.trusts('SHIPPED') && same(kept, [sha('KERNEL-1')]),
-      `the migration runs once (then ${m2.ran ? 'again' : 'never again'}); the studio's own code is trusted without being stored; stored: { sha256: [${kept.length}] }`);
-    t2.allow(['KERNEL-2', sha('KERNEL-3')]);
-    const song = { tracks: [{ id: 't_a', name: 'A', instrument: { device: 'x.inst' }, inserts: [{ id: 'fx_1', device: 'x.fx' }] }], master: { inserts: [{ id: 'fx_2', device: 'x.fx' }] },
-      devices: { 'x.inst': { id: 'x.inst', name: 'Inst', kind: 'instrument', kernel: 'KERNEL-2', by: 'guest:sam' }, 'x.fx': { id: 'x.fx', name: 'Fx', kind: 'effect', kernel: 'KERNEL-4', by: 'claude', via: 'guest:sam' } } };
-    const held = tr.heldIn(song, (h) => tr.createTrust({ storage: st }).has(h));
-    T.ok(held.length === 1 && held[0].id === 'x.fx' && held[0].hash === sha('KERNEL-4') && held[0].via === 'guest:sam' && same(held[0].uses.map((u) => u.track), ['A', 'Master']) && tr.createTrust({ storage: st }).trusts('KERNEL-3'),
-      'allow stores a kernel or a hash; heldIn lists what a song brings that isn\'t trusted, with where it plays');
-  }
-}
 {
   const { page, base, errors, close, shot } = await open('/app/', { query: 'new' });
   await ready(page);

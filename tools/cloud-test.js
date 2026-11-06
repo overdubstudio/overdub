@@ -4,7 +4,8 @@
 // Off without a site config; signing in with Google (the popup, the done page's message, the poll); the balance in the head; the price on screen before
 // any ask opens (typed, a suggestion, the tour, a direct send); a Claude of your own first; an ask streaming tool calls
 // that run here, signed Claude; Stop, retries, out of credits, credits back on undo; free moves; nothing secret kept in
-// the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel). Songs in the
+// the browser; the prompt bundle's version; back from a checkout (/app/?plus=done, /app/?plus=cancel; the address-bar
+// part on its own is test/unit/checkout-return.test.js). Songs in the
 // account (ui/songs.js, against the fake's /v1/songs): off without them, signed out, no Plus, Save to cloud and the save
 // as you work, a newer save made elsewhere, open, earlier saves, delete, a write whose answer is lost sent again as the
 // same write, a song put aside and Undo, two tabs on one song, and My songs on a phone; Top up's plans, "on" beside the
@@ -720,20 +721,6 @@ const fake = await fakeCloud();
 /* ------------------------------------------------------------------ 6. back from a checkout: /app/?plus=done, /app/?plus=cancel */
 {
   const { page, errors, close, shot } = await studio(fake);
-  // the address-bar part, on its own: plus and ref leave, the rest of the query and the #hash stay
-  const strip = await page.evaluate(async () => {
-    const { takeCheckoutReturn: takePaidReturn } = await import('/app/src/agent/cloud-panel.js');
-    const at = (u) => { const url = new URL(u); let now = u; return { win: { location: url, history: { state: null, replaceState: (_s, _t, to) => { now = new URL(to, url).href; } } }, now: () => now }; };
-    const a = at('http://localhost/app/?demo&plus=done&ref=chk_9#s=abc'); const ra = takePaidReturn(a.win);
-    const b = at('http://localhost/app/?plus=done&ref=../../x'); const rb = takePaidReturn(b.win);
-    const c = at('http://localhost/app/?demo&plus=cancel#s=abc'); const rc = takePaidReturn(c.win);
-    const d = at('http://localhost/app/?plus=other'); const rd = takePaidReturn(d.win);
-    return { ra, a: a.now(), rb, b: b.now(), rc, c: c.now(), rd, d: d.now() };
-  });
-  t.ok(strip.ra?.ref === 'chk_9' && strip.a === 'http://localhost/app/?demo#s=abc' && strip.rb?.ref === null && strip.b === 'http://localhost/app/',
-    `?plus=done&ref= is read once and leaves the address bar; the rest of the query and the hash stay; a bad ref is dropped (${strip.a} | ${strip.b})`);
-  t.ok(strip.rc?.cancelled === true && !('ref' in strip.rc) && strip.c === 'http://localhost/app/?demo#s=abc' && strip.rd === null && strip.d === 'http://localhost/app/?plus=other',
-    `?plus=cancel is read once and leaves the address bar the same way; any other plus= is left alone (${strip.c} | ${strip.d})`);
   await chooseCloud(page);
   await signInWithGoogle(page, fake, 'pat@example.com');
   fake.grant('pat@example.com', 30);

@@ -11,8 +11,8 @@
 //      exactly; everything is still there after a reload
 //   3. the rack: save, list, rename, load (ops for the song only: the rack as it was), remove and restore, kept across a
 //      reload
-//   (IndexedDB refused, a private window: both stores keep the visit's in memory and say so, in Node now:
-//   test/unit/liveroom-library-refused.test.js)
+//   4. IndexedDB refused (a private window), the one browser run with it gone: both stores fall back to memory with no
+//      page errors. That they keep the visit's and say so is test/unit/liveroom-library-refused.test.js's.
 import { open } from '../pw.js';
 import { houseStacks, loadOps, stackOf } from '../../app/src/core/liveroom/stacks.js';
 import { createStore } from '../../app/src/core/store.js';
@@ -59,7 +59,7 @@ export async function run(T, ctx) {
   if (!ctx.pages) return;
 
   // 2. the library, on disk
-  const s = await open('/');
+  let s = await open('/');
   try {
     const E = (fn, arg) => s.page.evaluate(fn, arg);
     const start = await E(async () => {
@@ -253,5 +253,20 @@ export async function run(T, ctx) {
     });
     T.ok(kept.count === N + 1 && kept.first.join() === 'Gallop' && kept.rack === 2, `after a reload: ${kept.count} riffs (the full disk’s one was the visit’s), Gallop among them, and the rack’s ${kept.rack} stacks`);
     T.ok(!s.errors.length, `no page errors${s.errors.length ? ': ' + s.errors.slice(0, 3).join(' | ') : ''}`);
+  } finally { await s.close(); }
+
+  // 4. IndexedDB refused
+  s = await open('/', { init: () => { try { Object.defineProperty(window, 'indexedDB', { value: undefined, configurable: true }); } catch { /* fine */ } } });
+  try {
+    const refused = await s.page.evaluate(async () => {
+      const riffs = await import('/app/src/ui/liveroom/riffs-db.js');
+      const rack = await import('/app/src/ui/liveroom/rack-db.js');
+      await riffs.add({ audio: { sr: 48000, channels: [new Float32Array(4800)] }, tempo: 120, beats: 1 });
+      await rack.save([{ device: 'core.stack', params: {}, on: true }]);
+      await riffs.list();
+      await rack.list();
+      return { rw: await riffs.where(), kw: await rack.where() };
+    });
+    T.ok(refused.rw === 'memory' && refused.kw === 'memory' && !s.errors.length, `IndexedDB refused: no page errors${s.errors.length ? ': ' + s.errors.slice(0, 3).join(' | ') : ''}`);
   } finally { await s.close(); }
 }

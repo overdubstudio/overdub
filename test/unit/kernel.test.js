@@ -1,9 +1,11 @@
-// The kernel platform's Node-only checks (kernel/worklet.js's parser, kernel/check.js's level advice, kernel/dsp.js's
-// stdlib). Moved intact from tools/kernel-test.js; the worklet host, the sandbox and the reference kernels stay there
+// The kernel platform's Node-only checks (kernel/worklet.js's parser, kernel/host.js's compileKernel, kernel/check.js's
+// level advice, kernel/dsp.js's stdlib). Moved intact from tools/kernel-test.js; the worklet host, the sandbox and the reference kernels stay there
 // (they need Chromium), and so does checkDeviceNode (it needs --permission and a child process).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as dspLib from '../../app/src/kernel/dsp.js';
+import { compileKernel } from '../../app/src/kernel/host.js';
+import { checks } from './helpers/check.js';
 
 const K = { dsp: dspLib };
 
@@ -253,4 +255,27 @@ test('the dsp stdlib', () => {
     Math.abs(d.lfoSync.phase - 0.5) < 1e-9 && Math.abs(d.lfoSync.hz - 0.5) < 1e-9,
     'lfo.sync locks to the song (beat 2 of a 4-beat cycle = phase 0.5)',
   );
+});
+
+test('compileKernel, on the main thread: a parse only', () => {
+  const T = checks();
+  const syn = compileKernel(
+    `({\n  create({ dsp }) {\n    return {\n      process(L, R, n) { for (let i = 0; i < n; i++ { L[i] = 0; } },\n    };\n  },\n})`,
+    'effect',
+  );
+  const noCreate = compileKernel('({ make() {} })', 'effect');
+  const notObj = compileKernel('42', 'effect');
+  const empty = compileKernel('', 'effect').error;
+  const semi = compileKernel('({ create() { return { process() {} }; } });\n', 'effect').ok;
+  const exp = compileKernel('export default ({ create() { return { process() {} }; } })', 'effect').ok;
+  T.ok(
+    !syn.ok && syn.line === 4 && /SyntaxError/.test(syn.error),
+    `a syntax error is refused with its line: "${syn.error}"`,
+  );
+  T.ok(
+    noCreate.ok && notObj.ok && !('kernel' in noCreate) && /empty/.test(empty),
+    `compileKernel is a parse only: it passes what parses, returns no kernel object, and refuses an empty source ("${empty}")`,
+  );
+  T.ok(semi && exp, 'a trailing semicolon and "export default" are tolerated');
+  T.done();
 });

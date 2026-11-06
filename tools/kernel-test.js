@@ -102,13 +102,8 @@ try {
   console.log('compile');
   const c1 = await page.evaluate(async () => {
     const { host } = window.K;
-    const syn = host.compileKernel(`({\n  create({ dsp }) {\n    return {\n      process(L, R, n) { for (let i = 0; i < n; i++ { L[i] = 0; } },\n    };\n  },\n})`, 'effect');
-    const noCreate = host.compileKernel('({ make() {} })', 'effect');
-    const notObj = host.compileKernel('42', 'effect');
-    const empty = host.compileKernel('', 'effect');
-    const semi = host.compileKernel('({ create() { return { process() {} }; } });\n', 'effect');
-    const exp = host.compileKernel('export default ({ create() { return { process() {} }; } })', 'effect');
-    // the worklet refuses too: ready rejects with the message
+    // (compileKernel on the main thread, a parse only, is test/unit/kernel.test.js's) the worklet refuses too: ready
+    // rejects with the message
     const c = new OfflineAudioContext(2, 4800, 48000);
     const inst = await host.kernelInstance(c, { id: 'x.bad', kind: 'effect', params: [], kernel: '({ create( { return {} } })' }, {});
     let rej = null; try { await inst.ready; } catch (e) { rej = e.message; }
@@ -124,15 +119,12 @@ try {
     };
     const wNoCreate = await shapeErr('({ make() {} })'), wNotObj = await shapeErr('42'), wPoly = await shapeErr('({ poly: 99, create() { return { voice() {} }; } })', 'instrument');
     const repShape = await window.K.check.checkDevice({ id: 'x.nocreate', kind: 'effect', params: [], kernel: '({ make() {} })' }, { quick: true });
-    return { syn, noCreate, notObj, empty: empty.error, semi: semi.ok, exp: exp.ok, rej, rej2, rej3, rep: { ok: rep.ok, errors: rep.errors, compile: rep.compile },
+    return { rej, rej2, rej3, rep: { ok: rep.ok, errors: rep.errors, compile: rep.compile },
       wNoCreate, wNotObj, wPoly, repShape: { ok: repShape.ok, errors: repShape.errors, compile: repShape.compile } };
   });
-  T.ok(!c1.syn.ok && c1.syn.line === 4 && /SyntaxError/.test(c1.syn.error), `a syntax error is refused with its line: "${c1.syn.error}"`);
-  T.ok(c1.noCreate.ok && c1.notObj.ok && !('kernel' in c1.noCreate) && /empty/.test(c1.empty), `compileKernel is a parse only: it passes what parses, returns no kernel object, and refuses an empty source ("${c1.empty}")`);
   T.ok(/create/.test(c1.wNoCreate) && /object/.test(c1.wNotObj) && /poly must be an integer/.test(c1.wPoly), `shape errors come from the worklet and say what is wrong: "${c1.wNoCreate}" / "${c1.wNotObj}" / "${c1.wPoly}"`);
   T.ok(!c1.repShape.ok && !c1.repShape.compile.ok && /^compile: .*create/.test(c1.repShape.errors[0]) && /create/.test(c1.repShape.compile.error), `checkDevice reports a worklet shape error as a compile error: "${c1.repShape.errors[0]}"`);
-  T.ok(c1.semi && c1.exp, 'a trailing semicolon and "export default" are tolerated');
-  T.ok(c1.rej && /SyntaxError/.test(c1.rej), `the worklet refuses it too: ready rejects with "${c1.rej}"`);
+  T.ok(c1.rej && /SyntaxError/.test(c1.rej), `the worklet refuses a syntax error: ready rejects with "${c1.rej}"`);
   T.ok(c1.rej2 && /process is missing/.test(c1.rej2) && c1.rej3 && /without release/.test(c1.rej3), `create()/voice() shape errors reject ready: "${c1.rej2}" / "${c1.rej3}"`);
   T.ok(!c1.rep.ok && c1.rep.compile.line === 3 && /line 3/.test(c1.rep.errors[0]), `checkDevice refuses it with the line: "${c1.rep.errors[0]}"`);
 

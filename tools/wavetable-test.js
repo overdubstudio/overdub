@@ -24,8 +24,9 @@
 //   allocation    a long render collects no more garbage than a kernel that does nothing (with the same params)
 //   CPU, memory   16 held notes at the defaults within budget (scaled to an idle core); one instance's buffers
 //
-// Then in Chromium: the device check (kernel/check.js), full at the defaults and quick on every preset; the face.
-//   node tools/wavetable-test.js        NODE_ONLY=1 skips the browser; CPU=0 the timing; GC=0 the allocation count
+// Then the device check (kernel/check.js, run by checkDeviceNode in a child process), full at the defaults and quick on
+// every preset. The face is in tools/wavetable-ui-test.js.
+//   node tools/wavetable-test.js        CPU=0 skips the timing; GC=0 the allocation count
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -513,44 +514,24 @@ if (process.env.CPU !== '0') {
   t.ok(mb > 1 && mb < 32, `one instance holds ${fmt(mb, 1)} MB of buffers (want under 32)`);
 }
 
-/* ------------------------------------------------------------------------------------------------ in Chromium */
-if (!process.env.NODE_ONLY) {
-  console.log('in Chromium: the device check, the face');
-  const { open } = await import('./pw.js');
-  const { page, errors, close } = await open('/app/');
-  try {
-    const r = await page.evaluate(async () => {
-      const { getDevice } = await import('/app/src/devices/registry.js');
-      const { checkDevice, summarize } = await import('/app/src/kernel/check.js');
-      await import('/app/src/devices/builtin/index.js');
-      const def = getDevice('core.wavetable');
-      const full = await checkDevice(def);
-      const presets = [];
-      for (const pr of def.presets) {
-        const rep = await checkDevice({ ...def, params: def.params.map((p) => ({ ...p, def: pr.params[p.key] })) }, { quick: true });
-        presets.push({ name: pr.name, ok: rep.ok, errors: rep.errors, cpu: rep.cpu && rep.cpu.pct });
-      }
-      return { ok: full.ok, sum: summarize(full), warnings: full.warnings, errors: full.errors, cpu: full.cpu && full.cpu.pct, failed: full.extremes && full.extremes.failed, presets };
-    });
-    t.ok(r.ok, `checkDevice (full) at the defaults: ${r.sum}`);
-    t.ok(!r.warnings.length, `no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
-    t.ok(!(r.failed && r.failed.length), 'every param at its min and its max renders (the check\'s 230 extreme cases)');
-    const bad = r.presets.filter((p) => !p.ok);
-    t.ok(!bad.length, `checkDevice (quick) passes on all ${r.presets.length} presets (cpu ${Math.min(...r.presets.map((p) => p.cpu))}-${Math.max(...r.presets.map((p) => p.cpu))}% of real time)${bad.length ? ': ' + bad.map((p) => p.name + ': ' + p.errors.join('; ')).join(' | ') : ''}`);
-    // the face: a control for every param, and it fits a phone
-    await page.setViewportSize({ width: 390, height: 844 });
-    const face = await page.evaluate(async () => {
-      const { getDevice } = await import('/app/src/devices/registry.js');
-      const { renderFace } = await import('/app/src/ui/faces.js');
-      const f = renderFace(getDevice('core.wavetable'), {}, {}).el;
-      document.body.appendChild(f);
-      const out = { controls: f.querySelectorAll('[data-key]').length, overflow: f.scrollWidth > f.clientWidth + 1 || f.getBoundingClientRect().right > innerWidth + 1 };
-      f.remove();
-      return out;
-    });
-    t.ok(face.controls === 117 && !face.overflow, `the face has a control for each of the ${face.controls} params and fits a 390 px phone`);
-    const mine = errors.filter((e) => /builtin\/(wavetable|wavetables)/.test(e));
-    t.ok(!mine.length, `no page errors from Light Table${mine.length ? ': ' + mine.join(' | ') : ''}`);
-  } finally { await close(); }
+/* ------------------------------------------------------------------------------------------------ the device check */
+// (in a child process: checkDeviceNode gives checkDevice's answer; the worklet realm is covered by tools/sounds-test.js,
+// and the face, a control for each param at 390 px, by tools/wavetable-ui-test.js)
+{
+  console.log('the device check (Node)');
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const { summarize } = await import('../app/src/kernel/check.js');
+  const def = getDevice('core.wavetable');
+  const r = await checkDeviceNode(def);
+  t.ok(r.ok, `checkDevice (full) at the defaults: ${summarize(r)}`);
+  t.ok(!r.warnings.length, `no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
+  t.ok(!(r.extremes && r.extremes.failed && r.extremes.failed.length), 'every param at its min and its max renders (the check\'s 230 extreme cases)');
+  const presets = [];
+  for (const pr of def.presets) {
+    const rep = await checkDeviceNode({ ...def, params: def.params.map((p) => ({ ...p, def: pr.params[p.key] })) }, { quick: true });
+    presets.push({ name: pr.name, ok: rep.ok, errors: rep.errors, cpu: rep.cpu && rep.cpu.pct });
+  }
+  const bad = presets.filter((p) => !p.ok);
+  t.ok(!bad.length, `checkDevice (quick) passes on all ${presets.length} presets (cpu ${Math.min(...presets.map((p) => p.cpu))}-${Math.max(...presets.map((p) => p.cpu))}% of real time)${bad.length ? ': ' + bad.map((p) => p.name + ': ' + p.errors.join('; ')).join(' | ') : ''}`);
 }
 t.done();

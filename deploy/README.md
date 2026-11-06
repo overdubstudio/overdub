@@ -29,7 +29,8 @@ of overdub-devices at the pinned commit. The preview can still be deployed from 
 
 `DRY_RUN=1` before a script prints what it would do and calls nothing: `DRY_RUN=1 deploy/deploy.sh --skip-tests`,
 `DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`, `DRY_RUN=1 deploy/relay/deploy.sh`,
-`DRY_RUN=1 deploy/analytics/setup.sh`. `tools/analytics-test.js` runs them dry with a stub `aws` and checks the plans.
+`DRY_RUN=1 deploy/analytics/setup.sh`. `test/unit/deploy-sites.test.js` runs `deploy/analytics/setup.sh` dry with a stub `aws` and checks the plan;
+`tools/analytics-test.js` runs the whole dry `deploy/deploy.sh` (live and `--next`).
 
 ## The live site
 
@@ -193,9 +194,10 @@ browser storage).
 SHA, a tag or `main`; empty is main's head). Two jobs.
 
 **e2e**, first, on Peter's self-hosted Mac mini (`ghastly`, labels `self-hosted, macOS, ARM64, overdub-e2e`): it
-resolves the ref the same way (a commit on main), then runs the whole end-to-end suite, `node tools/run-all.js` one
-suite at a time (`PAR=1`, so the real-time checks have the machine to themselves), the browsers, renders and real-time
-checks GitHub's shared macOS runners are too slow for. It sets itself up each run (Node from `mise.toml`, the kits with
+resolves the ref the same way (a commit on main), then runs the whole end-to-end suite, `node tools/run-all.js` three
+suites at a time (a suite that holds to the wall clock runs again alone if it fails, `REAL_TIME` in
+`tools/suite-status.js`; any other failure stops the deploy the first time, and so does a browser that won't launch),
+the browsers, renders and real-time checks GitHub's shared macOS runners are too slow for. It sets itself up each run (Node from `mise.toml`, the kits with
 their downloads kept in `~/Library/Caches/overdub-kits`, playwright-core and its browsers), so the machine needs nothing
 but the runner. It holds no AWS role, no environment and no secret; a failed run keeps its screenshots as the `e2e-out`
 artifact. A self-hosted runner must never take a job an outsider can start: the repo is public, so a fork's pull request

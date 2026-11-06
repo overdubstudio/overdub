@@ -1,8 +1,8 @@
 // The Guitar Studio in Overdub (devices/guitar, devices/graph.js + kit.js, ui/faces.js, gallery.html):
-//  1. registry: every pedal and amp in the gear (devices/guitar/gear/) is registered (ids kept: pedal.<id>, amp.<id>),
-//     none refused, and every rig's devices exist; rigOps dispatch through the real store. Every worklet the gear's code
-//     builds is a file on the studio's origin (gear/worklets/) with that source byte for byte, and the pedals and amps
-//     load theirs from those files.
+//  1. registry: in Node, test/unit/guitar-gear.test.js: every pedal and amp in the gear (devices/guitar/gear/) is
+//     registered (ids kept: pedal.<id>, amp.<id>), none refused, and every rig's devices exist; rigOps dispatch through
+//     the real store. Every worklet the gear's code builds is a file (gear/worklets/) with that source byte for byte,
+//     and the pedals and amps load theirs from those files. Here: the kit's envelope follower loads from its file.
 //  2. every pedal and amp instantiates on an OfflineAudioContext and renders the DI strum with no NaN or Inf;
 //     renders are deterministic (twice the same, sample for sample).
 //  3. bypass is exact: a sample of insert and trails pedals, off, equals the dry input to -90 dB.
@@ -26,8 +26,32 @@
 // usage: node tools/guitar-test.js   (FAST=1 skips the rigs' levels; PEDALS=quack,delay renders only those)
 import { open, tally, OUTDIR } from './pw.js';
 import path from 'node:path';
+import * as riffs from '../app/src/ui/liveroom/riffs-db.js';
 
 const t = tally('guitar');
+
+// The riff library on its memory side (no IndexedDB, as Node runs it): 2,000 riffs, then a page, a search through all
+// of them and the facets each under 150 ms. Wall clock, so here and not in test/unit (this runner retries a suite alone
+// when load made it fail). The IndexedDB side is timed in tools/liveroom/checks-library.js.
+{
+  const tiny = { sr: 48000, channels: [new Float32Array(480)] };
+  for (let i = 0; i < 2000; i++) {
+    const r = await riffs.add({ audio: tiny, tempo: 90 + (i % 80), beats: 4, name: i === 1234 ? 'Needle' : '',
+      tuning: ['standard', 'drop-c', 'drop-b'][i % 3], song: { id: 'p_' + (i % 40), title: i % 40 ? 'Song ' + (i % 40) : 'Untitled' },
+      starred: i % 25 === 0, at: 2e12 + i * 1000 });
+    if (!r.ok) throw new Error(r.error);
+  }
+  let t0 = performance.now();
+  await riffs.list({ limit: 50 });
+  const tPage = performance.now() - t0;
+  t0 = performance.now();
+  await riffs.list({ q: 'needle' });
+  const tSearch = performance.now() - t0;
+  t0 = performance.now();
+  await riffs.facets();
+  const tFacets = performance.now() - t0;
+  t.ok(tPage < 150 && tSearch < 150 && tFacets < 150, `2,000 riffs in memory: page ${tPage.toFixed(1)} ms, search ${tSearch.toFixed(1)} ms, facets ${tFacets.toFixed(1)} ms (each under 150)`);
+}
 const FAST = process.env.FAST === '1';
 const ONLY = process.env.PEDALS ? process.env.PEDALS.split(',') : null;
 
@@ -96,52 +120,6 @@ async function boot(page) {
   page.setDefaultTimeout(600000);
   await boot(page);
 
-  // 1. registry
-  const reg = await page.evaluate(() => {
-    const { G, R } = window.__gt;
-    const pedals = R.listDevices().filter((d) => d.id.startsWith('pedal.')), amps = R.listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.'));
-    const missing = [];
-    for (const r of G.RIGS) for (const s of r.chain) if (!R.getDevice(s.device)) missing.push(r.id + ':' + s.device);
-    const ids = G.gear.PEDAL_LIST.map((d) => d.id).filter((id) => !R.getDevice('pedal.' + id));
-    const badParams = [];
-    for (const d of pedals.concat(amps)) for (const p of d.params) { if (!(p.def >= Math.min(p.min, p.max) && p.def <= Math.max(p.min, p.max))) badParams.push(d.id + '.' + p.key); if (p.fmt) { try { if (typeof p.fmt(p.def) !== 'string') badParams.push(d.id + '.' + p.key + ' fmt'); } catch { badParams.push(d.id + '.' + p.key + ' fmt throws'); } } }
-    const roles = pedals.reduce((n, d) => n + d.params.filter((p) => p.role).length, 0), units = pedals.reduce((n, d) => n + d.params.filter((p) => p.unit).length, 0);
-    const knobs = pedals.reduce((n, d) => n + d.params.length, 0);
-    return { pedals: pedals.length, clawdPedals: G.gear.PEDAL_LIST.length, refused: G.gear.PFX.refused, amps: amps.length, clawdAmps: Object.keys(G.gear.PLUG_AMPS).length,
-      rigs: G.RIGS.length, presets: G.gear.PLUG_PRESETS.length, banks: G.RIG_BANKS.length, missing, ids, badParams, roles, units, knobs,
-      trails: pedals.filter((d) => d.trails).length, cats: [...new Set(pedals.map((d) => d.cat))].join(' ') };
-  });
-  t.ok(reg.pedals === reg.clawdPedals && reg.pedals >= 100 && !reg.ids.length, `${reg.pedals} pedals registered (the gear has ${reg.clawdPedals}) as pedal.<id>${reg.ids.length ? '; missing ' + reg.ids.join(' ') : ''}`);
-  t.ok(!reg.refused.length, `no pedal refused by its pedalDef${reg.refused.length ? ': ' + JSON.stringify(reg.refused) : ''}`);
-  t.ok(reg.amps === reg.clawdAmps && reg.amps >= 27, `${reg.amps} amps registered as amp.<id> (the gear has ${reg.clawdAmps})`);
-  t.ok(reg.rigs === reg.presets && reg.rigs > 100, `${reg.rigs} rigs from ${reg.banks} banks (every preset)`);
-  t.ok(!reg.missing.length, `every rig's devices are registered${reg.missing.length ? ': ' + reg.missing.slice(0, 5).join(' ') : ''}`);
-  t.ok(!reg.badParams.length, `every param's default is in range and its fmt returns a string${reg.badParams.length ? ': ' + reg.badParams.slice(0, 5).join(' ') : ''}`);
-  t.note(`${reg.knobs} pedal params: ${reg.roles} with a role, ${reg.units} with a unit; ${reg.trails} trails pedals; cats: ${reg.cats}`);
-
-  // the worklets: the studio loads worklet modules only from files on its own origin (its policy refuses data: and
-  // blob: scripts), so every processor source the gear's code builds is also a file of its own
-  // (devices/guitar/gear/worklets/). Each file is that source byte for byte (after its one line saying so), and every
-  // pedal and amp device names those files for its worklets.
-  const wl = await page.evaluate(async () => {
-    const { G, R } = window.__gt;
-    const { WORKLETS } = await import('/app/src/devices/guitar/gear/index.js');
-    const src = { 'clawd-amps': G.gear.PLUG_WORKLETS };
-    for (const [n, w] of Object.entries(G.gear.PFX.worklets)) src[n] = w.src;
-    const diff = [], files = Object.values(WORKLETS);
-    for (const [n, s] of Object.entries(src)) {
-      if (!WORKLETS[n]) { diff.push(n + ': no file'); continue; }
-      const u = new URL(WORKLETS[n]);
-      const text = await (await fetch(u)).text();
-      if (u.origin !== location.origin || !u.pathname.startsWith('/app/src/devices/guitar/gear/worklets/')) diff.push(n + ': ' + u.href);
-      else if (text.slice(text.indexOf('\n') + 1) !== s) diff.push(n + ': not its source');
-    }
-    const devs = R.listDevices().filter((d) => /^(pedal|amp)\./.test(d.id) && d.worklets);
-    const named = devs.flatMap((d) => Object.entries(d.worklets).filter(([n, u]) => u !== WORKLETS[n] || !files.includes(u)).map(([n]) => d.id + ':' + n));
-    return { n: Object.keys(src).length, files: files.length, diff, devs: devs.length, named };
-  });
-  t.ok(wl.n >= 40 && wl.files === wl.n && !wl.diff.length, `${wl.n} worklets the gear's code builds, each a file of its own on the studio's origin with its source byte for byte (gear/worklets/)${wl.diff.length ? ': ' + wl.diff.slice(0, 5).join(', ') : ''}`);
-  t.ok(wl.devs >= 30 && !wl.named.length, `the ${wl.devs} pedals and amps with worklets load them from those files${wl.named.length ? '; not: ' + wl.named.slice(0, 5).join(' ') : ''}`);
   // the kit's own envelope follower (PFX.ENV, for a graph device of Overdub's that calls kit.envelope(); no built-in
   // does yet): its file loads behind END and it follows a tone
   const env = await page.evaluate(async () => {
@@ -155,26 +133,6 @@ async function boot(page) {
     return { ok, end: d[d.length - 1], url: new URL(K.PFX.ENV).pathname };
   });
   t.ok(env.ok && Math.abs(env.end - 0.5) < 0.05, `the kit's own envelope follower (${env.url}) loads from its file and follows a 0.5 sine (${env.ok ? env.end.toFixed(3) : 'did not load'})`);
-
-  const ops = await page.evaluate(async () => {
-    const { G } = window.__gt;
-    let store = null;
-    try { const S = await import('/app/src/core/store.js'); store = S.createStore(); } catch (e) { return { skip: e.message }; }
-    let r = store.dispatch({ type: 'track.add', track: { name: 'Guitar', kind: 'audio' }, ref: 'g' }, { by: 'you' });
-    if (!r.ok) return { err: r.error };
-    const tid = r.created.g || Object.values(r.created)[0];
-    const rig = G.rigById('webcam') || G.RIGS[0];
-    r = store.dispatch(G.rigOps(tid, rig), { by: 'claude', label: 'rig ' + rig.name });
-    if (!r.ok) return { err: r.error };
-    const t1 = store.track(tid), first = t1.inserts.map((x) => x.id);
-    const rig2 = G.RIGS.find((x) => x.chain.length > 3 && x.id !== rig.id);
-    r = store.dispatch(G.rigOps(tid, rig2, { replace: first }), { by: 'claude' });
-    if (!r.ok) return { err: r.error };
-    const t2 = store.track(tid);
-    return { n1: first.length, chain1: rig.chain.length, n2: t2.inserts.length, chain2: rig2.chain.length, devs: t2.inserts.map((x) => x.device).join(' '), same: t2.inserts.every((x, k) => x.device === rig2.chain[k].device && x.on === rig2.chain[k].on) };
-  });
-  if (ops.skip) t.note('store not loadable: ' + ops.skip);
-  else t.ok(!ops.err && ops.n1 === ops.chain1 && ops.n2 === ops.chain2 && ops.same, `rigOps through the store: a rig's ${ops.chain1} inserts, then another replacing it (${ops.devs || ops.err})`);
 
   // 2b. automation (docs/research/AUTOMATION.md 3.5): the engine moves a pedal's knob with set(values, { at }) ahead
   // of time. A param that changes the sound before `at` (the pedal writes .value, or rebuilds, in set()) would land up

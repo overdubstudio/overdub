@@ -511,18 +511,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 }
 
 /* ================================================================== the arranger in the Liner notes look
-   (design/LINER-NOTES-KIT.md, DECISION.md amendments): no stripes, pills, sparkles or glows in its code; numbered
-   headers with a square swatch, signed only where an agent built the device; on the canvas the selected clip's label in
+   (design/LINER-NOTES-KIT.md, DECISION.md amendments; no stripes, pills, sparkles or glows in its code is
+   test/unit/panes-static.test.js): numbered headers with a square swatch, signed only where an agent built the device; on the canvas the selected clip's label in
    reverse, a muted clip in outline only, the agent's byline in cool ink and never on its notes, crop marks where an
    agent points; the first clip mute says the key in a toast */
 {
-  const fs = await import('node:fs');
-  for (const f of ['app/src/ui/arranger.js', 'app/src/ui/arrange-kit.js']) {
-    const src = fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
-    T.ok(!/inset\s+\d+(\.\d+)?px\s+0\s+0/.test(src) && !/99px|border-radius:\s*50%/.test(src), `${f}: no stripe (inset Npx 0 0) and no pill (99px, 50%)`);
-    T.ok(!/✦/.test(src) && !/'MUTED'/.test(src) && !/ar-auth|ar-welcome-edge|cool edge/.test(src), `${f}: no ✦, no MUTED tag, no author edge`);
-    T.ok(!/@keyframes ar-(pulse|flash)|Math\.sin\(now|shadowBlur = \d+ \* /.test(src), `${f}: no pulse, no flash glow, no shimmer`);
-  }
   const { page, errors, close, shot } = await boot();
   const E = (fn, arg) => page.evaluate(fn, arg);
   await E(() => window.overdub.welcome?.close?.());

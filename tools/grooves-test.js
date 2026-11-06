@@ -1,6 +1,7 @@
 // Checks for the groove library (app/src/core/grooves.js and its style files), tap-to-find, the song creator, the
 // Grooves tab (app/src/ui/grooves.js) and the agents' find_grooves, use_groove and drum_track (agent/grooves-tool.js).
 //   node tools/grooves-test.js      (screenshots: tools/.out/grooves-*.png)
+// (Its Node half now lives in test/unit/grooves.test.js; only the all-grooves tap matching stays here, as 20 s is not a unit.)
 // In Node: every groove parses with its notes inside its length; feel and humanising are deterministic and the accents
 // are where the grid says; the matcher finds a groove from its own jittered onsets (and from a shifted start); the song
 // creator's plan puts fills, crashes and the ending where it says (none by default when the loop goes round the song's
@@ -8,185 +9,20 @@
 // undo step), tap-to-find from taps on the pads, Build drums for the song (in the found groove's style, its ending a
 // choice), the tools' results and errors, the demo agent's grooves, a phone upright and on its side, and no page errors.
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as G from '../app/src/core/grooves.js';
 import { rng } from '../app/src/core/transforms.js';
-import { createStore } from '../app/src/core/store.js';
-import { createProject } from '../app/src/core/project.js';
-import { planDropTrim } from '../app/src/core/arrangement.js';
 import { open, tally, OUTDIR } from './pw.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const T = tally('grooves');
 const say = (xs, n = 6) => (xs.length ? ': ' + xs.slice(0, n).join('; ') + (xs.length > n ? ` … (${xs.length})` : '') : '');
-const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|AudioContext|getUserMedia|NotAllowedError|NotFoundError/.test(e);
 
 /* ================================================================== the library */
 console.log('\nthe library');
 const L = G.library();
-T.ok(!L.errors.length, `every style file parses${say(L.errors)}`);
-T.ok(L.styles.length >= 20, `${L.styles.length} styles (about 20 asked for)`);
-T.ok(L.grooves.length >= 180, `${L.grooves.length} grooves`);
-{
-  const need = ['intro', 'verse', 'chorus', 'bridge', 'ending'];
-  const short = L.styles.filter((s) => need.some((p) => !s.grooves.some((g) => g.part === p)) || ![1, 2, 4].every((b) => s.grooves.some((g) => g.part === 'fill' && near(g.length, b))));
-  T.ok(!short.length, `every style has an intro, a verse, a chorus, a bridge, fills of a beat, two beats and a bar, and an ending${say(short.map((s) => s.id))}`);
-  const half = L.styles.filter((s) => s.grooves.some((g) => g.part === 'half')).map((s) => s.id);
-  T.ok(half.length >= 12 && ['rock', 'trap', 'dnb', 'metal', 'jazz', 'shuffle'].every((id) => half.includes(id)), `a half-time feel where it fits (${half.length} styles: ${half.join(', ')})`);
-  const asked = ['rock', 'pop', 'funk', 'boombap', 'trap', 'neosoul', 'jazz', 'shuffle', 'reggae', 'bossa', 'samba', 'afrobeat', 'disco', 'house', 'dnb', 'metal', 'punk', 'country', 'gospel', 'lofi', 'indie', 'motown'];
-  const missing = asked.filter((id) => !G.getStyle(id));
-  T.ok(!missing.length, `the styles asked for are all there${say(missing)}`);
-}
-{
-  // every groove: a name, a style, a feel, a tempo range, its part and its length; every hit inside its length
-  const bad = [], outside = [];
-  for (const g of L.grooves) {
-    if (!g.name || !g.style || !g.feel || !(g.tempo[0] > 20 && g.tempo[1] >= g.tempo[0]) || !G.PARTS.includes(g.part) || !(g.length > 0)) bad.push(g.id);
-    if (g.hits.some((h) => h.t < 0 || h.t >= g.length - 1e-9)) outside.push(`${g.id} (written)`);
-    for (const tempo of [g.tempo[0], (g.tempo[0] + g.tempo[1]) / 2, g.tempo[1]]) {
-      for (const human of [0, 1, 2]) {
-        const ns = G.realize(g, { tempo, human, seed: 11 });
-        if (!ns.length || ns.some((n) => !(n.t >= 0 && n.t < g.length) || !(n.t + n.d <= g.length + 1e-9) || !(n.v > 0 && n.v <= 1))) outside.push(`${g.id} at ${tempo} BPM, human ${human}`);
-      }
-    }
-  }
-  T.ok(!bad.length, `every groove has a name, a style, a feel, a tempo range, a part and a length${say(bad)}`);
-  T.ok(!outside.length, `every groove's notes are inside its length, at the slow, middle and fast end of its range, bare and humanised${say(outside)}`);
-  const ids = new Set(L.grooves.map((g) => g.id));
-  T.ok(ids.size === L.grooves.length, 'groove ids are unique');
-  const gmOnly = L.grooves.filter((g) => g.hits.some((h) => ![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 59, 69, 70, 82].includes(h.p)));
-  T.ok(!gmOnly.length, `every hit is a General MIDI drum Gobo Kit plays (and Studio A will)${say(gmOnly.map((g) => g.id))}`);
-}
-{
-  // the format: a groove an agent writes in a handful of lines parses, and mistakes say where and what
-  const ok = G.parseGrooves(`style test  Test\ntempo 90-120\nswing 16 56%\nlay snare +10\n\nverse  Two bars  2 bars\n  hat    x.x. x.x. x.x. x.x. | x.x. x.x. x.x. xxxxxx\n  snare  .... X... .... X... | .... X... .... X..o\n  kick   X... ..x. X... .... | X... ..x. X..x ....\nfill  Triplet  1 beat\n  snare  xxX\n`, { file: 'test' });
-  const g = ok.grooves[0];
-  const count = (p) => g.hits.filter((h) => h.p === p).length;
-  T.ok(!ok.errors.length && ok.grooves.length === 2 && g.length === 8 && count(42) === 20 && count(38) === 5 && count(36) === 7 && ok.grooves[1].hits.length === 3 && near(g.hits.filter((h) => h.p === 42).at(-1).t, 7 + 5 / 6, 1e-3), `a two-bar groove and a triplet fill parse from a handful of lines (${g?.hits.length} hits; the last beat's six cells are sixteenth triplets)`);
-  const bad = G.parseGrooves('style t  T\nverse  V  1 bar\n  hat   x.x. x.x. x.x.\n  bongo x...\n  snare ..q. .... .... ....\nchorus  C  1 bar\n', { file: 'bad' });
-  T.ok(bad.errors.length === 5 && /bad line 3: hat has 3 groups/.test(bad.errors[0]) && /unknown piece "bongo"/.test(bad.errors[1]) && /"q" isn't a mark/.test(bad.errors[2]) && /bad line 2: "V" has no hits/.test(bad.errors[3]) && /"C" has no hits/.test(bad.errors[4]), `mistakes name the file, the line and what would work${say(bad.errors, 5)}`);
-}
-
-/* ================================================================== feel and humanising */
-console.log('\nfeel and humanising');
-{
-  const g = G.getGroove('rock/straight-eighths');
-  const a = G.realize(g, { tempo: 120, seed: 5, length: 32 }), b = G.realize(g, { tempo: 120, seed: 5, length: 32 }), c = G.realize(g, { tempo: 120, seed: 6, length: 32 });
-  T.ok(JSON.stringify(a) === JSON.stringify(b), 'the same groove, seed and tempo play the same notes');
-  T.ok(JSON.stringify(a) !== JSON.stringify(c), 'another seed plays it a little differently');
-  const src = fs.readFileSync(path.join(HERE, '../app/src/core/grooves.js'), 'utf8') + fs.readdirSync(path.join(HERE, '../app/src/core/grooves')).map((f) => fs.readFileSync(path.join(HERE, '../app/src/core/grooves', f), 'utf8')).join('');
-  T.ok(!/Math\.random\s*\(/.test(src), 'no Math.random in the library or its files (seeded, everywhere)');
-  // accents where the grid says: hats on the beat louder than on the "and"; the backbeat strong; ghosts soft
-  const bare = G.realize(g, { tempo: 120, human: 0 });
-  const hat = (t) => bare.find((n) => n.p === 42 && near(n.t, t, 0.02)).v;
-  T.ok(hat(0) > hat(0.5) && hat(1) > hat(1.5) && near(hat(0), 0.8) && near(hat(0.5), 0.8 * 0.84, 0.001), `rock: the hand's accent puts the hats on the beat over the ones on the and (${hat(0)} vs ${hat(0.5)})`);
-  const back = bare.filter((n) => n.p === 38).map((n) => n.v);
-  T.ok(back.length === 2 && back.every((v) => v === 1), `rock: the backbeat on 2 and 4 is an accent (${back.join(', ')})`);
-  const funk = G.realize('funk/ghost-notes', { tempo: 100, human: 0 });
-  const ghosts = funk.filter((n) => n.p === 38 && n.v < 0.5), hits = funk.filter((n) => n.p === 38 && n.v >= 0.95);
-  T.ok(ghosts.length >= 10 && hits.length === 4 && ghosts.every((n) => n.v <= 0.45), `funk: ${ghosts.length} ghost notes at 0.45 or under, ${hits.length} backbeats at full`);
-  const jazz = G.realize('jazz/spang-a-lang', { tempo: 120, human: 0 });
-  T.ok(jazz.filter((n) => n.p === 36).every((n) => n.v < 0.3), 'jazz: the kick is feathered (under 0.3)');
-  // humanising: velocity spread around the accents, never louder than full
-  const human = G.realize(g, { tempo: 120, seed: 9, length: 64 });
-  const onBeat = human.filter((n) => n.p === 42 && Math.abs(n.t - Math.round(n.t)) < 0.05).map((n) => n.v);
-  const spread = Math.max(...onBeat) - Math.min(...onBeat);
-  T.ok(spread > 0.04 && spread < 0.4 && human.every((n) => n.v <= 1), `humanised hats on the beat vary a little (spread ${spread.toFixed(2)})`);
-}
-{
-  // swing: jazz's ride swings harder at the slow end of its range than at the fast end (Friberg & Sundström)
-  const and = (tempo) => G.realize('jazz/spang-a-lang', { tempo, human: 0 }).filter((n) => n.p === 51 && n.t > 1.2 && n.t < 2).map((n) => n.t - 1)[0];
-  const slow = and(100), mid = and(170), fast = and(240);
-  T.ok(near(slow, 0.68 - 6 * 100 / 60000, 0.002) && near(fast, 0.55 - 6 * 240 / 60000, 0.002) && slow > mid && mid > fast, `jazz swing tightens with tempo: the ride's "and" at ${(slow * 100).toFixed(1)}% of the beat at 100 BPM, ${(mid * 100).toFixed(1)}% at 170, ${(fast * 100).toFixed(1)}% at 240`);
-  const bb = G.realize('boombap/head-nod', { tempo: 90, human: 0 }).filter((n) => n.p === 42 && n.t > 1.6 && n.t < 1.95)[0];
-  T.ok(bb && near(bb.t - 1, 0.5 + 0.56 * 0.5 + 4 * 90 / 60000, 0.002), `boom bap swings its sixteenths: the "a" of 2 at ${bb ? ((bb.t - 1) * 100).toFixed(1) : '?'}% of the beat (56% into its eighth, and the hat 4 ms late)`);
-}
-{
-  // micro-timing: neo-soul's snare behind the beat, punk's hats ahead of it, in ms at the song's tempo
-  const ms = (beats, tempo) => (beats * 60000) / tempo;
-  const ns = G.realize('neosoul/behind-the-beat', { tempo: 80, human: 0 }).find((n) => n.p === 38 && n.v >= 0.95);
-  const pk = G.realize('punk/straight-punk', { tempo: 180, human: 0 }).filter((n) => n.p === 42 && n.t > 0.9 && n.t < 1.1)[0];
-  T.ok(near(ms(ns.t - 1, 80), 24, 0.5), `neo-soul: the backbeat lands ${ms(ns.t - 1, 80).toFixed(1)} ms behind the beat`);
-  T.ok(near(ms(pk.t - 1, 180), -6, 0.5), `punk: the hats push ${ms(1 - pk.t, 180).toFixed(1)} ms ahead`);
-  const all = G.realize('neosoul/behind-the-beat', { tempo: 80, seed: 3, length: 64 }).filter((n) => n.p === 38 && n.v > 0.8);
-  const late = all.map((n) => ms(n.t - Math.round(n.t), 80));
-  T.ok(late.every((x) => x > 5 && x < 45), `humanised, every neo-soul backbeat is still behind the beat (${Math.min(...late).toFixed(0)} to ${Math.max(...late).toFixed(0)} ms)`);
-  // the drift is correlated (Hennig et al.: human timing has long-range correlations; white noise sounds wrong)
-  const dev = [];
-  const bareR = G.realize('rock/sixteenths', { tempo: 100, human: 0, length: 64 }), humR = G.realize('rock/sixteenths', { tempo: 100, human: 1, seed: 2, length: 64 });
-  for (const n of humR.filter((x) => x.p === 42)) { const b = bareR.find((x) => x.p === 42 && Math.abs(x.t - n.t) < 0.1); if (b) dev.push(n.t - b.t); }
-  const m = dev.reduce((a, b) => a + b, 0) / dev.length;
-  let num = 0, den = 0;
-  for (let i = 0; i < dev.length; i++) { den += (dev[i] - m) ** 2; if (i) num += (dev[i] - m) * (dev[i - 1] - m); }
-  const r1 = num / den, sd = ms(Math.sqrt(den / dev.length), 100);
-  T.ok(r1 > 0.3 && sd > 1.5 && sd < 9, `the timing drift is correlated from one hit to the next (lag-1 ${r1.toFixed(2)}) and small (${sd.toFixed(1)} ms spread)`);
-}
-
-/* ================================================================== Studio A */
-console.log('\nStudio A');
-{
-  // General MIDI by default (every groove plays right on Gobo Kit); Studio A's articulations only when the kit has them
-  const gm = new Set([35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 59, 69, 70, 82]);
-  const off = L.grooves.filter((g) => G.realize(g, { tempo: (g.tempo[0] + g.tempo[1]) / 2, human: 0 }).some((n) => !gm.has(n.p)));
-  T.ok(!off.length, `played as written, every groove is General MIDI${say(off.map((g) => g.id))}`);
-  const half = G.realize('rock/half-open-hats', { tempo: 120, human: 0, articulations: true });
-  const plain = G.realize('rock/half-open-hats', { tempo: 120, human: 0 });
-  T.ok(half.filter((n) => n.p === 24).length === 8 && !half.some((n) => n.p === 46) && plain.filter((n) => n.p === 46).length === 8, 'on Studio A the rock chorus\'s open hats are its half-open hat (note 24); on any other kit the GM open hat (46)');
-  T.ok(G.realize('disco/claps-and-tambourine', { tempo: 120, human: 0, articulations: true }).filter((n) => n.p === 24).length === 4, 'the disco chorus\'s hats half open on the ands, on Studio A');
-  const flamA = G.realize('rock/round-the-kit', { tempo: 120, human: 0, articulations: true }), flamG = G.realize('rock/round-the-kit', { tempo: 120, human: 0 });
-  T.ok(flamA.filter((n) => n.p === 31).length === 1 && flamA.filter((n) => n.p === 38 && n.t < 0.1).length === 0 && flamG.filter((n) => n.p === 38 && n.t < 0.1).length === 2, 'a flam into the fill is Studio A\'s own flam (note 31, one note); elsewhere a grace note and the stroke');
-  const bell = G.realize('rock/ride-and-push', { tempo: 120, human: 0 });
-  T.ok(bell.filter((n) => n.p === 53 && n.v >= 0.95).length === 4 && bell.filter((n) => n.p === 51).length === 4, 'rock\'s chorus rides the bell on the beat and the bow on the ands (General MIDI: both kits)');
-  // the kit: the style's Studio A preset when the studio has Studio A (its id is core.drumroom), else Gobo Kit
-  const fakeA = { id: 'core.drumroom', presets: [{ name: 'Arena', params: { kit: 3, mix_room: -4 } }, { name: 'Jazz club', params: { kit: 2 } }] };
-  const rockKit = G.kitFor('rock', { studioA: fakeA }), jazzKit = G.kitFor('jazz', { studioA: fakeA }), trapKit = G.kitFor('trap', { studioA: fakeA }), noA = G.kitFor('rock', {});
-  T.ok(G.STUDIO_A === 'core.drumroom' && rockKit.device === 'core.drumroom' && rockKit.params.kit === 3 && rockKit.preset === 'Arena' && jazzKit.params.kit === 2, `an acoustic style plays on Studio A, on the preset its style names (rock: ${rockKit.preset}, jazz: ${jazzKit.preset})`);
-  T.ok(trapKit.device === 'core.drums' && trapKit.params.kit === 3 && noA.device === 'core.drums' && noA.params.kit === 5, 'a machine style stays on Gobo Kit\'s machines (trap on its 808); without Studio A, Gobo Kit\'s ACOUSTIC+');
-  const s = sectionSongForStudio();
-  // the metal families: written for Studio A's note map and played on Rusty Sticks (core.metalkit) when the
-  // studio has it, else as an acoustic style; nothing older moves
-  {
-    const MK_NOTES = new Set([35, 36, 38, 40, 37, 42, 22, 44, 23, 24, 46, 21, 48, 50, 47, 45, 43, 41, 49, 57, 52, 55, 51, 53, 59, 27, 28, 29, 25]);
-    const off = [];
-    for (const id of ['extreme', 'modernmetal']) for (const g of G.getStyle(id).grooves) for (const h of g.hits) if (!MK_NOTES.has(h.p)) off.push(`${g.id} ${h.p}`);
-    T.ok(!off.length && G.getStyle('extreme') && G.getStyle('modernmetal'), `the extreme and modernmetal styles parse, and every row lands on a note Rusty Sticks plays${say(off)}`);
-    const names = (id) => G.getStyle(id).grooves.map((g) => g.name.toLowerCase()).join(' | ');
-    const ex = names('extreme'), mm = names('modernmetal');
-    T.ok(['traditional blast', 'hammer blast', 'bomb blast', 'gravity blast', 'd-beat', 'under the ride', 'under the china', 'triplet', 'thirty-seconds'].every((w) => ex.includes(w)), 'extreme: traditional, hammer, bomb and gravity blasts, the d-beat, double kick under the ride and the China, sixteenth-triplet and thirty-second fills');
-    T.ok(G.getStyle('modernmetal').grooves.filter((g) => /djent/i.test(g.name)).length === 3 && G.getStyle('modernmetal').grooves.filter((g) => g.part === 'half' && /china/i.test(g.name)).length === 2 && ['gallop', 'crash riding', 'drop'].every((w) => mm.includes(w)), 'modernmetal: three djent unisons, two half-time China breakdowns, a gallop, a crash-riding chorus, a drop bar');
-    const blast = G.realize('extreme/traditional-blast', { tempo: 220, human: 0 });
-    T.ok(blast.filter((n) => n.p === 38).length === 8 && blast.filter((n) => n.p === 36).length === 8 && blast.filter((n) => n.p === 38).every((n) => blast.every((k) => k.p !== 36 || Math.abs(k.t - n.t) > 0.1)), 'a traditional blast: kick and snare alternate on eighths, never together');
-    const mkDef = { id: 'core.metalkit', name: 'Rusty Sticks' }, has = (id) => (id === 'core.metalkit' ? mkDef : null);
-    const onMk = G.kitFor('extreme', { studioA: fakeA, device: has }), noMk = G.kitFor('extreme', { studioA: fakeA }), bare = G.kitFor('modernmetal', {});
-    T.ok(onMk.device === 'core.metalkit' && noMk.device === 'core.drumroom' && noMk.preset === 'Arena' && bare.device === 'core.drums' && bare.params.kit === 5, `kit metal plays on Rusty Sticks when the studio has it (${onMk.device}); without it on Studio A's ${noMk.preset}, or Gobo Kit's ACOUSTIC+`);
-    const sm = createStore(createProject());
-    const mp = G.planDrumTrack(sm.get(), { style: 'modernmetal', studioA: fakeA, device: has });
-    T.ok(mp.ops.find((o) => o.type === 'track.add').track.instrument.device === 'core.metalkit' && /Rusty Sticks/.test(mp.summary), `the song creator builds a modern metal track on Rusty Sticks ("${mp.summary.split('. ')[1]}")`);
-    // the older styles' plans for one fixed song, hashed on main before the metal families came (on Studio A and on Gobo Kit)
-    const MAIN = {"rock":"5f1e85bd9abdac08","pop":"9fbdb0f084e22953","indie":"ab7d20980e01c2d3","punk":"4bfba66b2d7689f8","metal":"38cbc5cdd14a1ce8","funk":"e21e91aee1a275e7","motown":"2d085e6342510ff8","disco":"129c1b16d7c12190","gospel":"7acaacf6ed13c201","neosoul":"ceb2d0196043fd9f","boombap":"4a55b8566bb9a353","lofi":"256f8fc186e1cf8c","trap":"d13fcfdbb6eae217","house":"37e9a6f18b8fd7c3","dnb":"8ddf5933ed7e13d9","jazz":"483e174349593971","shuffle":"5b7cc677af3dc82f","country":"de60caf110e871c4","reggae":"ae457d8d10d2c023","bossa":"2a8b8f8b4e61136d","samba":"65af64c04d2df3ab","afrobeat":"f648ab2b97fdedd0"};
-    const fixed = { ...createProject(), tempo: 120 };
-    const moved = [];
-    for (const [id, want] of Object.entries(MAIN)) {
-      const h = crypto.createHash('sha256');
-      for (const sa of [fakeA, null]) h.update(JSON.stringify(G.planDrumTrack(fixed, { style: id, seed: 7, studioA: sa }).ops));
-      if (h.digest('hex').slice(0, 16) !== want) moved.push(id);
-    }
-    T.ok(!moved.length, `every older style's plan for a fixed song is the one main makes (${Object.keys(MAIN).length} styles)${say(moved)}`);
-  }
-  const r = G.planDrumTrack(s.get(), { style: 'rock', studioA: fakeA });
-  const add = r.ops.find((o) => o.type === 'track.add');
-  const chorus2 = r.ops.filter((o) => o.type === 'clip.add')[3]?.clip;
-  T.ok(add.track.instrument.device === 'core.drumroom' && /On a new track, Drums, Studio A \(Arena\)/.test(r.summary) && chorus2?.notes.some((n) => n.p === 24), `the song creator builds on Studio A when the studio has it, with its articulations ("${r.summary.split('. ')[1]}"; Chorus 2 rides the half-open hat)`);
-}
-function sectionSongForStudio() {
-  const p = createProject({ tempo: 120 });
-  p.sections = [{ id: 's_v00001', name: 'Verse', start: 0, length: 16 }, { id: 's_c00001', name: 'Chorus', start: 16, length: 16 }, { id: 's_v00002', name: 'Verse 2', start: 32, length: 16 }, { id: 's_c00002', name: 'Chorus 2', start: 48, length: 16 }, { id: 's_o00001', name: 'Outro', start: 64, length: 8 }];
-  return createStore(p);
-}
-
 /* ================================================================== tap-to-find */
 console.log('\ntap-to-find');
 const voiceOf = (p) => (G.familyOf(p) === 'kick' ? 'kick' : G.familyOf(p) === 'snare' ? 'snare' : 'hat');
@@ -210,15 +46,6 @@ function tapsOf(g, { skip = 0, jitter = 12, seed = 7, main = false } = {}) {
 }
 const sig = (g) => { const o = G.onsetsOf(g); return JSON.stringify([g.length, o.kick.main, o.snare.main, o.all.main]); };
 {
-  // the tempo from the taps: straight eighths, a triplet shuffle, swung sixteenths
-  const at = (bpm, beats) => beats.map((b, i) => (b * 60) / bpm + ((i * 7) % 5 - 2) / 1000);
-  const straight = G.tempoFromTaps(at(100, [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.25, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5]));
-  const shuffle = G.tempoFromTaps(at(105, [0, 2 / 3, 1, 5 / 3, 2, 8 / 3, 3, 11 / 3, 4, 14 / 3, 5, 17 / 3, 6, 20 / 3, 7]));
-  const swung = G.tempoFromTaps(at(80, [0, 0.3, 0.5, 1, 1.3, 1.5, 2, 2.3, 2.5, 3, 3.5, 4, 4.3, 4.5, 5, 5.5, 6, 6.3, 6.5, 7]));
-  T.ok(near(straight.bpm, 100, 1) && near(shuffle.bpm, 105, 1) && near(swung.bpm, 80, 1), `the tempo comes from the taps: straight eighths ${straight.bpm} (100), a shuffle ${shuffle.bpm} (105, read on ${shuffle.grid}), swung sixteenths ${swung.bpm} (80, ${swung.grid})`);
-  T.ok(G.tempoFromTaps([0, 0.1]) === null, 'two taps are too few to read a tempo from');
-}
-{
   // every main groove from its own jittered onsets: first, or tied first with a groove that has the same hits
   const main = L.grooves.filter((g) => G.MAIN_PARTS.includes(g.part));
   for (const [label, opt] of [['from the downbeat', {}], ['from a shifted start (the taps begin on beat 2 and a half)', { skip: 1.5 }]]) {
@@ -240,119 +67,10 @@ const sig = (g) => { const o = G.onsetsOf(g); return JSON.stringify([g.length, o
     T.ok(first + tied >= main.length - 1 && top5 === main.length, `${label}: ${first} of ${main.length} main grooves come back first from their own taps, ${tied} tie with one that plays the same hits, all ${top5} in the closest five${say(miss)}`);
     T.ok(terr[terr.length - 1] < 0.02, `${label}: the tempo read from the taps is within 2% for all of them (worst ${(terr[terr.length - 1] * 100).toFixed(2)}%)`);
   }
-  // a person taps the main hits, kick and snare on their pads, no hats: the groove is still in the five
-  const picks = ['rock/straight-eighths', 'funk/ghost-notes', 'reggae/one-drop', 'house/jack', 'trap/rolls', 'bossa/bossa', 'shuffle/shuffle', 'dnb/two-step'];
-  const lost = picks.filter((id) => !G.matchTaps(tapsOf(G.getGroove(id), { main: true }).taps)?.results.some((r) => r.groove.id === id));
-  T.ok(!lost.length, `kick and snare alone (no ghosts, no hats) still find ${picks.length} distinctive grooves in the five${say(lost)}`);
-  // one pad: the rhythm with no voices
-  const { taps } = tapsOf(G.getGroove('reggae/one-drop'), { main: true });
-  const one = G.matchTaps(taps.map((x) => x.t));
-  T.ok(one.results.slice(0, 3).some((r) => r.groove.style === 'reggae'), `taps on one pad (the one drop's kick and rim) find reggae near the top (${one.results.slice(0, 3).map((r) => r.groove.id).join(', ')})`);
-  T.ok(one.results.length === 5, 'tap-to-find returns the closest five');
 }
 
 /* ================================================================== the song creator */
 console.log('\nthe song creator');
-function sectionSong(extra = {}) {
-  const p = createProject({ title: 'Sections', tempo: 120, ...extra });
-  p.sections = [
-    { id: 's_intro1', name: 'Intro', start: 0, length: 8 },
-    { id: 's_verse1', name: 'Verse', start: 8, length: 32 },
-    { id: 's_chor01', name: 'Chorus', start: 40, length: 32 },
-    { id: 's_brid01', name: 'Bridge', start: 72, length: 16 },
-    { id: 's_outr01', name: 'Outro', start: 88, length: 16 },
-  ];
-  return createStore(p);
-}
-{
-  const s = sectionSong();
-  const r = G.planDrumTrack(s.get(), { style: 'rock', seed: 3 });
-  T.ok(!r.error && r.summary.startsWith('Rock, the intro in bars 1–2, verse groove in 3–10, chorus groove in 11–18, bridge groove in 19–22 and chorus groove in 23–26; fills at 2, 10, 18 and 22; the ending in bars 25–26'), `the plan, said first: "${r.summary}"`);
-  T.ok(JSON.stringify(r.plan.fills) === '[2,10,18,22]', `a fill in the last bar before each change (${r.plan.fills.join(', ')})`);
-  T.ok(JSON.stringify(r.plan.crashes) === '[3,11,19,23]', `a crash on each new section's downbeat, none on the intro at the top (${r.plan.crashes.join(', ')})`);
-  const parts = r.plan.sections.map((x) => `${x.name}:${x.plays}`).join(' ');
-  T.ok(parts === 'Intro:intro Verse:verse Chorus:chorus Bridge:bridge Outro:chorus', `each section plays its part's groove (${parts})`);
-  const fills = r.plan.sections.map((x) => x.fill?.beats || 0).join(' ');
-  T.ok(fills === '2 4 2 4 0', `a bar of fill going up (into the chorus, and from the bridge into the outro), two beats coming down or out of the intro (${fills})`);
-  const res = s.dispatch(r.ops, { by: 'mcp:test', label: r.label });
-  const t = s.get().tracks.at(-1);
-  T.ok(res.ok && s.history.length === 1 && t.name === 'Drums' && t.clips.length === 5 && t.clips.every((c, i) => c.start === s.get().sections[i].start && c.length === s.get().sections[i].length && c.by === 'mcp:test'), `one undo step, signed by whoever asked: a Drums track with one clip per section (${t.clips.length})`);
-  const crashOk = t.clips.slice(1).every((c) => c.notes.some((n) => n.p === 49 && n.t === 0) && c.notes.some((n) => n.p === 36 && n.t < 0.06) && !c.notes.some((n) => [42, 44, 46, 51].includes(n.p) && n.t < 0.06));
-  T.ok(crashOk && !t.clips[0].notes.some((n) => n.p === 49 && n.t === 0), 'each new section opens on the crash and the kick, the hand off the hats for it; the intro opens without');
-  T.ok(t.clips.every((c) => c.notes.every((n) => n.t >= 0 && n.t < c.length)), 'every note is inside its clip');
-  const fillBar = t.clips[1].notes.filter((n) => n.t >= 28 && [50, 47, 45, 43].includes(n.p));
-  T.ok(fillBar.length >= 5, `the verse's last bar is the fill: ${fillBar.length} tom hits in it`);
-  const outro = t.clips[4];
-  const last = outro.notes.find((n) => n.p === 49 && n.t > 11);
-  T.ok(last && near(last.t, 12, 0.04) && !outro.notes.some((n) => n.t > 12.1), `the ending: the final hit on the one of the last bar (${last ? ((last.t - 12) * 500).toFixed(0) : '?'} ms off it), and nothing after it`);
-  T.ok(s.undo().ok && s.get().tracks.length === 0, 'one undo takes the whole track back out');
-  const again = G.planDrumTrack(s.get(), { style: 'rock', seed: 3 });
-  T.ok(JSON.stringify(again.ops) === JSON.stringify(r.ops), 'the same song, style and seed plan the same drums');
-}
-{
-  // parts by name or by energy; and asked
-  const p = createProject({ tempo: 100 });
-  p.sections = [{ id: 's_a00001', name: 'Part one', start: 0, length: 16 }, { id: 's_b00001', name: 'Part two', start: 16, length: 16 }, { id: 's_c00001', name: 'Part three', start: 32, length: 16 }];
-  p.tracks = [{ id: 't_keys01', name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys', params: {} }, clips: [
-    { id: 'c_quiet1', kind: 'notes', start: 0, length: 16, notes: Array.from({ length: 8 }, (_, i) => ({ p: 60, t: i * 2, d: 1, v: 0.6 })) },
-    { id: 'c_loud01', kind: 'notes', start: 16, length: 16, notes: Array.from({ length: 48 }, (_, i) => ({ p: 60 + (i % 3) * 4, t: (i % 16), d: 0.5, v: 0.9 })) },
-    { id: 'c_soft01', kind: 'notes', start: 32, length: 16, notes: [{ p: 60, t: 0, d: 8, v: 0.4 }] },
-  ], inserts: [], gain: 0, pan: 0, mute: false, solo: false }];
-  const r = G.planDrumTrack(createStore(p).get(), { style: 'pop' });
-  const how = r.plan.sections.map((x) => `${x.name}:${x.plays}(${x.by})`).join(' ');
-  T.ok(how === 'Part one:verse(energy) Part two:chorus(energy) Part three:bridge(energy)', `sections whose names say nothing take their part from how busy the song is there (${how})`);
-  const asked = G.planDrumTrack(createStore(p).get(), { style: 'pop', parts: { 'Part one': 'half', s_c00001: 'chorus' } });
-  T.ok(asked.plan.sections.map((x) => x.plays).join(' ') === 'half chorus chorus', `parts can be asked for, by name or id (${asked.plan.sections.map((x) => x.plays).join(' ')})`);
-  T.ok(['intro', 'verse', 'chorus', 'bridge', 'half', 'verse', 'chorus', 'outro', 'verse', 'bridge'].join() === ['Intro', 'Verse 2', 'Chorus', 'Middle 8', 'Breakdown', 'Pre-chorus', 'Guitar solo', 'Outro', 'A', 'B2'].map(G.partOfName).join(), 'section names read as parts (Intro, Verse 2, Chorus, Middle 8, Breakdown, Pre-chorus, Guitar solo, Outro, and A and B of an AABA)');
-}
-{
-  // no sections: one from the loop (no ending, so it goes round) or from the song's length (with an ending)
-  const loop = createStore(createProject({ tempo: 96, loop: { on: true, start: 4, end: 20 } }));
-  const r = G.planDrumTrack(loop.get(), { style: 'pop' });
-  const res = loop.dispatch(r.ops, { by: 'you' });
-  T.ok(res.ok && loop.get().sections.length === 1 && loop.get().sections[0].start === 4 && loop.get().sections[0].length === 16 && /no ending, so the loop goes round/.test(r.summary), `no sections: one is made from the loop, with no ending ("${r.summary}")`);
-  const whole = createStore(createProject({ tempo: 96 }));
-  whole.dispatch([{ type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$k', clip: { start: 0, length: 24, notes: 'C4@0:1' } }], { by: 'you' });
-  const w = G.planDrumTrack(whole.get(), { style: 'rock' });
-  T.ok(w.madeSection?.length === 24 && /the ending in bars 5–6/.test(w.summary), `or from the song's length, with an ending ("${w.summary}")`);
-  T.ok(/in 4\/4, and this song is in 3\/4/.test(G.planDrumTrack(createProject({ meter: [3, 4] }), {}).error || ''), 'a song in 3/4 is told the library is in 4/4');
-}
-{
-  // the ending and the loop (fresh eyes 6: Night Shift, looping bars 1-8, played its "Last rim" on every pass, and an
-  // 8-bar Verse/Chorus sketch got a 2-bar "Ring out" with no way to drop it): a song whose loop goes round its end gets
-  // no ending unless asked; ending and crashes are switches either way
-  const song = (loop) => { const p = createProject({ tempo: 124, loop }); p.sections = [{ id: 's_v00001', name: 'Verse', start: 0, length: 16 }, { id: 's_c00001', name: 'Chorus', start: 16, length: 16 }]; return createStore(p).get(); };
-  const looping = song({ on: true, start: 0, end: 32 }), straight = song({ on: false, start: 0, end: 32 }), short = song({ on: true, start: 0, end: 16 });
-  const def = G.planDrumTrack(looping, { style: 'pop' });
-  T.ok(G.songLoops?.(looping) && def.plan.loops === true && def.plan.ending === null && !def.plan.sections[1].ending && /; no ending, so the loop goes round\. On a new track/.test(def.summary), `the loop goes round the song's end, so by default there's no ending ("${def.summary.split('. ')[0]}")`);
-  const asked = G.planDrumTrack(looping, { style: 'pop', ending: true });
-  T.ok(asked.plan.ending?.name === 'Ring out' && asked.plan.ending.bars.join() === '7,8' && /; the ending in bars 7–8\./.test(asked.summary), `ending: true writes the style's ending anyway (${asked.plan.ending?.name}, bars ${asked.plan.ending?.bars.join('–')})`);
-  const plain = G.planDrumTrack(straight, { style: 'pop' }), none = G.planDrumTrack(straight, { style: 'pop', ending: false }), mid = G.planDrumTrack(short, { style: 'pop' });
-  T.ok(G.songLoops?.(straight) === false && plain.plan.ending?.bars.join() === '7,8' && mid.plan.ending && G.songLoops?.(short) === false, 'with the loop off, or stopping short of the song\'s end, the ending stays the default');
-  T.ok(none.plan.ending === null && /; no ending\. On a new track/.test(none.summary) && none.plan.sections[1].bars.join() === '5,8', `ending: false leaves it out, the last section playing its groove to the end ("${none.summary.split('. ')[0]}")`);
-  const quiet = G.planDrumTrack(straight, { style: 'pop', crashes: false });
-  const downbeats = quiet.ops.filter((o) => o.type === 'clip.add' && o.clip.notes.some((n) => n.p === 49 && n.t < 0.06)).length;
-  T.ok(quiet.plan.crashes.length === 0 && quiet.plan.sections.every((x) => x.crash === false) && /; no crashes\./.test(quiet.summary) && downbeats === 0 && plain.plan.crashes.join() === '1,5', `crashes: false leaves out the crash on each section's downbeat (${downbeats} clips open on one; ${plain.plan.crashes.length} by default)`);
-}
-{
-  // putting one groove: on a new track, onto a drum track (what's under it cut, or refused)
-  const s = createStore(createProject({ tempo: 110 }));
-  s.dispatch([{ type: 'track.add', ref: 'd', track: { name: 'Drums', instrument: { device: 'core.drums' } } }, { type: 'clip.add', track: '$d', clip: { start: 0, length: 16, name: 'Beat', notes: '36@0:0.25 38@4:0.25 36@8:0.25' } }], { by: 'you' });
-  const d = s.get().tracks[0];
-  const refuse = G.planPut(s.get(), { groove: 'funk/ghost-notes', track: d.id, bar: 3, bars: 2, under: 'refuse' });
-  T.ok(/bars 3–4 on Drums already holds "Beat"/.test(refuse.error || '') && refuse.occupied?.length === 1, `onto bars that hold a clip, the agents' way refuses: "${refuse.error}"`);
-  // the hints name a way out that works (fresh eyes 6: "leave track out" picked the same drum track again): track "new"
-  const fresh = G.planPut(s.get(), { groove: 'funk/ghost-notes', track: 'new', bar: 3, bars: 2, under: 'refuse' });
-  const hints = [refuse, G.planPut(s.get(), { groove: 'funk/ghost-notes', track: 'Nope', bar: 3 }), G.planPut(s.get(), { groove: 'funk/ghost-notes', track: d.id, bar: 3, isDrum: () => false })].map((x) => x.hint || '');
-  T.ok(hints.every((x) => /track "new" for a new Drums track/.test(x) && !/leave track out/.test(x)) && fresh.newTrack && fresh.ops[0].type === 'track.add' && fresh.trackName === 'Drums 2' && !fresh.cut, `the hints say track "new" for a new Drums track, and planPut takes it: ${fresh.summary || fresh.error}`);
-  const cut = G.planPut(s.get(), { groove: 'funk/ghost-notes', track: d.id, bar: 3, bars: 2, planDrop: planDropTrim });
-  const res = s.dispatch(cut.ops, { by: 'you' });
-  const clips = s.get().tracks[0].clips.map((c) => `${c.name}@${c.start}+${c.length}`).join(' ');
-  T.ok(res.ok && clips === 'Beat@0+8 Funk, Ghost notes@8+8', `the person's way cuts what's under it, as a drop does (${clips})`);
-  const fill = G.planPut(s.get(), { groove: 'rock/snare-pickup', bar: 6 });
-  T.ok(fill.start === 23 && fill.length === 1 && /the end of bar 6/.test(fill.summary), `a fill lands at the end of its bar ("${fill.summary}")`);
-  T.ok(G.defaultBars(G.getGroove('rock/straight-eighths')) === 4 && G.defaultBars(G.getGroove('rock/big-finish')) === 2, 'a main groove fills four bars unless asked; an ending its own two');
-}
 {
   // what agents read (extra-schemas.js): use_groove's track "new"; drum_track's ending and crashes, and no ending by
   // default when the loop goes round; and that find_grooves returns the studio's own library, no song text (the page
@@ -576,87 +294,8 @@ const floorCheck = (E, label) => E((label) => {
   await E(() => window.overdub.store.undo());
   T.ok(await E((n) => window.overdub.store.get().tracks.length === n, p0.tracks), 'one undo takes the whole drum track back out');
 
-  // the agents' tools: results and errors
-  const tools = await E(async () => {
-    const o = window.overdub, run = (n, i, by = 'claude') => o.tools.run(n, i, { by });
-    const funk = await run('find_grooves', { style: 'funk', part: 'verse' });
-    const any = await run('find_grooves', {});
-    const feel = await run('find_grooves', { feel: 'laid back', limit: 20 });
-    const beats = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5].flatMap((b) => [[b, 'hat']]).concat([[0, 'kick'], [2, 'kick'], [2.5, 'kick'], [4, 'kick'], [6, 'kick'], [6.5, 'kick'], [1, 'snare'], [3, 'snare'], [5, 'snare'], [7, 'snare']]).sort((a, b) => a[0] - b[0]);
-    const rhythm = await run('find_grooves', { rhythm: { onsets: beats.map((x) => (x[0] * 60) / 110), voices: beats.map((x) => x[1]) } });
-    const grid = await run('find_grooves', { rhythm: { steps: 16, step: 0.25, rows: { kick: '....X.......X...'.replace(/./g, (c, i) => (i % 4 === 0 ? 'X' : '.')), clap: '....X.......X...', open: '..x...x...x...x.' } } });
-    const badStyle = await run('find_grooves', { style: 'polka' });
-    const badRhythm = await run('find_grooves', { rhythm: { onsets: [0, 0.1] } });
-    const hd = o.store.history.length;
-    const dry = await run('use_groove', { groove: 'rock/straight-eighths', bar: 9, bars: 2, dry_run: true });
-    const dryKept = o.store.history.length === hd;
-    const h0 = o.store.history.length;
-    const use = await run('use_groove', { groove: 'rock/straight-eighths', bar: 9, bars: 2, reason: 'a straight backbeat under the new part' });
-    const clip = o.store.findClip(use.clip);
-    const again = await run('use_groove', { groove: 'rock/straight-eighths', bar: 9, bars: 2 });
-    const noGroove = await run('use_groove', { groove: 'rock/does-not-exist' });
-    const notDrums = await run('use_groove', { groove: 'rock/straight-eighths', track: 'Bass', bar: 9 });
-    const hp = o.store.history.length;
-    const planOnly = await run('drum_track', { style: 'disco', dry_run: true });
-    const planKept = o.store.history.length === hp;
-    const h1 = o.store.history.length;
-    const drum = await run('drum_track', { style: 'disco', reason: 'a four on the floor to try under it' }, 'mcp:Claude Code');
-    const dt = o.store.get().tracks.find((t) => t.id === drum.track?.id);
-    const badDrum = await run('drum_track', { style: 'polka' });
-    return {
-      funk: funk.grooves?.map((g) => g.id), funkGrid: funk.grooves?.[0]?.grid, styles: any.styles?.length, feel: feel.grooves?.map((g) => g.style),
-      rhythm: rhythm.grooves?.map((g) => `${g.id} ${g.score}`), tapped: rhythm.rhythm?.tapped_bpm, grid: grid.grooves?.slice(0, 3).map((g) => g.id),
-      badStyle, badRhythm, dry: { ok: dry.ok, dry: dry.dry_run, summary: dry.summary, hist: dryKept },
-      use: { ok: use.ok, summary: use.summary, by: clip?.clip.by, track: clip?.track.name, start: clip?.clip.start, hist: h0 + 1 === hp }, again, noGroove, notDrums,
-      planOnly: { ok: planOnly.ok, dry: planOnly.dry_run, summary: planOnly.summary, sections: planOnly.plan?.sections?.length, unchanged: planKept },
-      drum: { ok: drum.ok, by: dt?.by, clips: dt?.clips.length, clipsBy: dt?.clips.every((c) => c.by === 'mcp:Claude Code'), name: dt?.name, hist: o.store.history.length === h1 + 1 }, badDrum,
-      chips: [...document.querySelectorAll('.ag-step, .ag-chip')].map((x) => x.textContent).slice(-6),
-    };
-  });
-  T.ok(tools.funk?.length >= 2 && tools.funk.every((id) => id.startsWith('funk/')) && /hat\s+xxxx/.test(tools.funkGrid || '') && tools.styles === L.styles.length, `find_grooves by style and part: ${tools.funk?.join(', ')}, each with its grid; with no style it lists the ${tools.styles} styles`);
-  T.ok(tools.feel?.length >= 3 && tools.feel.every((s) => ['Neo-soul', 'Lo-fi', 'Reggae'].includes(s)), `find_grooves by feel ("laid back"): ${[...new Set(tools.feel)].join(', ')}`);
-  T.ok(tools.rhythm?.length === 5 && /^(rock|pop|indie)\//.test(tools.rhythm[0]) && near(tools.tapped, 110, 2), `find_grooves from a rhythm given as onsets: ${tools.rhythm?.slice(0, 3).join('; ')} (tapped at ${tools.tapped} BPM)`);
-  T.ok(tools.grid?.length === 3 && tools.grid.some((id) => /^(house|disco)\//.test(id)), `and from a drum grid (four on the floor, claps, open hats): ${tools.grid?.join(', ')}`);
-  T.ok(/no style "polka"/.test(tools.badStyle.error) && /rock/.test(tools.badStyle.hint) && /at least three onsets/.test(tools.badRhythm.error), `its errors say what would work ("${tools.badStyle.error}"; "${tools.badRhythm.error}")`);
-  T.ok(tools.dry.ok && tools.dry.dry && tools.dry.hist && /Rock, Straight eighths on Drums, bars 9–10/.test(tools.dry.summary), `use_groove dry_run plans and changes nothing ("${tools.dry.summary}")`);
-  T.ok(tools.use.ok && tools.use.by === 'claude' && tools.use.track === 'Drums' && tools.use.start === 32 && tools.use.hist, `use_groove puts it in: a clip on Drums at bar 9, signed by the agent, one undo step ("${tools.use.summary}")`);
-  T.ok(/bars 9–10 on Drums already holds "Rock, Straight eighths"/.test(tools.again.error) && tools.again.occupied?.length === 1, `onto bars that hold a clip it refuses, changing nothing ("${tools.again.error}")`);
-  T.ok(/no groove "rock\/does-not-exist"/.test(tools.noGroove.error) && /find_grooves/.test(tools.noGroove.hint) && /Bass isn't a drum track/.test(tools.notDrums.error), `and says so for a groove that isn't there or a track that isn't drums ("${tools.notDrums.error}")`);
-  T.ok(tools.planOnly.ok && tools.planOnly.dry && tools.planOnly.unchanged && tools.planOnly.sections === 2 && /^Disco, verse groove in bars 1–4 and chorus groove in 5–8/.test(tools.planOnly.summary), `drum_track dry_run: the plan, nothing changed ("${tools.planOnly.summary}")`);
-  T.ok(tools.drum.ok && tools.drum.clipsBy && tools.drum.clips === 2 && tools.drum.hist && /^Drums/.test(tools.drum.name), `drum_track writes it: ${tools.drum.name}, ${tools.drum.clips} clips signed by the MCP client, one undo step`);
-  T.ok(/no style "polka"/.test(tools.badDrum.error), 'drum_track: a style that isn\'t there is an error with the list');
-  const schemas = await E(async () => { const m = await import('/app/src/agent/extra-schemas.js'); return m.EXTRA_SCHEMAS.filter((x) => ['find_grooves', 'use_groove', 'drum_track'].includes(x.name)).map((x) => ({ name: x.name, a: x.annotations, live: window.overdub.tools.schemas().find((y) => y.name === x.name)?.description === x.description })); });
-  T.ok(schemas.length === 3 && schemas.every((x) => x.live && x.a && x.a.openWorldHint === false) && schemas[0].a.readOnlyHint === true && schemas.slice(1).every((x) => x.a.readOnlyHint === false && x.a.destructiveHint === false), `the three schemas live in extra-schemas.js with their annotations, the page registers them as they are (${schemas.map((x) => `${x.name} ${x.a.readOnlyHint ? 'read-only' : 'adds'}`).join(', ')})`);
-  // fresh eyes 6: following use_groove's hint gave the same error again; drum_track wrote an ending under a loop that
-  // goes round the song's end; and find_grooves' results led with a note that the song's maker wrote them
-  const more = await E(async () => {
-    const o = window.overdub, run = (n, i, by = 'mcp:Claude Code') => o.tools.run(n, i, { by });
-    const drums = o.store.get().tracks.find((t) => t.name === 'Drums');
-    const taken = await run('use_groove', { groove: 'neosoul/behind-the-beat', bar: 1, bars: 2 });
-    const h0 = o.store.history.length;
-    const followed = await run('use_groove', { groove: 'neosoul/behind-the-beat', bar: 1, bars: 2, track: 'new', reason: 'the groove on its own track, as the hint says' });
-    const t = o.store.get().tracks.find((x) => x.id === followed.track?.id);
-    const out = { taken, followed: { ok: followed.ok, track: followed.track, clips: t?.clips.map((c) => `${c.name}@${c.start}`), hist: o.store.history.length - h0, beat: drums.clips.map((c) => c.name).join(', ') === o.store.get().tracks.find((x) => x.id === drums.id).clips.map((c) => c.name).join(', ') } };
-    if (followed.ok) o.store.undo({ by: 'mcp:Claude Code' });
-    const loopDry = await run('drum_track', { style: 'pop', dry_run: true });
-    const endDry = await run('drum_track', { style: 'pop', ending: true, crashes: false, dry_run: true });
-    const badEnd = await run('drum_track', { style: 'pop', ending: 'no' });
-    out.loopDry = { loops: loopDry.plan?.loops, ending: loopDry.plan?.ending, summary: loopDry.summary };
-    out.endDry = { ending: endDry.plan?.ending?.bars, crashes: endDry.plan?.crashes, summary: endDry.summary };
-    out.badEnd = badEnd;
-    // nothing of the song's own text reaches find_grooves: a track and a title only this song has
-    o.store.dispatch([{ type: 'project.set', patch: { title: 'Zq7 the title' } }, { type: 'track.set', track: drums.id, patch: { name: 'Zq7 the drums' } }], { by: 'you', label: 'names only this song has' });
-    const found = [];
-    for (const input of [{}, { style: 'rock' }, { query: 'shuffle' }, { rhythm: { onsets: [0, 0.3, 0.6, 0.9, 1.2, 1.5], voices: ['kick', 'hat', 'snare', 'hat', 'kick', 'snare'] } }]) found.push(await run('find_grooves', input));
-    o.store.undo({ by: 'you' });
-    out.leaks = found.map((r) => JSON.stringify(r)).filter((s) => /Zq7/.test(s)).length;
-    out.found = found.map((r) => (r.grooves || []).length);
-    return out;
-  });
-  T.ok(/track "new" for a new Drums track/.test(more.taken.hint || '') && more.followed.ok && more.followed.track?.new && /^Drums \d/.test(more.followed.track.name) && more.followed.hist === 1 && more.followed.beat, `use_groove on taken bars says to give track "new" ("${more.taken.hint}"), and that works: ${more.followed.track?.name}, ${more.followed.clips?.join(', ')}, Drums untouched`);
-  T.ok(more.loopDry.loops === true && more.loopDry.ending === null && /no ending, so the loop goes round/.test(more.loopDry.summary || ''), `drum_track on a song whose loop goes round its end: no ending by default ("${(more.loopDry.summary || '').split('. ')[0]}")`);
-  T.ok(more.endDry.ending?.join() === '7,8' && more.endDry.crashes?.length === 0 && /no crashes/.test(more.endDry.summary || '') && /ending is true or false/.test(more.badEnd.error || ''), `drum_track's ending: true and crashes: false say so in the plan (the ending in bars ${more.endDry.ending?.join('–')}, crashes at ${more.endDry.crashes?.length ?? '?'} bars); a word for ending is an error`);
-  T.ok(more.leaks === 0 && more.found.every((n) => n > 0), `find_grooves carries none of the song's own text, only the library (${more.found.join(', ')} grooves across four calls, none naming the song's title or tracks)`);
+
+  // (the agents' find_grooves, use_groove and drum_track: results, errors and History are in test/unit/grooves-tools.test.js)
 
   // the demo agent: "give me a funk beat" takes from the library, as cards
   const mock = await E(async () => {

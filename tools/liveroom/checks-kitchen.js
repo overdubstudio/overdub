@@ -1,8 +1,6 @@
 // The live room's checks: the kitchen table [stream D] (docs/research/LIVE-ROOM-MODE.md §11.7). Run by
 // tools/liveroom-test.js (ONLY=kitchen), whose header says what a checks module exports.
-//   1. the paper (Node): ChordPro and chords-over-words fixtures read into sections, lines and anchored chords;
-//      format(parse(x)) is stable; capo 3 on G shapes sounds in Bb; Nashville numbers read; a chord nobody reads is
-//      kept as text and plays nothing; an edited line keeps each chord on its syllable
+//   1. (the paper, the offered move and the two inputs' setup, which read no audio: test/unit/liveroom-kitchen.test.js)
 //   2. the time (Node): the analyser on synthesized strummed takes (72-120 BPM, drifting up to 4%) reads the tempo
 //      within 3%, or offers it as Twice or Half as fast; a take in free time over a fifth of it says so
 //   3. the chords (Node): the paper's chords lined up with those takes, a voice 5 LU over the guitar, put each change
@@ -21,9 +19,9 @@
 //      by you; Again asks Both, or just the voice?, and just the voice is a pass on Voice alone over the guitar from the
 //      take before. If Chromium's fake capture gives one channel, the page part is skipped and said (the plans in Node).
 //      One source on both channels (the same strums on 1 and 2) moves both and the option still needs a pickup
-import { parseSheet, formatSheet, soundingKey, sheetChords, setWords, pasteOps } from '../../app/src/core/liveroom/sheet-text.js';
+import { parseSheet, sheetChords, pasteOps } from '../../app/src/core/liveroom/sheet-text.js';
 import { readTape, alignChords, timeWords } from '../../app/src/core/liveroom/tape.js';
-import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, offeredKitchen, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen-plans.js';
+import { kitchenOps, planTime, planRead, planPlayer, planKitchenFinish, PLAYERS, PLAYER_ORDER, chordsTimeline, TAKE_LEVEL } from '../../app/src/core/liveroom/kitchen-plans.js';
 import { LINES as KLINES } from '../../app/src/core/liveroom/lines/kitchen.js';
 import { createStore } from '../../app/src/core/store.js';
 import { createProject } from '../../app/src/core/project.js';
@@ -34,7 +32,7 @@ import { measure } from '../../app/src/audio/measure.js';
 import { checkTargets } from '../../app/src/audio/targets.js';
 import { strum, voice, mix, rng, SR } from './fake.js';
 import { mapBeat, mapSec } from '../../app/src/core/music.js';
-import { openRoom, history } from './harness.js';
+import { openRoom, history, atOnce } from './harness.js';
 
 export const name = 'kitchen';
 export const pages = true;
@@ -163,28 +161,6 @@ export async function run(T, ctx) {
   // (KITCHEN_ONLY=flow: the browser part alone, while working on it; KITCHEN_ONLY=two: the two inputs' alone)
   if (process.env.KITCHEN_ONLY === 'flow') { if (ctx.pages) await flow(T, ctx); return; }
   if (process.env.KITCHEN_ONLY === 'two') { if (ctx.pages) await twoFlow(T); return; }
-  // 1. the paper
-  {
-    const ug = parseSheet(UG), cho = parseSheet(CHO);
-    T.ok(ug.sections.map((s) => s.name).join(',') === 'Verse 1,Chorus,Verse 2,Bridge' && ug.capo === 3 && ug.title === 'Paper Moon', `the paper: chords over words read into ${ug.sections.length} sections, capo ${ug.capo}, each written once`);
-    T.ok(ug.sections[0].lines[0].text === '[G]Somewhere [Em]a paper moon is hanging' && ug.sections[0].lines[1].text === '[C]over the roofs of the [D]town', 'the paper: each chord anchored by column to the syllable under it');
-    T.ok(cho.sections.map((s) => s.name).join(',') === 'Verse 1,Chorus,Bridge' && cho.capo === 2 && cho.time?.join('/') === '3/4' && cho.key?.root === 'G', 'the paper: ChordPro read (directives, environments, {chorus} recalled once, {c: Bridge})');
-    let stable = true;
-    for (const src of [UG, CHO]) for (const as of ['text', 'chordpro']) {
-      const a = parseSheet(src), t1 = formatSheet(a, { as, title: a.title, key: a.key }), b = parseSheet(t1);
-      stable = stable && JSON.stringify(b.sections) === JSON.stringify(a.sections) && b.capo === a.capo && formatSheet(b, { as, title: b.title, key: b.key }) === t1;
-    }
-    T.ok(stable, 'the paper: format(parse(x)) is stable, as text and as ChordPro, both fixtures');
-    const sk = soundingKey(ug, {});
-    T.ok(sk?.root === 'Bb' && sk.scale === 'major', `the paper: capo 3 on G shapes sounds in ${sk?.root} ${sk?.scale} (Bb, not E)`);
-    const nash = sheetChords(parseSheet('{key: G}\n[Verse]\n1 4 6- 5/7\n'), {})[0].chords.map((c) => c.chord?.name);
-    T.ok(nash.join(' ') === 'G C Em D/F#', `the paper: Nashville numbers read in the key (1 4 6- 5/7 -> ${nash.join(' ')})`);
-    const br = sheetChords(cho, {}).find((s) => s.name === 'Bridge');
-    T.ok(br.chords[1].sym === 'Hm7' && br.chords[1].chord === null && cho.sections[2].lines[0].text.includes('[Hm7]'), 'the paper: a chord nobody reads (Hm7) is kept as written and plays nothing');
-    const ed = setWords('Somewhere a [G]paper [Em]moon is hanging', 'Somewhere out there a silver moon is hanging');
-    T.ok(ed === 'Somewhere out there a [G]silver [Em]moon is hanging', `the paper: an edit keeps each chord on its syllable ("${ed}")`);
-  }
-
   // 2 and 3. the time and the chords, on synthesized takes
   const takes = [];
   for (const [bpm, drift, seed] of [[72, 0.02, 1], [84, 0.04, 2], [96, 0.03, 3], [108, 0, 4], [120, 0.04, 5]]) {
@@ -274,18 +250,6 @@ export async function run(T, ctx) {
     });
     const noTime = !r.ops.some((o) => o.type === 'tempo.map') && !p.tempoMap && p.tempo === 84;
     T.ok(noTime && p.room.master === clip && p.sections[0]?.start === 0 && hit / total >= 0.9, `Count me in: a counted take keeps the song's time (no tempo map: ${noTime}; at 84) and the band reads its chords on that grid (${hit} of ${total} changes within a beat; ${p.sections.map((s) => s.name).join(', ')})`);
-    // a fresh song at the kitchen starts at the kitchen's 84, the tempo Count me in offers
-    const fresh = createStore(createProject({ tempo: 120 }), { getDevice });
-    ok(fresh.dispatch(kitchenOps(fresh.get(), { mic: 'one' }).ops, { by: 'overdub' }));
-    T.ok(fresh.get().tempo === 84, `Count me in: a fresh song at the kitchen table starts at ${fresh.get().tempo} BPM`);
-  }
-  {
-    // a paper in Nashville numbers: the Chords track plays them in the key of the shapes (G), not in C
-    const st = createStore(createProject({ tempo: 84 }), { getDevice });
-    ok(st.dispatch(pasteOps(st.get(), parseSheet('{key: G}\n[Verse]\n| 1 | 4 | 6- | 5 |\n')).ops, { by: 'you' }));
-    ok(st.dispatch([{ type: 'track.add', ref: 'c', track: { name: 'Chords', kind: 'instrument', instrument: { device: 'core.keys' }, mute: true } }, ...['1', '4', '6-', '5'].map((n, i) => ({ type: 'clip.add', track: '$c', clip: { kind: 'notes', start: i * 4, length: 4, name: n, notes: [] } }))], { by: 'overdub' }));
-    const names = chordsTimeline(st.get()).map((x) => x.chord.name).join(' ');
-    T.ok(names === 'G C Em D', `the chords: Nashville numbers on the Chords track play in the paper's key (1 4 6- 5 in G: ${names})`);
   }
   {
     // where the time moves, the players rest: a take with a third of it in free time, the shaker kept over all of it
@@ -338,28 +302,6 @@ export async function run(T, ctx) {
       T.ok(m.lufs >= lo && m.lufs <= hi && m.truePeak <= -0.9, `the levels: ${f} at ${r2(m.lufs)} LUFS, ${r2(m.truePeak)} dBTP, PLR ${r2(m.truePeak - m.lufs)}${tp?.ok ? '' : ' (true peak over)'}`);
     }
   } else T.note('the levels: skipped (LEVELS=0)');
-
-  // the offered move, in order (§7.4)
-  {
-    const v = { cards: [{ name: 'Verse' }, { name: 'Chorus' }, { name: 'Bridge' }] };
-    const seq = [offeredKitchen(v, {}), offeredKitchen(v, { rolling: true }), offeredKitchen(v, { takes: 1, ask: 'time' }), offeredKitchen(v, { takes: 1 }), offeredKitchen(v, { takes: 1, offer: 'shaker' }), offeredKitchen(v, { takes: 1, done: PLAYER_ORDER }), offeredKitchen(v, { takes: 1, done: PLAYER_ORDER, again: true })].map((o) => o?.id);
-    T.ok(seq.join(' ') === 'tape stop time offer.shaker keep again hear', `the offered move: ${seq.join(' → ')}`);
-    T.ok(offeredKitchen({ cards: [{ name: 'Verse' }] }, { takes: 1, done: ['shaker', 'cajon', 'bass'] })?.id === 'again', 'the offered move: strings only with a bridge');
-    const form = offeredKitchen(v, { takes: 1, ask: 'form', offer: null })?.id, bare = offeredKitchen({ cards: [] }, { takes: 1 })?.id, noChorus = offeredKitchen({ cards: [{ name: 'Verse 1' }] }, { takes: 1 })?.id;
-    T.ok(form === 'form' && bare === 'again' && noChorus === 'offer.cajon', `the offered move: the form asked before the players (${form}); no parts, no players (${bare}); no chorus, no shaker (${noChorus})`);
-    const both = offeredKitchen(v, { takes: 1, done: PLAYER_ORDER, again: true, ask: 'both' })?.id;
-    T.ok(both === 'again.both', `the offered move: with two inputs, Again's question offers both again first (${both})`);
-  }
-  {
-    // two inputs (§6.2 c): Voice on input 1 and Guitar on input 2, each with its chain; one mic is the default setup
-    const st = createStore(createProject({ tempo: 84 }), { getDevice });
-    ok(st.dispatch(kitchenOps(st.get(), { mic: 'one' }).ops, { by: 'overdub' }));
-    const one = structuredClone(st.get().room);
-    ok(st.dispatch(kitchenOps(st.get(), { mic: 'two' }).ops, { by: 'overdub' }));
-    const p = st.get(), R = p.room, tr = (id) => p.tracks.find((t) => t.id === id);
-    T.ok(one.mic === 'one' && one.tracks.take && R.mic === 'two' && tr(R.tracks.voice)?.input?.channel === 1 && tr(R.tracks.kguitar)?.input?.channel === 2 && tr(R.tracks.voice).name === 'Voice' && tr(R.tracks.kguitar).name === 'Guitar',
-      `two inputs: one mic is the default (${one.mic}); picked, Voice on input ${tr(R.tracks.voice)?.input?.channel} and Guitar on input ${tr(R.tracks.kguitar)?.input?.channel}`);
-  }
 
   if (!ctx.pages) { T.note('the flow: skipped (PAGES=0)'); return; }
   await flow(T, ctx);
@@ -420,159 +362,163 @@ const INSTALL = async () => {
 };
 
 async function flow(T, ctx) {
-  const tape = kitchenTape();
-  for (const phones of [true, false]) {
-    let S;
-    try { S = await openRoom('/app/?room', { name: `kitchen-${phones ? 'phones' : 'speakers'}`, fake: tape }); } catch (e) { T.ok(false, `the flow: the room opened (${e.message})`); return; }
-    const { page, E } = S;
-    const warns = [];
-    page.on('console', (m) => { if (/overdub (kitchen|paper)/.test(m.text())) warns.push(m.text()); });
-    let presses = 0;
-    const press = async (key) => { presses++; await page.keyboard.press(key); await page.waitForTimeout(120); };
-    const at = (x, ms = 90000) => page.waitForFunction((x) => window.__k.pos() >= x, x, { timeout: ms, polling: 20 });
-    try {
-      await E(INSTALL);
-      // press 1: the door's kitchen table (held off the door while the guitar room is built, door.js OFFERED: picked by
-      // its id, as its card would)
-      await page.waitForSelector('.lrd-card', { timeout: 15000 });
-      presses++;
-      await E(() => window.overdub.liveRoom.press('place:kitchen'));
-      await page.waitForSelector('.kt', { timeout: 10000 });
-      // press 2: Allow (this browser has allowed it already: the kitchen opens the input by itself)
-      presses++;
-      await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
-      await E(() => { window.__k.deck.latency = 0; });
-      const st0 = await E(() => ({ ...window.__kstate(), pos: window.__k.pos(), how: window.__k.lines.find((x) => /^How is it miked\?/.test(x)) || '' }));
-      T.ok(st0.mic === 'laptop' && /The laptop’s mic/.test(st0.how), `the flow (${phones ? 'headphones' : 'speakers'}): the input opened by itself, the mic picked from what the room sees (${st0.how}), then Headphones on?`);
-      if (st0.pos > tape.T.strum - 0.5) throw new Error(`the input was ${st0.pos.toFixed(1)} s into the fake before the headphones question: too late for its strum at ${tape.T.strum} s`);
-      // press 3: the headphones question; then the balance hears the strum, then a voice over it
-      if (phones) await press('Space'); else { presses++; await page.click('[data-act="phones.no"]'); }
-      await page.waitForFunction(() => window.__kstate()?.step === 'paper', null, { timeout: 30000 });
-      const tb = await E(() => window.__k.lines.filter((x) => /^Good:|guitar’s louder|well over the guitar/.test(x)).at(-1) || '');
-      T.ok(/^Good: your voice sits [3-8] dB over the guitar\.$/.test(tb), `the flow: the balance from the input, a voice over the strum (${tb})`);
-      // the paper, pasted (typing isn't a press)
-      await E(async (text) => {
-        const app = window.overdub;
-        const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
-        app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
-      }, PAPER);
-      // press 4 and 5: the tape in the quiet before the take, then the stop once it's played
-      await at(tape.T.sing + 6);
-      const playsBefore = (await S.plays()).length;
-      await press('Space');
-      await page.waitForTimeout(400);
-      const rolling = await E((n) => {
-        const o = window.overdub, p = o.store.get(), r = p.room || {};
-        const band = ['shaker', 'cajon', 'bass', 'strings'].map((k) => p.tracks.find((t) => t.id === r.tracks?.[k])).filter(Boolean);
-        return { rolling: window.__kstate()?.rolling, counted: (window.__lrPlays || []).slice(n).some((x) => x.opts?.countIn), click: !!o.engine.click?.on, band: band.every((t) => t.mute || !t.clips.length) };
-      }, playsBefore);
-      T.ok(rolling.rolling && !rolling.counted && !rolling.click && rolling.band, `the work tape rolls with no count, no click and no band (counted ${rolling.counted}, click ${rolling.click}, band silent ${rolling.band})`);
-      await at(tape.T.end + 0.3);
-      await press('Space');
-      const log = await E(() => window.__k.log.slice());
-      T.ok(log.join(' ').startsWith('countIn:none:0 take stop'), `the flow: the work tape through the deck (${log.join(' ')})`);
-      // the take as it went in: one audio clip by you, its room before the first strum trimmed to two seconds
-      const took = await E(() => {
-        const p = window.overdub.store.get(), t = p.tracks.find((x) => x.id === p.room.tracks.take), c = t?.clips.find((x) => x.kind === 'audio');
-        const H = window.overdub.store.history.slice(-3).map((x) => `${x.label}:${x.by}`);
-        return c ? { offset: c.offset || 0, start: c.start, length: c.length, by: c.by, name: c.name, tempo: p.tempo, H } : null;
-      });
-      const secs = took ? ((took.offset || 0) * 60) / took.tempo : 0;
-      T.ok(took && took.by === 'you' && took.start === 0 && secs > 0, `the work tape goes in by you, its quiet head trimmed (${took ? `${secs.toFixed(2)} s of it cut, “${took.name}”` : 'no take'})`);
-      // the read, in a Worker; then the time question with the shaker on it
-      await page.waitForFunction(() => window.__kstate()?.ask === 'time', null, { timeout: 60000 });
-      const line = await E(() => window.__k.lines.at(-1) || '');
-      T.ok(/The band’s read it: around \d+/.test(line), `the flow: the read's question (${line})`);
-      // press 6: On the beat
-      await press('Space');
-      await page.waitForFunction(() => window.__kstate()?.offer === 'shaker', null, { timeout: 20000 });
-      await page.waitForFunction(() => window.__k.lines.includes('Want a shaker in the chorus?'), null, { timeout: 10000 }).catch(() => {});
-      const said = await E(() => window.__k.lines.slice(-3));
-      const chordsLine = said.find((x) => /The band has your chords/.test(x)) || said.join(' | ');
-      // press 7: Keep it, the shaker
-      await press('Space');
-      await page.waitForFunction(() => window.__kstate()?.done.includes('shaker'), null, { timeout: 10000 });
-      if (!phones) {
-        // on speakers: Again, with the shaker in the song: the band held muted for the whole take, no count, and no
-        // click, though the control room's click is on (held off for the take, given back after it)
-        await E(() => { window.overdub.engine.click = { on: true }; });
-        const before = (await S.plays()).length;
-        await E(() => window.overdub.liveRoom.press('again'));
-        await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 10000 });
-        await page.waitForTimeout(600);
-        const during = await E((n) => { const o = window.overdub, p = o.store.get(), id = p.room?.tracks?.shaker; return { muted: !!p.tracks.find((t) => t.id === id)?.mute, hold: window.__kstate().hold, counted: (window.__lrPlays || []).slice(n).some((x) => x.opts?.countIn), click: !!o.engine.click?.on }; }, before);
-        await E(() => window.overdub.liveRoom.press('stop'));
-        await page.waitForFunction(() => window.__kstate()?.rolling === false, null, { timeout: 15000 });
-        const after = await E(() => { const o = window.overdub, p = o.store.get(), id = p.room?.tracks?.shaker; return { band: !p.tracks.find((t) => t.id === id)?.mute, click: !!o.engine.click.on }; });
-        T.ok(during.muted && during.hold && !during.counted && !during.click && after.band && after.click, `the flow (speakers): nothing of the band sounds during a take (the shaker held muted ${during.muted}, no count ${!during.counted}, the click held off ${!during.click}; the shaker back after ${after.band}, the click ${after.click})`);
-      }
-      if (phones) {
-        // signing on the paper: an agent's line in --ink-agent, the house's chord lines unsigned
-        await E(async () => {
-          const app = window.overdub;
-          const sh = app.store.get().sheet;
-          app.store.dispatch([{ type: 'sheet.line.set', section: sh.sections[0].id, line: sh.sections[0].lines[0].id, patch: { text: 'Somewhere a [G]silver [Em]moon' } }], { by: 'mcp:test', label: 'A line' });
-          app.store.dispatch([{ type: 'sheet.section.add', section: { name: 'Bridge', lines: [{ text: '| Am | C | D |' }] } }], { by: 'overdub', label: 'The chords from the take' });
-        });
-        await page.waitForTimeout(200);
-        const ink = await E(() => {
-          const by = document.querySelector('.pp .pp-line .by');
-          const want = getComputedStyle(document.documentElement).getPropertyValue('--ink-agent').trim();
-          const probe = document.createElement('span'); probe.style.color = want; document.body.append(probe); const w = getComputedStyle(probe).color; probe.remove();
-          const house = [...document.querySelectorAll('.pp .pp-line')].find((l) => /Am/.test(l.textContent));
-          return { color: by ? getComputedStyle(by).color : null, want: w, text: by?.textContent || '', house: house ? !house.querySelector('.by') : null };
-        });
-        T.ok(ink.color && ink.color === ink.want && /test/i.test(ink.text), `signing: an mcp:test line carries its byline in --ink-agent (${ink.text} ${ink.color})`);
-        T.ok(ink.house === true, 'signing: the house\'s chord lines are unsigned');
-        await S.shot?.('kitchen-paper');
-      }
-      // a finish (Bare is on): Warm pressed is answered at once, and its number, measured, follows
-      if (await page.$('[data-act="finish.warm"]')) {
-        await page.click('[data-act="finish.warm"]');
-        await page.waitForTimeout(300);
-        const now = await E(() => document.querySelector('.lr-tb-line')?.textContent || '');
-        const num = await page.waitForFunction(() => window.__k.lines.find((x) => /^Warm is on: the peaks rounded off, (about \d+ dB (louder|quieter) than Bare|as loud as Bare)\.$/.test(x)), null, { timeout: 15000 }).then((h) => h.jsonValue(), () => null);
-        T.ok(/^Warm is on: the peaks rounded off/.test(now) && !!num, `a finish: Warm answered at once (“${now}”), its number after (“${num}”)`);
-        await page.click('[data-act="finish.bare"]');
-      }
-      // press 8: Send a mix, the send screen
-      presses++;
-      await page.click('[data-act="send"]');
-      const sent = await page.waitForFunction(() => window.overdub.ui.state.liveRoom.screen === 'send', null, { timeout: 10000 }).then(() => true, () => false);
-      const H = await history(page);
-      const steps = H.map((x) => `${x.label}:${x.by}`);
-      const time = H.find((x) => /^On the beat/.test(x.label));
-      const read = H.find((x) => /^The band read/.test(x.label));
-      const shaker = H.find((x) => /^Shaker/.test(x.label));
-      const into = H[0];
-      T.ok(presses === 8 && sent, `the flow: §2.5 in ${presses} presses, the last opening Send (${sent ? 'the send screen' : 'no send screen'})`);
-      T.ok(into?.by === 'you' && /kitchen/i.test(into.label) && time?.by === 'you' && time.ops.includes('tempo.map') && read?.by === 'overdub' && shaker?.by === 'you', `the flow: the place by you, the time by you (tempo.map), the read by the house, the shaker kept by you (${[steps[0], ...steps.slice(-4)].join(' · ')})`);
-      T.ok(/^The band has your chords: .+ in the (verse|chorus)\.$/.test(chordsLine) && said.some((x) => x === 'Want a shaker in the chorus?'), `the flow: the chords line, then the shaker's offer (${said.join(' | ')})`);
-      const clipBy = await E(() => { const p = window.overdub.store.get(); const t = p.tracks.find((x) => x.id === p.room.tracks.shaker); return t ? [...new Set(t.clips.map((c) => c.by))] : []; });
-      T.ok(clipBy.join() === 'overdub', `signing: the shaker's clips the house's (${clipBy.join()})`);
-    } catch (e) {
-      let why = '';
-      try { const k = await E(() => { const s = window.__kstate(); return s && { step: s.step, ask: s.ask, offer: s.offer, done: s.done, takes: s.takes, reading: s.reading, offered: s.offered?.id, pos: +window.__k.pos().toFixed(2), log: window.__k.log, lines: window.__k.lines.slice(-3) }; }); why = ` ${JSON.stringify(k)}`; } catch { /* the page is gone */ }
-      const errs = (S.errors || []).slice(-3).map((x) => String(x.message || x).split('\n')[0]).join(' | ');
-      T.ok(false, `the flow (${phones ? 'headphones' : 'speakers'}): ${e.message.split('\n')[0]}${why}${errs ? ` errors: ${errs}` : ''}${warns.length ? ` warnings: ${warns.slice(-3).join(' | ')}` : ''}`);
-    } finally {
-      await S.close();
+  // (five browsers that share nothing, each waiting on its own fake, so side by side; their fakes made first: atOnce)
+  const tape = kitchenTape(), counted = kitchenTape({ counted: true }), two = twoTape(), same = sameTape();
+  await atOnce(T, [...[true, false].map((phones) => (T) => oneFlow(T, tape, phones)), (T) => countedFlow(T, counted), (T) => twoFlow(T, two), (T) => sameFlow(T, same)]);
+}
+
+async function oneFlow(T, tape, phones) {
+  let S;
+  try { S = await openRoom('/app/?room', { name: `kitchen-${phones ? 'phones' : 'speakers'}`, fake: tape }); } catch (e) { T.ok(false, `the flow: the room opened (${e.message})`); return; }
+  const { page, E } = S;
+  const warns = [];
+  page.on('console', (m) => { if (/overdub (kitchen|paper)/.test(m.text())) warns.push(m.text()); });
+  let presses = 0;
+  const press = async (key) => { presses++; await page.keyboard.press(key); await page.waitForTimeout(120); };
+  const at = (x, ms = 90000) => page.waitForFunction((x) => window.__k.pos() >= x, x, { timeout: ms, polling: 20 });
+  try {
+    await E(INSTALL);
+    // press 1: the door's kitchen table (held off the door while the guitar room is built, door.js OFFERED: picked by
+    // its id, as its card would)
+    await page.waitForSelector('.lrd-card', { timeout: 15000 });
+    presses++;
+    await E(() => window.overdub.liveRoom.press('place:kitchen'));
+    await page.waitForSelector('.kt', { timeout: 10000 });
+    // press 2: Allow (this browser has allowed it already: the kitchen opens the input by itself)
+    presses++;
+    await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
+    await E(() => { window.__k.deck.latency = 0; });
+    const st0 = await E(() => ({ ...window.__kstate(), pos: window.__k.pos(), how: window.__k.lines.find((x) => /^How is it miked\?/.test(x)) || '' }));
+    T.ok(st0.mic === 'laptop' && /The laptop’s mic/.test(st0.how), `the flow (${phones ? 'headphones' : 'speakers'}): the input opened by itself, the mic picked from what the room sees (${st0.how}), then Headphones on?`);
+    if (st0.pos > tape.T.strum - 0.5) throw new Error(`the input was ${st0.pos.toFixed(1)} s into the fake before the headphones question: too late for its strum at ${tape.T.strum} s`);
+    // press 3: the headphones question; then the balance hears the strum, then a voice over it
+    if (phones) await press('Space'); else { presses++; await page.click('[data-act="phones.no"]'); }
+    await page.waitForFunction(() => window.__kstate()?.step === 'paper', null, { timeout: 30000 });
+    const tb = await E(() => window.__k.lines.filter((x) => /^Good:|guitar’s louder|well over the guitar/.test(x)).at(-1) || '');
+    T.ok(/^Good: your voice sits [3-8] dB over the guitar\.$/.test(tb), `the flow: the balance from the input, a voice over the strum (${tb})`);
+    // the paper, pasted (typing isn't a press)
+    await E(async (text) => {
+      const app = window.overdub;
+      const { parseSheet, pasteOps } = await import('/app/src/core/liveroom/sheet-text.js');
+      app.store.dispatch(pasteOps(app.store.get(), parseSheet(text)).ops, { by: 'you', label: 'The paper' });
+    }, PAPER);
+    // press 4 and 5: the tape in the quiet before the take, then the stop once it's played
+    await at(tape.T.sing + 6);
+    const playsBefore = (await S.plays()).length;
+    await press('Space');
+    await page.waitForTimeout(400);
+    const rolling = await E((n) => {
+      const o = window.overdub, p = o.store.get(), r = p.room || {};
+      const band = ['shaker', 'cajon', 'bass', 'strings'].map((k) => p.tracks.find((t) => t.id === r.tracks?.[k])).filter(Boolean);
+      return { rolling: window.__kstate()?.rolling, counted: (window.__lrPlays || []).slice(n).some((x) => x.opts?.countIn), click: !!o.engine.click?.on, band: band.every((t) => t.mute || !t.clips.length) };
+    }, playsBefore);
+    T.ok(rolling.rolling && !rolling.counted && !rolling.click && rolling.band, `the work tape rolls with no count, no click and no band (counted ${rolling.counted}, click ${rolling.click}, band silent ${rolling.band})`);
+    await at(tape.T.end + 0.3);
+    await press('Space');
+    const log = await E(() => window.__k.log.slice());
+    T.ok(log.join(' ').startsWith('countIn:none:0 take stop'), `the flow: the work tape through the deck (${log.join(' ')})`);
+    // the take as it went in: one audio clip by you, its room before the first strum trimmed to two seconds
+    const took = await E(() => {
+      const p = window.overdub.store.get(), t = p.tracks.find((x) => x.id === p.room.tracks.take), c = t?.clips.find((x) => x.kind === 'audio');
+      const H = window.overdub.store.history.slice(-3).map((x) => `${x.label}:${x.by}`);
+      return c ? { offset: c.offset || 0, start: c.start, length: c.length, by: c.by, name: c.name, tempo: p.tempo, H } : null;
+    });
+    const secs = took ? ((took.offset || 0) * 60) / took.tempo : 0;
+    T.ok(took && took.by === 'you' && took.start === 0 && secs > 0, `the work tape goes in by you, its quiet head trimmed (${took ? `${secs.toFixed(2)} s of it cut, “${took.name}”` : 'no take'})`);
+    // the read, in a Worker; then the time question with the shaker on it
+    await page.waitForFunction(() => window.__kstate()?.ask === 'time', null, { timeout: 60000 });
+    const line = await E(() => window.__k.lines.at(-1) || '');
+    T.ok(/The band’s read it: around \d+/.test(line), `the flow: the read's question (${line})`);
+    // press 6: On the beat
+    await press('Space');
+    await page.waitForFunction(() => window.__kstate()?.offer === 'shaker', null, { timeout: 20000 });
+    await page.waitForFunction(() => window.__k.lines.includes('Want a shaker in the chorus?'), null, { timeout: 10000 }).catch(() => {});
+    const said = await E(() => window.__k.lines.slice(-3));
+    const chordsLine = said.find((x) => /The band has your chords/.test(x)) || said.join(' | ');
+    // press 7: Keep it, the shaker
+    await press('Space');
+    await page.waitForFunction(() => window.__kstate()?.done.includes('shaker'), null, { timeout: 10000 });
+    if (!phones) {
+      // on speakers: Again, with the shaker in the song: the band held muted for the whole take, no count, and no
+      // click, though the control room's click is on (held off for the take, given back after it)
+      await E(() => { window.overdub.engine.click = { on: true }; });
+      const before = (await S.plays()).length;
+      await E(() => window.overdub.liveRoom.press('again'));
+      await page.waitForFunction(() => window.__kstate()?.rolling === true, null, { timeout: 10000 });
+      await page.waitForTimeout(600);
+      const during = await E((n) => { const o = window.overdub, p = o.store.get(), id = p.room?.tracks?.shaker; return { muted: !!p.tracks.find((t) => t.id === id)?.mute, hold: window.__kstate().hold, counted: (window.__lrPlays || []).slice(n).some((x) => x.opts?.countIn), click: !!o.engine.click?.on }; }, before);
+      await E(() => window.overdub.liveRoom.press('stop'));
+      await page.waitForFunction(() => window.__kstate()?.rolling === false, null, { timeout: 15000 });
+      const after = await E(() => { const o = window.overdub, p = o.store.get(), id = p.room?.tracks?.shaker; return { band: !p.tracks.find((t) => t.id === id)?.mute, click: !!o.engine.click.on }; });
+      T.ok(during.muted && during.hold && !during.counted && !during.click && after.band && after.click, `the flow (speakers): nothing of the band sounds during a take (the shaker held muted ${during.muted}, no count ${!during.counted}, the click held off ${!during.click}; the shaker back after ${after.band}, the click ${after.click})`);
     }
+    if (phones) {
+      // signing on the paper: an agent's line in --ink-agent, the house's chord lines unsigned
+      await E(async () => {
+        const app = window.overdub;
+        const sh = app.store.get().sheet;
+        app.store.dispatch([{ type: 'sheet.line.set', section: sh.sections[0].id, line: sh.sections[0].lines[0].id, patch: { text: 'Somewhere a [G]silver [Em]moon' } }], { by: 'mcp:test', label: 'A line' });
+        app.store.dispatch([{ type: 'sheet.section.add', section: { name: 'Bridge', lines: [{ text: '| Am | C | D |' }] } }], { by: 'overdub', label: 'The chords from the take' });
+      });
+      await page.waitForTimeout(200);
+      const ink = await E(() => {
+        const by = document.querySelector('.pp .pp-line .by');
+        const want = getComputedStyle(document.documentElement).getPropertyValue('--ink-agent').trim();
+        const probe = document.createElement('span'); probe.style.color = want; document.body.append(probe); const w = getComputedStyle(probe).color; probe.remove();
+        const house = [...document.querySelectorAll('.pp .pp-line')].find((l) => /Am/.test(l.textContent));
+        return { color: by ? getComputedStyle(by).color : null, want: w, text: by?.textContent || '', house: house ? !house.querySelector('.by') : null };
+      });
+      T.ok(ink.color && ink.color === ink.want && /test/i.test(ink.text), `signing: an mcp:test line carries its byline in --ink-agent (${ink.text} ${ink.color})`);
+      T.ok(ink.house === true, 'signing: the house\'s chord lines are unsigned');
+      await S.shot?.('kitchen-paper');
+    }
+    // a finish (Bare is on): Warm pressed is answered at once, and its number, measured, follows
+    if (await page.$('[data-act="finish.warm"]')) {
+      await page.click('[data-act="finish.warm"]');
+      await page.waitForTimeout(300);
+      const now = await E(() => document.querySelector('.lr-tb-line')?.textContent || '');
+      const num = await page.waitForFunction(() => window.__k.lines.find((x) => /^Warm is on: the peaks rounded off, (about \d+ dB (louder|quieter) than Bare|as loud as Bare)\.$/.test(x)), null, { timeout: 15000 }).then((h) => h.jsonValue(), () => null);
+      T.ok(/^Warm is on: the peaks rounded off/.test(now) && !!num, `a finish: Warm answered at once (“${now}”), its number after (“${num}”)`);
+      await page.click('[data-act="finish.bare"]');
+    }
+    // press 8: Send a mix, the send screen
+    presses++;
+    await page.click('[data-act="send"]');
+    const sent = await page.waitForFunction(() => window.overdub.ui.state.liveRoom.screen === 'send', null, { timeout: 10000 }).then(() => true, () => false);
+    const H = await history(page);
+    const steps = H.map((x) => `${x.label}:${x.by}`);
+    const time = H.find((x) => /^On the beat/.test(x.label));
+    const read = H.find((x) => /^The band read/.test(x.label));
+    const shaker = H.find((x) => /^Shaker/.test(x.label));
+    const into = H[0];
+    T.ok(presses === 8 && sent, `the flow: §2.5 in ${presses} presses, the last opening Send (${sent ? 'the send screen' : 'no send screen'})`);
+    T.ok(into?.by === 'you' && /kitchen/i.test(into.label) && time?.by === 'you' && time.ops.includes('tempo.map') && read?.by === 'overdub' && shaker?.by === 'you', `the flow: the place by you, the time by you (tempo.map), the read by the house, the shaker kept by you (${[steps[0], ...steps.slice(-4)].join(' · ')})`);
+    T.ok(/^The band has your chords: .+ in the (verse|chorus)\.$/.test(chordsLine) && said.some((x) => x === 'Want a shaker in the chorus?'), `the flow: the chords line, then the shaker's offer (${said.join(' | ')})`);
+    const clipBy = await E(() => { const p = window.overdub.store.get(); const t = p.tracks.find((x) => x.id === p.room.tracks.shaker); return t ? [...new Set(t.clips.map((c) => c.by))] : []; });
+    T.ok(clipBy.join() === 'overdub', `signing: the shaker's clips the house's (${clipBy.join()})`);
+  } catch (e) {
+    let why = '';
+    try { const k = await E(() => { const s = window.__kstate(); return s && { step: s.step, ask: s.ask, offer: s.offer, done: s.done, takes: s.takes, reading: s.reading, offered: s.offered?.id, pos: +window.__k.pos().toFixed(2), log: window.__k.log, lines: window.__k.lines.slice(-3) }; }); why = ` ${JSON.stringify(k)}`; } catch { /* the page is gone */ }
+    const errs = (S.errors || []).slice(-3).map((x) => String(x.message || x).split('\n')[0]).join(' | ');
+    T.ok(false, `the flow (${phones ? 'headphones' : 'speakers'}): ${e.message.split('\n')[0]}${why}${errs ? ` errors: ${errs}` : ''}${warns.length ? ` warnings: ${warns.slice(-3).join(' | ')}` : ''}`);
+  } finally {
+    await S.close();
   }
-  await countedFlow(T);
-  await twoFlow(T);
-  await sameFlow(T);
 }
 
 // One source on both channels of a stereo input (a mic on it, or Chromium's own fake): both channels move, always at
 // the same level, and the two-input option still says it needs a pickup
-async function sameFlow(T) {
+function sameTape() {
   const bpm = 96, bars = [...V, ...C, ...V];
   const g = strum(bars.map((c, i) => ({ beat: i * 4, notes: VOICINGS[c], beats: 4 })), { bpm, seed: 61, peak: -14, tail: 1 });
   const len = g.buf.length + SR;
   const one = mix([{ buf: g.buf, at: 0.5 }], { length: len });
+  return { wav: { sr: SR, channels: [one, one.slice()] } };
+}
+
+async function sameFlow(T, tape) {
   let S;
-  try { S = await openRoom('/app/?room', { name: 'kitchen-same', fake: { wav: { sr: SR, channels: [one, one.slice()] } } }); } catch (e) { T.ok(false, `one source on both channels: the room opened (${e.message})`); return; }
+  try { S = await openRoom('/app/?room', { name: 'kitchen-same', fake: tape }); } catch (e) { T.ok(false, `one source on both channels: the room opened (${e.message})`); return; }
   const { page, E } = S;
   try {
     await E(INSTALL);
@@ -619,8 +565,7 @@ function twoTape() {
   return { wav: { sr: SR, channels: [mix([{ buf: sung.buf, at: 1 }], { length: len }), mix([{ buf: guitar.buf, at: lead }], { length: len })] }, T: { guitar: lead } };
 }
 
-async function twoFlow(T) {
-  const tape = twoTape();
+async function twoFlow(T, tape = twoTape()) {
   let S;
   try { S = await openRoom('/app/?room', { name: 'kitchen-two', fake: tape }); } catch (e) { T.ok(false, `two inputs: the room opened (${e.message})`); return; }
   const { page, E } = S;
@@ -721,8 +666,7 @@ async function twoFlow(T) {
 // Count me in (§6.3), the other way in on headphones: the tempo set first with → and ⇧→, one bar of sticks, the
 // shaker under the take (a preview), and on the stop no question about the time: the band reads the chords on the
 // song's grid at once. The take is played at that tempo from beat 0, the count put a bar before it in the fake.
-async function countedFlow(T) {
-  const tape = kitchenTape({ counted: true });
+async function countedFlow(T, tape) {
   let S;
   try { S = await openRoom('/app/?room', { name: 'kitchen-counted', fake: tape }); } catch (e) { T.ok(false, `Count me in: the room opened (${e.message})`); return; }
   const { page, E } = S;

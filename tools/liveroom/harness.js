@@ -17,6 +17,11 @@
 //   history(page) -> [{ label, by, reason, kind, ops }]   the song's History, oldest first (ops: the op types)
 //   press(page, key, { delay }) -> the key pressed (page.keyboard.press: 'Space', 'Shift+KeyR', 'Meta+KeyZ'), then
 //       two frames, so the room's frame has run
+//   atOnce(T, flows, { max }) -> flows (each (T) => a promise) that share nothing, up to max at a time: most of such a
+//       flow is its fake playing in real time, so they wait side by side. Each gets a tally of its own, printed whole in
+//       the order given, so the suite reads as if they ran one after the other; one that throws is a FAIL line and the
+//       others still run. Make the fakes before calling it: Node's synthesis would hold up the presses of a flow already
+//       under way, and those are timed against the file
 
 import path from 'node:path';
 import { open, OUTDIR } from '../pw.js';
@@ -70,4 +75,21 @@ export async function press(page, key, { delay = 0 } = {}) {
   await page.keyboard.press(key, delay ? { delay } : undefined);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   return key;
+}
+
+export async function atOnce(T, flows, { max = 3 } = {}) {
+  const logs = flows.map(() => []);
+  const tallyInto = (log) => ({
+    ok(cond, msg) { log.push(() => T.ok(cond, msg)); return !!cond; },
+    note(msg) { log.push(() => T.note(msg)); },
+  });
+  let next = 0;
+  const lane = async () => {
+    while (next < flows.length) {
+      const i = next++, t = tallyInto(logs[i]);
+      try { await flows[i](t); } catch (e) { t.ok(false, `a flow threw: ${String(e?.stack || e).split('\n').slice(0, 3).join(' | ').slice(0, 300)}`); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(max, flows.length) }, lane));
+  for (const log of logs) for (const say of log) say();
 }

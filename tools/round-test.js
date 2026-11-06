@@ -1,5 +1,5 @@
 // The circle [round, a prototype]: ?view=round draws the section as a loop, a ring per track (app/src/ui/round.js).
-//   - decideView: ?view=round is the simple view for that load, round: true, never written down
+//   - (decideView, ?view=round is the simple view for that load, is test/unit/round-view.test.js)
 //   - a blank song: the Circle tab is open beside Arrange, no rings, the Ask line asleep
 //   - Tap a beat (the door): a drum track, the loop on, the circle is the loop, one ring
 //   - Night Shift: a ring per track, a row per ring, no two ring colours alike; Play in the middle and the doors in an
@@ -14,7 +14,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { open, tally, OUTDIR } from './pw.js';
-import { decideView } from '../app/src/ui/workspace-view.js';
 
 const T = tally('round');
 const OUT = path.join(OUTDIR, 'round');
@@ -30,14 +29,6 @@ async function ringPoint(page, i, a = 0) {
   const box = await page.locator('.rd-cv').boundingBox();
   const r = g.rings[i], m = (r.r0 + r.r1) / 2;
   return { x: box.x + g.cx + Math.cos(a) * m, y: box.y + g.cy + Math.sin(a) * m, id: r.id, g, box };
-}
-
-/* ======================================================================== decideView */
-{
-  const d = decideView({ search: '?view=round', storage: null, webdriver: true });
-  T.ok(d.view === 'simple' && d.round === true && d.persist === false && d.from === 'url', `?view=round is the simple view, round, this load only (${JSON.stringify(d)})`);
-  const s = decideView({ search: '?view=simple', storage: null, webdriver: true });
-  T.ok(!s.round, '?view=simple is not round');
 }
 
 /* ======================================================================== a blank song, and Tap a beat */

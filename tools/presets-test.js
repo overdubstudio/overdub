@@ -140,20 +140,13 @@ try {
   await sleep(120);
   T.ok(await E(() => !document.querySelector('.rk-presets')), 'clicking the name again closes the list');
 
-  /* ---- the agent: list_devices and get_device name the same presets; its instrument.set lands on the same name */
-  const ld = await run('list_devices', { kind: 'instrument', query: 'Baby Grand', detail: 'brief' });
-  const ldText = JSON.stringify(ld);
-  T.ok(presetNames.every((n) => ldText.includes(n)), 'list_devices lists the names the rack does');
+  /* ---- the agent: its instrument.set lands on the same name (list_devices, get_device and get_project: test/unit/agent-presets.test.js) */
   const gd = await run('get_device', { id: 'core.piano' });
-  T.ok(JSON.stringify(gd.presets.map((p) => p.name)) === JSON.stringify(presetNames), 'get_device has the same presets, in the same order');
   const bright = gd.presets.find((p) => p.name === 'Bright pop') || gd.presets[0];
-  const ap = await run('apply_ops', { ops: [{ type: 'instrument.set', track: 'Keys', params: bright.params }], label: `${bright.name} on the keys` });
-  T.ok(ap.ok !== false && !ap.error, 'an agent applies get_device\'s params with instrument.set' + (ap.error ? ': ' + ap.error : ''));
+  await run('apply_ops', { ops: [{ type: 'instrument.set', track: 'Keys', params: bright.params }], label: `${bright.name} on the keys` });
   await sleep(250);
   L = await line();
   T.ok(L.preset === bright.name && !L.edited, `the rack names what the agent picked ("${L.text}")`);
-  const gp = await run('get_project', { track: 'Keys' });
-  T.ok(Array.isArray(gp.presets) && gp.presets.includes(`Keys: Baby Grand, ${bright.name}`), `get_project tells the agent the name the rack shows (${JSON.stringify(gp.presets)})`);
   // the human edits it: the agent no longer reads it as that preset, and the rack says edited
   await E((id) => window.overdub.store.dispatch({ type: 'instrument.set', track: id, params: { room: 0.9 } }, { by: 'you' }), keys);
   await sleep(150);

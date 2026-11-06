@@ -17,7 +17,7 @@
 //             harder (x1.5, x1.3: FIELD is x1.0); claps of three or more bursts; closed hats to -40 dB in 150-250 ms;
 //             the open hat choked; each new kit at most 1.5x FIELD's cost on the drum phrase, in CPU time
 //
-// Then each passes checkDevice (kernel/check.js, full mode) in Chromium with no warnings, the drums once per new kit.
+// Then each passes checkDevice (kernel/check.js, full mode, run by checkDeviceNode in a child process) with no warnings, the drums once per new kit.
 //   node tools/instruments2-test.js            NODE_ONLY=1 skips the browser
 import crypto from 'node:crypto';
 import { tally } from './pw.js';
@@ -365,28 +365,33 @@ console.log('presets: a sound by name');
 }
 console.log('\n  ' + ['id', 'setting', 'LUFS', 'dBTP', 'colour', 'register / hat', 'cpu / clap'].join(' | ') + '\n' + table.map((r) => '  ' + r.join(' | ')).join('\n') + '\n');
 
-// ------------------------------------------------------------------------------------------------ the device check, in Chromium
+// ------------------------------------------------------------------------------------------------ the device check (Node)
+// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs each registered device at its defaults through checkDevice in Chromium's worklet, and only notes its warnings; presets and kits are not run there)
+{
+  console.log('checkDevice in a child process (full mode)');
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const { summarize } = await import('../app/src/kernel/check.js');
+  const { getDevice } = await import('../app/src/devices/registry.js');
+  // the two new instruments, and the kit with each new option as its default (a def under a test id)
+  for (const [id, kit] of [['core.ep'], ['core.mallets'], ['core.drums', 3], ['core.drums', 4], ['core.drums', 5]]) {
+    let def = getDevice(id);
+    if (kit != null) def = { ...def, id: 'test.drums-' + kit, params: def.params.map((p) => (p.key === 'kit' ? { ...p, def: kit } : p)) };
+    const rep = await checkDeviceNode(def);
+    const r = { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed };
+    const tag = kit != null ? `${id} (KIT ${['FIELD', 'MACHINE', 'DUST', '808', '909', 'ACOUSTIC+'][kit]})` : id;
+    t.ok(r.ok, `${tag}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);
+    t.ok(!r.warnings.length, `${tag}: no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
+    t.ok(!(r.failed && r.failed.length), `${tag}: every param at min and max renders (worst raw peak ${r.worst} dBFS)`);
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ the faces, in Chromium
 if (!process.env.NODE_ONLY) {
-  console.log('checkDevice in Chromium (full mode)');
+  console.log('the faces and the page, in Chromium');
   const { open } = await import('./pw.js');
   const { page, errors, close } = await open('/app/');
   try {
-    // the two new instruments, and the kit with each new option as its default (a def under a test id)
-    for (const [id, kit] of [['core.ep'], ['core.mallets'], ['core.drums', 3], ['core.drums', 4], ['core.drums', 5]]) {
-      const r = await page.evaluate(async ({ id, kit }) => {
-        const { getDevice } = await import('/app/src/devices/registry.js');
-        const { checkDevice, summarize } = await import('/app/src/kernel/check.js');
-        await import('/app/src/devices/builtin/index.js');
-        let def = getDevice(id);
-        if (kit != null) def = { ...def, id: 'test.drums-' + kit, params: def.params.map((p) => (p.key === 'kit' ? { ...p, def: kit } : p)) };
-        const rep = await checkDevice(def);
-        return { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed };
-      }, { id, kit });
-      const tag = kit != null ? `${id} (KIT ${['FIELD', 'MACHINE', 'DUST', '808', '909', 'ACOUSTIC+'][kit]})` : id;
-      t.ok(r.ok, `${tag}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);
-      t.ok(!r.warnings.length, `${tag}: no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
-      t.ok(!(r.failed && r.failed.length), `${tag}: every param at min and max renders (worst raw peak ${r.worst} dBFS)`);
-    }
+    await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
     // the faces at phone width: a six-option KIT and a five-option BAR become menus, and nothing spills
     await page.setViewportSize({ width: 390, height: 844 });
     const faces = await page.evaluate(async () => {

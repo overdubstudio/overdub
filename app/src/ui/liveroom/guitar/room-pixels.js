@@ -5,7 +5,7 @@
 // window shows. The gear itself is not drawn here: it's the studio's real faces (ui/faces.js), crisp in front.
 //
 // Drawn with the live room's brushes (../pixels/paint.js) and nothing else: fillStyle '#rrggbb', globalAlpha and
-// fillRect at whole pixels, so a Node check draws the same pixels into a buffer (tools/liveroom/checks-room.js). No
+// fillRect at whole pixels, so a Node check draws the same pixels into a buffer (test/unit/guitar-stage.test.js). No
 // red pixel (red is the record light's), no people.
 //
 // Coordinates are room pixels (PX = 4 world units, ./layout.js), the core's top-left at 0, 0; the room runs on past

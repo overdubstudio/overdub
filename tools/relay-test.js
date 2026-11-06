@@ -5,9 +5,10 @@
 // catalog (server/relay-catalog.json, current with tools.js) and nothing else can be called; caps and rate limits
 // answer 429 or 503 with Retry-After and recover (a call one too many in flight is a tool error saying when to retry);
 // old sessions, links and addresses age out; no log line carries a token, a secret or a session id; a browser that
-// kept a token from before the secret gets a new pair; the page's policy allows the relay; the deploy reads the origin
-// secret from Parameter Store. And the protocol's edges (sessions, batches, notifications, versions), CORS and the tab
-// reconnecting mid-session. Fake tabs (Node) cover the cases a real tab is too slow or too polite for.
+// kept a token from before the secret gets a new pair. And the protocol's edges (sessions, batches, notifications,
+// versions), CORS and the tab reconnecting mid-session. Fake tabs (Node) cover the cases a real tab is too slow or too
+// polite for. (Which origins ?relay= counts on, relayOverride, is test/unit/relay-override.test.js; the catalog being
+// current and annotated, the page's policy, the dry deploy and relay.js's helpers are test/unit/relay-policy.test.js.)
 //
 //   node tools/relay-test.js
 import crypto from 'node:crypto';
@@ -276,67 +277,8 @@ async function accountTab(base, ticket, { tab = 'tab_acct' + Math.floor(Math.ran
 const ASCII_HDR = /^[\x20-\x21\x23-\x5B\x5D-\x7E]*$/;
 
 const relays = [], fakes = [];
-let studio = null, stub = null;
+let studio = null;
 try {
-  /* ================================================================== without a relay: catalog, policy, deploy */
-  {
-    // the catalog the relay lists is a generated file, current with the studio's (tools.js catalogSchemas())
-    const chk = spawnSync(process.execPath, [path.join(ROOT, 'tools/relay-catalog.js'), '--check'], { encoding: 'utf8' });
-    t.ok(chk.status === 0, `server/relay-catalog.json is tools.js's catalog, generated (node tools/relay-catalog.js --check): ${(chk.stdout + chk.stderr).trim().split('\n').pop().slice(0, 160)}`);
-    // every tool in it has its annotations (a title and four hints), and the relay won't start on a catalog with a tool
-    // that has none: it names the tool
-    const shipped = JSON.parse(read('server/relay-catalog.json') || '[]');
-    const HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'];
-    const bareIn = shipped.filter((x) => !(x.annotations && typeof x.annotations.title === 'string' && x.annotations.title && HINTS.every((k) => typeof x.annotations[k] === 'boolean'))).map((x) => x.name);
-    const tmpCat = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'relay-cat-')), 'catalog.json');
-    fs.writeFileSync(tmpCat, JSON.stringify([...shipped, { name: 'jam_probe', description: 'probe', input_schema: { type: 'object' } }]));
-    let refused = '';
-    try { relayMod.loadCatalog(tmpCat); } catch (e) { refused = e.message; }
-    fs.rmSync(path.dirname(tmpCat), { recursive: true, force: true });
-    t.ok(shipped.length && !bareIn.length && /jam_probe has no annotations/.test(refused), `every tool in server/relay-catalog.json has a title and its four hints (${shipped.length}${bareIn.length ? '; not: ' + bareIn.join(', ') : ''}), and the relay won't load one without: "${refused}"`);
-
-    // the page's policy lets the tab reach the hosted relay
-    const RELAY = /export const RELAY = '([^']+)'/.exec(read('app/src/agent/remote.js'))?.[1];
-    const html = read('app/index.html');
-    const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(html)?.[1] || '';
-    const connect = (/connect-src ([^;]*)/.exec(csp)?.[1] || '').split(/\s+/);
-    const why = (/<!--([\s\S]*?)-->/.exec(html)?.[1] || '').replace(/\s+/g, ' ');
-    t.ok(!!RELAY && connect.includes(RELAY) && why.includes(`connect-src ${RELAY}`) && /Connect to Claude/.test(why),
-      `app/index.html's connect-src allows the relay (${RELAY}), and the comment there says why (${connect.join(' ')})`);
-
-    // the deploy, dry: the origin secret is read on the instance from Parameter Store, never put in the SSM command.
-    // A stub aws comes first on PATH and there are no credentials, so nothing here can reach AWS whatever the script does.
-    stub = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-dry-'));
-    fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
-    const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null' };
-    for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']) delete env[k];
-    const dry = spawnSync('bash', [path.join(ROOT, 'deploy/relay/deploy.sh'), '--skip-tests'], { cwd: ROOT, env, encoding: 'utf8', timeout: 120000 });
-    const out = (dry.stdout || '') + (dry.stderr || '');
-    t.ok(dry.status === 0 && !/aws was called/.test(out), `deploy/relay/deploy.sh with DRY_RUN=1 builds the release without calling AWS (exit ${dry.status})`);
-    const envLine = out.split('\n').find((l) => l.includes('/etc/overdub-relay.env') && l.includes('printf')) || '';
-    t.ok(/aws ssm get-parameter [^\n]*--name \/overdub\/relay\/origin-secret[^\n]*--with-decryption/.test(out) && /"RELAY_ORIGIN_SECRET=\$SECRET"/.test(envLine) && !/dryrun-secret/.test(out),
-      `the deploy command carries no origin secret: the instance reads it from Parameter Store (/overdub/relay/origin-secret) as the command runs (${envLine.trim().slice(0, 110)})`);
-    // its AWS is Terraform's (infra/live/relay.tf): the secret a SecureString only the instance's role may read, CloudFront's
-    // header from the same value, and the name the studio talks to
-    const tf = read('infra/live/relay.tf'), vars = read('infra/live/variables.tf');
-    const relayName = /variable "relay_domain"[\s\S]*?default\s*=\s*"([^"]+)"/.exec(vars)?.[1];
-    t.ok(/type\s*=\s*"SecureString"/.test(tf) && /Action = "ssm:GetParameter", Resource = aws_ssm_parameter\.origin_secret\.arn/.test(tf)
-      && /name\s*=\s*"x-overdub-origin"\s*\n\s*value\s*=\s*random_password\.origin_secret\.result/.test(tf) && /"\/overdub\/relay\/origin-secret"/.test(tf)
-      && `https://${relayName}` === RELAY && spawnSync('bash', ['-n', path.join(ROOT, 'deploy/relay/deploy.sh')]).status === 0,
-      `infra/live/relay.tf keeps the secret as a SecureString the instance may read and gives CloudFront the same value; its relay_domain is RELAY (${relayName})`);
-
-    // the relay's own helpers
-    const { addressKey, inRanges, redact, tokenFor } = relayMod;
-    const s0 = crypto.randomBytes(32).toString('base64url');
-    t.ok(typeof tokenFor === 'function' && tokenFor(s0) === derive(s0) && /^[A-Za-z0-9_-]{22}$/.test(derive(s0)), 'the relay makes the token from a secret the documented way (SHA-256 with a prefix, 22 characters)');
-    const keys = typeof addressKey === 'function' ? [addressKey('2001:db8:1:2::1'), addressKey('2001:db8:1:2:ffff:ffff:ffff:9'), addressKey('2001:db8:1:3::1'), addressKey('203.0.113.7'), addressKey('::ffff:203.0.113.7'), addressKey('203.0.113.8')] : [];
-    t.ok(keys.length && keys[0] === keys[1] && keys[0] !== keys[2] && keys[3] === keys[4] && keys[3] !== keys[5], `rate limits key IPv6 by its /64 and IPv4 by its address (${keys.join(' | ')})`);
-    t.ok(typeof inRanges === 'function' && inRanges('160.79.104.9', ['160.79.104.0/21']) && inRanges('160.79.111.250', ['160.79.104.0/21']) && !inRanges('160.79.112.1', ['160.79.104.0/21']) && inRanges('::ffff:160.79.105.1', ['160.79.104.0/21']) && inRanges('2607:6bc0::1', ['2607:6bc0::/48']),
-      'claude.ai\'s published range (160.79.104.0/21) is recognised, IPv4-mapped too');
-    const line = typeof redact === 'function' ? redact(`failed for /s/${derive(s0)}/hello with ${s0}, session ${crypto.randomUUID()}`) : '';
-    t.ok(!!line && !line.includes(s0) && !line.includes(derive(s0)) && !/[0-9a-f]{8}-[0-9a-f]{4}-/.test(line), `a log line loses anything shaped like a token, secret or session id: "${line}"`);
-  }
-
   /* ================================================================== relay A: the real path */
   const A = await startRelay({ port: 0, log: logTo, jsonGraceMs: 1500, heartbeatMs: 400, reconnectGraceMs: 1500, rate: { perAddress: 100000 } });
   relays.push(A);
@@ -761,13 +703,6 @@ try {
   // and, for someone who had Connect on, point this tab at whatever answers on that port: there it is ignored.
   {
     const s = studio = await open('/app/', { query: 'new' });
-    const pure = await s.page.evaluate(async () => {
-      const { relayOverride: o } = await import('/app/src/agent/remote.js');
-      if (!o) return 'no relayOverride';
-      return [o('?relay=http://127.0.0.1:8787', 'localhost'), o('?relay=http://localhost:8787/x', '127.0.0.1'), o('?relay=https://relay.example', 'localhost'),
-        o('?relay=http://127.0.0.1:8787', 'overdubstudio.com'), o('?relay=http://localhost:8787', 'overdub.example'), o('?relay=javascript:alert(1)', 'localhost'), o('', 'localhost')];
-    });
-    t.ok(JSON.stringify(pure) === JSON.stringify(['http://127.0.0.1:8787', 'http://localhost:8787', 'https://relay.example', null, null, null, null]), `?relay= counts only on a local studio (localhost, 127.0.0.1): ${JSON.stringify(pure)}`);
     // the live site, played by a made-up origin served from the local server (nothing leaves this machine). Its
     // app/site-config.json is the one given, or the local server's when none is
     const PUB = 'https://overdub.example';
@@ -1568,7 +1503,6 @@ try {
   if (studio) await studio.close().catch(() => {});
   for (const r of relays) await r.close().catch(() => {});
   for (const f of fakes) await new Promise((r) => { f.server.closeAllConnections?.(); f.server.close(r); });
-  if (stub) fs.rmSync(stub, { recursive: true, force: true });
 }
 t.done();
 process.exit(process.exitCode || 0);

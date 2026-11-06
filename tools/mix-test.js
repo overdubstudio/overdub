@@ -2,11 +2,13 @@
 // the mixer (faders, pan, mute/solo, meters, agent flash), the browser (search, keys, click, drag and drop), the
 // inspector (notes, clip, track edits), and the Song menu's exports (WAV, MIDI, zip and the logs parse back).
 //   node tools/mix-test.js        screenshots: tools/.out/mix-*.png
+// (The encoders parsed back (WAV, MIDI, zip) now live in test/unit/export-formats.test.js; the parsers are test/unit/helpers/formats.js.)
 import fs from 'node:fs';
 import { open, tally } from './pw.js';
 import * as S from '../app/src/core/share.js';
 import '../app/src/devices/builtin/index.js';
 import '../app/src/devices/library/index.js';
+import { parseWav, parseMidi, parseZip } from '../test/unit/helpers/formats.js';
 import { demoProject } from '../app/src/core/demo.js';
 
 const T = tally('mix');
@@ -14,91 +16,6 @@ const ok = T.ok;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // other areas are being written in parallel: their 404s are not ours
 const ours = (errors) => errors.filter((e) => !/Failed to load resource/.test(e));
-
-/* ---------------------------------------------------------------- parsers (independent of the encoders) */
-function parseWav(b) {
-  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  const s = (o, n) => String.fromCharCode(...b.slice(o, o + n));
-  if (s(0, 4) !== 'RIFF' || s(8, 4) !== 'WAVE') return null;
-  let o = 12, fmt = null, data = null;
-  while (o + 8 <= b.length) {
-    const id = s(o, 4), len = dv.getUint32(o + 4, true);
-    if (id === 'fmt ') fmt = { format: dv.getUint16(o + 8, true), channels: dv.getUint16(o + 10, true), sr: dv.getUint32(o + 12, true), byteRate: dv.getUint32(o + 16, true), block: dv.getUint16(o + 20, true), bits: dv.getUint16(o + 22, true) };
-    if (id === 'data') data = { off: o + 8, len };
-    o += 8 + len + (len & 1);
-  }
-  if (!fmt || !data) return null;
-  const frames = data.len / fmt.block;
-  const ch = Array.from({ length: fmt.channels }, () => new Float64Array(frames));
-  for (let i = 0; i < frames; i++) for (let c = 0; c < fmt.channels; c++) {
-    const p = data.off + i * fmt.block + c * (fmt.bits / 8);
-    let v;
-    if (fmt.bits === 24) { v = b[p] | (b[p + 1] << 8) | (b[p + 2] << 16); if (v & 0x800000) v -= 0x1000000; v /= 8388608; } else { v = dv.getInt16(p, true) / 32768; }
-    ch[c][i] = v;
-  }
-  return { ...fmt, frames, ch, riffSize: dv.getUint32(4, true), total: b.length };
-}
-function parseMidi(b) {
-  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  const s = (o, n) => String.fromCharCode(...b.slice(o, o + n));
-  if (s(0, 4) !== 'MThd' || dv.getUint32(4) !== 6) return null;
-  const format = dv.getUint16(8), ntrks = dv.getUint16(10), ppq = dv.getUint16(12);
-  let o = 14;
-  const tracks = [];
-  for (let k = 0; k < ntrks; k++) {
-    if (s(o, 4) !== 'MTrk') return { error: 'bad chunk at ' + o };
-    const len = dv.getUint32(o + 4), end = o + 8 + len;
-    let p = o + 8, t = 0, run = 0;
-    const tr = { name: '', tempo: null, timesig: null, keysig: null, markers: [], on: 0, off: 0, open: new Map(), notes: [], ended: false, chans: new Set() };
-    const vlq = () => { let v = 0, c; do { c = b[p++]; v = (v << 7) | (c & 0x7f); } while (c & 0x80); return v; };
-    while (p < end) {
-      t += vlq();
-      let st = b[p];
-      if (st & 0x80) p++; else st = run;
-      if (st === 0xff) {
-        const type = b[p++], l = vlq(), d = b.slice(p, p + l); p += l;
-        if (type === 0x03) tr.name = new TextDecoder().decode(d);
-        if (type === 0x51) tr.tempo = (d[0] << 16) | (d[1] << 8) | d[2];
-        if (type === 0x58) tr.timesig = [d[0], 2 ** d[1]];
-        if (type === 0x59) tr.keysig = [(d[0] << 24) >> 24, d[1]];
-        if (type === 0x06) tr.markers.push([t, new TextDecoder().decode(d)]);
-        if (type === 0x2f) tr.ended = true;
-        continue;
-      }
-      run = st;
-      const hi = st & 0xf0;
-      tr.chans.add(st & 15);
-      if (hi === 0x90 || hi === 0x80) {
-        const n = b[p++], v = b[p++];
-        if (hi === 0x90 && v > 0) { tr.on++; tr.open.set(n, (tr.open.get(n) || []).concat([[t, v]])); } else { tr.off++; const q = tr.open.get(n); if (q?.length) { const [t0, v0] = q.shift(); tr.notes.push({ p: n, t: t0, d: t - t0, v: v0 }); } }
-      } else if (hi === 0xc0 || hi === 0xd0) p += 1; else p += 2;
-    }
-    tracks.push(tr);
-    o = end;
-  }
-  return { format, ntrks, ppq, tracks, consumed: o === b.length };
-}
-function parseZip(b) {
-  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  let e = b.length - 22;
-  while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
-  if (e < 0) return null;
-  const n = dv.getUint16(e + 10, true), cdOff = dv.getUint32(e + 16, true);
-  const files = [];
-  let o = cdOff;
-  for (let i = 0; i < n; i++) {
-    if (dv.getUint32(o, true) !== 0x02014b50) return { error: 'bad central dir' };
-    const crc = dv.getUint32(o + 16, true), size = dv.getUint32(o + 20, true), nl = dv.getUint16(o + 28, true), xl = dv.getUint16(o + 30, true), cl = dv.getUint16(o + 32, true), lo = dv.getUint32(o + 42, true);
-    const name = new TextDecoder().decode(b.slice(o + 46, o + 46 + nl));
-    if (dv.getUint32(lo, true) !== 0x04034b50) return { error: 'bad local header' };
-    const lnl = dv.getUint16(lo + 26, true), lxl = dv.getUint16(lo + 28, true);
-    const data = b.slice(lo + 30 + lnl + lxl, lo + 30 + lnl + lxl + size);
-    files.push({ name, crc, data });
-    o += 46 + nl + xl + cl;
-  }
-  return { files };
-}
-function crc32(b) { let c = ~0; for (let i = 0; i < b.length; i++) { c ^= b[i]; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; } return ~c >>> 0; }
 
 /* ---------------------------------------------------------------- the studio */
 const { page, errors, close, shot } = await open('/app/', { query: 'demo' });
@@ -598,44 +515,6 @@ try {
     await shot('mix-mixer');
     await E(() => window.overdub.engine.stop());
     await E(() => { const a = window.overdub; while (a.store.history.length && a.store.history[a.store.history.length - 1].label !== 'nothing') { if (!a.store.undo().ok) break; if (a.store.history.length < 3) break; } });
-  }
-
-  /* ---------------- the encoders, parsed back */
-  {
-    const wav = await E(() => {
-      const n = 4800, L = new Float32Array(n), R = new Float32Array(n);
-      for (let i = 0; i < n; i++) { L[i] = Math.sin((2 * Math.PI * 440 * i) / 48000) * 0.5; R[i] = i % 100 === 0 ? 1 : -0.25; }
-      L[10] = 1.5; L[11] = -2;
-      return Array.from(window.overdub.exporter.encodeWav({ sampleRate: 48000, channels: [L, R] }, { bits: 24 }));
-    });
-    const w = parseWav(Uint8Array.from(wav));
-    ok(w && w.format === 1 && w.bits === 24 && w.channels === 2 && w.sr === 48000 && w.block === 6 && w.byteRate === 288000, 'WAV: a 24-bit stereo PCM header');
-    ok(w && w.frames === 4800 && w.riffSize === w.total - 8, 'WAV: the sizes add up');
-    let maxErr = 0;
-    for (let i = 0; i < 4800; i++) { if (i === 10 || i === 11) continue; const want = Math.fround(Math.sin((2 * Math.PI * 440 * i) / 48000) * 0.5); maxErr = Math.max(maxErr, Math.abs(w.ch[0][i] - want)); }
-    ok(maxErr < 1.5 / 8388608, `WAV: samples round-trip to 24-bit precision (max error ${maxErr.toExponential(2)})`);
-    ok(Math.abs(w.ch[0][10] - 8388607 / 8388608) < 1e-9 && w.ch[0][11] === -1 && w.ch[1][0] > 0.9999 && Math.abs(w.ch[1][1] + 0.25) < 1e-6, 'WAV: overs clip cleanly, channels interleave in order');
-    const w16 = parseWav(Uint8Array.from(await E(() => Array.from(window.overdub.exporter.encodeWav({ sampleRate: 44100, channels: [new Float32Array([0, 0.5, -0.5, 1])] }, { bits: 16 })))));
-    ok(w16 && w16.bits === 16 && w16.channels === 1 && w16.sr === 44100 && Math.abs(w16.ch[0][1] - 0.5) < 1e-4, 'WAV: 16-bit mono too');
-
-    const mid = await E(() => Array.from(window.overdub.exporter.encodeMidi(window.overdub.store.get(), { isDrums: (t) => /drum/i.test(t.instrument?.device || '') || t.name === 'Drums' })));
-    const proj = await E(() => { const p = window.overdub.store.get(); return { tempo: p.tempo, meter: p.meter, key: p.key, title: p.title, sections: p.sections.length, parts: p.tracks.filter((t) => t.kind === 'instrument' && t.clips.some((c) => c.notes?.length)).map((t) => ({ name: t.name, n: t.clips.reduce((s, c) => s + c.notes.filter((n) => n.t < c.length).length, 0), first: Math.min(...t.clips.flatMap((c) => c.notes.map((n) => c.start + n.t))) })) }; });
-    const M = parseMidi(Uint8Array.from(mid));
-    ok(M && M.format === 1 && M.ppq === 480 && M.consumed, 'MIDI: a format-1 file at 480 ppq that parses to the end');
-    ok(M && M.ntrks === proj.parts.length + 1, `MIDI: a tempo track plus one track per part (${M?.ntrks})`);
-    ok(M && M.tracks[0].tempo === Math.round(60000000 / proj.tempo) && M.tracks[0].timesig[0] === proj.meter[0] && M.tracks[0].timesig[1] === proj.meter[1], `MIDI: tempo ${proj.tempo} bpm and ${proj.meter.join('/')} in the tempo track`);
-    ok(M && (!proj.key || proj.key.root !== 'A' || (M.tracks[0].keysig?.[0] === 0 && M.tracks[0].keysig?.[1] === 1)), 'MIDI: the key signature (A minor: no sharps, minor)');
-    ok(M && M.tracks[0].markers.length === proj.sections, 'MIDI: sections become markers');
-    ok(M && M.tracks.every((t) => t.ended), 'MIDI: every track ends with End of Track');
-    const okParts = M ? proj.parts.every((p, i) => { const t = M.tracks[i + 1]; return t.name === p.name && t.on === p.n && t.off === p.n && t.notes.length === p.n; }) : false;
-    ok(okParts, 'MIDI: every note of every part is there, paired on/off, with its track name');
-    ok(M && proj.parts.every((p, i) => Math.min(...M.tracks[i + 1].notes.map((n) => n.t)) === Math.round(p.first * 480)), 'MIDI: notes land on the right ticks');
-    ok(M && M.tracks.slice(1).some((t) => t.chans.has(9)), 'MIDI: drums go on channel 10');
-
-    const z = await E(() => { const ex = window.overdub.exporter; const big = new Uint8Array(70000); for (let i = 0; i < big.length; i++) big[i] = (i * 31) & 255; return Array.from(ex.zipStore([{ name: 'a.txt', data: 'hello overdub' }, { name: '02 Bass ♪.wav', data: big }])); });
-    const Z = parseZip(Uint8Array.from(z));
-    ok(Z && Z.files?.length === 2 && Z.files[0].name === 'a.txt' && new TextDecoder().decode(Z.files[0].data) === 'hello overdub' && Z.files[1].name === '02 Bass ♪.wav', 'zip: entries and UTF-8 names read back');
-    ok(Z && Z.files.every((f) => crc32(f.data) === f.crc), 'zip: CRC-32s check out');
   }
 
   /* ---------------- the Song menu */

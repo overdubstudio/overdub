@@ -415,8 +415,11 @@ try {
       const prov = a.provider, n = o.store.history.length;
       await a.send('Set the tempo to 97');
       const added = o.store.history.slice(n);
-      return { prov, tempo: o.store.get().tempo, by: added.map((x) => x.by), label: added.map((x) => x.label).join(' | '), feed: document.querySelector('.ag-feed, #ag-feed, .ag-log')?.innerText || document.body.innerText };
+      return { prov, tempo: o.store.get().tempo, by: added.map((x) => x.by), label: added.map((x) => x.label).join(' | ') };
     });
+    // the feed paints on the shell's next frame, not when send resolves
+    await page.waitForFunction(() => /Tempo is 97 now/.test(document.querySelector('.ag-feed, #ag-feed, .ag-log')?.innerText || document.body.innerText), null, { timeout: 5000 }).catch(() => {});
+    r1.feed = await page.evaluate(() => document.querySelector('.ag-feed, #ag-feed, .ag-log')?.innerText || document.body.innerText);
     t.ok(r1.prov === 'local' && r1.tempo === 97 && r1.by.length === 1 && r1.by[0] === 'claude' && /Tempo is 97 now/.test(r1.feed),
       `a message in the panel goes to Claude Code: its edit lands signed ${JSON.stringify(r1.by)} ("${r1.label}", tempo ${r1.tempo}) and its reply is in the panel`);
     const planLine = await page.evaluate(() => ({ text: document.querySelector('.ag-plan')?.textContent || '', title: document.querySelector('.ag-plan')?.title || '', kept: JSON.parse(localStorage.getItem('overdub:agent:local-plan') || 'null')?.seven_day?.used }));

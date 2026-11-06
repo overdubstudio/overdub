@@ -11,11 +11,11 @@
 //   perform(place, seed, { peak, part }) -> Float32Array   a part's reference played once: its notes moved by up to
 //       ±8 ms and their velocities by ±0.03, seeded (two seeds are two performances, never a copy; 0 is as written),
 //       rendered, peaks at `peak` dBFS (-12: as an interface brings a guitar in)
-//   roomSong(place, { finish, rig, sides, feel, busy, loud, peak, tuning, parts }) -> { p, assets, ids, reads, learns, beats,
+//   roomSong(place, { finish, rig, sides, feel, busy, loud, peak, tuning, parts, fresh }) -> { p, assets, ids, reads, learns, beats,
 //       parts, finish }   the song: the place's tracks (setupOf), its parts one after another, each part's left take
 //       (seed 1) and, with sides 2 (the metal club and the basement), its right (seed 2) hard right with the left hard
 //       left; the band learned from each left take's read; feel, busy and loud as planFeel takes them, on every part;
-//       the finish on the master
+//       the finish on the master; a part's read is kept between scenes unless fresh
 //   clean(p) -> a copy with the master's inserts out (the balance before the finish)
 //   stem(p, assets, trackIds, opts) -> measure() of those tracks alone (renderSong's tracks)
 import fs from 'node:fs';
@@ -69,6 +69,14 @@ export const REFS = {
 };
 
 const DI = new Map();
+// a part's read: the same performance read the same way, however many scenes are built on it (a copy each: planLearn
+// has the read after this); fresh reads it again, for a check that the read itself comes out the same
+const READS = new Map();
+function readOf(place, part, peak, tempo, grid, fresh) {
+  const key = `${place}:${part.k}:${peak}:${part.beats}:${tempo}:${grid}`;
+  if (fresh || !READS.has(key)) READS.set(key, readTake(perform(place, 1, { peak, part: part.k }), SR, { tempo, start: 0, bars: part.beats / 4, grid, place }));
+  return structuredClone(READS.get(key));
+}
 export function perform(place, seed = 1, { peak = -12, part = 0 } = {}) {
   const key = `${place}:${part}:${seed}:${peak}`;
   if (DI.has(key)) return DI.get(key);
@@ -108,7 +116,7 @@ function canonInserts(p) {
   return JSON.parse(s);
 }
 
-export function roomSong(place, { finish = null, rig = null, sides = null, feel = null, busy = 0, loud = 0, peak = -12, tuning = null, parts: count = null } = {}) {
+export function roomSong(place, { finish = null, rig = null, sides = null, feel = null, busy = 0, loud = 0, peak = -12, tuning = null, parts: count = null, fresh = false } = {}) {
   const ref = REFS[place], P = placeOf(place), S = setupOf(place, { tuning: tuning || ref.tuning, rig });
   const two = sides ? sides === 2 : place !== 'bluesbar', spb = 60 / ref.tempo;
   const st = createStore({ ...createProject({ tempo: ref.tempo }), id: `p_room_${place}`, title: `The room: ${P.name.toLowerCase()}`, meta: { created: STAMP, modified: STAMP, authors: {} } }, { getDevice });
@@ -141,7 +149,7 @@ export function roomSong(place, { finish = null, rig = null, sides = null, feel 
   if (!r.ok) throw new Error(`the ${place} scene: ${r.error}`);
   const reads = [], learns = [];
   for (const part of parts) {
-    const read = readTake(perform(place, 1, { peak, part: part.k }), SR, { tempo: ref.tempo, start: 0, bars: part.beats / 4, grid: P.grid, place });
+    const read = readOf(place, part, peak, ref.tempo, P.grid, fresh);
     const learned = planLearn(st.get(), { section: part.id, read });
     r = st.dispatch(learned.ops, { by: 'overdub' });
     if (!r.ok) throw new Error(`the ${place} band: ${r.error}`);

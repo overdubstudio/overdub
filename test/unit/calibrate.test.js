@@ -2,8 +2,10 @@
 // again. The clicks are sound: a fake latency stands in for the page's (measure calls onStep as the real one does).
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeTaps } from '../../app/src/input/latency.js';
+import { judgeTaps, hits, median } from '../../app/src/input/latency.js';
 import { createCalibration, calibrationLine, fmtMs } from '../../app/src/input/calibrate.js';
+import { rng, strum } from '../../tools/strings.js';
+import { checks } from './helpers/check.js';
 
 const W = [10, 12]; // the count's two (not used)
 
@@ -145,4 +147,36 @@ describe('the calibration', () => {
     assert.equal(fmtMs(140.4), '140');
     assert.equal(fmtMs(9), '9.0');
   });
+});
+
+// moved from tools/input-test.js
+test('calibration: a strum along recorded, through onsets and judgeTaps, finds the round trip played', () => {
+  const T = checks();
+  // muted chops, each its own few ms late, one missed, one caught late
+  const sr = 48000,
+    beat = 0.6,
+    t0 = 0.9,
+    clicks = Array.from({ length: 8 }, (_, i) => t0 + i * beat),
+    r = rng(5);
+  const late = [0.004, 0.01, 0.0142, 0.0161, 0.0128, null, 0.0153, 0.0139],
+    hitsAt = clicks.map((c, i) => (late[i] == null ? null : c + late[i]));
+  hitsAt[6] += 0.045; // (one strum caught on the way: 45 ms late)
+  const { buf } = strum(
+    [40, 47, 52],
+    hitsAt.filter((x) => x != null),
+    { sr, len: t0 + 8 * beat + 0.6, peak: -12, mute: true },
+  );
+  for (let i = 0; i < buf.length; i++) buf[i] += (r() - 0.5) * 2e-4;
+  const hs = hits(
+    buf,
+    sr,
+    clicks.map((c) => Math.round(c * sr)),
+  );
+  const j = judgeTaps(hs),
+    want = median(late.slice(2).filter((x) => x != null)) * 1000;
+  T.ok(
+    j.grade === 'good' && j.dropped != null && j.used === 4 && Math.abs(j.ms - want) <= 1 && j.confidence >= 0.8,
+    `calibration: a strum along with one missed and one 45 ms late finds ${j.ms.toFixed(1)} ms (played ${want.toFixed(1)}), the late one left out, ${j.grade} at ${Math.round(j.confidence * 100)}% sure`,
+  );
+  T.done();
 });

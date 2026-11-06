@@ -93,16 +93,20 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts playwright-core@1.62.0
           npx --no-install playwright-core install chromium chromium-headless-shell webkit firefox
 
-      # One suite at a time: the real-time checks (stack-monitor's latency, the lamps that step with the song) miss their
-      # deadlines with three browser suites sharing the machine. Slower (about twice run-all's default), but the point
-      # of this machine is that those checks mean something.
+      # Three suites at a time, run-all's default; one at a time took over an hour. The suites that hold to the wall clock
+      # can miss with the machine shared, so run-all runs those once more on their own (REAL_TIME, tools/suite-status.js);
+      # any other failure stops the deploy the first time it shows. REQUIRE_ALL: a browser that won't launch fails compat
+      # and phone here, where a developer's machine would skip it.
+      # shell: bash is what brings pipefail: the default shell would take tee's exit status and pass a failed run.
       - name: The end-to-end suite
+        shell: bash
         env:
-          PAR: '1'
+          REQUIRE_ALL: '1'
         run: node tools/run-all.js | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # cancelled() too: a job that hits timeout-minutes is cancelled, and that run needs its screenshots most
       - name: Keep the screenshots and logs of a failed run
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-out

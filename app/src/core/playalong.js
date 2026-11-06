@@ -2,7 +2,7 @@
 // judged by pitch and onset; a chord by when it is struck and its lowest note only, because a pitch tracker hears one
 // note at a time (input/pitch.js, input/onsets.js) and a judge that marked a chord wrong for notes it couldn't hear would
 // be lying. A line after each pass says it plainly ("11 of 14, the bend in bar 10 is late"). Pure (no DOM, no clock:
-// every time comes in as a song beat), so the Jam room's tab lane (ui/tabs.js) and tools/tabs-test.js share the rules.
+// every time comes in as a song beat), so the Jam room's tab lane (ui/tabs.js) and test/unit/tabs.test.js share the rules.
 //
 //   groupsOf(notes, { start, bpb, key }) -> [{ i, t (song beat), d, p (the lowest pitch), ps, n, bend, s, f, bar, beat }]
 //       the part's onsets: notes that start within 30 ms-ish (0.03 beats) of each other are one chord

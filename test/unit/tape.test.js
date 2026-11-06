@@ -3,78 +3,17 @@
 // a new run), the default selection on synthetic riffs, and grab: the samples exactly as they came in, placed where
 // the deck would place them. The live tape runs here on a simulated audio thread: the worklet's own file in a vm with
 // the worklet scope's globals, driven a quantum at a time.
-import { test, describe } from 'node:test';
+import { test, describe, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import v8 from 'node:v8';
 import { PerformanceObserver } from 'node:perf_hooks';
-import { createTape } from '../../app/src/input/tape.js';
 import { createGrid, defaultSelection, riffOps, pcm16, unpcm16, BIN } from '../../app/src/input/tape-core.js';
-import { createClock } from '../../app/src/engine/clock.js';
 import { createStore } from '../../app/src/core/store.js';
 import { riffDI, rng } from '../../tools/liveroom/fake.js';
+import { SR, workletScope, rolling, RIFF2, session, restoreWorkletNode } from './_tape-kit.js';
 
-const SR = 48000;
-const WORKLET = fs.readFileSync(new URL('../../app/src/input/tape-worklet.js', import.meta.url), 'utf8');
-
-// the worklet's file with the worklet scope's globals: { make(frames) -> processor, scope (scope.currentFrame: the
-// audio clock it reads) }. (A closure's variable, as the real scope's is cheap to read: a vm context's global would
-// go through an interceptor and allocate on every read, and the measure below would be of that.)
-function workletScope(sr = SR) {
-  const reg = {};
-  const base = class {
-    constructor() {
-      this.port = { onmessage: null, postMessage: () => {} };
-    }
-  };
-  const mk = new Function(
-    'AudioWorkletProcessor',
-    'registerProcessor',
-    'sampleRate',
-    `let currentFrame = 0;\n${WORKLET}\nreturn [(f) => { currentFrame = f; }, () => currentFrame];`,
-  );
-  const [set, get] = mk(base, (name, cls) => (reg[name] = cls), sr);
-  const scope = {
-    get currentFrame() {
-      return get();
-    },
-    set currentFrame(f) {
-      set(f);
-    },
-  };
-  return { scope, make: (frames) => new reg['ew-tape']({ processorOptions: { frames } }) };
-}
-
-// a processor and its posts, driven a quantum at a time from `signal` (frame -> sample; null: no input connected)
-function rolling(frames, sr = SR) {
-  const w = workletScope(sr);
-  const p = w.make(frames);
-  const posts = [];
-  p.port.postMessage = (m) => posts.push(m);
-  const q = new Float32Array(128),
-    ins = [[q]],
-    none = [[]];
-  return {
-    p,
-    posts,
-    scope: w.scope,
-    run(n, signal, { skip = null } = {}) {
-      for (let k = 0; k < n; k++) {
-        const f = w.scope.currentFrame;
-        if (!skip || !skip(f)) {
-          if (signal instanceof Float32Array) for (let i = 0; i < 128; i++) q[i] = signal[(f + i) % signal.length];
-          else if (signal) for (let i = 0; i < 128; i++) q[i] = signal(f + i);
-          p.process(signal ? ins : none);
-        }
-        w.scope.currentFrame = f + 128;
-      }
-    },
-    get: (from, to) => {
-      p.msg({ t: 'get', id: 1, from, to });
-      return posts.findLast((m) => m.t === 'got');
-    },
-  };
-}
+// (the session's fake AudioWorkletNode is a global: take it away when each test ends)
+afterEach(restoreWorkletNode);
 
 describe('the ring', () => {
   test('16 bits as Chromium reads a 16-bit file: every value comes back', () => {
@@ -186,7 +125,7 @@ describe('the ring', () => {
     assert.ok(best < (128 / SR) * 1000, `within a quantum's 2.67 ms (${best.toFixed(2)} ms)`);
   });
 
-  test('rolling allocates nothing a quantum and costs little: measured', (t) => {
+  test('rolling allocates nothing a quantum: measured', (t) => {
     const w = workletScope(SR),
       p = w.make(SR * 60);
     let posts = 0;
@@ -219,11 +158,9 @@ describe('the ring', () => {
       const g0 = gcs,
         p0 = posts,
         h0 = v8.getHeapStatistics().used_heap_size;
-      const t0 = process.hrtime.bigint();
       roll(22500); // a minute of audio at 48 kHz
-      const ns = Number(process.hrtime.bigint() - t0);
       const h1 = v8.getHeapStatistics().used_heap_size;
-      if (gcs === g0 && h1 >= h0) best = { bytes: h1 - h0, ns, posts: posts - p0 };
+      if (gcs === g0 && h1 >= h0) best = { bytes: h1 - h0, posts: posts - p0 };
     }
     // and with the peaks held back (no posts): what a quantum itself allocates
     p.post = function () {
@@ -240,15 +177,14 @@ describe('the ring', () => {
     }
     obs.disconnect();
     assert.ok(best && held != null, 'a minute rolled with no collection in between, to measure it by');
-    const perQ = best.bytes / 22500,
-      us = best.ns / 22500 / 1000;
+    const perQ = best.bytes / 22500;
     t.diagnostic(
-      `a minute of audio: ${best.bytes} bytes allocated (${perQ.toFixed(2)} a quantum, all of it the ${best.posts} peak posts, one every 32 quanta), ${us.toFixed(2)} µs a quantum (${((us / ((128 / SR) * 1e6)) * 100).toFixed(2)}% of its 2.67 ms)`,
+      `a minute of audio: ${best.bytes} bytes allocated (${perQ.toFixed(2)} a quantum, all of it the ${best.posts} peak posts, one every 32 quanta)`,
     );
     t.diagnostic(`the same minute with the peak posts held: ${held} bytes (${(held / 22500).toFixed(3)} a quantum)`);
     assert.ok(perQ < 16, `less than an object a quantum, the posts included (${perQ.toFixed(2)} bytes)`);
     assert.ok(held / 22500 < 1, `nothing a quantum without them (${held} bytes in a minute)`);
-    assert.ok(us < 60, `a quantum in well under its time (${us.toFixed(2)} µs)`);
+    // (the time a quantum takes, under 60 µs, is wall clock and is timed in tools/input-test.js)
   });
 });
 
@@ -348,22 +284,6 @@ describe('the grid', () => {
 });
 
 /* ------------------------------------------------------------------------------------- the default selection */
-const RIFF2 = {
-  bpm: 120,
-  beats: 8,
-  chord: true,
-  notes: [
-    [0, 40, 0],
-    [0.5, 40, 0],
-    [1, 43, 1],
-    [2.5, 40, 0],
-    [3, 45, 0.5],
-    [4, 40, 0],
-    [4.75, 40, 0],
-    [5.5, 47, 1],
-    [7, 43, 0],
-  ],
-};
 const BAR1 = {
   bpm: 120,
   beats: 4,
@@ -375,121 +295,6 @@ const BAR1 = {
     [3, 45, 0.5],
   ],
 };
-
-// a simulated session: the band from startT (a bar of count-in), the guitar played at `bar` with the round trip L
-// late, run through the live tape on a simulated audio thread. -> { tape, sim, src (frame -> sample), lineF(beat) }
-async function session({
-  riff,
-  passes,
-  bar = 1,
-  L = 0.012,
-  bpm = 120,
-  startT = 0.5,
-  tail = 3,
-  playing = true,
-  seconds = 60,
-  extra = null,
-  early = 0,
-} = {}) {
-  const spb = 60 / bpm,
-    s0 = -4,
-    sched = (beat) => startT + (beat - s0) * spb;
-  const di = riffDI(riff, { passes, bpm, seed: 7, jitter: 0.003, solid: true, tail: 0, peak: -12 });
-  const at0 = Math.round((sched((bar - 1) * 4) + L - early) * SR);
-  const len = at0 + di.buf.length + Math.round(tail * SR);
-  const src = new Float32Array(len);
-  const rnd = rng(9);
-  for (let i = 0; i < len; i++)
-    src[i] =
-      Math.fround(i >= at0 && i - at0 < di.buf.length ? di.buf[i - at0] : 0) + Math.fround((rnd() * 2 - 1) * 0.0004);
-  if (extra) extra(src, sched, L);
-  const sim = simulated(src, { spb, s0, startT, playing, L });
-  const tape = createTape(sim.app, sim.input);
-  tape.start({ seconds });
-  await sim.ready();
-  sim.roll(len);
-  return { tape, sim, src, at0, lineF: (beat) => Math.round((sched(beat) + L) * SR), L, spb, sched };
-}
-
-// the browser, simulated: an audio context whose clock is the frames rolled, the worklet's file in a vm, the input
-// tapped into it, an engine whose clock is a steady transport
-function simulated(src, { spb, s0, startT, playing, L = 0.012 }) {
-  const w = workletScope(SR);
-  let proc = null,
-    frame = 0;
-  const ctx = {
-    sampleRate: SR,
-    get currentTime() {
-      return frame / SR;
-    },
-    audioWorklet: { addModule: async () => {} },
-  };
-  globalThis.AudioWorkletNode = class {
-    constructor(c, name, o) {
-      this.context = c;
-      proc = w.make(o.processorOptions.frames);
-      this.port = { onmessage: null, postMessage: (m) => proc.msg(m) };
-      proc.port.postMessage = (m) => this.port.onmessage && this.port.onmessage({ data: m });
-    }
-    disconnect() {}
-  };
-  const gridAt = (t) => s0 + (t - startT) / spb;
-  const clock = createClock({
-    now: () => ctx.currentTime,
-    playing: () => playing,
-    bpm: () => 60 / spb,
-    beatsPerBar: () => 4,
-    gridAt,
-    timeAtGrid: (g) => startT + (g - s0) * spb,
-    songBeatAt: (t) => (t <= startT ? s0 : gridAt(t)),
-  });
-  const listeners = new Map();
-  const audio = {
-    state: { open: true },
-    ctx,
-    latency: { get: () => L },
-    tap: () => () => {},
-  };
-  const engine = {
-    ctx,
-    get playing() {
-      return playing;
-    },
-    gen: 1,
-    clock,
-    latency: { total: 0 },
-    assets: { put: async (id, d) => (engine.stored[id] = d) },
-    stored: {},
-    on: () => () => {},
-  };
-  const app = { engine, store: { get: () => ({ loop: { on: false } }) } };
-  const input = {
-    audio,
-    on: (e, fn) => {
-      listeners.set(e, fn);
-      return () => listeners.delete(e);
-    },
-  };
-  const q = new Float32Array(128),
-    ins = [[q]];
-  return {
-    app,
-    input,
-    engine,
-    async ready() {
-      for (let i = 0; i < 10 && !proc; i++) await new Promise((r) => setImmediate(r));
-    },
-    roll(n) {
-      const end = frame + n;
-      while (frame < end) {
-        for (let i = 0; i < 128; i++) q[i] = src[frame + i] || 0;
-        w.scope.currentFrame = frame;
-        proc.process(ins);
-        frame += 128;
-      }
-    },
-  };
-}
 
 describe('that was the one', () => {
   test('four bars of a two-bar riff, then silence: the four bars, on their lines', async () => {
@@ -554,29 +359,12 @@ describe('that was the one', () => {
     s.tape.stop();
   });
 
-  test('a minute of tape is read in slices: the page is never held up for long', async () => {
+  test('a minute of tape is read in slices', async () => {
     const s = await session({ riff: RIFF2, passes: 13 });
     assert.ok(s.tape.span().seconds > 50);
-    let last = performance.now(),
-      worst = 0,
-      ticks = 0;
-    const iv = setInterval(() => {
-      const n = performance.now();
-      worst = Math.max(worst, n - last);
-      last = n;
-      ticks++;
-    }, 1);
-    const t0 = performance.now();
     const sel = await s.tape.select();
-    const total = performance.now() - t0;
-    clearInterval(iv);
-    worst = Math.max(worst, performance.now() - last);
     assert.equal(sel.why, 'repeat');
-    // (timers ran between the slices: the longest the page waited is a slice, not the whole read)
-    assert.ok(
-      ticks >= 4 && worst < total / 2,
-      `${ticks} timer ticks over ${total.toFixed(0)} ms, the longest wait ${worst.toFixed(1)} ms`,
-    );
+    // (that timers run between the slices, so the page is never held up for long, is wall clock and is timed in tools/input-test.js)
     s.tape.stop();
   });
 

@@ -65,7 +65,10 @@ test('each worklet the gear builds is a file of its own with its source byte for
       diff.push(`${n}: no file`);
       continue;
     }
-    const f = fileURLToPath(WORKLETS[n]);
+    // (in the page this URL is on the studio's origin because it is made from import.meta.url, as here it is file:. A
+    // data:, blob: or other host's URL, which the page's policy would refuse, is reported, not thrown on)
+    const u = new URL(WORKLETS[n]);
+    const f = u.protocol === 'file:' ? fileURLToPath(u) : '';
     if (!f.startsWith(dir)) diff.push(`${n}: ${WORKLETS[n]}`);
     else {
       const text = fs.readFileSync(f, 'utf8');
@@ -80,7 +83,7 @@ test('each worklet the gear builds is a file of its own with its source byte for
   );
   t.ok(
     Object.keys(src).length >= 40 && files.length === Object.keys(src).length && !diff.length,
-    `${Object.keys(src).length} worklets the gear's code builds, each a file of its own with its source byte for byte (gear/worklets/)${diff.length ? `: ${diff.slice(0, 5).join(', ')}` : ''}`,
+    `${Object.keys(src).length} worklets the gear's code builds, each a file of its own, beside the module as it is on the studio's origin, with its source byte for byte (gear/worklets/)${diff.length ? `: ${diff.slice(0, 5).join(', ')}` : ''}`,
   );
   t.ok(
     devs.length >= 30 && !named.length,

@@ -13,8 +13,6 @@ import { valueAt, toPos } from '../app/src/core/automation.js';
 import { GLIDE_S } from '../app/src/input/autorec.js';
 
 const t = tally('autorec');
-const canon = (x) => JSON.stringify(x, (k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((kk) => [kk, v[kk]])) : v));
-const body = (s) => canon({ ...s.get(), meta: null });
 const near = (a, b, e) => Math.abs(a - b) <= e;
 
 /* ------------------------------------------------------------------ 2. the studio */

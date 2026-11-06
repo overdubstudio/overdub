@@ -10,8 +10,9 @@
 // a key to a missing track, and a loop in a hand-written song, are silence (the loop is reported); a key source after
 // the keyed track in track order is still heard on the same block; NO KEY fires on the song's grid; FOLLOW follows
 // the key's level; renders repeat bit for bit.
-// In Chromium (QUIET, through tools/pw.js): the device check passes on the defaults and every preset, and renders a
-// keyed effect keyed by its drum loop (keyed: deltaLU, grMaxDb; a key: true effect that ignores it is warned); the window's Key
+// The device check (checkDeviceNode, in a child process) passes on the defaults and every preset, and renders a keyed
+// effect keyed by its drum loop (keyed: deltaLU, grMaxDb; a key: true effect that ignores it is warned).
+// In Chromium (QUIET, through tools/pw.js): the window's Key
 // menu sets the key (one undo step, signed you), the mixer says "keyed by Kick", the live engine wires it (the key
 // input on, and off again when the key track is removed), and the master's menu sets the clean ceiling. The browser's
 // render agreeing with Node on a keyed scene is tools/golden-test.js's (scenes sidechain and master-clean).
@@ -217,31 +218,33 @@ function gainCurve(r) {
   ok(worst === 0 && !dozed, `live, a keyed Dim Switch stays awake while its key plays through the bass's rests: the same samples as a render when the bass comes back (worst difference ${worst})`);
 }
 
+/* ======================================================================== the device check (checkDeviceNode) */
+console.log('the device check');
+const chk = await (async () => {
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const d = getDevice('core.ducker');
+  const r0 = await checkDeviceNode(d, { quick: true });
+  const pre = [];
+  for (const pr of d.presets) {
+    const pd = { ...d, id: 'core.ducker-preset', params: d.params.map((p) => ({ ...p, def: pr.params[p.key] ?? p.def })) };
+    const r = await checkDeviceNode(pd, { quick: true });
+    pre.push({ name: pr.name, ok: r.ok, errors: r.errors, tp: r.truePeak });
+  }
+  // (R5) an effect whose def says key: true and never reads it is warned about
+  const deaf = await checkDeviceNode({ id: 'you.deaf', name: 'Deaf', kind: 'effect', key: true, params: [], kernel: '({ create() { return { process(L, R, n) {} }; } })' }, { quick: true });
+  return { ok: r0.ok, errors: r0.errors, dLU: r0.level?.deltaLU, keyed: r0.keyed, pre, deaf: { keyed: deaf.keyed, warned: deaf.warnings.some((x) => /^key:/.test(x)) } };
+})();
+  ok(chk.keyed && chk.keyed.grMaxDb >= 10 && chk.keyed.deltaLU < -0.5, `the device check renders a keyed effect keyed too (the DI strum keyed by the drum loop): Dim Switch dips ${chk.keyed && chk.keyed.grMaxDb} dB at most, ${chk.keyed && chk.keyed.deltaLU} LU overall`);
+  ok(chk.deaf.keyed && chk.deaf.keyed.grMaxDb === 0 && chk.deaf.warned, `...and warns about a key: true effect that ignores its key (${JSON.stringify(chk.deaf.keyed)})`);
+  ok(chk.ok && Math.abs(chk.dLU) <= 0.1, `the device check passes at the defaults, at bypass level (${chk.dLU} LU)${chk.errors?.length ? ': ' + chk.errors.join(' | ') : ''}`);
+  ok(chk.pre.every((x) => x.ok), `...and on every preset (${chk.pre.length})${chk.pre.filter((x) => !x.ok).map((x) => ` ${x.name}: ${x.errors.join(' | ')}`).join(';')}`);
+
 /* ======================================================================== the studio (Chromium, QUIET) */
 console.log('the studio');
 const { page, close, errors } = await open('/app/', { query: 'new' });
 try {
   await page.waitForFunction(() => window.overdub && window.overdub.store && window.overdub.plugin, null, { timeout: 30000 });
   const E = (fn, arg) => page.evaluate(fn, arg);
-  const chk = await E(async () => {
-    const { checkDevice } = await import('/app/src/kernel/check.js');
-    const reg = await import('/app/src/devices/registry.js');
-    const d = reg.getDevice('core.ducker');
-    const r0 = await checkDevice(d, { quick: true });
-    const pre = [];
-    for (const pr of d.presets) {
-      const pd = { ...d, id: 'core.ducker-preset', params: d.params.map((p) => ({ ...p, def: pr.params[p.key] ?? p.def })) };
-      const r = await checkDevice(pd, { quick: true });
-      pre.push({ name: pr.name, ok: r.ok, errors: r.errors, tp: r.truePeak });
-    }
-    // (R5) an effect whose def says key: true and never reads it is warned about
-    const deaf = await checkDevice({ id: 'you.deaf', name: 'Deaf', kind: 'effect', key: true, params: [], kernel: '({ create() { return { process(L, R, n) {} }; } })' }, { quick: true });
-    return { ok: r0.ok, errors: r0.errors, dLU: r0.level?.deltaLU, keyed: r0.keyed, pre, deaf: { keyed: deaf.keyed, warned: deaf.warnings.some((x) => /^key:/.test(x)) } };
-  });
-  ok(chk.keyed && chk.keyed.grMaxDb >= 10 && chk.keyed.deltaLU < -0.5, `the device check renders a keyed effect keyed too (the DI strum keyed by the drum loop): Dim Switch dips ${chk.keyed && chk.keyed.grMaxDb} dB at most, ${chk.keyed && chk.keyed.deltaLU} LU overall`);
-  ok(chk.deaf.keyed && chk.deaf.keyed.grMaxDb === 0 && chk.deaf.warned, `...and warns about a key: true effect that ignores its key (${JSON.stringify(chk.deaf.keyed)})`);
-  ok(chk.ok && Math.abs(chk.dLU) <= 0.1, `the device check passes at the defaults, at bypass level (${chk.dLU} LU)${chk.errors?.length ? ': ' + chk.errors.join(' | ') : ''}`);
-  ok(chk.pre.every((x) => x.ok), `...and on every preset (${chk.pre.length})${chk.pre.filter((x) => !x.ok).map((x) => ` ${x.name}: ${x.errors.join(' | ')}`).join(';')}`);
   // a song with a kick and a bass; the window's Key menu
   const ids = await E(async () => {
     const a = window.overdub;

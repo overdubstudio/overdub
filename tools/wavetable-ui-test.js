@@ -680,6 +680,17 @@ async function openLT(page) {
     await sleep(150);
     const pp = await E(() => { const a = window.overdub; const P = a.store.track(a.plugin.current.track).instrument.params; return [P.m1_src, P.m1_dst, P.m1_amt]; });
     ok(still && still.src === 4 && pp[0] === 4 && pp[1] === 1, `phone: a tap on LFO 1's jack, the Osc A tab and POS makes the patch (slot 1: ${pp.join(', ')})`);
+    // the generic face (ui/faces.js), moved here from tools/wavetable-test.js: a control for every param, and it fits a 390 px phone
+    const face = await E(async () => {
+      const { getDevice } = await import('/app/src/devices/registry.js');
+      const { renderFace } = await import('/app/src/ui/faces.js');
+      const f = renderFace(getDevice('core.wavetable'), {}, {}).el;
+      document.body.appendChild(f);
+      const out = { controls: f.querySelectorAll('[data-key]').length, overflow: f.scrollWidth > f.clientWidth + 1 || f.getBoundingClientRect().right > innerWidth + 1 };
+      f.remove();
+      return out;
+    });
+    ok(face.controls === 117 && !face.overflow, `the face has a control for each of the ${face.controls} params and fits a 390 px phone`);
     ok(!ours(errors).length, `phone: no page errors${ours(errors).length ? ': ' + ours(errors).slice(0, 3).join(' | ') : ''}`);
   } catch (e) {
     ok(false, 'phone run threw: ' + (e && e.stack || e));

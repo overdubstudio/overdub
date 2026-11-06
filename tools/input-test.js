@@ -5,13 +5,13 @@
 // tuner over a played guitar phrase (cents only once a note settles; nothing under the low string), and monitoring
 // with no audio track (said once, then it waits and wires itself when one appears).
 // (YIN, the played-guitar tuner, the sloppy-human timing, monitoring, hum, tap, latency, capture and MIDI-input Node
-// checks now live in test/unit/input.test.js and input-timing.test.js; the plucked-string tuner sweep stays here.)
+// checks now live in test/unit/input.test.js and input-timing.test.js, the tuner's strings and tunings in tuner.test.js
+// and the strum calibration in calibrate.test.js; the plucked-string tuner sweep, seconds of Node, stays here.)
 //   node tools/input-test.js        (screenshots: tools/.out/input-*.png)
 import { open, tally, OUTDIR } from './pw.js';
 import path from 'node:path';
 import fs from 'node:fs';
-import { hits, median } from '../app/src/input/latency.js';
-import * as LAT from '../app/src/input/latency.js';
+import { median } from '../app/src/input/latency.js';
 import { noteName } from '../app/src/core/music.js';
 import { createPitchTracker, segment } from '../app/src/input/pitch.js';
 import { render as renderVoice, makePhrase } from './hum-bench.js';
@@ -155,49 +155,6 @@ function readTuner(buf, sr, tuning, until) {
       `tuner, ${k}: ${NOTES.length} strings E1 to E4 (drop C's C2, a seven-string's B1, drop A, a bass's E1) 13 cents flat: the note named within ${ms(mx(R.named))} ms of the pluck, within 3 cents within ${ms(mx(R.settle))} ms, then off by ${f1(med(R.errs))} cents at the median and ${f1(mx(R.errs))} at worst (${R.errs.length} readings; ${R.wrong} wrong notes; ${R.flick} strings whose shown cents flickered)`);
   }
 }
-{
-  // the strings, read in turn: each tuning's open strings, plucked one after another, name themselves
-  const sr = 48000, bad = [];
-  for (const id of ['standard', 'drop-d', 'd-standard', 'drop-c', 'b-standard', 'drop-b', 'drop-a', '7-standard', '7-drop-a']) {
-    const t = TUN.TUNER_TUNINGS[id], at0 = 0.5, len = at0 + t.strings.length * 1.0 + 1, buf = new Float32Array(Math.round(len * sr));
-    t.strings.forEach((m, i) => { const s = STR.string(m, { sr, dur: 0.95, at: at0 + i, len, peak: -14, seed: 11 + i, hum: -62 }); for (let j = 0; j < buf.length; j++) buf[j] += s.buf[j]; });
-    const reads = readTuner(buf, sr, id, len);
-    t.strings.forEach((m, i) => {
-      const mid = reads.filter((x) => x.t > at0 + i + 0.12 && x.t < at0 + i + 0.5 && x.r.live);
-      const ok = mid.length >= 5 && mid.every((x) => x.r.p === m && x.r.string?.open === m && x.r.string?.number === t.strings.length - i);
-      if (!ok) bad.push(`${id} string ${t.strings.length - i}: ${mid.slice(0, 2).map((x) => `${x.r.note}${x.r.octave} as ${x.r.string?.name}`).join(', ') || 'nothing'}`);
-    });
-  }
-  T.ok(!bad.length, `tuner: nine tunings' open strings (E standard to a seven-string's drop A), plucked in turn, each read as its note on its own string${bad.length ? '; wrong: ' + bad.slice(0, 4).join('; ') : ''}`);
-  // the low string names the tuning, and the strings heard settle it
-  const low = [36, 35, 33].map((m) => `${noteName(m)}: ${TUN.tuningsFromLow(m).map((x) => x.name).join(' or ')}`);
-  const g = (hs) => TUN.guessTuning(hs)[0]?.id;
-  T.ok(TUN.tuningsFromLow(36)[0].id === 'drop-c' && g([35, 42]) === 'drop-b' && g([35, 40, 45, 50, 54]) === 'b-standard' && g([35, 40, 45, 50, 55]) === '7-standard' && g([36, 43]) === 'drop-c' && g([36, 41]) === 'c-standard',
-    `tuner: a low string asks which tuning (${low.join('; ')}), and the strings heard after it settle it (B then F♯: drop B; B E A D F♯: B standard; B E A D G: seven-string; C then G: drop C; C then F: C standard)`);
-}
-{
-  // a peg turned while the string rings (B1 from 40 cents flat up to pitch over two seconds): the reading follows it
-  const sr = 48000, s = STR.string(35, { sr, dur: 4, cents: -40, at: 0.5, bend: (t) => Math.min(40, Math.max(0, (t - 0.5) * 20)), peak: -12 });
-  const reads = readTuner(s.buf, sr, '7-standard', 5), half = TUN.windowFor(sr) / sr / 2;
-  const live = reads.filter((x) => x.r.live && x.r.settled);
-  const lag = Math.max(...live.map((x) => Math.abs((x.r.midi - 35) * 100 - (1200 * Math.log2(s.truth(x.t - half) / 440) + 6900 - 3500))));
-  const end = live.filter((x) => x.t > 3.3).map((x) => x.r.shown);
-  T.ok(lag <= 8 && end.length >= 5 && end.every((c) => c === 0), `tuner: a peg turned 20 cents a second while B1 rings is followed within ${lag.toFixed(1)} cents, and reads 0 once it stops (${[...new Set(end)].join(', ')})`);
-}
-{
-  // calibration: a strum along recorded (muted chops, each its own few ms late, one missed, one caught late) through
-  // latency.js's onsets and judgeTaps: the round trip it finds against the one played
-  const sr = 48000, beat = 0.6, t0 = 0.9, clicks = Array.from({ length: 8 }, (_, i) => t0 + i * beat), r = STR.rng(5);
-  const late = [0.004, 0.01, 0.0142, 0.0161, 0.0128, null, 0.0153, 0.0139], hitsAt = clicks.map((c, i) => (late[i] == null ? null : c + late[i]));
-  hitsAt[6] += 0.045; // (one strum caught on the way: 45 ms late)
-  const { buf } = STR.strum([40, 47, 52], hitsAt.filter((x) => x != null), { sr, len: t0 + 8 * beat + 0.6, peak: -12, mute: true });
-  for (let i = 0; i < buf.length; i++) buf[i] += (r() - 0.5) * 2e-4;
-  const hs = hits(buf, sr, clicks.map((c) => Math.round(c * sr)));
-  const j = LAT.judgeTaps(hs), want = median(late.slice(2).filter((x) => x != null)) * 1000;
-  T.ok(j.grade === 'good' && j.dropped != null && j.used === 4 && Math.abs(j.ms - want) <= 1 && j.confidence >= 0.8,
-    `calibration: a strum along with one missed and one 45 ms late finds ${j.ms.toFixed(1)} ms (played ${want.toFixed(1)}), the late one left out, ${j.grade} at ${Math.round(j.confidence * 100)}% sure`);
-}
-
 /* ------------------------------------------------------------------ the pedal across a change of track (the studio) */
 {
   // Pedal down on track A, a key played and let go (held by the pedal), track B selected, pedal up: the lift reaches A

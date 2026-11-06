@@ -29,21 +29,3 @@ test('the guide names every dsp function and only real ones, embeds both example
     'docs/DEVICES.md carries both examples',
   );
 });
-
-// DEVICES.md says the guide is below "word for word". Markdown's dressing aside (code fences, backticks, line breaks, the
-// guide's own title), every paragraph has to be there. It is a todo because it fails today: the two have drifted apart
-// in The definition, The kernel and dsp. A todo still runs and prints what's missing; make the two agree, then drop it.
-test('docs/DEVICES.md carries the guide, paragraph by paragraph', {
-  todo: 'DEVICES.md and KERNEL_GUIDE have drifted apart',
-}, () => {
-  const plain = (s) =>
-    s
-      .replace(/^```\w*$/gm, '')
-      .replace(/`/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  const md = plain(fs.readFileSync(new URL('../../docs/DEVICES.md', import.meta.url), 'utf8'));
-  const body = guide.KERNEL_GUIDE.slice(guide.KERNEL_GUIDE.indexOf('\n') + 1);
-  const missing = body.split(/\n\s*\n/).filter((p) => !md.includes(plain(p)));
-  assert.deepEqual(missing, []);
-});

@@ -1,5 +1,6 @@
-// Picking a sound (docs/INSTRUMENTS-UX.md, section 6.1), the Node sections 1-3: kindOfTake, soundsFor, newPartFor
-// (core/sounds.js). Moved intact from tools/pick-sound-test.js; the tool (13) and the browser sections stay there.
+// Picking a sound (docs/INSTRUMENTS-UX.md, section 6.1), what needs no browser: 1-3, kindOfTake, soundsFor, newPartFor
+// (core/sounds.js); 4, the aim, with real commits on a stub shell and engine; and 13, the tool's catalog entry. Moved
+// from tools/pick-sound-test.js; the tool's calls and the browser sections stay there.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HUM_NOTES } from '../../tools/fake-wav.js';
@@ -169,28 +170,25 @@ const aimRig = (view) => {
     Object.assign(ui.state.selection, x);
     ui.emit('select', ui.state.selection);
   };
-  // the transport: from where play() was told to start, the beat runs at the song's tempo
-  let t0 = 0;
+  // the transport: the beat stays where play() was told to start (the notes come in with their own beats)
   const engine = {
     playing: false,
     recording: false,
     pos: 0,
     get beat() {
-      return this.playing ? this.pos + ((performance.now() - t0) / 1000) * (store.get().tempo / 60) : this.pos;
+      return this.pos;
     },
     get gridBeat() {
-      return this.beat;
+      return this.pos;
     },
     seek(b) {
       this.pos = b;
     },
     async play(b) {
       this.pos = b;
-      t0 = performance.now();
       this.playing = true;
     },
     stop() {
-      this.pos = this.beat;
       this.playing = false;
     },
     on() {},
@@ -227,7 +225,6 @@ test('4 the aim, simple view, with real commits', async () => {
       ps.map((p, i) => ({ p, g: (bar - 1) * 4 + i, d: 0.9, v: 0.8 })),
       { src: 'hum' },
     );
-    await new Promise((res) => setTimeout(res, 150));
     return rec.stop();
   };
   const out = {};
@@ -253,7 +250,6 @@ test('4 the aim, simple view, with real commits', async () => {
   const made = st.get().tracks.at(-1);
   out.oneShot = { made: made.name, next: aimName('hum') };
   // a newer selection wins over the last take
-  await new Promise((res) => setTimeout(res, 20));
   ui.select({ track: ids.Bass });
   out.selWins = aimName('hum');
   rec.setAim('hum', ids.Drums);

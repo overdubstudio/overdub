@@ -1,80 +1,27 @@
-// Analytics checks: counting, not tracking (app/src/analytics.js, site/assets/analytics.js).
-//   1. the pieces: host and opt-out rules, the referrer host, the fixed event list, the GIFs
+// Analytics checks: counting, not tracking (app/src/analytics.js, site/assets/analytics.js). The pieces (host and opt-out
+// rules, the referrer host, the fixed event list, the GIFs, what the copy says) are test/unit/analytics.test.js.
 //   2. off production (localhost) nothing fires, whatever you do
 //   3. on a faked production host (https://overdubstudio.com routed to the local server) exactly the right URLs
 //      fire for the right actions, with no referrer and no cookie, and nothing else
 //   4. Do Not Track, Global Privacy Control and automation (navigator.webdriver) send nothing
-//   5. the two sites' deploys (both in the Overdub account, their AWS Terraform's: infra/live, infra/next): what
-//      infra/live promises, read from its HCL (the cutover variable, the production-only role, the private buckets);
-//      deploy/analytics/setup.sh and deploy/deploy.sh (live and --next) plan the right things with DRY_RUN=1 (a stub aws
-//      on PATH, no credentials); a live deploy off GitHub Actions is refused, and the live site's config is the committed
-//      deploy/live-config.json, which names no cloud; the preview's lays deploy/next-config.json over it (the staging cloud
-//      API, which the studio's connect-src allows); the config the deploy writes puts up the Preview ribbon on the preview (desktop and
-//      phone), and nothing is counted there; the live site has no ribbon
+//   5. the two sites' deploys (both in the Overdub account, their AWS Terraform's: infra/live, infra/next):
+//      deploy/deploy.sh (live and --next) plans the right things with DRY_RUN=1 (a stub aws on PATH, no credentials), and
+//      the live site's config is the committed deploy/live-config.json, which names no cloud; the preview's lays
+//      deploy/next-config.json over it (the staging cloud API); the config the deploy writes puts up the Preview ribbon on
+//      the preview (desktop and phone), and nothing is counted there; the live site has no ribbon. What needs no whole
+//      dry deploy (the HCL, setup.sh, the refusals, connect-src) is test/unit/deploy-sites.test.js.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { open, tally, OUTDIR } from './pw.js';
-import { allowed, optedOut, referrerHost, beaconUrl, exportKind, EVENTS, HOST } from '../app/src/analytics.js';
+import { HOST } from '../app/src/analytics.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const t = tally('analytics');
 const PROD = 'https://' + HOST;
 const GIF = fs.readFileSync(path.join(ROOT, 'app/e.gif'));
-
-/* ---------------------------------------------------------------- 1. the pieces */
-{
-  for (const f of ['app/e.gif', 'site/e.gif']) {
-    const b = fs.readFileSync(path.join(ROOT, f));
-    t.ok(b.length === 43 && b.subarray(0, 6).toString() === 'GIF89a' && b[b.length - 1] === 0x3b, `${f} is a 43-byte GIF`);
-  }
-  const loc = (hostname, protocol = 'https:') => ({ hostname, protocol });
-  t.ok(allowed(loc(HOST), {}, {}), 'allowed on https://overdubstudio.com');
-  t.ok(!allowed(loc('localhost', 'http:'), {}, {}) && !allowed(loc('127.0.0.1', 'http:'), {}, {}), 'not on localhost');
-  t.ok(!allowed(loc(HOST, 'http:'), {}, {}) && !allowed(loc('overdubstudio.com.evil.test'), {}, {}) && !allowed(loc('overdub.ajsmithhq.com'), {}, {}), 'not over http, nor on look-alike hosts');
-  t.ok(!allowed(loc(HOST), { doNotTrack: '1' }, {}) && !allowed(loc(HOST), {}, { doNotTrack: '1' }) && !allowed(loc(HOST), { msDoNotTrack: '1' }, {}), 'Do Not Track: nothing');
-  t.ok(!allowed(loc(HOST), { globalPrivacyControl: true }, {}), 'Global Privacy Control: nothing');
-  t.ok(!allowed(loc(HOST), { webdriver: true }, {}), 'automation: nothing');
-  t.ok(!optedOut({ doNotTrack: '0' }, {}) && !optedOut({ doNotTrack: null }, {}), 'DNT 0 or unset is not an opt-out');
-  t.ok(referrerHost('https://www.google.com/search?q=my+secret+song') === 'google.com', 'referrer: host only, no www, no query');
-  t.ok(referrerHost('https://news.ycombinator.com:8443/item?id=1') === 'news.ycombinator.com', 'referrer: no port, no path');
-  t.ok(referrerHost('') === '' && referrerHost('not a url') === '' && referrerHost('file:///Users/aj/song.html') === '', 'referrer: nothing when none or odd');
-  t.ok(beaconUrl('play') === '/app/e.gif?e=play', 'beacon: /app/e.gif?e=play');
-  t.ok(beaconUrl('agent', 'claude.ai') === '/app/e.gif?e=agent&p=claude.ai', 'beacon: an enumerated field');
-  t.ok(beaconUrl('agent', 'my-key-sk-ant') === null && beaconUrl('agent') === null, 'beacon: a field off the list is refused');
-  t.ok(beaconUrl('title', 'x') === null && beaconUrl('toString') === null && beaconUrl('constructor') === null, 'beacon: an event off the list is refused');
-  t.ok(beaconUrl('hum', 'loud') === '/app/e.gif?e=hum', 'beacon: an event without fields drops any field');
-  t.ok(beaconUrl('device', 'you', { r: 'google.com' }) === '/app/e.gif?e=device&p=you', 'beacon: r only on opens');
-  t.ok(beaconUrl('open', 'demo', { r: 'x.com/path?q' }) === '/app/e.gif?e=open&p=demo', 'beacon: a malformed r is dropped');
-  t.ok(Object.keys(EVENTS).join() === 'open,play,agent,device,export,share,hum,keep', 'the event list is short and fixed');
-  t.ok(Object.values(EVENTS).every((v) => !v || (v.length <= 8 && v.every((s) => /^[a-z.]{1,10}$/.test(s)))), 'every field is a short word from a list');
-  t.ok(['Night Shift.wav', 'Night Shift stems.zip', 'Night Shift.mid', 'Night Shift.overdub.json', 'Night Shift attribution.json', 'velvet.overdub-device.json', 'a.webm', 'a.txt'].map(exportKind).join() === 'wav,stems,midi,song,log,device,video,other', 'exports: the file type, never the name');
-}
-
-/* ---------------------------------------------------------------- 1b. what the copy says about it */
-// The counts exist, so nothing public (or about to be) may say there are none, and the privacy answers name every
-// event the studio can send.
-{
-  // The deck and the launch drafts live in a private repo beside this one; they're checked when it's there.
-  const PRIV = process.env.OVERDUB_PRIVATE || path.resolve(ROOT, '..', 'overdub-private');
-  const HAS_PRIV = fs.existsSync(path.join(PRIV, 'docs/launch'));
-  const at = (f) => (fs.existsSync(path.join(ROOT, f)) ? path.join(ROOT, f) : path.join(PRIV, f));
-  const read = (f) => fs.readFileSync(at(f), 'utf8');
-  const COPY = ['site/index.html', 'site/press/index.html', 'README.md', 'docs/AGENTS.md', ...(HAS_PRIV ? ['deck/index.html',
-    ...fs.readdirSync(path.join(PRIV, 'docs/launch')).filter((f) => f.endsWith('.md')).map((f) => 'docs/launch/' + f)] : [])];
-  const denials = COPY.flatMap((f) => (read(f).match(/[^.\n]*\b(no analytics|there(?:'|’)s no analytics|none in the studio)\b[^.\n]*/gi) || []).map((m) => `${f}: "${m.trim()}"`));
-  t.ok(!denials.length, `no copy says the studio has no analytics${denials.length ? ':\n       ' + denials.join('\n       ') : ''}`);
-  const word = { open: 'opens', play: 'plays', agent: 'agent messages', device: 'devices', export: 'exports', share: 'shares', hum: 'hums', keep: 'keeps' };
-  const faq6 = HAS_PRIV && (read('docs/launch/faq.md').match(/\*\*6\.[\s\S]*?(?=\n\*\*7\.)/) || [''])[0];
-  const pressMd = HAS_PRIV && (read('docs/launch/press-kit.md').match(/\| \*\*Privacy\*\* \|[^\n]*/) || [''])[0];
-  const pressHtml = (read('site/press/index.html').match(/<dt>Privacy<\/dt><dd>[\s\S]*?<\/dd>/) || [''])[0];
-  for (const [name, text] of [...(HAS_PRIV ? [['faq.md 6', faq6], ['press-kit.md privacy row', pressMd]] : []), ['press page privacy row', pressHtml]]) {
-    const missing = Object.keys(EVENTS).filter((e) => !(word[e] && text.includes(word[e])));
-    t.ok(text && !missing.length && /Do Not Track|DNT/.test(text), `${name} names every counted event and the opt-out${missing.length ? ' (missing: ' + missing.join(', ') + ')' : ''}`);
-  }
-}
 
 /* ---------------------------------------------------------------- helpers */
 const BEACON = /\/e\.gif(\?|$)/;
@@ -287,36 +234,6 @@ try {
     const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; const r = spawnSync('bash', [path.join(ROOT, script), ...args], { cwd: ROOT, env: { ...env, ...extra }, encoding: 'utf8', timeout: 600000 }); return { status: r.status, out: (r.stdout || '') + (r.stderr || '') }; };
     const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
 
-    // Both sites' AWS is Terraform's (infra/live, infra/next): what the live site's directory promises, read from its HCL
-    // (tools/check.sh validates it; the plan itself needs credentials)
-    const hcl = (f) => fs.readFileSync(path.join(ROOT, 'infra/live', f), 'utf8');
-    const cdn = hcl('cdn.tf'), dns = hcl('dns.tf'), gh = hcl('github.tf'), bucket = hcl('bucket.tf'), vars = hcl('variables.tf');
-    // on by default since the cutover (2026-10-14, #30); false still restores the pre-cutover shape
-    t.ok(/variable "serve_names"[\s\S]*?default\s*=\s*true/.test(vars) && /aliases\s*=\s*var\.serve_names \? \[var\.domain, "www\.\$\{var\.domain\}"\] : \[\]/.test(cdn)
-      && /cloudfront_default_certificate = !var\.serve_names/.test(cdn) && /site_target = var\.serve_names \?/.test(dns) && /var\.old_distribution_domain/.test(dns),
-      'infra/live: the cutover is one variable, serve_names, on by default since the cutover (false gives the distribution no names and the default certificate, and keeps the apex and www records on the old distribution)');
-    t.ok(/"var CLOUDFRONT_NAME = \$\{var\.serve_names \? "false" : "true"\};"/.test(cdn) && /path-rewrite\.js/.test(cdn) && /name\s*=\s*"overdub-path-rewrite"/.test(cdn),
-      'infra/live: until the cutover the path-rewrite function also serves the distribution\'s cloudfront.net name (CLOUDFRONT_NAME)');
-    t.ok(/data "aws_iam_openid_connect_provider" "github"/.test(gh) && !/resource "aws_iam_openid_connect_provider"/.test(gh)
-      && /"token\.actions\.githubusercontent\.com:sub" = "\$\{var\.github_sub_claim_prefix\}:environment:\$\{var\.deploy_environment\}"/.test(gh) && !/StringLike/.test(gh)
-      && /variable "deploy_environment"[\s\S]*?default\s*=\s*"production"/.test(vars),
-      'infra/live: the deploy role reuses infra/next\'s OIDC provider and trusts one subject, <prefix>:environment:production');
-    t.ok(/site\s*=\s*var\.domain/.test(bucket) && /models = "overdub-models-\$\{local\.account_id\}"/.test(bucket) && /block_public_policy\s*=\s*true/.test(bucket)
-      && /"AWS:SourceArn" = aws_cloudfront_distribution\.live\.arn/.test(bucket),
-      'infra/live: private buckets for the site (read only by its distribution) and the stems model');
-    t.ok(/s3:\/\/overdub-models-800849967977\//.test(fs.readFileSync(path.join(ROOT, 'deploy/live-config.json'), 'utf8')) && /account_id = "800849967977"/.test(bucket),
-      'deploy/live-config.json takes the model from infra/live\'s models bucket');
-    // the Athena half of the counts, dry; and it refuses AJ's personal account (a stub that answers sts with it)
-    const logs = run('deploy/analytics/setup.sh');
-    t.ok(clean(logs) && /CREATE DATABASE IF NOT EXISTS overdub/.test(logs.out) && /CREATE OR REPLACE VIEW overdub\.events/.test(logs.out),
-      `deploy/analytics/setup.sh, dry: the Athena database, table and view (exit ${logs.status})`);
-    const personal = path.join(stub, 'personal');
-    fs.mkdirSync(personal);
-    fs.writeFileSync(path.join(personal, 'aws'), '#!/bin/sh\ncase "$*" in "sts get-caller-identity"*) echo 165604225334; exit 0;; esac\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
-    const own = run('deploy/analytics/setup.sh', { DRY_RUN: '', PATH: `${personal}${path.delimiter}${process.env.PATH}` });
-    t.ok(own.status === 1 && /refusing: these credentials are AJ's personal account/.test(own.out) && !/aws was called/.test(own.out),
-      `deploy/analytics/setup.sh refuses AJ's personal account before anything else (exit ${own.status})`);
-
     const ref = spawnSync('git', ['rev-parse', '--short', 'HEAD~1'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
     const next = run('deploy/deploy.sh', '--skip-tests', '--next', 'HEAD~1');
     const live = run('deploy/deploy.sh', '--skip-tests');
@@ -328,9 +245,6 @@ try {
     t.ok(/\+ aws s3 sync \S+ s3:\/\/overdubstudio\.com --only-show-errors --delete/.test(live.out) && !/next\.overdubstudio\.com/.test(live.out) && !/ajsmithhq/.test(live.out),
       'deploy without --next ships to the live bucket, s3://overdubstudio.com, only');
     // the live site from GitHub Actions only (deploy-live.yml); LOCAL_LIVE_DEPLOY=1 is the hatch, a dry run needs neither
-    const refused = run('deploy/deploy.sh', { DRY_RUN: '' }, '--skip-tests');
-    t.ok(refused.status === 1 && /not deploying: the live site deploys from GitHub Actions/.test(refused.out) && !/aws was called/.test(refused.out) && !/\+ aws/.test(refused.out),
-      `a live deploy off GitHub Actions, without LOCAL_LIVE_DEPLOY=1, is refused before anything is staged or called (exit ${refused.status})`);
     const hatch = run('deploy/deploy.sh', { DRY_RUN: '', LOCAL_LIVE_DEPLOY: '1', LIVE_DISTRIBUTION: 'ELIVE', COMMUNITY_PIN: '', OVERDUB_DEVICES_DIR: path.join(stub, 'no-devices') }, '--skip-tests');
     t.ok((/^live: .* -> s3:\/\/overdubstudio\.com, distribution ELIVE$/m.test(hatch.out) || /^not deploying: no checkout with the pinned shelf/m.test(hatch.out))
       && !/not deploying: the live site deploys from GitHub Actions/.test(hatch.out),
@@ -350,9 +264,6 @@ try {
       `with no SITE_CONFIG the live deploy ships the committed deploy/live-config.json, its model from the private bucket (exit ${committed.status}: ${(/^stems: .*model.*$/m.exec(comOut) || ['no stems line'])[0].slice(0, 120)})`);
     const cfgOf = (out) => { try { return JSON.parse((/^app\/site-config\.json: (.*)$/m.exec(out) || [])[1]); } catch { return null; } };
     const nextCfg = cfgOf(next.out), liveCfg = cfgOf(live.out);
-    const tracked = spawnSync('git', ['ls-files', 'app/site-config.json', 'deploy/site-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
-    const ignored = spawnSync('git', ['check-ignore', 'app/site-config.json', 'deploy/site-config.json'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim().split('\n').length === 2;
-    t.ok(!tracked && ignored, `the site config is never committed: deploy.sh writes it (${tracked || 'untracked'}, ${ignored ? 'ignored' : 'not ignored'})`);
     // no base: the live deploy ships {}, and the preview its own three keys
     t.ok(liveCfg && JSON.stringify(liveCfg) === '{}', `with no base the live deploy ships {} (${JSON.stringify(liveCfg)})`);
     t.ok(nextCfg && nextCfg.preview === true && nextCfg.env === 'preview' && nextCfg.ref === ref && Object.keys(nextCfg).length === 3,
@@ -385,22 +296,10 @@ try {
     fs.writeFileSync(overlay, '[1]');
     const badO = run('deploy/deploy.sh', { NEXT_CONFIG: overlay }, '--skip-tests', '--next', 'HEAD~1');
     t.ok(badO.status !== 0 && /not deploying: .*next-config\.json is not a JSON object/.test(badO.out) && !/aws (s3|cloudfront)/.test(badO.out), `an overlay that isn't a JSON object stops a preview deploy (exit ${badO.status})`);
-    // the studio's policy lets it reach every cloud origin a committed config names, and the comment says why
-    const page = fs.readFileSync(path.join(ROOT, 'app/index.html'), 'utf8');
-    const connect = (/connect-src ([^;]*)/.exec(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(page)?.[1] || '')?.[1] || '').split(/\s+/);
-    const named = [nextJson, liveJson].flatMap((c) => [c?.cloud?.api, c?.accounts?.api]).filter(Boolean);
-    const comment = (/<!--([\s\S]*?)-->/.exec(page)?.[1] || '').replace(/\s+/g, ' ');
-    t.ok(named.length && named.every((o) => connect.includes(new URL(o).origin) && comment.includes(`connect-src ${new URL(o).origin}`)),
-      `app/index.html's connect-src names every cloud origin the committed configs name (${named.join(', ')}), and its comment says why`);
     // the feature toggles are retired (merged means shipped): a "toggles" left in the base is dropped, with a line
     fs.writeFileSync(base, JSON.stringify({ toggles: { relay: 'on' }, other: 1 }));
     const oldR = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'), old = cfgOf(oldR.out);
     t.ok(clean(oldR) && old && !('toggles' in old) && old.other === 1 && /dropped .*"toggles"/.test(oldR.out), `a base with "toggles" ships without it, and says so (${JSON.stringify(old)})`);
-    // a base that isn't a JSON object stops a live deploy before anything is planned
-    fs.writeFileSync(base, '[1]');
-    const badLive = run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests');
-    t.ok(badLive.status !== 0 && /not deploying: .* is not a JSON object/.test(badLive.out) && !/aws (s3|cloudfront)/.test(badLive.out), `a base that isn't a JSON object stops a live deploy (exit ${badLive.status})`);
-    t.ok(!allowed({ hostname: 'next.overdubstudio.com', protocol: 'https:' }, {}, {}), 'analytics: not on next.overdubstudio.com');
     fs.rmSync(stub, { recursive: true, force: true });
 
     // the studio on the preview host, served the config the deploy wrote

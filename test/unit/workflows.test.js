@@ -106,3 +106,11 @@ test('the tee check itself: what it refuses and what it lets through', () => {
     'a',
   ]);
 });
+
+// run-all is what deploy-live waits for and it only picks up tools/*-test.js, so a unit test gates a deploy through this.
+test('a live deploy waits on the unit tests: run-all has a suite that runs them', () => {
+  const tools = path.join(path.dirname(WORKFLOWS), '../tools');
+  assert.ok(fs.readdirSync(tools).includes('unit-test.js'));
+  assert.match(fs.readFileSync(path.join(tools, 'unit-test.js'), 'utf8'), /test\/unit\/\*\.test\.js/);
+  assert.match(fs.readFileSync(path.join(WORKFLOWS, 'deploy-live.yml'), 'utf8'), /node tools\/run-all\.js/);
+});

@@ -74,5 +74,6 @@ test('the real-time list names suites that exist, and only those get a retry', (
     assert.ok(fs.existsSync(path.join(TOOLS, f)), `${f} is a suite`);
     assert.equal(mayRetry(f), true);
   }
-  for (const f of ['compat-test.js', 'agent-test.js', 'stack-monitor-test.js', 'unit-test.js']) assert.equal(mayRetry(f), false, f);
+  for (const f of ['compat-test.js', 'agent-test.js', 'stack-monitor-test.js', 'unit-test.js'])
+    assert.equal(mayRetry(f), false, f);
 });

@@ -10,6 +10,7 @@
 // budget and rebuilds byte for byte from the download cache; the device passes checkDevice, renders bit-exact twice
 // and at 44.1 kHz; every one of the 88 keys plays its zone's sample at the right pitch; the level climbs with
 // velocity on every octave, across the layer seam too; the studio fetches it packed and renders what Node does.
+// That an agent finds each of them (list_devices, get_device) is test/unit/sampler-agent.test.js.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -202,13 +203,6 @@ console.log('Parlour Upright: the studio');
     for (let c = 0; c < 2; c++) for (let i = 0; i < Math.min(ch[c].length, node.channels[c].length); i++) worst = Math.max(worst, Math.abs(ch[c][i] - node.channels[c][i]));
     t.ok(reqs.join() === 'odkz', `the studio fetched the kit once, packed (${reqs.join(', ')})`);
     t.ok(out.len === node.length && db(worst) <= -90, `the page's render matches Node's within -90 dBFS (worst ${worst ? db(worst).toFixed(1) : '-inf'} dBFS${worst ? '' : ': bit-identical'})`);
-    // an agent finds it: list_devices names it among the keys, get_device gives its params and presets
-    const ag = await page.evaluate(async () => {
-      const l = await window.overdub.tools.run('list_devices', { kind: 'instrument', cat: 'keys' }, { by: 'claude' });
-      const g = await window.overdub.tools.run('get_device', { id: 'core.upright' }, { by: 'claude' });
-      return { list: JSON.stringify(l), get: JSON.stringify(g) };
-    });
-    t.ok(/core\.upright/.test(ag.list) && /Parlour Upright/.test(ag.list) && /dynamics/.test(ag.get) && /Felt/.test(ag.get), 'an agent finds it: list_devices names Parlour Upright among the keys, get_device gives its params and presets');
     t.ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
 }
@@ -217,8 +211,8 @@ console.log('Parlour Upright: the studio');
 // ------------------------------------------------------------------------------------------------ the other sampled instruments
 // Each held to the same bar as Parlour Upright, from one table: the kit file and its budget, the keys and layers it
 // covers, the rebuild from the cache, checkDevice, renders bit-exact twice, every key's pitch, the level climbing
-// with velocity, a held note holding (a looped kit), and in the studio: fetched packed, the page's render against
-// Node's, and an agent finding it.
+// with velocity, a held note holding (a looped kit), and in the studio: fetched packed, and the page's render against
+// Node's.
 const MORE = [
   { id: 'core.grand', hash: GRAND_HASH, recipe: GRAND_RECIPE, only: 'salamander', mb: 15, keys: [21, 108], layers: [[1, 58], [59, 100], [101, 127]], preset: 'Half stick' },
   // (a bowed note swells for its first seconds: its velocity is read once it has settled; the solo bass's two layers
@@ -348,12 +342,6 @@ if (fetched.length) {
       for (let c = 0; c < 2; c++) for (let i = 0; i < Math.min(ch[c].length, node.channels[c].length); i++) worst = Math.max(worst, Math.abs(ch[c][i] - node.channels[c][i]));
       t.ok(reqs.join() === 'odkz', `${d.name}: the studio fetched the kit once, packed (${reqs.join(', ')})`);
       t.ok(out.len === node.length && db(worst) <= -90, `${d.name}: the page's render matches Node's within -90 dBFS (worst ${worst ? db(worst).toFixed(1) : '-inf'} dBFS${worst ? '' : ': bit-identical'})`);
-      const ag = await page.evaluate(async ({ id, cat }) => {
-        const l = await window.overdub.tools.run('list_devices', { kind: 'instrument', cat }, { by: 'claude' });
-        const g = await window.overdub.tools.run('get_device', { id }, { by: 'claude' });
-        return { list: JSON.stringify(l), get: JSON.stringify(g) };
-      }, { id: x.id, cat: d.cat });
-      t.ok(ag.list.includes(x.id) && ag.list.includes(d.name) && /dynamics/.test(ag.get) && ag.get.includes(x.preset), `${d.name}: an agent finds it (list_devices names it among the ${d.cat}, get_device gives its params and presets)`);
     }
     t.ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }

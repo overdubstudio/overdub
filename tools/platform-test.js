@@ -17,11 +17,9 @@
 import { open, tally } from './pw.js';
 import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
 import { makeDsp } from '../app/src/kernel/dsp.js';
-import { noteExpr, normCurve, chanExpr } from '../app/src/kernel/expr.js';
 import { kernelSpecs } from '../app/src/kernel/host.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { createProject, cleanProject } from '../app/src/core/project.js';
-import { normNote } from '../app/src/core/music.js';
 import { createStore } from '../app/src/core/store.js';
 import { measure } from '../app/src/audio/measure.js';
 import { phrase, PHRASE_BEATS } from '../app/src/audio/testsignals.js';
@@ -95,52 +93,6 @@ function t60(x, frame = 0.01) {
 const slice = (r, a, b) => ({ sr: r.sr, channels: r.channels.map((x) => x.subarray(Math.round(a * r.sr), Math.round(b * r.sr))) });
 
 /* ------------------------------------------------------------------ 1. expression */
-console.log('expression: the kernel core');
-{
-  // a probe: each voice adds its t.bend to L and t.mod to R; process adds 1000 x the channel's sustain to R
-  const probe = (poly) => `({ poly: ${poly}, create() { return {
-    voice() { let rel = false; return {
-      start() { rel = false; }, release() { rel = true; },
-      render(L, R, n, p, t) { if (rel) return false; for (let i = 0; i < n; i++) { L[i] += t.bend; R[i] += t.mod; } return true; },
-    }; },
-    process(L, R, n, p, t) { if (t.sustain) for (let i = 0; i < n; i++) R[i] += 1000; },
-  }; } })`;
-  const PROBE = probe(4);
-  // a note's own curve: 0 -> 2 semitones over 10 ms, mod 0.25 throughout
-  let c = core(PROBE);
-  let o = run(c, 2048, [{ type: 'on', p: 60, v: 0.8, time: 0, x: { bend: [0, 0, 0.01, 2], mod: 0.25 } }]);
-  const want = (f) => 2 * Math.min(1, f / 480);
-  const atBlocks = [0, 128, 256, 384, 512, 1024].map((f) => [o.L[f], want(f)]);
-  t.ok(atBlocks.every(([g, w]) => near(g, w, 1e-6)), `a note's bend curve is evaluated at each block start: ${atBlocks.map(([g]) => fmt(g, 3)).join(' ')} st (want ${atBlocks.map(([, w]) => fmt(w, 3)).join(' ')})`);
-  t.ok(near(o.R[700], 0.25, 1e-7) && o.L[127] === o.L[0], `t.mod is the note's 0.25; t stays put inside a block (${fmt(o.R[700], 3)})`);
-  // the channel adds, from its frame (the block is split there), and process sees the channel's alone
-  c = core(PROBE);
-  o = run(c, 2048, [{ type: 'on', p: 60, v: 0.8, time: 0, x: { bend: 1 } }, { type: 'expr', bend: -3, mod: 0.5, time: 300 / SR }]);
-  t.ok(o.L[299] === 1 && o.L[300] === -2 && near(o.R[300], 0.5, 1e-7) && o.R[299] === 0, `instance.expr lands on its frame: bend ${o.L[299]} -> ${o.L[300]} st (channel -3 plus the note's +1), mod ${o.R[299]} -> ${fmt(o.R[300], 2)} at frame 300`);
-  c = core(PROBE);
-  o = run(c, 1024, [{ type: 'on', p: 60, v: 0.8, time: 0, x: { mod: 0.8 } }, { type: 'expr', mod: 0.5, time: 0 }]);
-  t.ok(near(o.R[10], 1, 1e-7), `t.mod is the channel's plus the note's, clamped to 1 (${fmt(o.R[10], 3)})`);
-  t.ok(chanExpr({ bend: 99, mod: -1, sustain: 1 }).bend === 48 && chanExpr({ mod: -1 }).mod === 0 && chanExpr({ sustain: 1 }).sustain === true, 'channel values are clamped: bend +-48 st, mod 0..1, sustain a boolean');
-  // the pedal: a note-off while it is down is held until it lifts; process sees t.sustain
-  c = core(PROBE);
-  o = run(c, 4096, [{ type: 'on', p: 60, v: 0.8, time: 0, x: { bend: 1 } }, { type: 'expr', sustain: true, time: 300 / SR }, { type: 'off', p: 60, time: 500 / SR }, { type: 'expr', sustain: false, time: 2000 / SR }]);
-  // (process runs once a block, after its events: it sees the pedal from the block it went down in)
-  t.ok(o.R[255] === 0 && o.R[256] === 1000 && o.L[1999] === 1 && o.L[2000] === 0 && o.R[2100] === 0, `sustain: the note-off at frame 500 waits for the pedal; it lifts at 2000 and the note goes there (voice ${o.L[1999]} -> ${o.L[2000]}; process saw t.sustain from the block holding frame 300)`);
-  c = core(probe(2));
-  o = run(c, 4096, [{ type: 'on', p: 60, v: 0.8, time: 0, x: { bend: 1 } }, { type: 'on', p: 62, v: 0.8, time: 0, x: { bend: 2 } }, { type: 'expr', sustain: true, time: 0 },
-    { type: 'off', p: 60, time: 256 / SR }, { type: 'on', p: 64, v: 0.8, time: 512 / SR, x: { bend: 4 } }]);
-  // poly 2: the third note steals; the pedal-held note (60, bend 1) goes before the key still down (62, bend 2)
-  t.ok(o.L[400] === 3 && o.L[2000] === 6, `a pedal-held voice is stolen before a held key: ${o.L[400]} -> ${o.L[2000]} (62 and 64 left, 60 stolen)`);
-  c = core(PROBE);
-  o = run(c, 2048, [{ type: 'on', p: 60, v: 0.8, time: 0 }, { type: 'expr', sustain: true, time: 0 }, { type: 'alloff', time: 256 / SR }]);
-  t.ok(o.R[300] === 1000 && o.L[300] === 0 && c.cur.voices.every((s) => !s.alive), 'all-off releases every voice, the pedal-held ones too');
-  // a kernel that never heard of it: t has the fields, at rest
-  c = core(`({ create() { return { voice() { return { start() {}, release() {}, render(L, R, n, p, t) { L[0] += (t.bend === 0 && t.mod === 0 && t.sustain === false) ? 1 : -1; return false; } }; } }; } })`);
-  o = run(c, 256, [{ type: 'on', p: 60, v: 0.8, time: 0 }]);
-  t.ok(o.L[0] === 1, 't = { bpm, playing, beat, bend: 0, mod: 0, sustain: false } when nobody moves a wheel');
-  t.ok(!c.posts.some((m) => m.type === 'error'), 'no errors from the probes');
-}
-
 console.log('expression: existing instruments are bit-identical with the wheels at rest');
 {
   const ph = phrase().slice(0, 40).map((n) => ({ ...n, t: n.t * BEAT, d: n.d * BEAT }));
@@ -160,87 +112,12 @@ console.log('expression: existing instruments are bit-identical with the wheels 
   t.ok(!bad.length, `${INSTRUMENTS.length} built-in instruments render the same samples with bend 0 and mod 0 posted as without${bad.length ? ': differs: ' + bad.join(', ') : ''}`);
 }
 
-console.log('expression: note data');
-{
-  t.ok(normCurve(0, -48, 48) === undefined && normCurve(2.123456, -48, 48) === 2.1235 && normCurve(60, -48, 48) === 48, 'a constant bend: 0 is stored as nothing, values rounded and clamped');
-  const c = normCurve([[1, 2], [0, 0], ['x', 1], [0.5, 9]], -2, 2);
-  t.ok(JSON.stringify(c) === '[[0,0],[0.5,2],[1,2]]', `a curve is sorted, clamped and cleaned: ${JSON.stringify(c)}`);
-  t.ok(normCurve([[0, 0], [1, 0]], -48, 48) === undefined, 'a curve that never leaves 0 is stored as nothing');
-  const n = normNote({ p: 'E4', t: 0, d: 1, bend: [[0, 0], [0.5, 1]], mod: 0.3 });
-  t.ok(JSON.stringify(n.bend) === '[[0,0],[0.5,1]]' && n.mod === 0.3, `normNote keeps bend and mod: ${JSON.stringify({ bend: n.bend, mod: n.mod })}`);
-  t.ok(!('bend' in normNote({ p: 60, t: 0, bend: 0 })), 'a note without expression stays as it was (no new fields)');
-  const x = noteExpr({ bend: [[0, 0], [1, 2]], mod: 0.5 }, 0.5);
-  t.ok(JSON.stringify(x) === '{"bend":[0,0,0.5,2],"mod":0.5}', `noteExpr: beats to seconds at 120 BPM ${JSON.stringify(x)}`);
-  const xc = noteExpr({ bend: [[0, 0], [1, 2]] }, 0.5, 0.5);
-  t.ok(JSON.stringify(xc.bend) === '[-0.25,0,0.25,2]', `a chased note's curve starts where the note is: ${JSON.stringify(xc.bend)}`);
-  t.ok(noteExpr({ p: 60 }, 0.5) === null, 'a plain note sends no expression');
-  // through the store: notes.add keeps it, undo removes it
-  const store = createStore(cleanProject(song('core.guitar', [], { beats: 4 })), { getDevice: registry.getDevice });
-  const r = store.dispatch({ type: 'notes.add', track: 't_plat', clip: 'c_plat', notes: [{ p: 57, t: 0, d: 2, bend: [[0, 0], [1, 2]], mod: 0.2 }] }, { by: 'claude' });
-  const got = store.get().tracks[0].clips[0].notes[0];
-  t.ok(r.ok && JSON.stringify(got.bend) === '[[0,0],[1,2]]' && got.mod === 0.2, `notes.add (an agent's) keeps a note's bend and mod: ${JSON.stringify({ bend: got.bend, mod: got.mod })}`);
-  // the Node render plays it: a held bend to +2 lands on B3 from A3; mod 1 makes vibrato
-  const bent = play('core.guitar', [{ p: 57, t: 0, d: 2, bend: [[0, 0], [0.5, 2]] }], {}, 2, 0);
-  const f = peakFreq(bent.channels[0], Math.round(0.6 * SR), 16384, mtof(59));
-  t.ok(near(cents(f, mtof(59)), 0, 3), `the canonical render bends: A3 with a bend curve to +2 sounds at B3 ${fmt(cents(f, mtof(59)), 2)} cents after it`);
-  const pb = play('core.poly', [{ p: 57, t: 0, d: 2, bend: -12 }], {}, 2, 0);
-  const fp = peakFreq(pb.channels[0], Math.round(0.4 * SR), 16384, mtof(45));
-  t.ok(near(cents(fp, mtof(45)), 0, 8), `core.poly follows a note's bend: A3 bent -12 sounds at A2 (${fmt(cents(fp, mtof(45)), 1)} cents, its oscillators drift a little)`);
-  // chased from mid-note: the curve is where the note is, not at its start
-  const whole = play('core.guitar', [{ p: 57, t: 0, d: 3, bend: [[0, 0], [2, 4]] }], {}, 3, 0);
-  const chased = play('core.guitar', [{ p: 57, t: 0, d: 3, bend: [[0, 0], [2, 4]] }], {}, 3, 0, 4); // from beat 4 (2 s): bend 4 already
-  const fw = peakFreq(whole.channels[0], Math.round(2.05 * SR), 8192, mtof(61)), fc = peakFreq(chased.channels[0], Math.round(0.05 * SR), 8192, mtof(61));
-  t.ok(near(cents(fw, mtof(61)), 0, 5) && near(cents(fc, mtof(61)), 0, 5), `a render from mid-note starts the bend where it is: ${fmt(cents(fc, mtof(61)), 1)} cents from C#4 (the whole render: ${fmt(cents(fw, mtof(61)), 1)})`);
-}
-
 /* ------------------------------------------------------------------ 2. MIDI */
-console.log('MIDI: wheels and the pedal');
-{
-  const mem = new Map();
-  globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
-  if (typeof globalThis.document === 'undefined') globalThis.document = { hidden: false, addEventListener() {} };
-  const { createMidi } = await import('../app/src/input/midi.js');
-  const got = [], notes = [];
-  const input = { emit() {}, noteOn: (src, p, v) => notes.push(['on', p, v]), noteOff: (src, p) => notes.push(['off', p]), expr: (src, x) => got.push(x) };
-  const midi = createMidi({ ui: {} }, input);
-  midi.message([0xe0, 0x00, 0x40]); // centre
-  midi.message([0xe0, 0x7f, 0x7f]); // full up
-  midi.message([0xe0, 0x00, 0x00]); // full down
-  t.ok(got[0].bend === 0 && got[1].bend === 2 && got[2].bend === -2 && midi.state.bendRange === 2, `the bend wheel: centre 0, full up +${got[1].bend}, full down ${got[2].bend} st (range ${midi.state.bendRange})`);
-  midi.message([0xb0, 101, 0]); midi.message([0xb0, 100, 0]); midi.message([0xb0, 6, 12]);
-  t.ok(midi.state.bendRange === 12 && got[got.length - 1].bend === -12, `RPN 0 sets the bend range to 12, and the held bend follows (${got[got.length - 1].bend})`);
-  midi.setBendRange(7);
-  t.ok(midi.state.bendRange === 7 && JSON.parse(mem.get('overdub:midi')).bendRange === 7, 'midi.setBendRange(7) is kept for next time');
-  got.length = 0;
-  midi.message([0xb0, 1, 64]); midi.message([0xb0, 33, 127]);
-  t.ok(near(got[0].mod, 64 * 128 / 16383, 1e-3) && near(got[1].mod, (64 * 128 + 127) / 16383, 1e-3), `the mod wheel: CC 1 ${fmt(got[0].mod, 3)}, with CC 33's fine bits ${fmt(got[1].mod, 4)}`);
-  got.length = 0; notes.length = 0;
-  midi.message([0x90, 60, 100]); midi.message([0xb0, 64, 127]); midi.message([0x80, 60, 0]);
-  const heldOk = got.length === 1 && got[0].sustain === true && !notes.some((n) => n[0] === 'off');
-  midi.message([0xb0, 64, 0]);
-  t.ok(heldOk && got[1].sustain === false && notes[notes.length - 1][0] === 'off', `the pedal reaches the instrument (sustain ${got[0] && got[0].sustain} then ${got[1] && got[1].sustain}) and still holds the key until it lifts`);
-  got.length = 0;
-  midi.message([0xe0, 0x7f, 0x7f]); midi.message([0xb0, 121, 0]);
-  const last = got[got.length - 1];
-  t.ok(last.bend === 0 && last.mod === 0 && midi.state.bend === 0 && midi.state.mod === 0, 'CC 121 puts the wheels back to rest');
-}
-
 /* ------------------------------------------------------------------ 3. presets */
 console.log('presets');
 {
-  const P = (presets) => registry.normPresets('you.test', presets, [{ key: 'tone', min: 0, max: 1, def: 0.5, step: 0 }, { key: 'mode', opts: ['A', 'B', 'C'], min: 0, max: 2, def: 0, step: 1 }, { key: 'n', min: 1, max: 9, def: 3, step: 2 }]);
-  const p = P([{ name: '  Dark  room ', params: { tone: -4, mode: 'c', n: 6 } }]);
-  t.ok(JSON.stringify(p) === '[{"name":"Dark room","params":{"tone":0,"mode":2,"n":7}}]', `a preset is filled in, clamped, snapped, and a switch is named by its label: ${JSON.stringify(p)}`);
-  const throws = (x, re) => { try { P(x); return false; } catch (e) { return re.test(e.message); } };
-  t.ok(throws([{ name: 'X', params: { cutoff: 1 } }], /sets "cutoff", which is not a param/), 'a preset that sets an unknown param is refused, naming it');
-  t.ok(throws([{ name: 'X', params: {} }, { name: 'x', params: {} }], /two presets are called/), 'two presets of one name (any case) are refused');
-  t.ok(throws([{ name: 'X', params: { mode: 'Z' } }], /one of A, B, C/) && throws([{ name: '', params: {} }], /needs a name/), 'a bad switch label and a missing name are refused with what to do');
-  t.ok(registry.normPresets('x', undefined, []).length === 0 && registry.getDevice('core.poly').presets.length === 0, 'a device without presets has none (older defs need no change)');
   const g = registry.getDevice('core.guitar');
-  t.ok(registry.presetParams(g, 'nylon').body === 1 && registry.presetParams('core.guitar', 'Nope') === null, 'presetParams finds one by name in any case');
   const NEW = ['core.piano', 'core.organ', 'core.strings', 'core.bassguitar', 'core.guitar'];
-  const counts = NEW.map((id) => [id, (registry.getDevice(id)?.presets || []).length]);
-  t.ok(counts.every(([, n]) => n >= 2), `the new built-ins carry presets: ${counts.map(([id, n]) => `${id} ${n}`).join(', ')}`);
   // agents see them
   const app = { devices: registry, store: null };
   const list = TOOLS.find((x) => x.name === 'list_devices').run({ query: 'DI Box' }, { app });

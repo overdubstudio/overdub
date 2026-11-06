@@ -1,5 +1,6 @@
 // Checks for the kernel platform (app/src/kernel/*): the dsp stdlib, the worklet host, the device check, the
-// reference kernels and the agent guide. Runs in headless Chromium via tools/pw.js on tools/kernel-test.html.
+// reference kernels and the agent guide (its text checks are in test/unit/kernel-guide.test.js). Runs in headless Chromium via tools/pw.js on
+// tools/kernel-test.html.
 //   node tools/kernel-test.js            (QUICK=1 skips the slow full checks of the guide examples)
 import fs from 'node:fs';
 import { open, tally } from './pw.js';
@@ -455,7 +456,7 @@ try {
   // ------------------------------------------------------------------ the reference kernels and the guide
   console.log('reference kernels');
   const rk = await page.evaluate(async (quick) => {
-    const { check, examples, guide, registry, dsp } = window.K;
+    const { check, examples, guide, registry } = window.K;
     const out = {};
     for (const d of [...examples.EXAMPLES, guide.GUIDE_EFFECT, guide.GUIDE_INSTRUMENT]) {
       const r = await check.checkDevice(d, { quick: quick && d.by === 'claude' });
@@ -468,16 +469,6 @@ try {
     await inst.ready; inst.output.connect(c.destination); inst.noteOn(57, 0.9, 0.05); inst.noteOff(57, 0.6);
     const b = await c.startRendering(); let pk = 0; for (const v of b.getChannelData(0)) pk = Math.max(pk, Math.abs(v));
     out.viaRegistry = pk; inst.dispose();
-    // the guide names every dsp function, and only real ones
-    const text = guide.KERNEL_GUIDE;
-    const api = dsp.DSP_API;
-    out.missing = api.filter((k) => !new RegExp('\\b' + k + '\\b').test(text));
-    const used = [...text.matchAll(/dsp\.(\w+)/g)].map((m) => m[1]);
-    out.unknown = [...new Set(used.filter((k) => !api.includes(k)))];
-    out.words = text.split(/\s+/).length;
-    out.examplesInGuide = text.includes(guide.GUIDE_EFFECT.kernel) && text.includes(guide.GUIDE_INSTRUMENT.kernel);
-    const md = await (await fetch('../docs/DEVICES.md')).text();
-    out.examplesInDocs = md.includes(guide.GUIDE_EFFECT.kernel) && md.includes(guide.GUIDE_INSTRUMENT.kernel) && md.includes(text.split('## The kernel')[1].split('## Rules')[0].split('\n')[1]);
     const q0 = performance.now(); const qr = await check.checkDevice(examples.TESTFILTER, { quick: true }); out.quickMs = performance.now() - q0; out.quickOk = qr.ok;
     return out;
   }, !!process.env.QUICK);
@@ -485,9 +476,6 @@ try {
     T.ok(rk[id].ok && !rk[id].warnings.length, `${id} passes checkDevice: ${rk[id].sum}`);
   }
   T.ok(rk.registered && rk.viaRegistry > 0.05, `the examples are registered and play through registry.instantiate (peak ${rk.viaRegistry.toFixed(3)})`);
-  T.ok(!rk.missing.length && !rk.unknown.length, `the guide documents every dsp name and no others${rk.missing.length ? ' (missing ' + rk.missing + ')' : ''}${rk.unknown.length ? ' (unknown ' + rk.unknown + ')' : ''}`);
-  T.ok(rk.examplesInGuide, `the guide embeds both verified examples verbatim (${rk.words} words)`);
-  T.ok(rk.examplesInDocs, 'docs/DEVICES.md carries the same guide and examples');
   T.ok(rk.quickOk && rk.quickMs < 1500, `a quick check takes ${Math.round(rk.quickMs)} ms`);
 
   // ------------------------------------------------------------------ the check catches bad devices

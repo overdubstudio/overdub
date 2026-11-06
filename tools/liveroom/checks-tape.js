@@ -12,8 +12,7 @@
 //   4. it doesn't change recording: the deck's take landed as a take does (one step by you, asset.add and its clip)
 //   5. what it costs the page while it rolls: the JS heap after a forced collection, before and after ten seconds
 // And the guitar room's TAPE stream (app/src/ui/liveroom/guitar/tape.js and its tape-*.js, talk-room.js):
-//   6. in Node: every line it says keeps the room's copy rules (checks-copy.js's never-says words, no exclamation mark,
-//      two sentences at most), and a long reply from Claude is cut to a sentence or two for the talkback
+//   6. (every line it says and a long reply from Claude: test/unit/guitar-tape.test.js)
 //   7. in the club (the door's 1, the fake guitar, the drummer standing in as the transport counted in to the fake's
 //      bar 1): the tape rolls as the room mounts; G puts the camera on the machine and the last minute up, the default
 //      selection on its bar lines; a focused end moves a bar line at a time; B turns snapping off and on (the pref
@@ -43,7 +42,6 @@ const IGNORE = (e) => /favicon|net::ERR|Failed to load resource|AudioContext was
 const fmt = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
 
 export async function run(T, ctx) {
-  await guitarNode(T);
   if (!ctx.pages) return;
   await rolling(T, ctx);
   await guitarRoom(T, ctx);
@@ -186,27 +184,6 @@ async function rolling(T, ctx) {
 }
 
 /* ============================================================================================ the guitar room's tape stream */
-async function guitarNode(T) {
-  const { TAPE_LINES } = await import('../../app/src/ui/liveroom/guitar/tape-lines.js');
-  const { breaks } = await import('./checks-copy.js');
-  const vars = { a: 30, b: 33, s: 7.3, name: 'Riff 4', n: 4, tempo: 132, tuning: 'Drop C', bar: 33, what: 'Bars 30–33', names: ['Claude Code'], why: 'the key on the server was turned down' };
-  const bad = [];
-  for (const [id, fn] of Object.entries(TAPE_LINES)) {
-    for (const v of [vars, { ...vars, n: 1, tuning: '', names: [] }]) {
-      let t;
-      try { t = String(fn(v)); } catch (e) { bad.push(`${id}: throws (${e?.message || e})`); break; }
-      for (const x of breaks(`tape.${id}`, t)) bad.push(`${id}: ${x.why}`);
-    }
-  }
-  T.ok(!bad.length, `the tape stream's ${Object.keys(TAPE_LINES).length} lines keep the room's copy rules${bad.length ? ': ' + bad.join('; ') : ''}`);
-  const { shorten } = await import('../../app/src/ui/liveroom/guitar/talk-room.js').catch(() => ({ shorten: null }));
-  if (shorten) {
-    const long = 'The drummer’s on **Double-kick gallop** now, at 132. A d-beat wants 160 or more: say if you want the tempo up. ⌘Z puts the old beat back. ' + 'More words here. '.repeat(30);
-    const s = shorten(long);
-    T.ok(s.length <= 280 && s.startsWith('The drummer’s on Double-kick gallop now') && !/\*/.test(s), `a long reply from Claude is a sentence or two in the talkback (${s.length} characters: "${s.slice(0, 60)}…")`);
-  }
-}
-
 async function guitarRoom(T, ctx) {
   const BPM = 120;
   const probe = await openRoom('/app/', { ready: false });

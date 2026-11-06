@@ -21,7 +21,7 @@
 //     role=listbox; the shell leaves a list its arrows), and the room's everywhere else; but Home on the part line is
 //     the room's, play from the top, as the line's own hint says;
 //   - the room draws no <select> and no <input type=range>: a knob is the faces' ARIA slider, a choice is buttons
-//     (tools/liveroom/checks-guitar.js fails on either).
+//     (test/unit/guitar-foundation.test.js fails on either).
 //
 // Where a key is live: the contexts, read from ui.state.liveRoom.gr and the room's run (contextOf below):
 //   rec      a count or a take is running (ui.state.liveRoom.run 'count' | 'take')

@@ -2,7 +2,7 @@
 // Getting started's plan and words [ui; the guitar room's START stream, pure] (docs/research/GUITAR-ROOM.md §2.1;
 // design/mock/guitar-room-2/ shots 01a-01k). What ./start.js walks through, where the camera goes for each step and
 // what the spotlight lands on, and everything the engineer says on the slate, the tuner's panel and the talkback. No
-// DOM and no audio: test/unit/guitar-start.test.js checks it, and tools/liveroom/checks-start.js holds every word here
+// DOM and no audio: test/unit/guitar-start.test.js checks it, and test/unit/guitar-start-plan.test.js holds every word here
 // to the room's copy rules (tools/liveroom/checks-copy.js NEVER, two sentences a line, a real minus).
 //
 //   STEPS                    [{ id: 'plug' | 'tune' | 'time' | 'sound' | 'tour', label }]

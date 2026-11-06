@@ -1,9 +1,11 @@
 // Playing live through Half Stack, in a QUIET Chromium (tools/pw.js): a guitar on an
 // interface, monitored through an armed audio track's inserts (input/audioin.js, engine.inputNode). The interface is a
 // page-made stream named as a Scarlett (tools/input-test.js's way), so monitoring starts by itself as it would for a
-// player. A click goes in at a known audio-clock time; what reaches the speakers is recorded from the node wired to
-// the destination: with Half Stack on the track, with it bypassed, and with no insert at all. Against no insert the amp
-// adds only its declared 28 samples (0.58 ms), within 1 ms. (A bypassed kernel keeps delaying its dry path by its
+// player. A click goes in, and the track's input and what reaches the speakers (the node wired to the destination) are
+// recorded side by side in one block, so the gap between them is the path through the track, whatever the stream's own
+// buffering did on the way in (it moves by a hundred samples from click to click, more than the amp adds): with Half
+// Stack on the track, with it bypassed, and with no insert at all. Against no insert the amp adds only its declared 28
+// samples (0.58 ms), within 1 ms. (A bypassed kernel keeps delaying its dry path by its
 // declared latency, engine/strip.js, so the bypassed path shows only latency the amp has and doesn't declare.)
 // engine.latency reports the track's latency; plugin delay compensation never holds live input back.
 //   node tools/stack-monitor-test.js        (HEADED=1 to watch)
@@ -48,26 +50,30 @@ try {
     await inst?.ready;
     out.instLatency = inst ? Math.round(inst.latency * sr) : null;
     out.trackLatency = Math.round((engine.latency.tracks[tid] || 0) * sr);
-    // a recorder on the node wired to the speakers (the mix plus the monitor)
+    // one recorder, two channels: the left of the node wired to the speakers (the mix plus the monitor), and the track's
+    // input. They share every block, so a sample's place in one is its place in the other.
     const rec = [];
-    const sp = ctx.createScriptProcessor(1024, 2, 2), mon = engine._monitor;
-    sp.onaudioprocess = (e) => { const d = e.inputBuffer.getChannelData(0); rec.push({ t: e.playbackTime, d: Float32Array.from(d) }); };
-    mon.connect(sp); sp.connect(ctx.destination);
-    // a click at a known time, then where it comes out (first sample over -40 dBFS), in samples
-    async function clickOut() {
+    const sp = ctx.createScriptProcessor(1024, 2, 2), mon = engine._monitor, left = ctx.createChannelSplitter(2), both = ctx.createChannelMerger(2), trackIn = engine.inputNode(tid);
+    sp.onaudioprocess = (e) => { rec.push({ out: Float32Array.from(e.inputBuffer.getChannelData(0)), in: Float32Array.from(e.inputBuffer.getChannelData(1)) }); };
+    mon.connect(left); left.connect(both, 0, 0); trackIn.connect(both, 0, 1); both.connect(sp); sp.connect(ctx.destination);
+    // a click, then how far behind its arrival at the track's input it reaches the speakers (first sample over -40 dBFS
+    // on each), in samples. A click the page-made stream dropped before the track's input says nothing about the track,
+    // so it goes again; one that reached the input and never the speakers stays a null, and fails.
+    async function clickOut(tries = 4) {
       rec.length = 0;
       const t0 = Math.ceil((ctx.currentTime + 0.4) * sr) / sr;
       const b = ctx.createBuffer(1, 256, sr); const x = b.getChannelData(0); x[0] = 0.5; x[1] = -0.25;
       const n = ctx.createBufferSource(); n.buffer = b; n.connect(window.__bus); n.start(t0);
       await w(1200);
-      for (const blk of rec) for (let i = 0; i < blk.d.length; i++) if (Math.abs(blk.d[i]) > 0.01) return Math.round((blk.t - t0) * sr) + i;
-      return null;
+      const over = (key, from) => { let at = 0; for (const blk of rec) for (const v of blk[key]) { if (at >= from && Math.abs(v) > 0.01) return at; at++; } return null; };
+      const inAt = over('in', 0), outAt = inAt == null ? null : over('out', inAt);
+      if (inAt == null) { out.lost = (out.lost || 0) + 1; return tries > 1 ? clickOut(tries - 1) : null; }
+      return outAt == null ? null : outAt - inAt;
     }
     const fx = JSON.parse(JSON.stringify(store.get().tracks.find((t) => t.id === tid).inserts[0])), fxId = fx.id;
     // Unmeasured clicks first, until two in a row come out at the same sample (at most ten): the first after the
-    // interface opens can come out before the monitor's chain has settled (a null, or a block early), and an output
-    // device waking from idle (a Mac mini's own speakers, unlike a virtual device that never sleeps) keeps the input
-    // stream's buffering moving for a few clicks more. Then five rounds, and the median of each.
+    // interface opens can come out before the monitor's chain has settled (a null, or a block early). Then five rounds,
+    // and the median of each.
     out.warmup = [];
     for (let prev = null; out.warmup.length < 10; ) {
       const d = await clickOut();
@@ -87,16 +93,16 @@ try {
       await engine.instance(tid, fxId)?.ready;
     }
     out.withAmp = withAmp; out.bypassed = bypassed; out.without = without; out.sr = sr;
-    mon.disconnect(sp); sp.disconnect(); a.monitor(false); a.close();
+    mon.disconnect(left); trackIn.disconnect(both); both.disconnect(); sp.disconnect(); a.monitor(false); a.close();
     return out;
   });
   T.ok(r.monitoring && r.auto && r.through === 'Guitar', `the interface opens and monitoring starts by itself, through the armed Guitar track (${r.through})`);
   T.ok(r.instLatency === 28 && r.trackLatency === 28, `Half Stack reports 28 samples (${(28 / r.sr * 1000).toFixed(2)} ms) and engine.latency puts the track at ${r.trackLatency}`);
-  T.note(`warm-up clicks until two agreed: ${r.warmup.map((x) => (x == null ? '-' : x)).join(', ')}`);
+  T.note(`warm-up clicks until two agreed: ${r.warmup.map((x) => (x == null ? '-' : x)).join(', ')}; clicks the stream dropped on the way in: ${r.lost || 0}`);
   const med = (a) => a.slice().sort((x, y) => x - y)[2];
   const dw = med(r.withAmp), db = med(r.bypassed), dn = med(r.without), extra = dw - dn;
   T.ok(r.withAmp.every((x) => x != null) && r.without.every((x) => x != null) && r.bypassed.every((x) => x != null) && extra >= 0 && extra * 1000 / r.sr <= 1,
-    `a click in comes out ${dw} samples later through Half Stack, ${db} with it bypassed and ${dn} with no insert (the input stream's own buffering): the amp adds ${extra} samples, ${(extra * 1000 / r.sr).toFixed(2)} ms (want within 1 ms; runs ${r.withAmp.join(', ')} / ${r.bypassed.join(', ')} / ${r.without.join(', ')})`);
+    `a click in comes out ${dw} samples later through Half Stack, ${db} with it bypassed and ${dn} with no insert, from the track's input to the speakers: the amp adds ${extra} samples, ${(extra * 1000 / r.sr).toFixed(2)} ms (want within 1 ms; runs ${r.withAmp.join(', ')} / ${r.bypassed.join(', ')} / ${r.without.join(', ')})`);
   T.ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
 } finally { await close(); }
 T.done();

@@ -1,7 +1,7 @@
 // The guitar room's checks: the riff library and the stack rack, on IndexedDB [guitar room] (docs/research/GUITAR-ROOM.md
 // §2.4, §2.9, §4.3). Run by tools/liveroom-test.js (ONLY=library), whose header says what a checks module exports. What
 // a riff and a stack are, and both stores' memory side, are test/unit/guitar-library.test.js's; this is the browser's.
-//   1. in Node: the house's stacks put on a track and read back are the same chain (core/liveroom/stacks.js)
+//   1. (that the house's stacks put on a track read back as the same chain: test/unit/guitar-library.test.js)
 //   2. the library (muted Chromium, on a bare page of the studio's server): kept on disk with no note; a riff's audio
 //      comes back sample for sample and its peaks as bytes; 2,000 riffs listed a page at a time, every filter and both
 //      orders paged through with the token and equal to the pure reference (core/liveroom/riffs.js pageOf), a search
@@ -14,8 +14,6 @@
 //   4. IndexedDB refused (a private window), the one browser run with it gone: both stores fall back to memory with no
 //      page errors. That they keep the visit's and say so is test/unit/liveroom-library-refused.test.js's.
 import { open } from '../pw.js';
-import { houseStacks, loadOps, stackOf } from '../../app/src/core/liveroom/stacks.js';
-import { createStore } from '../../app/src/core/store.js';
 
 export const name = 'library';
 export const pages = true;
@@ -47,15 +45,6 @@ const FILL = async (n) => {
 };
 
 export async function run(T, ctx) {
-  // 1. in Node
-  {
-    const store = createStore();
-    const r = store.dispatch([{ type: 'track.add', ref: 'g', track: { name: 'Guitar L', kind: 'audio' } }, { type: 'insert.add', track: '$g', insert: { device: 'core.eq8' } }]);
-    const h = houseStacks('metal')[0];
-    store.dispatch(loadOps(store.track(r.created.g), h).ops, { by: 'you' });
-    const back = stackOf(store.track(r.created.g));
-    T.ok(back && JSON.stringify(back.chain) === JSON.stringify(h.chain), `a house stack put on a track reads back as the same chain (${h.name}, ${h.chain.length} piece${h.chain.length === 1 ? '' : 's'}, before the guitar's EQ)`);
-  }
   if (!ctx.pages) return;
 
   // 2. the library, on disk

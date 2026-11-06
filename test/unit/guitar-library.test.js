@@ -527,3 +527,26 @@ describe('the stack rack with no IndexedDB (memory, for the visit)', () => {
     );
   });
 });
+
+// moved from tools/liveroom/checks-library.js
+test('a house stack put on a track reads back as the same chain', async () => {
+  const { houseStacks, loadOps, stackOf } = await import('../../app/src/core/liveroom/stacks.js');
+  const { createStore } = await import('../../app/src/core/store.js');
+  const { checks } = await import('./helpers/check.js');
+  const T = checks();
+  {
+    const store = createStore();
+    const r = store.dispatch([
+      { type: 'track.add', ref: 'g', track: { name: 'Guitar L', kind: 'audio' } },
+      { type: 'insert.add', track: '$g', insert: { device: 'core.eq8' } },
+    ]);
+    const h = houseStacks('metal')[0];
+    store.dispatch(loadOps(store.track(r.created.g), h).ops, { by: 'you' });
+    const back = stackOf(store.track(r.created.g));
+    T.ok(
+      back && JSON.stringify(back.chain) === JSON.stringify(h.chain),
+      `a house stack put on a track reads back as the same chain (${h.name}, ${h.chain.length} piece${h.chain.length === 1 ? '' : 's'}, before the guitar's EQ)`,
+    );
+  }
+  T.done();
+});

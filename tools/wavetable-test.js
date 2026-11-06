@@ -32,6 +32,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tally } from './pw.js';
+import { getDevice } from '../app/src/devices/registry.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { measure } from '../app/src/audio/measure.js';
 import { phrase, bassPhrase, PHRASE_BEATS } from '../app/src/audio/testsignals.js';

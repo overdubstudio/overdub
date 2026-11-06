@@ -18,7 +18,6 @@ import { open, tally, OUTDIR } from './pw.js';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const T = tally('grooves');
 const say = (xs, n = 6) => (xs.length ? ': ' + xs.slice(0, n).join('; ') + (xs.length > n ? ` … (${xs.length})` : '') : '');
-const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|AudioContext|getUserMedia|NotAllowedError|NotFoundError/.test(e);
 
 /* ================================================================== the library */

@@ -8,7 +8,7 @@ import { open, tally } from './pw.js';
 import * as S from '../app/src/core/share.js';
 import '../app/src/devices/builtin/index.js';
 import '../app/src/devices/library/index.js';
-import { parseWav, parseMidi, parseZip, crc32 } from '../test/unit/helpers/formats.js';
+import { parseWav, parseMidi, parseZip } from '../test/unit/helpers/formats.js';
 import { demoProject } from '../app/src/core/demo.js';
 
 const T = tally('mix');

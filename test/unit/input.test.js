@@ -3,8 +3,6 @@
 // intact from tools/input-test.js; the studio flows (musical typing, the fake mic, Sketch, the guitar room) stay there.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import fs from 'node:fs';
 import { yin, ftom, segment, frames, createPitchTracker } from '../../app/src/input/pitch.js';
 import * as PITCH from '../../app/src/input/pitch.js';
 import { phrase, render as renderVoice, makePhrase, scoreNotes } from '../../tools/hum-bench.js';
@@ -13,17 +11,9 @@ import vm from 'node:vm';
 import { hear, transcribe, guessKey, keyChosen } from '../../app/src/input/hum.js';
 import { beatbox, toDrums, onsets } from '../../app/src/input/tap.js';
 import { onset, xcorr, chirp, hits, median } from '../../app/src/input/latency.js';
-import * as LAT from '../../app/src/input/latency.js';
 import { noteName } from '../../app/src/core/music.js';
 import { createCapture } from '../../app/src/input/capture.js';
 import { createStore } from '../../app/src/core/store.js';
-import { createProject } from '../../app/src/core/project.js';
-import { snapGentle, fitHits, fitSegs, tightness, blend, placeTake, leanOf } from '../../app/src/input/timing.js';
-import { newPartFor } from '../../app/src/core/sounds.js';
-import { clickSamples } from '../../app/src/engine/click.js';
-import { renderSong } from '../../app/src/engine/node/render.js';
-import { perform, sloppyHum, rng } from '../../tools/sloppy.js';
-import { installMidiEnv } from './helpers/midi-env.js';
 
 let seed = 12345;
 const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;

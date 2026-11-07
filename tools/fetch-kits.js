@@ -6,8 +6,12 @@
 // deploy/deploy.sh uploads app/kits/.
 //
 //   node tools/fetch-kits.js            fetch and build every kit a device names; fails unless the build is the pinned one
-//                                       (a pinned kit already here is not rebuilt: only its .odkz is written again)
-//   node tools/fetch-kits.js --rebuild  build every kit from its upstream files even when it is here
+//                                       (a pinned kit already here is not rebuilt: only its .odkz is written again).
+//                                       A kit that isn't here is rebuilt from the download cache alone when it holds
+//                                       every file, else taken from the copy the site serves, held to the pinned hash
+//                                       (tools/kits/published.js: the live site, then the preview; KITS_FROM=<urls>
+//                                       names others, KITS_FROM= none), else built from upstream
+//   node tools/fetch-kits.js --rebuild  build every kit from its upstream files even when it is here (never the site's)
 //   node tools/fetch-kits.js --check    say whether each pinned kit is here (and is its own hash) with its .odkz (which
 //                                       unpacks to it), build nothing: exit 0 here, 1 missing or wrong
 //   node tools/fetch-kits.js --verify   build from the download cache alone (no network) and compare with the pinned
@@ -64,6 +68,7 @@ import { RECIPE as CABS_RECIPE, cabBuilder } from './kits/jester-cabs.js';
 import { CABS_HASH } from '../app/src/devices/builtin/amp-lib.js';
 import { RECIPE as AIR_RECIPE, roomBuilder } from './kits/air-rooms.js';
 import { ROOMS_HASH } from '../app/src/devices/builtin/rooms-lib.js';
+import { fetchPublished } from './kits/published.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -416,7 +421,31 @@ async function one(recipe, pinned, make, { check, verify, rebuild }) {
     console.log(`  here already (${path.relative(ROOT, file)}): wrote its .odkz; ${sizes(s)}`);
     return 0;
   }
-  const r = await make(recipe);
+  // Not here: the download cache alone first (a full cache rebuilds the kit with no network, and proves it still builds
+  // byte for byte), then the copy the site serves (held to the pin), and upstream only for a kit no site has yet.
+  // --rebuild goes to upstream's files whatever the cache or the site hold.
+  let r = null;
+  if (!rebuild) {
+    OFFLINE = true;
+    try {
+      r = await make(recipe);
+    } catch (e) {
+      if (e.code !== 'NOCACHE') throw e;
+    } finally {
+      OFFLINE = false;
+    }
+    if (!r) {
+      const got = await fetchPublished(pinned, { log: (m) => console.log(`  not from ${m}`) });
+      if (got) {
+        fs.mkdirSync(KITS_DIR, { recursive: true });
+        const s = writePacked(file, got.bytes);
+        fs.writeFileSync(file, got.bytes);
+        console.log(`  the published kit, the pinned bytes (${got.url}): wrote ${path.relative(ROOT, file)} and its .odkz; ${sizes(s)}`);
+        return 0;
+      }
+    }
+  }
+  if (!r) r = await make(recipe);
   if (r.qa) {
     printQa(r.qa);
     // the report, one row per sample with every number (tools/.out/library/<repo>/qa.json)

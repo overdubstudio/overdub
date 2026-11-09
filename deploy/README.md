@@ -211,7 +211,8 @@ ref is main's head, which may have moved in between). It:
    deployment branches are main only, so a run started from another branch never gets that far;
 2. checks that commit is on main again, then checks it out, and checks out overdub-devices (private) with the
    environment's read-only deploy key, `OVERDUB_DEVICES_DEPLOY_KEY`, for the community shelf;
-3. builds the sampled kits (`node tools/fetch-kits.js`, with ci.yml's cache) and installs playwright-core and its
+3. builds the sampled kits (`node tools/fetch-kits.js`: each one the site already serves, held to its pinned SHA-256,
+   so the deploy doesn't wait on the upstream servers they were built from) and installs playwright-core and its
    headless Chromium for the check, before any AWS credentials exist in the job;
 4. signs in to AWS as `overdub-live-deploy-github` with GitHub's OIDC token and runs `deploy/deploy.sh --skip-tests <sha>`;
 5. runs `node tools/prod-check.js` against https://overdubstudio.com, or the distribution's cloudfront.net name before

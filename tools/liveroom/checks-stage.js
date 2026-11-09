@@ -6,11 +6,14 @@
 // its takes through the recorder, its stop rule), the band's read and learning (core/liveroom/read.js in its worker,
 // band.js planLearn), the double (double.js planDouble, tight.js measurePair) and the finish (band.js planFinish). The
 // guitar is a fake (fake.js session: a riff's DI at 132, every pass at its own place in one WAV that Chromium plays as
-// the input, never to a speaker), each pass's count lined up with the part it plays (harness.js alignCount's sum: the
-// count's `at` given to the deck's countIn), the deck's latency 0 (the fake has none). Hear it all and the wide
-// playback after the other side are moved on by seeking near their end: what's checked is where they start and that
-// they stop and say so, not a minute and fifty-one seconds of listening. The control room's click, left on, is held off
-// through every play in the room and given back as it was when the room closes.
+// the input, never to a speaker), each pass's count lined up with the part it plays: the count's `at` given to the
+// deck's countIn, from where the file's mark came in on the input's clock (not the first block's frame: Chromium's fake
+// capture runs its file ms off that, by a different amount each run) and less the engine's delay compensation (the
+// count sounds that much after its `at`, and the recorder places takes by where it sounds), the deck's latency 0 (the
+// fake has none). Hear it all and the wide playback after the other side are moved on by seeking near their end: what's
+// checked is where they start and that they stop and say so, not a minute and fifty-one seconds of listening. The
+// control room's click, left on, is held off through every play in the room and given back as it was when the room
+// closes.
 
 import path from 'node:path';
 import { openRoom, history, press, OUT } from './harness.js';
@@ -33,14 +36,18 @@ const CHORUS = { bpm: BPM, beats: 4, chord: true, notes: [[0, 36, 1], [1, 43, 1]
 // band's learning, so it sits 18 bars after the kept pass: at 10, its count came after its bar on a slow run, and the
 // pair was measured on that offset, a wander or a bar to play again, which Space then offered ahead of Lay it out.)
 const PASSES = [['verse L', VERSE, 1, 11], ['verse R', VERSE, 19, 12], ['chorus', CHORUS, 37, 13], ['chorus again', CHORUS, 53, 14], ['chorus kept', CHORUS, 67, 15], ['chorus R', CHORUS, 85, 16]];
+// The mark: one pluck in the lead, right on its time (a riff's first note has no jitter), 3 s into the file and the
+// last of the session's parts (so the passes keep their indices); the page lines the file up by where it's heard
+const MARK = { kind: 'riff', riff: { bpm: BPM, beats: 1, notes: [[0, 36, 0]] }, bar: -5, passes: 1, seed: 17, jitter: 0, peak: -12 };
 function stageFake() {
-  return session({ bpm: BPM, lead: 14, tail: 4, parts: PASSES.map(([, riff, bar, seed]) => ({ kind: 'riff', riff, bar, passes: 8, seed, jitter: 0.003, peak: -12 })) });
+  return session({ bpm: BPM, lead: 14, tail: 4, parts: [...PASSES.map(([, riff, bar, seed]) => ({ kind: 'riff', riff, bar, passes: 8, seed, jitter: 0.003, peak: -12 })), MARK] });
 }
 
 // In the page: the room on a metal song (the door's step, planPlace by you), the input open on the fake, the deck's
 // latency 0, and its countIn given each pass's `at` in turn (the audio-clock time of the count's first beat that puts
-// the pass's downbeat on its part of the file); a pass with no part queued counts in as the deck would
-const INSTALL = async ({ parts }) => {
+// the pass's downbeat, as the count sounds, on its part of the file); a pass with no part queued counts in as the deck
+// would. The file's start on the audio clock (fileT0) is where its mark was heard less the mark's time in the file
+const INSTALL = async ({ parts, mark }) => {
   const o = window.overdub;
   const { planPlace } = await import('/app/src/core/liveroom/plans.js');
   const { createDeck } = await import('/app/src/ui/liveroom/deck.js');
@@ -54,20 +61,27 @@ const INSTALL = async ({ parts }) => {
   await o.engine.start?.();
   await o.input.audio.open({ channel: '1', capture: true, monitor: false });
   await until(() => o.input.audio.state.open && Number.isFinite(o.input.audio.state.firstFrame), 15000);
+  const st0 = o.input.audio.state, sr0 = st0.sr || o.engine.ctx.sampleRate;
+  window.__lr.firstT = st0.firstFrame / sr0;
+  window.__lr.fileT0 = null;
+  // (the mark: the first sample over -34 dBFS, the file silent before it)
+  const offMark = o.input.audio.listen((b) => {
+    if (window.__lr.fileT0 != null) return;
+    const d = b.d[0];
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > 0.02) { window.__lr.fileT0 = (b.f + i) / sr0 - mark; offMark(); return; }
+  });
   const deck = createDeck(o);
   deck.latency = 0;
   const count = deck.countIn, take = deck.take, stop = deck.stop;
-  const st0 = o.input.audio.state, fileT0 = st0.firstFrame / (st0.sr || o.engine.ctx.sampleRate);
   deck.countIn = (a = {}) => {
     const part = window.__lr.queue.shift();
-    const bpb = 4, spb = 60 / (o.store.get().tempo || 120);
-    const at = part == null ? null : fileT0 + parts[part] - (a.bars ?? 1) * bpb * spb;
-    window.__lr.counts.push({ ...a, at, part: part ?? null, now: o.engine.ctx.currentTime });
+    const bpb = 4, spb = 60 / (o.store.get().tempo || 120), pdc = o.engine.latency?.total || 0;
+    const at = part == null ? null : window.__lr.fileT0 + parts[part] - (a.bars ?? 1) * bpb * spb - pdc;
+    window.__lr.counts.push({ ...a, at, pdc, part: part ?? null, now: o.engine.ctx.currentTime });
     return count(at == null ? a : { ...a, at });
   };
   deck.take = (a = {}) => { window.__lr.takes.push(JSON.parse(JSON.stringify(a))); return take(a); };
   deck.stop = (a = {}) => { window.__lr.stops.push(JSON.parse(JSON.stringify(a))); return stop(a); };
-  window.__lr.fileT0 = fileT0;
   // the control room's click on (not only while recording), as a person might have left it there: the room holds it
   // off from when it opens (the door is up at ?room: through the glass first, so the click is the control room's)
   if (o.liveRoom.isOpen()) o.liveRoom.close();
@@ -105,7 +119,7 @@ export async function run(T, ctx) {
   if (!ctx.pages) return;
   /* ---------------------------------------------------------------------------------------- §11.6, muted Chromium */
   const fk = stageFake();
-  const parts = fk.timeline.parts.map((x) => x.at);
+  const parts = fk.timeline.parts.map((x) => x.at), MARK_AT = parts.length - 1;
   const s = await openRoom('/app/?room', { fake: fk, name: 'stage' });
   const { page, E } = s;
   const settle = (ms = 60) => page.evaluate((ms) => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), ms)), ms);
@@ -125,7 +139,7 @@ export async function run(T, ctx) {
   // (a count lined up with its part: its first beat still ahead of the audio clock when the deck was asked)
   const lined = (c) => c && c.at != null && c.at > c.now + 0.02;
   try {
-    const placed = await E(INSTALL, { parts });
+    const placed = await E(INSTALL, { parts, mark: parts[MARK_AT] });
     await settle(300);
     let r = await E(READ);
     const tracks = await E(() => window.overdub.store.get().tracks.map((t) => `${t.name}:${t.by}`));
@@ -151,16 +165,22 @@ export async function run(T, ctx) {
     r = await E(READ);
     T.ok(t1 === 144 && r.tempo === 132 && /The drummer’s at 132/.test(saidSince(r0, r).at(-1) || ''), `before the first take ← → move the tempo 2 BPM and ⇧ 10 (132 → ${t1} → ${r.tempo}), said each time`);
 
-    // Space: counted in (a bar of sticks, lined up with the fake's verse), the take from beat 0 on Guitar L
+    // Space: counted in (a bar of sticks, lined up with the fake's verse), the take from beat 0 on Guitar L; its first
+    // stick sounds a bar before the verse comes in on the input's clock (the file lined up by its mark, heard first)
+    await waitFor(() => window.__lr.fileT0 != null, null, 30000);
     await queue(0);
     await press(page, 'Space');
     await settle();
     r = await E(READ);
+    // (the sticks are handed over a moment ahead of when they sound: the first one, once it has been)
+    await waitFor(() => window.overdub.engine.lastCount?.sounded?.length > 0, null, 30000);
+    const stick = await E(() => { const k = window.overdub.engine.lastCount, s0 = k?.sounded?.[0]; return s0 ? { i: s0.i, at: s0.at, spb: k.spb, fileT0: window.__lr.fileT0, firstT: window.__lr.firstT } : null; });
+    const stickOff = stick ? (stick.at - (stick.fileT0 + parts[0] - (4 - stick.i) * stick.spb)) * 1000 : NaN;
     const gL = await E(() => window.overdub.store.get().tracks.find((t) => t.name === 'Guitar L')?.id);
     const gR = await E(() => window.overdub.store.get().tracks.find((t) => t.name === 'Guitar R')?.id);
     let ci = r.counts.at(-1), tk = r.takes.at(-1);
-    T.ok(ci?.from === 0 && ci?.bars === 1 && ci?.voice === 'sticks' && lined(ci) && tk?.track === gL && tk?.from === 0 && !tk?.punch && (r.run === 'count' || r.run === 'take') && r.primary === 'That’s a take' && r.dim === 'take',
-      `Space counts in (the deck's countIn from ${ci?.from}, ${ci?.bars} bar of ${ci?.voice}, its first stick ${ci ? (ci.at - ci.now).toFixed(2) : '-'} s ahead) and the take starts on Guitar L at beat 0; the primary reads ${r.primary}, the rest dims (${r.dim})`);
+    T.ok(ci?.from === 0 && ci?.bars === 1 && ci?.voice === 'sticks' && lined(ci) && Math.abs(stickOff) <= 0.5 && tk?.track === gL && tk?.from === 0 && !tk?.punch && (r.run === 'count' || r.run === 'take') && r.primary === 'That’s a take' && r.dim === 'take',
+      `Space counts in (the deck's countIn from ${ci?.from}, ${ci?.bars} bar of ${ci?.voice}, its first stick ${ci ? (ci.at - ci.now).toFixed(2) : '-'} s ahead, sounding ${stickOff.toFixed(2)} ms from a bar before the verse comes in: the file ${stick ? ((stick.fileT0 - stick.firstT) * 1000).toFixed(1) : '-'} ms off its first block, ${((ci?.pdc || 0) * 1000).toFixed(1)} ms of delay compensation) and the take starts on Guitar L at beat 0; the primary reads ${r.primary}, the rest dims (${r.dim})`);
     // That's a take, pressed half a beat into bar 9: the part is 8 bars, the band learns it
     await toBeat(32.45);
     await press(page, 'Space');

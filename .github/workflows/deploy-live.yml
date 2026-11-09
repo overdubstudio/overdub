@@ -176,13 +176,9 @@ jobs:
         with:
           install_args: node
 
-      - name: Cache the kit downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: tools/.out/kits-cache
-          key: kits-cache-${{ hashFiles('tools/fetch-kits.js', 'app/src/devices/builtin/*.js') }}
-          restore-keys: kits-cache-
-
+      # Each kit is taken from the copy a site already serves, held to the SHA-256 the device pins
+      # (tools/kits/published.js), so this needs our site and not the upstream servers the kits were built from; a kit
+      # no site has yet is built from upstream, once.
       - name: Build the sampled kits this commit names
         run: node tools/fetch-kits.js
 

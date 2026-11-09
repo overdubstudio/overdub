@@ -859,7 +859,10 @@ scene, never a moved one.</li>
 <li><strong>The audio stays out of git.</strong> <code>node tools/fetch-kits.js</code> downloads the pinned upstream files (by commit, each
 checked by SHA-256, with the upstream licence checked too), decodes them with <code>tools/flac.js</code> (held to each file's
 MD5), trims and converts them in integer arithmetic, and writes the <code>.odk</code> and its <code>.odkz</code>. The same files always
-build the same bytes: <code>--verify</code> rebuilds from the download cache and compares. <code>deploy/deploy.sh</code> refuses to deploy
+build the same bytes: <code>--verify</code> rebuilds from the download cache and compares. A kit that isn't here is rebuilt from
+the download cache when every file is in it, else taken from the copy https://overdubstudio.com (then the preview)
+serves, held to the hash the device pins (<code>tools/kits/published.js</code>; <code>KITS_FROM</code> names other sites, empty none), and
+built from upstream only when no site has it yet; <code>--rebuild</code> always goes to upstream. <code>deploy/deploy.sh</code> refuses to deploy
 unless every kit the shipped devices name is in <code>app/kits/</code>, is its own hash and has an <code>.odkz</code> that unpacks to it,
 and uploads both, gzipped and cached for good
 (<code>immutable</code>: a file named by its hash never changes), before the code that names them. Without the kit, the tests that need it skip

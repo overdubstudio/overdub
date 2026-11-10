@@ -151,11 +151,13 @@ console.log('cost');
   const obs = new PerformanceObserver((list) => { gcs += list.getEntries().length; });
   obs.observe({ entryTypes: ['gc'] });
   const blocks = Math.round(48000 * 10 / 128);
-  const t0 = performance.now(); for (let b = 0; b < blocks; b++) C.process(x, y, null, 128); const ms = performance.now() - t0;
-  const t1 = performance.now(); for (let b = 0; b < blocks; b++) Cd.process(x, y, null, 128); const msd = performance.now() - t1;
+  // (the fastest of five: the run shares the machine with other suites, and what they take only ever adds time, so
+  // the fastest pass is the nearest to what the convolver itself costs)
+  const time = (P) => { let best = Infinity; for (let k = 0; k < 5; k++) { const t0 = performance.now(); for (let b = 0; b < blocks; b++) P.process(x, y, null, 128); best = Math.min(best, performance.now() - t0); } return best; };
+  const ms = time(C), msd = time(Cd);
   await new Promise((r) => setTimeout(r, 50));
   obs.disconnect();
-  ok(gcs === 0, `process() allocates nothing: no garbage collection over 20 s of audio (${gcs})`);
+  ok(gcs === 0, `process() allocates nothing: no garbage collection over 100 s of audio (${gcs})`);
   ok(ms / 100 < 2, `a 4096-tap mono cab with direct: 128 costs ${(ms / 100).toFixed(2)}% of real time (${(msd / 100).toFixed(2)}% at 128 frames' latency)`);
   const room = rand(9600, 41), R = convolver(room);
   const t2 = performance.now(); for (let k = 0; k < 50; k++) R.set(room); const setMs = (performance.now() - t2) / 50;

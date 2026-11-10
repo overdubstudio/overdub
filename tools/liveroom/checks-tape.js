@@ -29,7 +29,7 @@
 //      talkback signed in cool ink; a click away closes the field (its words kept) and gives the room its keys back;
 //      an edit by 'claude' while the room is up is one step ⌘Z takes back
 //  11. leaving the room stops the tape it started; no console or page errors
-import { openRoom, alignCount, history, press } from './harness.js';
+import { openRoom, withMark, hearMark, alignCount, history, press } from './harness.js';
 import { session } from './fake.js';
 import { fakeCaptureRate } from '../pw.js';
 
@@ -52,13 +52,14 @@ async function rolling(T, ctx) {
   const probe = await openRoom('/app/', { ready: false });
   let sr = 48000;
   try { sr = await fakeCaptureRate(probe.context, probe.base); } finally { await probe.close(); }
-  const fake = session({ bpm: BPM, lead: 5, tail: 8, sr, parts: [{ kind: 'riff', riff: RIFF, bar: 1, passes: 2, seed: 21 }] });
+  const fake = withMark(session({ bpm: BPM, lead: 5, tail: 8, sr, parts: [{ kind: 'riff', riff: RIFF, bar: 1, passes: 2, seed: 21 }] }));
   const src = fake.wav.channels[0], bar1 = fake.timeline.bar1;
   // the 16-bit samples the file holds (fake.js writeWav's rounding)
   const v16 = Int16Array.from(src, (x) => Math.round(Math.max(-1, Math.min(1, x)) * 32767));
   const room = await openRoom('/app/', { fake, name: 'tape' });
   const { errors, E } = room;
   try {
+    await hearMark(room.page);
     const setup = await E(async () => {
       const app = window.overdub, { store, input } = app;
       const { createProject } = await import('/app/src/core/project.js');
@@ -97,7 +98,7 @@ async function rolling(T, ctx) {
     T.ok(took.spans[1] > took.spans[0] + 8, `it fills as the band plays: ${fmt(took.spans[0])} s on tape, then ${fmt(took.spans[1])} s`);
 
     // the fake rings out and the band rolls on: then "that was the one"
-    await E(async (until) => { const st = window.overdub.input.audio.state, c = window.overdub.engine.ctx; while ((c.currentTime - st.firstFrame / st.sr) < until) await new Promise((r) => setTimeout(r, 50)); }, bar1 + 8 + 2.5);
+    await E(async (until) => { const c = window.overdub.engine.ctx; while ((c.currentTime - window.__lrFile.t0) < until) await new Promise((r) => setTimeout(r, 50)); }, bar1 + 8 + 2.5);
     const r = await E(async () => {
       const app = window.overdub, tape = app.input.tape, { deck, h0 } = window.__tp;
       const sel = await tape.select();
@@ -126,8 +127,8 @@ async function rolling(T, ctx) {
         for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
         b64 = btoa(s);
       }
-      const ff = app.input.audio.state.firstFrame;
-      return { sel, g: g && { ok: g.ok, error: g.error, asset: g.asset, frames: g.frames, place: g.place, seconds: g.seconds, peak: g.peak, lead: g.lead }, b64, hist, h0, loud, same, take, ff, inAssets: g?.ok ? !!(await app.engine.assets.get(g.asset.id)) : false };
+      const f0 = Math.round(window.__lrFile.t0 * app.input.audio.state.sr);
+      return { sel, g: g && { ok: g.ok, error: g.error, asset: g.asset, frames: g.frames, place: g.place, seconds: g.seconds, peak: g.peak, lead: g.lead }, b64, hist, h0, loud, same, take, f0, inAssets: g?.ok ? !!(await app.engine.assets.get(g.asset.id)) : false };
     });
     const sel = r.sel;
     T.ok(sel && sel.snapped && sel.beats?.from === 0 && sel.beats?.to === 16 && sel.bars === 4 && sel.bar === 1,
@@ -135,9 +136,10 @@ async function rolling(T, ctx) {
     T.ok(r.loud > 0 && Math.abs(20 * Math.log10(r.loud) + 12) < 0.6, `its waveform peaks where the riff does: ${fmt(20 * Math.log10(r.loud), 2)} dBFS (the fake: −12)`);
     if (!r.g?.ok) { T.ok(false, `grab: ${r.g?.error || 'no selection'}`); return; }
 
-    // the grab against the file: where in the file its first sample is (around firstFrame's reckoning), then every sample
+    // the grab against the file: where in the file its first sample is (around where the mark put the file's start), then
+    // every sample
     const got = new Int16Array(Uint8Array.from(Buffer.from(r.b64, 'base64')).buffer);
-    const guess = r.g.frames.from - r.ff;
+    const guess = r.g.frames.from - r.f0;
     let off = null;
     for (let d = 0; d <= 4096 && off == null; d++) {
       for (const s of d ? [guess + d, guess - d] : [guess]) {
@@ -151,9 +153,9 @@ async function rolling(T, ctx) {
     if (off != null) { bad = 0; for (let i = 0; i < got.length; i++) if (got[i] !== v16[off + i]) bad++; }
     T.ok(off != null && bad === 0, `grab: the asset's ${got.length} samples are the fake's, every one (${off == null ? 'not found in the file' : `${bad} differ`}), ${fmt(r.g.seconds, 3)} s at ${r.g.asset.sr} Hz, peaking at ${fmt(r.g.peak, 2)} dBFS`);
     const lineErr = off == null ? null : r.g.frames.at - r.g.frames.from + off - Math.round(bar1 * sr);
-    // (the band was counted in by firstFrame, which reckons the fake capture's start a few ms either way: the deck's
-    // take, next, is off by the same, so this is the count's lining up with the file, not the tape's with the band)
-    T.ok(lineErr != null && Math.abs(lineErr) <= Math.round(0.05 * sr), `its line is the fake's bar 1 to ${lineErr} samples (${fmt((lineErr / sr) * 1000, 1)} ms: where firstFrame puts the fake capture's start; within 50 ms)`);
+    // (the band was counted in to the file as the mark lined it up, harness.js alignCount: the tape's line is the band's
+    // bar 1, so this holds that lining up and the tape's frames to the band's clock at once)
+    T.ok(lineErr != null && Math.abs(lineErr) <= 0.0005 * sr, `its line is the fake's bar 1 to ${lineErr} samples (${fmt((lineErr / sr) * 1000, 2)} ms, the file lined up by its mark; within 0.5 ms)`);
     const sm = r.same;
     T.ok(sm && sm.at.n > sr * 4 && sm.at.ok === sm.at.n && sm.before.ok < sm.before.n * 0.5 && sm.after.ok < sm.after.n * 0.5,
       `and the deck's: the take's first sample (beat ${r.take?.start}, offset ${r.take?.offset}) is the grab's at its line, and they agree for ${sm?.at.ok} of ${sm?.at.n} samples (a sample either way: ${sm?.before.ok}, ${sm?.after.ok})`);
@@ -190,7 +192,7 @@ async function guitarRoom(T, ctx) {
   let sr = 48000;
   try { sr = await fakeCaptureRate(probe.context, probe.base); } finally { await probe.close(); }
   // (three passes of the riff from bar 1, then the band rolls on)
-  const fake = session({ bpm: BPM, lead: 5, tail: 8, sr, parts: [{ kind: 'riff', riff: RIFF, bar: 1, passes: 3, seed: 21 }] });
+  const fake = withMark(session({ bpm: BPM, lead: 5, tail: 8, sr, parts: [{ kind: 'riff', riff: RIFF, bar: 1, passes: 3, seed: 21 }] }));
   const room = await openRoom('/app/?room', { fake, name: 'gr-tape' });
   const { page, E, errors } = room;
   const shot = (n) => page.screenshot({ path: `${ctx.out}/gr-tape-${n}.png` });
@@ -201,6 +203,7 @@ async function guitarRoom(T, ctx) {
     await wait(300);
     await press(page, 'Digit1');
     await page.waitForFunction(() => window.overdub.ui.state.liveRoom.screen === 'guitar', null, { timeout: 15000 }).catch(() => {});
+    await hearMark(page);
     const m = await E(async () => {
       const o = window.overdub, R = document.querySelector('.gr')?.__gr;
       const rollingAtMount = !!o.input.tape.state.rolling;
@@ -218,7 +221,7 @@ async function guitarRoom(T, ctx) {
     const al = await alignCount(page, { bar1: fake.timeline.bar1, beats: 4, bpm: BPM });
     if (!al.ok) { T.ok(false, `the count lined up with the fake: ${al.error}`); return; }
     await E(async ({ at }) => { const o = window.overdub; await o.engine.start(); o.engine.play(-4, { at }); }, { at: al.at });
-    await E(async (until) => { const st = window.overdub.input.audio.state, c = window.overdub.engine.ctx; while ((c.currentTime - st.firstFrame / st.sr) < until) await new Promise((r) => setTimeout(r, 50)); }, fake.timeline.bar1 + 12 + 2.5);
+    await E(async (until) => { const c = window.overdub.engine.ctx; while ((c.currentTime - window.__lrFile.t0) < until) await new Promise((r) => setTimeout(r, 50)); }, fake.timeline.bar1 + 12 + 2.5);
 
     // G: that was the one
     await press(page, 'KeyG');

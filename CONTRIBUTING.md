@@ -44,8 +44,7 @@ mini: every push to a branch of this repo starts `.github/workflows/suites.yml`,
 `main` requires, so a pull request shows it running, with its log, on exactly what's being merged. A pull request from a
 fork doesn't run anything on that machine (the repo is public): it gets `suites` once a maintainer has read it and
 pushed its branch here. Dependabot's branches are left out the same way; Actions › suites › Run workflow on one once
-it's been read. On your own machine, `node tools/run-all.js` runs the same suite; `--post` puts its result on a clean,
-pushed commit as the status `suites` (a run that named suites, or ran with uncommitted edits, posts nothing).
+it's been read. On your own machine, `node tools/run-all.js` runs the same suite for you; only the workflow sets `suites`.
 Production gets them again either way: the deploy-live workflow runs the whole suite on the Mac mini before it asks
 for approval.
 

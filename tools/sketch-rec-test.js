@@ -586,15 +586,19 @@ try {
     // Logic), and the bar's lamp says Esc
     const lamp = await P(() => document.querySelector('.tp-hold')?.textContent || '');
     await P(() => { const a = window.overdub, t = a.store.get().tracks.find((x) => x.name === 'Keys'); a.ui.select({ track: t.id, clip: t.clips[0].id }); a.ui.state.focus = 'arranger'; a.engine.stop(); });
-    await pg.keyboard.press('Backquote');   // (on again: keysOver lent it, the stop may have let it go)
-    if (!(await P(() => window.overdub.input.qwerty.on))) await pg.keyboard.press('Backquote');
-    // first a menu open: Esc closes it and the keys stay
+    // musical typing on again (keysOver lent it, the stop may have let it go): set, not toggled, so a key that lands
+    // on whatever state the stop left can't turn it off
+    await P(() => window.overdub.input.qwerty.toggle(true));
+    // first a menu open: Esc closes it and the keys stay. Esc goes only once the menu is up with its item focused and
+    // the keys are on, so what the check reads is what Esc did, not where the page had got to
     await P(() => document.querySelector('.sk-idea .sk-keep')?.click());
-    await pg.waitForTimeout(100);
-    const menuOpen = await P(() => !!document.querySelector('.sk-menu'));
+    const ready = () => P(() => ({ menu: !!document.querySelector('.sk-menu'), focused: !!document.activeElement?.closest?.('.sk-menu'), on: window.overdub.input.qwerty.on }));
+    let before = await ready();
+    for (let i = 0; i < 40 && !(before.menu && before.focused && before.on); i++) { await pg.waitForTimeout(50); before = await ready(); }
+    const menuOpen = before.menu && before.focused && before.on;
     await pg.keyboard.press('Escape');
     await pg.waitForTimeout(100);
-    const afterMenu = await P(() => ({ menu: !!document.querySelector('.sk-menu'), on: window.overdub.input.qwerty.on }));
+    const afterMenu = { ...(await P(() => ({ menu: !!document.querySelector('.sk-menu'), on: window.overdub.input.qwerty.on }))), before };
     await pg.keyboard.press('Escape');
     await pg.waitForTimeout(150);
     const esc = await P(() => ({ on: window.overdub.input.qwerty.on, lamp: !document.querySelector('.tp-hold') || document.querySelector('.tp-hold').hidden, sel: window.overdub.ui.state.selection.clip }));

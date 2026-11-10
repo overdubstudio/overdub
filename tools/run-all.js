@@ -2,29 +2,26 @@
 //   node tools/run-all.js            all of them, three at a time
 //   node tools/run-all.js core mix   only those whose name contains one of the words
 //   node tools/run-all.js round-test.js   a whole file name picks that file alone (not arrange-around-test.js)
-//   node tools/run-all.js --post     a full run of a clean, pushed commit: post its result to the commit on GitHub
-//                                    as the status "suites" (tools/suite-status.js), which its pull request shows
 //
 // These are the integration suites (browsers, servers, renders), and the unit tests as one more (tools/unit-test.js).
-// The suites workflow runs them on the Mac mini for every push to a branch, as the check "suites" main requires; run
-// here with --post, they say the same about a commit from another machine. CI runs the unit tests alone (node --test
-// "test/unit/*.test.js"); the deploy-live workflow runs all of this on the Mac mini again before production.
+// The suites workflow runs them on the Mac mini for every push to a branch, as the check "suites" main requires; that
+// job is the only thing that sets it, and a run anywhere else says nothing to GitHub. CI runs the unit tests alone
+// (node --test "test/unit/*.test.js"); the deploy-live workflow runs all of this on the Mac mini again before
+// production.
 //
 // First it makes sure the sampled kits are here (app/kits/, gitignored): a kit a device pins and this checkout hasn't
 // built fails suites far from the cause, so a missing one is fetched and built (tools/fetch-kits.js) before anything
 // runs, and the run stops if that fails.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTEXT, failureLines, mayRetry, suiteStatus } from './suite-status.js';
+import { failureLines, mayRetry } from './suite-status.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const args = process.argv.slice(2);
-const post = args.includes('--post');
-const only = args.filter((a) => a !== '--post');
+const only = args;
 const git = (...a) => spawnSync('git', a, { cwd: ROOT, encoding: 'utf8' });
 const tests = fs.readdirSync(HERE).filter((f) => /-test\.js$/.test(f)).filter((f) => !only.length || only.some((w) => (/-test\.js$/.test(w) ? f === w : f.includes(w)))).sort();
 const PAR = Number(process.env.PAR || 3);
@@ -98,14 +95,5 @@ if (!only.length) {
     fs.writeFileSync(path.join(HERE, '.out', 'run-all.json'), JSON.stringify({ at: new Date().toISOString(), sha: sha || null, dirty, suites: results.length, passed: results.length - bad.length, checks: oks + fails, oks, fails, retried: retried.map((r) => r.file) }, null, 2) + '\n');
   } catch { /* the totals are a convenience */ }
   console.log(`${oks + fails} checks in ${results.length} suites (${fails} failed)`);
-}
-if (post) {
-  const st = suiteStatus({ results, only, dirty, sha, host: os.hostname().replace(/\.local$/, '') });
-  if (!st.ok) console.log(`--post: nothing posted, ${st.why}`);
-  else {
-    const r = spawnSync('gh', ['api', '--method', 'POST', 'repos/{owner}/{repo}/statuses/' + sha, '-f', 'state=' + st.state, '-f', 'context=' + CONTEXT, '-f', 'description=' + st.description], { cwd: ROOT, encoding: 'utf8' });
-    console.log(r.status === 0 ? `--post: ${CONTEXT} = ${st.state} on ${sha.slice(0, 9)} ("${st.description}")` : `--post: GitHub refused it (is ${sha.slice(0, 9)} pushed, and gh signed in?): ${(r.stderr || r.stdout || '').trim().split('\n')[0]}`);
-    if (r.status !== 0) process.exitCode = 1;
-  }
 }
 if (bad.length) process.exitCode = 1;

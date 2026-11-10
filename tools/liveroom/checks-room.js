@@ -284,9 +284,15 @@ async function checks(T, s, ctx) {
   await page.waitForTimeout(400);
   T.ok(hotTape.includes('tape') && kitCam === 'kit' && door === 'shop' && add.world === 'shop' && add.cam === 'case', `the hotspots: the tape machine presses tape (${hotTape.join(', ')}), the kit opens the book (${kitCam}), the door is the shop (${door}); + Pedal goes to the shop's case (${add.world} ${add.cam})`);
 
-  // 8. a mic dragged across the grille, close up at the cab
+  // 8. a mic dragged across the grille, close up at the cab (the club's Kraken stands on a measured cab, its mic part of
+  // the measurement: the cab zoom's builder puts it on the designed 4x12 Modern first, which takes mics)
   await E(() => window.overdub.liveRoom.press('cam:cab'));
   await page.waitForTimeout(800);
+  const measuredMics = await E(() => document.querySelectorAll('.gr-r-mic:not([hidden])').length);
+  await E(() => [...document.querySelectorAll('.gr-panel[data-target=cab] .grs-cablist:not(.measured) .grs-chip')].find((b) => b.textContent === '4x12 Modern')?.click());
+  await page.waitForTimeout(500);
+  const designedMics = await E(() => document.querySelectorAll('.gr-r-mic:not([hidden])').length);
+  T.ok(measuredMics === 0 && designedMics >= 1, `at the cab: no mic stands in front of the measured cab (${measuredMics}); on the designed 4x12 Modern, ${designedMics} to move`);
   const mic = await center('.gr-r-mic-body'), cone = await E(() => { const c = document.querySelectorAll('.gr-r-cone')[3].getBoundingClientRect(); return { x: c.left + c.width * 0.97, y: c.top + c.height * 0.5 }; });
   await oneStep('the mic dragged out to the fourth cone’s edge', async () => {
     await page.mouse.move(mic.x, mic.y); await page.mouse.down();

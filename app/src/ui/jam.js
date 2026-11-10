@@ -1390,7 +1390,7 @@ export default function (app) {
       board() {
         const gt = guitarTrack(), twin = gt ? twinOf(gt) : null;
         const k = gt ? `${gt.id}|${twin?.id || ''}|${gt.inserts.map((x) => `${x.id}:${x.device}:${x.on}`).join(',')}|${!!faces}` : '';
-        if (k === boardKey) { if (gt) for (const fx of gt.inserts) for (const el of rigSec.querySelectorAll(`[data-fx="${fx.id}"]`)) { el._face?.update(fx.params, fx.on !== false); el._sum?.(fx.params || {}); } return; }
+        if (k === boardKey) { if (gt) for (const fx of gt.inserts) for (const el of rigSec.querySelectorAll(`[data-fx="${fx.id}"]`)) { el._face?.update(fullParams(app, fx), fx.on !== false); el._sum?.(fx.params || {}); } return; }
         boardKey = k;
         for (const c of rigSec.querySelectorAll('[data-fx]')) c._face?.destroy?.();
         if (!gt) { put(ampBox, h('p.jm-amp-none', 'No Guitar track yet: flip to a tone above and the room makes one.')); put(board, h('p.jm-board-empty', 'Its pedals go here, in the order the signal runs.')); boardHint.textContent = ''; return; }
@@ -1705,9 +1705,17 @@ export default function (app) {
 }
 
 // an amp's cab and mics in words, for the line under the amp ("Its own cab, Dynamic mic at 0.30 cap edge, 1"")
+// an insert's params with the defaults filled in (the store keeps them sparse: a knob put back at its default, or a cab
+// undone back to the amp's own default, is no key, and the face has to hear that too)
+function fullParams(app, fx) {
+  const def = app.devices.getDevice(fx.device), out = {};
+  for (const p of def?.params || []) out[p.key] = p.def;
+  return Object.assign(out, fx.params || {});
+}
 function cabWords(def, vals = {}) {
   const P = Object.fromEntries((def.params || []).map((x) => [x.key, x]));
   const v = (k) => (P[k] && faces ? faces.valueText(P[k], vals[k] ?? P[k].def) : '');
+  if (P.cab && P.mic && P.cab.measured?.includes(Math.round(+(vals.cab ?? P.cab.def)))) return `${v('cab')}, measured`;
   if (P.cab && P.mic) return `${v('cab')} cab, ${v('mic')} mic${P.micpos ? ` at ${v('micpos')}` : ''}${P.micdist ? `, ${v('micdist')}` : ''}${P.mic2 && Math.round(+vals.mic2 || 0) > 0 ? `, and ${v('mic2')} as a second mic` : ''}`;
   return (def.params || []).filter((x) => x.group === 'cab').slice(0, 3).map((x) => `${String(x.label || x.key).toLowerCase()} ${v(x.key)}`).join(', ');
 }

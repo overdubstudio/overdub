@@ -182,14 +182,14 @@ Phones (390 px) show two pedals across, with `wide` and `rack` full width.
 | `kit.G(v = 1)` | GainNode |
 | `kit.F(type, freq, Q?, gain?)` | BiquadFilterNode. **For lowpass/highpass, Web Audio's Q is resonance in dB** (0.7 is not Butterworth here; 0 is flat). For bandpass/peaking/notch it's the usual Q. |
 | `kit.chain(a, b, c…)` | connects them in order and returns the last |
-| `kit.shaper(k, bias = 0, over = '2x')` | WaveShaper: tanh at drive `k` with an asymmetry `bias`, normalised to ±1 and centred (no DC at rest). The drives use it. |
-| `kit.curve(fn, over = '2x', n = 4096)` | WaveShaper from `fn(x)` over [−1, 1] (folders, crushers, rectifiers…) |
+| `kit.shaper(k, bias = 0, over = '2x')` | WaveShaper: tanh at drive `k` with an asymmetry `bias`, centred (no DC at rest), ±1 in giving ±1 out on its stronger side. The drives use it. It's drawn out past ±1 as far as tanh takes to flatten (reach `'soft'`, below), so a small `k` stays soft however hard it's driven; from about `k = 3` it's flat by ±1 and is the plain node. |
+| `kit.curve(fn, over = '2x', n = 4096, reach = 1)` | WaveShaper from `fn(x)` over [−1, 1] (folders, crushers, rectifiers…). A WaveShaper **clamps** its input to the curve: past ±1 it holds `fn(±1)`, a hard corner wherever `fn` is still climbing there. `reach` R > 1 draws `fn` over [−R, R] behind a 1/R gain (the same `fn` for the signal, with `n × R` points, the clamp out at ±R); `'soft'` picks R for a soft clipper: the least R at which `fn`'s slope at ±R is 1% of its slope at 0 (`softReach` in `devices/kit.js`). Give a soft clipper `'soft'`; a curve that's meant to stop dead at ±1 (a rail, a map) keeps 1. `tools/guitar-test.js` fails a pedal's soft clipper that's still climbing at its clamp. |
 | `kit.delay(max, t = 0)` | DelayNode |
 | `kit.lfo(rate, shape = 'sine')` | a **started** OscillatorNode, ±1, `shape` is `'sine' 'triangle' 'square' 'sawtooth'` or `[harmonic amplitudes]`. Connect it through `kit.G(depth)` into a param. |
 | `kit.constant(v = 0)` | a started ConstantSourceNode (an offset to add to a param alongside an LFO or envelope) |
 | `kit.noise({ secs = 2, seed = 1, color = 'white' \| 'pink' \| 'brown', channels = 1 })` | a deterministic noise AudioBuffer, cached per context |
 | `kit.noiseSource(opts)` | a started, looping BufferSource of that noise |
-| `kit.ir({ secs = 2, pre = 0.012, seed = 1, tail = 1.2, damp = 0.25, darken = 0.7, width = 1, channels = 2 })` | a reverb impulse response (the Deep Trench's, generalised): decaying noise, −60 dB at `secs`, `pre`-delay, getting darker as it goes (`damp` 0 bright … 1 dark, plus `darken` by `secs`), `width` 0 mono … 1 wide. Deterministic for a seed. It takes a few ms, so rebuild it with `kit.later` once a knob settles (see Deep Trench). |
+| `kit.ir({ secs = 2, pre = 0.012, seed = 1, tail = 1.2, damp = 0.25, darken = 0.7, width = 1, channels = 2 })` | a room's impulse response for a convolver (Plankton Cloud's): decaying noise, −60 dB at `secs`, `pre`-delay, getting darker as it goes (`damp` 0 bright … 1 dark, plus `darken` by `secs`), `width` 0 mono … 1 wide. Deterministic for a seed. It takes a few ms, so rebuild it with `kit.later` once a knob settles. A reverb with a DECAY knob wants the tank instead (Worklets, below). |
 | `kit.convolver(buffer?)` | ConvolverNode (live, a new `.buffer` crossfades from the old one instead of cutting its tail) |
 | `kit.merge(L, R)` | a 2-channel ChannelMerger with L on the left and R on the right (`R` defaults to `L`) |
 | `kit.pan(v)` | StereoPannerNode |
@@ -222,7 +222,8 @@ and its code keeps these rules:
   makes 23 linear ramps through the raised cosine's points (`devices/kit.js` `glide`). `pfxGlide` and the kit's
   convolver crossfade work the same way.
 - **What you start, you stop.** Sources go through the kit or `kit.own`, timers through `kit.later`, and everything
-  else through `dispose` (the amps' `plugAmp` stops its wow oscillator and clears its duck timers there).
+  else through `dispose` (the graph amps' `plugAmp`, since retired, stopped its wow oscillator and cleared its duck
+  timers there).
 - **A declared worklet that didn't load fails the build** (`ready` rejects with `'worklet'`), so `k.worklet(...)` is
   never null in a pedal that's playing. Keep the `|| k.G(1)` fallback for pedalRig's own board. The module is asked
   for again on the next build.
@@ -261,6 +262,13 @@ pedalDef({ id: 'reefcrush', …, worklets: { 'reef-crush': CRUSH },
 - `process` must return `true`, cope with a missing input (`ins[0][0]` can be undefined), and allocate nothing per
   call. Keep it deterministic: no `Math.random`, so seed your own LCG.
 - A processor has no latency of its own. If you buffer (a pitch shifter's window), declare `latency`.
+- **A reverb uses the tank.** `VERB_TANK` (pedals/00-classic.js, processor `'verb-tank'`) is the reverbs' algorithmic
+  tank: Dattorro's plate (`algo: 'plate'`) or a ring of four of his sections (`'hall'`), modulated by seeded sines,
+  mono in and stereo out. Declare `worklets: { 'verb-tank': VERB_TANK }` (the same code under the same name, so every
+  pack can) and make it with `verbTank(k, { algo, scale, pre, bw, early, er, shimmer, out })`; its params are `decay`
+  (the T60 in seconds, glided, never rebuilt), `hf` (the highs die in `hf` times that), `shim` and `ratio` (a shimmer
+  fed back into it) and `space` (which set of early reflections). Deep Trench, Lobster Plate, Kraken Hall, Halo Jelly
+  and Frostbite Crab are built on it, and `tools/guitar-test.js` holds each to its DECAY's T60, its level and its cost.
 
 ## Levels (measured, never guessed)
 

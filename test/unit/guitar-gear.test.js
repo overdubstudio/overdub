@@ -1,7 +1,7 @@
 // The Guitar Studio's registry, in Node: every pedal and amp of the gear is registered (ids kept: pedal.<id>,
 // amp.<id>), none refused, every rig's devices exist, every param's default is in range; every worklet the gear's code
-// builds is a file of its own (gear/worklets/) with that source byte for byte, and the pedals and amps name those
-// files; rigOps dispatch through the real store. Moved from tools/guitar-test.js section 1.
+// builds is a file of its own (gear/worklets/) with that source byte for byte, and the pedals name those files;
+// rigOps dispatch through the real store. Moved from tools/guitar-test.js section 1.
 import { test } from 'node:test';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -56,7 +56,7 @@ test('every pedal, amp and rig is registered; every param default is in range', 
 
 test('each worklet the gear builds is a file of its own with its source byte for byte, and the devices name those files', () => {
   const dir = fileURLToPath(new URL('../../app/src/devices/guitar/gear/worklets/', import.meta.url));
-  const src = { 'clawd-amps': G.gear.PLUG_WORKLETS };
+  const src = {};
   for (const [n, w] of Object.entries(G.gear.PFX.worklets)) src[n] = w.src;
   const diff = [],
     files = Object.values(WORKLETS);

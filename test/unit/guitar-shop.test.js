@@ -37,7 +37,12 @@ test('the catalogue, a carried amp, the cab and the words', async () => {
     );
     const club = CLUB_STACK.chain.find((l) => l.device === 'amp.recto');
     const meg = D.carriedAmp('amp.metal', club);
-    const keep = ['cab', 'mic', 'micpos', 'micdist', 'micang'].every((k) => meg.params[k] === club.params[k]);
+    const yours = { device: 'amp.recto', params: { cab: 7, mic: 1, micpos: 0.5, micdist: 3, micang: 0 } },
+      meg2 = D.carriedAmp('amp.metal', yours);
+    const keep =
+      ['cab', 'mic', 'micpos', 'micdist', 'micang'].every((k) => meg2.params[k] === yours.params[k]) &&
+      !('cab' in meg.params) &&
+      !('mic' in meg.params);
     const lv = D.carryLevel('amp.metal');
     const hs = D.carriedAmp('core.stack', club);
     T.ok(
@@ -47,22 +52,34 @@ test('the catalogue, a carried amp, the cab and the words', async () => {
         !('gain' in meg.params) &&
         !('cab' in hs.params) &&
         hs.params.level === D.carryLevel('core.stack').value,
-      `a carried amp keeps your cab and mics and comes in at its measured level, its own knobs at their defaults (Megalodon: MASTER ${lv.value}, on cab ${meg.params.cab}; the Half Stack: LEVEL ${hs.params.level} dB)`,
+      `a carried amp keeps the cab and mics you chose (Megalodon from a Kraken on cab ${yours.params.cab}: cab ${meg2.params.cab}), comes onto its own default off the club's (${D.cabOf(meg).cabName}) and in at its measured level, its own knobs at their defaults (MASTER ${lv.value}; the Half Stack: LEVEL ${hs.params.level} dB)`,
     );
     const said = D.describeStack(CLUB_STACK.chain);
     T.ok(
-      /^Kraken on a 4x12 Modern, a noise gate and a treble booster in front$/.test(said),
+      /^Kraken on a Modern 4x12, close dynamic, a noise gate and a treble booster in front$/.test(said),
       `a stack in a phrase: "${said}"`,
     );
-    const cab = D.cabOf(club);
+    const cab = D.cabOf(club),
+      des = D.cabOf(yours),
+      bass = D.cabOf({ device: 'amp.whale', params: {} });
     T.ok(
       cab.kind === 'clawd' &&
-        cab.cab === 'v412' &&
-        cab.mic1.type === 'dyn' &&
-        cab.mic1.pos === 0.3 &&
+        cab.cab === 'modern-close' &&
+        cab.measured &&
+        cab.def === 'modern-close' &&
+        cab.mic1 === null &&
         cab.mic2 === null &&
+        des.cab === 'v412' &&
+        !des.measured &&
+        des.mic1.type === 'ribbon' &&
+        des.mic1.pos === 0.5 &&
+        bass.cab === 'own' &&
+        bass.def === 'own' &&
+        !bass.measured &&
+        bass.mic1.type === 'dyn' &&
+        D.MEASURED_CABS.length === 6 &&
         D.cabOf({ device: 'core.stack', params: {} }).kind === 'stack',
-      `the cab builder reads the amp's own params (Kraken: ${cab.cabName}, ${D.MICS[cab.mic1.type].name} ${D.onCone(cab.mic1.pos)}, ${D.inches(cab.mic1.dist)})`,
+      `the cab builder reads the amp's own params, its default when none is set (Kraken: ${cab.cabName}, measured, no mic to place; on cab 7: ${des.cabName}, ${D.MICS[des.mic1.type].name} ${D.onCone(des.mic1.pos)}, ${D.inches(des.mic1.dist)}; Blue Whale: ${bass.cabName})`,
     );
     // the shop's own words keep the talkback's rules
     const { SAY, SAMPLE } = await import('../../app/src/ui/liveroom/guitar/shop-say.js');

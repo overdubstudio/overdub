@@ -36,7 +36,7 @@ export const SAY = {
 
 export const SAMPLE = {
   leave: { amp: 'Kraken on a 4x12 Modern', pedals: 3, changed: true },
-  ampOn: { name: 'Megalodon', cab: 'your 4x12 Modern', was: 'Kraken', sec: 'high gain' },
+  ampOn: { name: 'Megalodon', cab: 'its Modern 4x12, close dynamic', was: 'Kraken', sec: 'high gain' },
   ampAlready: { name: 'Kraken' },
   pedalOn: { name: 'Clam Shut', nth: 'second', loop: false },
   pedalOff: { name: 'Clam Shut', cat: 'Dynamics' },

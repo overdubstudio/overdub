@@ -150,7 +150,7 @@ instrument), a test source and no master inserts, and renders that.</p>
 <h3 id="what-makes-it-repeatable"><a class="h-link" href="#what-makes-it-repeatable">What makes it repeatable</a></h3>
 <ul>
 <li><strong>One renderer.</strong> Scores come from the canonical Node render, never the browser preview. It runs kernels only:
-graph devices (the pedals and amps) are bypassed there, so every task needs kernel devices only (<code>bench-test</code>
+graph devices (the guitar pedals; every amp is a kernel) are bypassed there, so every task needs kernel devices only (<code>bench-test</code>
 checks the starting songs). An agent that reaches for a pedal is scored as if the pedal weren't there, and the
 result says so in <code>warnings</code>.</li>
 <li><strong>Stable ids.</strong> The studio gives new tracks, clips and inserts random ids, and ids seed devices. Before rendering,

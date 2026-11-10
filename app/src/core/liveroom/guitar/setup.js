@@ -10,7 +10,8 @@
 // parts: the part line starts empty.
 //
 //   CLUB_STACK = { id: 'house.metal.club', name: 'The club’s stack', chain }   a noise gate and a treble booster into
-//       Kraken (amp.recto) on its closed 4x12 with a dynamic mic on the cap edge, a delay and a plate in the loop (off)
+//       Kraken (amp.recto) on its measured cab (a modern closed 4x12, a dynamic close in), a delay and a plate in the
+//       loop (off)
 //   GUITAR_DB                       the guitars' fader for the club's stack, measured (tools/liveroom/checks-guitar.js
 //                                   holds it to the old Half Stack's level within a dB)
 //   guitarSetup({ tuning, stack }) -> a setup (core/liveroom/places.js setupOf's shape) for planPlace
@@ -31,8 +32,10 @@ export const CLUB_STACK = Object.freeze({
   chain: Object.freeze([
     { device: 'pedal.gate', params: { th: -62 }, on: true },
     { device: 'pedal.mantisboost', params: { boost: 6, range: 0 }, on: true },
-    // Kraken on the 4x12 Modern (cab 7), a dynamic (mic 0) on the cap edge, an inch back
-    { device: 'amp.recto', params: { gain: 6.8, bass: 6.2, mid: 4.4, treble: 6.4, presence: 6, level: 6.2, cab: 7, mic: 0, micpos: 0.3, micdist: 1, micang: 0 }, on: true },
+    // Kraken on its default cab, the measured modern 4x12 with a dynamic close in (no CAB written: an amp's own default,
+    // devices/guitar/gear/code.js PLUG_AMP_IR). (It stood on the designed 4x12 Modern, CAB 7, before the measured cabs:
+    // a song saved then keeps that.)
+    { device: 'amp.recto', params: { gain: 6.8, bass: 6.2, mid: 4.4, treble: 6.4, presence: 6, level: 6.2 }, on: true },
     { device: 'pedal.delay', params: { time: 2, fb: 4, mix: 4 }, on: false },
     { device: 'pedal.lobsterplate', params: { decay: 4, tone: 6, pre: 20, mix: 3 }, on: false },
   ].map((l) => Object.freeze(l))),
@@ -42,7 +45,8 @@ export const CLUB_STACK = Object.freeze({
 // chords) rendered offline through the club's stack and through the old stage's Half Stack (places.js setupOf('metal'),
 // at its own fader, +6), BS.1770: the club's reads -20.2 and -20.7 LUFS, the Half Stack's -18.3 and -15.9 with its
 // fader; this fader puts the two DIs' mean on the old one's (each within 2 LU: the stacks answer a chug and a chord
-// differently). tools/liveroom/checks-guitar.js measures it again.
+// differently). tools/liveroom/checks-guitar.js measures it again. (Kraken on its measured cab since: -21.4 and -20.2,
+// the mean 0.3 LU under the old one's at this fader, inside the 0.5 it's held to, so it stays.)
 export const GUITAR_DB = 3.3;
 
 export function guitarSetup({ tuning = null, stack = null } = {}) {

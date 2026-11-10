@@ -46,6 +46,11 @@ import { normParam, paramValues, seedOf } from '../devices/registry.js';
 import { chanExpr } from './expr.js';
 import { loadData, peekData } from './data.js';
 import { normData } from './odk.js';
+import { cosineRamp, LEAD } from '../devices/kit.js';
+
+// a stomp has settled once the audio clock is past its fade's end, or (a stalled or suspended clock) this long after it
+// by the wall clock (as devices/graph.js: lifecycle.js health().settled)
+const SETTLE_MS = 100;
 
 const loaded = new WeakMap();
 // the watchdog's catches go to the console on a dev host (they mean a stop or a note-off went wrong somewhere)
@@ -244,7 +249,7 @@ export async function kernelInstance(c, def, opts = {}) {
     node.connect(out);
   }
 
-  let sleepTimer = null;
+  let sleepTimer = null, swEnd = 0, swWall = 0, disposed = false;
   let lastValues = values;
   inst.set = (params, x = {}) => {
     const v = paramValues(ndef, params || {});
@@ -261,7 +266,13 @@ export async function kernelInstance(c, def, opts = {}) {
     if (next === on) return;
     on = next;
     const t = Math.max(at == null ? 0 : at, c.currentTime), tc = 0.010 / 3; // ~10 ms to settle
-    const ramp = (g, v) => { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.setTargetAtTime(v, t, tc); };
+    // live, the graph devices' 10 ms raised cosine (kit.js cosineRamp: no corner where it starts, which a stomp on a
+    // clean, quiet sound would show); offline, the exponential it always was, so renders stay bit-identical
+    const now = c.currentTime, t1 = Math.max(now + LEAD, t);
+    if (!offline) { swEnd = Math.max(swEnd, t1 + 0.01); swWall = Math.max(swWall, performance.now() + (t1 + 0.01 - now) * 1000 + SETTLE_MS); }
+    const ramp = offline
+      ? (g, v) => { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.setTargetAtTime(v, t, tc); }
+      : (g, v) => cosineRamp(g.gain, g.gain.value, v, now, t1, 0.010);
     if (sleepTimer) { clearTimeout(sleepTimer); sleepTimer = null; }
     if (on) {
       post({ type: 'sleep', on: false });
@@ -276,6 +287,31 @@ export async function kernelInstance(c, def, opts = {}) {
       }
     }
   };
+  // What an effect says about itself (devices/lifecycle.js, as a graph device does): the bypass gains as they are and
+  // should be, once the last stomp's fade is over; assure() snaps them there (a stomp the browser dropped: Chrome 155
+  // and 156 dropped a freshly built device's scheduled gains), true if it had to.
+  if (kind === 'effect') {
+    const want = () => ({ dry: on ? 0 : 1, wet: on || def.trails ? 1 : 0, feed: on ? 1 : 0 });
+    const near = (v, w) => Math.abs(v - w) <= 1e-3;
+    const settledNow = () => offline || c.state !== 'running' || c.currentTime >= swEnd || performance.now() >= swWall;
+    inst.health = () => {
+      const w = want(), settled = settledNow(), dv = dry.gain.value, wv = wet.gain.value;
+      const ok = !disposed && settled && near(dv, w.dry) && near(wv, w.wet) && near(feed.gain.value, w.feed);
+      return { ok, failed: disposed ? 'disposed' : '', on, settled, dry: dv, wet: wv, want: { dry: w.dry, wet: w.wet } };
+    };
+    inst.assure = () => {
+      if (disposed || !settledNow()) return false;
+      const w = want();
+      let moved = false;
+      for (const [g, v] of [[dry, w.dry], [wet, w.wet], [feed, w.feed]]) {
+        if (near(g.gain.value, v)) continue;
+        g.gain.cancelScheduledValues(0); g.gain.value = v; moved = true;
+      }
+      if (moved && on) post({ type: 'sleep', on: false });
+      if (moved) { swEnd = 0; swWall = 0; }
+      return moved;
+    };
+  }
   const tOf = (time) => (time == null ? 0 : +time);
   // the ledger (see the watchdog in the header): what was handed over, in time order (k: 0 allOff, 1 off, 2 on)
   const led = { base: new Map(), ev: [], last: 0 };
@@ -413,6 +449,7 @@ export async function kernelInstance(c, def, opts = {}) {
 
   const unbarrier = offline ? offlineBarrier(c, inst) : null;
   inst.dispose = () => {
+    disposed = true;
     if (unbarrier) unbarrier();
     if (tick) clearInterval(tick);
     if (sleepTimer) clearTimeout(sleepTimer);

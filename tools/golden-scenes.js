@@ -21,8 +21,9 @@
 //               the kit it plays, so a different kit is a different scene, never a moved hash. Only when the kit has
 //               been fetched (node tools/fetch-kits.js); otherwise it is listed by missingScenes() and skipped.
 //   inst:core.metalkit#<12 hex>:trigger   Rusty Sticks with its trigger up and its room off: the synthesized layers
-//   fx:core.stack, fx:core.cab, fx:core.bassrig   the amps (tools/amp-scenes.js builds them): Half Stack on its filter
-//               cab, and each on the cab bank as fx:<id>[:cab]#<12 hex>, only when the bank has been fetched
+//   fx:core.stack, fx:core.cab, fx:core.bassrig, fx:amp.<id>   the amps (tools/amp-scenes.js builds them): Half Stack
+//               on its filter cab, and each on the cab bank as fx:<id>[:cab]#<12 hex>, only when the bank has been
+//               fetched (the guitar amps on the kernel engine, devices/guitar/voicings.js, each at its defaults)
 //   room:metal  the live room's metal club, one verse as the room makes it (tools/liveroom/band-scene.js): the chug
 //               fixture on both sides, the house band learned from the left's read, Tight on the master; only when the
 //               kits it plays have been fetched

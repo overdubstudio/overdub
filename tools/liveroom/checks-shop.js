@@ -122,8 +122,8 @@ export async function run(T, ctx) {
     await wait(150);
     const carried = await rig(), h1 = await history(page);
     const lv = D.carryLevel('amp.metal');
-    T.ok(carried.amp.device === 'amp.metal' && carried.same && carried.amp.params.level === lv.value && carried.amp.params.cab === 7 && h1.length === h0 + 1 && h1.at(-1).by === 'you',
-      `a click carries Megalodon to your stack: one step by you, both guitars, at its measured level (MASTER ${lv.value}) on your 4x12 (${h1.at(-1)?.label})`);
+    T.ok(carried.amp.device === 'amp.metal' && carried.same && carried.amp.params.level === lv.value && carried.amp.params.cab == null && h1.length === h0 + 1 && h1.at(-1).by === 'you',
+      `a click carries Megalodon to your stack: one step by you, both guitars, at its measured level (MASTER ${lv.value}) on its own measured cab (${h1.at(-1)?.label})`);
     // refused during a take
     const refused = await E(() => {
       const o = window.overdub, L = o.ui.state.liveRoom, R = document.querySelector('.gr').__gr, was = L.run, n = o.store.history.length;
@@ -263,7 +263,18 @@ export async function run(T, ctx) {
     await press(page, 'KeyC');
     await wait(450);
     const cb0 = await rig(), hc0 = (await history(page)).length;
-    await page.click('.gr-panel[data-target=tryout-cab] .grs-cablist .grs-chip:nth-child(3)');
+    // on its measured cab: the six measured cabs first (its default marked and picked), the designed ones after, and no
+    // mic to place
+    const meas = await E(() => {
+      const p = document.querySelector('.gr-panel[data-target=tryout-cab]'), q = (sel) => [...p.querySelectorAll(sel)];
+      return { measured: q('.grs-cablist.measured .grs-chip').map((b) => b.textContent), on: q('.grs-cablist.measured .grs-chip[aria-checked=true]').map((b) => b.textContent),
+        designed: q('.grs-cablist:not(.measured) .grs-chip').length, faders: q('.grs-fader').length, mics: document.querySelectorAll('.gr .grs-cab.open .grs-mic').length,
+        note: p.textContent.includes('no mic to move'), plate: document.querySelector('.gr .grs-cab.open')?.classList.contains('ir') };
+    });
+    await s.shot('liveroom/gr-shop-cab-measured');
+    T.ok(meas.measured.length === 6 && meas.on.length === 1 && /· default$/.test(meas.on[0]) && meas.designed > 8 && !meas.faders && !meas.mics && meas.note && meas.plate,
+      `the cab builder on a measured cab: the six measured cabs (${meas.on[0]} picked), ${meas.designed} designed ones after; no mic to move, and it says so`);
+    await page.click('.gr-panel[data-target=tryout-cab] .grs-cablist:not(.measured) .grs-chip:nth-child(3)');
     await wait(100);
     const cb1 = await rig();
     await E(() => document.querySelector('.gr-panel[data-target=tryout-cab] .grs-fader[aria-label^="Mic 1: distance"]')?.focus());

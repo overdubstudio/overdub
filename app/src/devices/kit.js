@@ -15,6 +15,8 @@
 //                               from one read of the clock; offline, a value curve scheduled ahead (as it always was)
 //   cosineRamp(param, from, to, now, t, dur)   that raised cosine as linear ramps, held at `from` from `now` until `t`
 //   isOffline(c)
+//   softReach(fn), SOFT         how far out a soft clipper's curve has to be drawn for the WaveShaper's clamp to fall
+//                               where it has flattened (kit.curve's reach 'soft'; kit.shaper always)
 //
 // The live rules (docs/DEVICES.md, "Graph devices in a live chain"; devices/lifecycle.js): nothing here schedules a
 // setValueCurveAtTime on a live context (Chrome 155 and 156 drop a curve that is over before its node first renders,
@@ -22,7 +24,7 @@
 // at a time, even inside one task: a second read can be later than the first).
 //
 // The kit (k.G, k.F, ...): the same names and meanings as the gear's (devices/guitar/gear/docs/PEDALS.md, "The kit"):
-//   G(v) F(type, f, Q?, gain?) chain(...nodes) curve(fn, over, n) shaper(k, bias, over) delay(max, t) lfo(rate, shape)
+//   G(v) F(type, f, Q?, gain?) chain(...nodes) curve(fn, over, n, reach) shaper(k, bias, over) delay(max, t) lfo(rate, shape)
 //   constant(v) noise({ secs, seed, color, channels }) noiseSource(opts) ir({ secs, pre, seed, tail, damp, darken,
 //   width, channels }) convolver(buffer?) merge(L, R) pan(v) envelope({ attack, release }) worklet(name, opts)
 //   later(fn, ms) own(node) onDispose(fn) dB toDb clamp rng noteSec noteFmt NOTES uid seed clock c sr
@@ -55,6 +57,22 @@ export const noteFmt = (v) => NOTES[clamp(Math.round(v), 0, NOTES.length - 1)][0
 export const PFX = { dB, toDb, clamp, rng, noteSec, noteFmt, NOTES, ENV, END };
 
 export const isOffline = (c) => typeof OfflineAudioContext !== 'undefined' && c instanceof OfflineAudioContext;
+
+// A WaveShaperNode clamps its input to the curve's [-1, 1]: past ±1 it holds the end value, so a soft clipper whose
+// curve is still climbing there (tanh at a small drive: Blue Tang's first stage keeps 15% of its slope at +1, 53% at
+// -1) turns into a hard corner the moment it's driven past it. softReach(fn) is how far out the curve has to be drawn
+// for the clamp to land where fn has flattened: the least R ≥ 1, in 64ths, at which fn's slope at ±R is no more than
+// SOFT (1%) of its slope at rest (fn'(0), its small-signal gain). A step in slope of 1% is 40 dB down on the curve's
+// own, under the harmonics of the tanh itself. 1 for a curve already that flat at ±1 (a tanh driven hard, from about
+// k = 3; a diode clip), and for one with no slope at rest (a dead zone): those are drawn exactly as they always were.
+export const SOFT = 0.01;
+export function softReach(fn, max = 8) {
+  const h = 1e-5, slope = (x) => Math.abs(fn(x + h) - fn(x - h)), s0 = slope(0);
+  if (!(s0 > 0)) return 1;
+  let R = 1;
+  while (R < max && Math.max(slope(R), slope(-R)) > SOFT * s0) R += 1 / 64;
+  return R;
+}
 
 /* ---- worklets: a def's worklets map each processor name to its module's URL, a file on the page's own origin (the
    pages' policy refuses data: and blob: scripts, so a worklet can't be made from a string). Each is loaded once per
@@ -137,15 +155,34 @@ export function makeKit(c, { uid = 'device', seed = 1, clock = null } = {}) {
   const G = (v = 1) => { const n = c.createGain(); n.gain.value = v; return n; };
   const F = (type, f, q, g) => { const n = c.createBiquadFilter(); n.type = type; n.frequency.value = f; if (q != null) n.Q.value = q; if (g != null) n.gain.value = g; return n; };
   const chain = (...ns) => { for (let i = 0; i + 1 < ns.length; i++) ns[i].connect(ns[i + 1]); return ns[ns.length - 1]; };
-  const curve = (fn, over = '2x', N = 4096) => {
-    const n = c.createWaveShaper(), cv = new Float32Array(N);
-    for (let i = 0; i < N; i++) cv[i] = fn((i / (N - 1)) * 2 - 1);
-    n.curve = cv; n.oversample = over; return n;
+  // A WaveShaper from fn(x) over [-1, 1]. reach R > 1 (or 'soft': softReach(fn)) draws fn over [-R, R] instead, behind a
+  // gain of 1/R: the signal still meets fn(x) (the same small-signal gain, the same curve inside ±1), but the clamp
+  // moves out to ±R. It's drawn with more points (an odd number: one sits on 0, so nothing at rest) so they're no
+  // further apart than N over [-1, 1]; the gain stands in for the node (connect and disconnect go on from the shaper).
+  // R = 1: the plain node, as it always was.
+  const curve = (fn, over = '2x', N = 4096, reach = 1) => {
+    const R = reach === 'soft' ? softReach(fn) : Math.max(1, reach);
+    const n = c.createWaveShaper();
+    if (R === 1) {
+      const cv = new Float32Array(N);
+      for (let i = 0; i < N; i++) cv[i] = fn((i / (N - 1)) * 2 - 1);
+      n.curve = cv; n.oversample = over; return n;
+    }
+    const M = 2 * Math.ceil(((N - 1) * R) / 2) + 1, cv = new Float32Array(M);
+    for (let i = 0; i < M; i++) cv[i] = fn(R * ((i / (M - 1)) * 2 - 1));
+    n.curve = cv; n.oversample = over;
+    const g = G(1 / R);
+    g.connect(n);
+    g.connect = (...a) => n.connect(...a);
+    g.disconnect = (...a) => n.disconnect(...a);
+    return g;
   };
-  // tanh at k with a bias b (asymmetry: even harmonics), normalised to ±1 and centred (no DC at rest)
+  // tanh at k with a bias b (asymmetry: even harmonics), centred (no DC at rest) and normalised so ±1 in is ±1 out on
+  // its stronger side. It reaches as far as it takes to flatten (softReach): past ±1 it goes on rounding off toward
+  // tanh's own ceiling instead of meeting the clamp, so a small k stays soft however hard it's driven.
   const shaper = (k, b = 0, over = '2x') => {
     const t0 = Math.tanh(k * b), norm = Math.max(Math.tanh(k * (1 + b)) - t0, t0 - Math.tanh(k * (b - 1)));
-    return curve((x) => (Math.tanh(k * (x + b)) - t0) / norm, over);
+    return curve((x) => (Math.tanh(k * (x + b)) - t0) / norm, over, 4096, 'soft');
   };
   const start = (n) => { n.start(); own.src.push(n); return n; };
   const lfo = (rate, shape = 'sine') => {

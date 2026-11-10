@@ -142,7 +142,7 @@ export function mount(R) {
   const shapeOf = (rig) => {
     if (!rig) return 'none';
     const amp = rig.amp ? { ...rig.amp, params: R.rig.values(rig.amp.slot) } : null;
-    return [rig.slots.map((s) => s.device).join(','), amp ? cabOf(amp).id + ':' + micsOf(amp.params).length : ''].join('|');
+    return [rig.slots.map((s) => s.device).join(','), amp ? cabOf(amp).id + ':' + micsOf(amp.params, amp.device).length : ''].join('|');
   };
   const tuner = tunerFace({ onStomp: () => R.press('tuner') });
 
@@ -240,7 +240,7 @@ export function mount(R) {
         built.meter = { el: meter, leds, db: dbEl, n: -1, text: '' };
         boxes.set('meter', { x: hd.x + 14, y: hd.y - 30, w: mw, h: mh }); els.set('meter', meter);
         // the mics, in front of the grille
-        built.mics = micsOf(values).map((m, i) => { const el = buildMic(i); G.gear.append(el); wireMic(el, i); return el; });
+        built.mics = micsOf(values, rig.amp.device).map((m, i) => { const el = buildMic(i); G.gear.append(el); wireMic(el, i); return el; });
         placeMics(values);
       }
 
@@ -369,7 +369,7 @@ export function mount(R) {
 
   function placeMics(values) {
     if (!built?.cab || !built.mics) return;
-    const mics = micsOf(values);
+    const mics = micsOf(values, built.rig?.amp?.device);
     const cabBox = { ...built.cab };
     built.mics.forEach((el, i) => {
       const m = mics[i];
@@ -404,7 +404,7 @@ export function mount(R) {
         body.removeEventListener('pointermove', move); body.removeEventListener('pointerup', up); body.removeEventListener('pointercancel', up);
         built?.cab?.el.querySelectorAll('.gr-r-cone').forEach((c) => c.classList.remove('gr-on'));
         if (last == null) return;
-        const m = micsOf(R.rig.values(slot))[i];
+        const m = micsOf(R.rig.values(slot), built?.rig?.amp?.device)[i];
         if (m) say(`${i ? 'Mic 2: ' : ''}${m.name} ${onCone(m.pos)}, ${inches(m.dist)} back. ${m.pos < 0.4 ? 'Brighter' : m.pos > 0.82 ? 'Darker' : 'Rounder'}; this song’s copy.`);
       };
       body.addEventListener('pointermove', move); body.addEventListener('pointerup', up); body.addEventListener('pointercancel', up);

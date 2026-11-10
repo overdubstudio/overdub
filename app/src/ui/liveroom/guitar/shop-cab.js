@@ -1,7 +1,9 @@
 // The cab and its mics [ui; the guitar room's SHOP stream] (docs/research/GUITAR-ROOM.md §2.9; the second mock's
 // shot-2-cab-zoom and 03c: "click the cab and it zooms into the cab builder with mics"). A cab drawn from its speakers,
 // the mics standing in front of its grille, and the cab builder: which cab, each mic's type, where it is on the cone,
-// how far back, its angle, a second mic blended in. Every control is a param of the real amp on your stack (amp.*: cab,
+// how far back, its angle, a second mic blended in. A measured cab (every guitar amp's default) is a real 4x12 and the
+// mic it was recorded with: the builder offers it beside the designed ones, and the mics are for a designed cab only.
+// Every control is a param of the real amp on your stack (amp.*: cab,
 // mic, micpos, micdist, micang, mic2, mic2pos, mic2dist, mic2ang, blend, flip; the Half Stack: its measured CAB),
 // turned through R.rig.turn: both guitars, by you, a drag one undo step. Which cone a mic is on, and where around
 // it, is the room's (R.gr.shop.mics): the sound is the distance from the dust cap.
@@ -19,7 +21,7 @@
 //       'tryout-cab')); refresh() after the rig changed (keeps a drag in hand)
 
 import { h } from '../../dom.js';
-import { CABS, MICS, MIC_IDS, GUITAR_CABS, BASS_CABS, cabBox, cabOf, cabIndex, whereOnCone, onCone, inches } from './shop-data.js';
+import { CABS, MICS, MIC_IDS, MEASURED_CABS, GUITAR_CABS, BASS_CABS, cabBox, cabOf, cabIndex, whereOnCone, onCone, inches } from './shop-data.js';
 import { SAY } from './shop-say.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -228,7 +230,7 @@ export function cabPanel(R, host, { where = 'stage', saveRow = null } = {}) {
     }
     if (view.kind === 'stack') {
       host.append(h('div.kind', 'The cab · your stack'), h('h2.grs-disp', view.cabName), h('p', view.cabBlurb),
-        h('p.note', `The ${view.amp}’s cabs are measured: each one a 4x12 and its mics as the engineer left them. A Claw’d-o-Matic head off the wall has mics you can move.`),
+        h('p.note', `The ${view.amp}’s cabs are measured: each one a 4x12 and its mics as the engineer left them. A head off the wall plays the same six, or a designed cab with mics you can move.`),
         h('h3', 'Which cab'),
         chips('Which cab', view.opts.map((name, i) => ({ id: i, name })), { cls: 'grs-cablist', cur: view.index, onPick: (i) => { if (turn(a.slot, 'cab', i).ok) say(SAY.stackCab({ cab: view.opts[i] })); } }));
       if (saveRow) host.append(saveRow());
@@ -236,11 +238,12 @@ export function cabPanel(R, host, { where = 'stage', saveRow = null } = {}) {
     }
     const mini = where === 'stage';
     host.append(h('div.kind', 'The cab · your stack'), h('h2.grs-disp', view.cabName), h('p', view.cabBlurb ? view.cabBlurb + '.' : ''),
-      h('p.note', mini ? 'From the front: drag a mic across a cone. At the cap it’s bright; out toward the edge it’s darker.' : 'You’re at the grille. Drag a mic across a cone: at the cap it’s bright, out toward the edge it’s darker.'));
+      h('p.note', view.measured ? 'A real 4x12 and the mic it was recorded with, so there’s no mic to move. A designed cab takes mics you place.'
+        : mini ? 'From the front: drag a mic across a cone. At the cap it’s bright; out toward the edge it’s darker.' : 'You’re at the grille. Drag a mic across a cone: at the cap it’s bright, out toward the edge it’s darker.'));
     if (mini) {
       const box = cabBox(view.shown), w = 372, hh = Math.round(box.h * (w / box.w));
       const wrap = h('div.grs-front', { style: { height: hh + 'px' } });
-      const cab = cabView(view.shown, w, hh, { mini: true, label: view.cab === 'own' ? 'Its own' : null });
+      const cab = cabView(view.shown, w, hh, { mini: true, ir: view.measured, label: view.cab === 'own' ? 'Its own' : null });
       wrap.append(cab.el);
       host.append(wrap);
       parts.mini = cab;
@@ -250,10 +253,16 @@ export function cabPanel(R, host, { where = 'stage', saveRow = null } = {}) {
       const i = cabIndex(id);
       if (turn(a.slot, 'cab', i).ok) say(SAY.cab({ cab: id === 'own' ? `${view.amp}’s own cab` : CABS[id].name, amp: view.amp, blurb: CABS[id]?.blurb || '' }));
     };
-    host.append(h('h3', 'Which cab'),
-      chips('Which cab', GUITAR_CABS.map((id) => ({ id, name: id === 'own' ? 'Its own' : CABS[id].name, title: CABS[id]?.blurb || '' })), { cls: 'grs-cablist', cur: view.cab, onPick: pick }),
+    // (the amp's default cab is marked: the one it plays when nobody picked one)
+    const named = (id, name) => (id === view.def ? `${name} · default` : name);
+    host.append(h('h3', 'Measured cabs'),
+      chips('Measured cabs', MEASURED_CABS.map((id) => ({ id, name: named(id, CABS[id].name), title: CABS[id].blurb })), { cls: 'grs-cablist.measured', cur: view.cab, onPick: pick }),
+      h('h3', 'Designed cabs'),
+      chips('Designed cabs', GUITAR_CABS.map((id) => ({ id, name: named(id, id === 'own' ? 'Its own' : CABS[id].name), title: CABS[id]?.blurb || '' })), { cls: 'grs-cablist', cur: view.cab, onPick: pick }),
       h('p.note', 'Bass cabs:'),
-      chips('Bass cabs', BASS_CABS.map((id) => ({ id, name: CABS[id].name, title: CABS[id].blurb })), { cls: 'grs-cablist', cur: view.cab, onPick: pick }));
+      chips('Bass cabs', BASS_CABS.map((id) => ({ id, name: named(id, CABS[id].name), title: CABS[id].blurb })), { cls: 'grs-cablist', cur: view.cab, onPick: pick }));
+    // a measured cab: nothing to place
+    if (view.measured) { if (saveRow) host.append(saveRow()); return; }
     const side = h('canvas.grs-side', { width: 744, height: 300, 'aria-label': 'The mics from the side: drag to set how far back the nearest one stands' });
     parts.side = side;
     host.append(h('h3', 'From the side'), side);
@@ -320,7 +329,7 @@ export function cabPanel(R, host, { where = 'stage', saveRow = null } = {}) {
     const a = amp();
     const view = a ? cabOf(a.link) : null;
     if (!parts || keyOf(a, view) !== shape) { if (!R.gr.shop.dragging) render(); return; }
-    if (!view || view.kind !== 'clawd') return;
+    if (!view || view.kind !== 'clawd' || view.measured) return;
     const set = (id, v) => parts.faders[id]?.set(v);
     set('0pos', view.mic1.pos); set('0dist', view.mic1.dist); set('0ang', view.mic1.ang);
     const outs = parts.outs, t = (id, s) => { if (outs[id]) outs[id].textContent = s; };

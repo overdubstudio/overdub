@@ -50,7 +50,8 @@ export function failure(code, message, cause) {
 export const failureCode = (e) => (e && typeof e === 'object' && typeof (/** @type {any} */ (e).code) === 'string' && FAILURE_CODES.includes(/** @type {any} */ (e).code) ? /** @type {any} */ (e).code : '');
 
 /**
- * What an instance says about itself, normalised: a device without health() (a kernel) is ok unless it's a stand-in.
+ * What an instance says about itself, normalised: a device without health() (a kernel instrument) is ok unless it's a
+ * stand-in. (A kernel effect has one, kernel/host.js, about its bypass gains as a graph device's is.)
  * Never throws.
  * @param {any} inst
  * @returns {{ ok: boolean, failed: string, on: boolean | null, settled: boolean, dry: number | null, wet: number | null, want: { dry: number | null, wet: number | null } | null, known: boolean }}

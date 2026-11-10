@@ -34,6 +34,7 @@
 import { makeKit, workletsReady, glide, cosineRamp, LEAD, dB, noteSec, isOffline } from './kit.js';
 import { paramValues, seedOf } from './registry.js';
 import { failure, failureCode } from './lifecycle.js';
+import { loadData } from '../kernel/data.js';
 
 // A switch has settled once the audio clock is past its fade's end, or (a stalled or suspended clock) this long after it
 // by the wall clock (lifecycle.js: health().settled within the live path's HEALTH.settle, 150 ms, of the last setOn).
@@ -287,8 +288,13 @@ export function graphInstance(c, def, opts = {}) {
   };
   inst._syncErr = false;
   if (fx) { track(dry.gain, 1); dry.gain.value = 1; wet.gain.value = 0; }
-  // ready: built, or a lifecycle failure (a declared worklet that didn't load is one: the device isn't what it says)
-  const r = workletsReady(c, def.worklets);
+  // ready: built, or a lifecycle failure (a declared worklet that didn't load is one: the device isn't what it says).
+  // Offline, a device that names kernel data (an amp's measured cabs) is built once the files are in or known not to be
+  // here, as engine/strip.js waits for a kernel's, so a render has them from its first sample. (Live it builds at once
+  // and moves onto them when they land.)
+  const w0 = workletsReady(c, def.worklets);
+  const hashes = offline && def.data ? Object.values(def.data).filter((x) => typeof x === 'string') : [];
+  const r = !hashes.length ? w0 : Promise.all([w0 === true ? [] : w0, ...hashes.map((h) => loadData(h))]).then(([missing]) => missing);
   if (r === true) {
     try { build(); inst.ready = Promise.resolve(inst); } catch (e) { inst.ready = Promise.reject(e); }
   } else {

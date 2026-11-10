@@ -65,22 +65,36 @@ test("the stage's pixels and the cab", async () => {
   const club = rr.cabOf(amp),
     own = rr.cabOf({ device: 'amp.recto', params: { cab: 0 } }),
     fridge = rr.cabOf({ device: 'amp.recto', params: { cab: 9 } });
+  const modern = rr.cabOf({ device: 'amp.recto', params: { cab: 7 } }),
+    bass = rr.cabOf({ device: 'amp.whale', params: {} }),
+    stack = rr.cabOf({ device: 'core.stack', params: { cab: 4 } });
   const mics = rr.micsOf({ mic: 0, micpos: 0.3, micdist: 1 }),
     two = rr.micsOf({ mic: 1, mic2: 3, mic2pos: 0.9 });
+  const none = rr.micsOf({ mic: 0, micpos: 0.3, micdist: 1 }, 'amp.recto'),
+    placed = rr.micsOf({ cab: 7, mic: 0, micpos: 0.3, micdist: 1 }, 'amp.recto');
   T.ok(
-    club.name === '4x12 Modern' &&
+    club.name === 'Modern 4x12, close dynamic' &&
+      club.measured &&
       club.n === 4 &&
       club.box.w === 496 &&
       own.n === 4 &&
       /its own/.test(own.name) &&
+      !own.measured &&
       fridge.odd === 'fridge' &&
+      modern.name === '4x12 Modern' &&
+      !modern.measured &&
+      /its own/.test(bass.name) &&
+      stack.measured &&
+      stack.name === 'British 4x12, dynamic' &&
       mics.length === 1 &&
       mics[0].type === 'dyn' &&
       two.length === 2 &&
       two[0].type === 'ribbon' &&
       two[1].type === 'cond' &&
-      two[1].pos === 0.9,
-    `the cab under the amp: the club's ${club.name}, the amp's own (${own.name}), the fridge; the mics from the amp's params (${two.map((m) => m.name).join(' + ')})`,
+      two[1].pos === 0.9 &&
+      !none.length &&
+      placed.length === 1,
+    `the cab under the amp: the club's ${club.name} (measured: no mic to move), the amp's own (${own.name}), the designed ${modern.name}, the fridge; a bass amp on its own (${bass.name}); the Half Stack's ${stack.name}; the mics from the amp's params on a designed cab (${two.map((m) => m.name).join(' + ')})`,
   );
 
   T.done();

@@ -499,7 +499,7 @@ export function mount(R) {
     const shown = view?.kind === 'clawd' ? view.shown : 'v412';
     const box = cabBox(shown), z = Math.min(400 / box.w, 300 / box.h, 0.9);
     const cw = Math.round(box.w * z), chh = Math.round(box.h * z);
-    const open = R.gr.cam === 'tryout-cab', ir = view?.kind === 'stack', label = view?.kind === 'stack' ? view.cabName : view?.cab === 'own' ? `${view.amp}’s own` : null;
+    const open = R.gr.cam === 'tryout-cab', ir = view?.kind === 'stack' || !!view?.measured, label = view?.kind === 'stack' ? view.cabName : view?.cab === 'own' ? `${view.amp}’s own` : null;
     const key = JSON.stringify([shown, cw, chh, open, ir, label]);
     if (key !== cabKey || !cabObj?.el.isConnected) {
       cabObj?.el.remove();
@@ -716,7 +716,9 @@ export function mount(R) {
     if (!res.ok) { say(res.error); return res; }
     ghost(fromEl?.querySelector('.ewf') || fromEl, boxes.head?.el, () => {});
     const v = cabOf(ampLink());
-    say(SAY.ampOn({ name: d.name, cab: v?.kind === 'clawd' ? (v.cab === 'own' ? 'its own cab' : `your ${v.cabName}`) : 'its measured cab', was: was?.name || '', sec: toneWord(toneOf(was)).toLowerCase() }));
+    // (a cab you chose came along: yours; one it plays by default: its own)
+    const mine = ampLink()?.params?.cab != null;
+    say(SAY.ampOn({ name: d.name, cab: v?.kind === 'clawd' ? (v.cab === 'own' ? 'its own cab' : `${mine ? 'your' : 'its'} ${v.cabName}`) : 'its measured cab', was: was?.name || '', sec: toneWord(toneOf(was)).toLowerCase() }));
     later(() => flash(boxes.head?.el), 30);
     return res;
   }

@@ -591,6 +591,9 @@ try {
     await P(() => window.overdub.input.qwerty.toggle(true));
     // first a menu open: Esc closes it and the keys stay. Esc goes only once the menu is up with its item focused and
     // the keys are on, so what the check reads is what Esc did, not where the page had got to
+    // (the take's row is drawn on a frame after the take: on a loaded machine, a little after)
+    let keepB = false;
+    for (let i = 0; i < 40 && !(keepB = await P(() => !!document.querySelector('.sk-idea .sk-keep'))); i++) await pg.waitForTimeout(50);
     await P(() => document.querySelector('.sk-idea .sk-keep')?.click());
     const ready = () => P(() => ({ menu: !!document.querySelector('.sk-menu'), focused: !!document.activeElement?.closest?.('.sk-menu'), on: window.overdub.input.qwerty.on }));
     let before = await ready();
@@ -598,7 +601,7 @@ try {
     const menuOpen = before.menu && before.focused && before.on;
     await pg.keyboard.press('Escape');
     await pg.waitForTimeout(100);
-    const afterMenu = { ...(await P(() => ({ menu: !!document.querySelector('.sk-menu'), on: window.overdub.input.qwerty.on }))), before };
+    const afterMenu = { ...(await P(() => ({ menu: !!document.querySelector('.sk-menu'), on: window.overdub.input.qwerty.on }))), before, keep: keepB };
     await pg.keyboard.press('Escape');
     await pg.waitForTimeout(150);
     const esc = await P(() => ({ on: window.overdub.input.qwerty.on, lamp: !document.querySelector('.tp-hold') || document.querySelector('.tp-hold').hidden, sel: window.overdub.ui.state.selection.clip }));

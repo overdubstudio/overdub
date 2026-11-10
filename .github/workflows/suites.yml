@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
 
       # Node from mise.toml: the runner's own PATH is the system's, so nothing on the machine is relied on
-      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
         with:
           install_args: node
 
@@ -71,7 +71,7 @@ jobs:
       # cancelled() too: a job that hits timeout-minutes is cancelled, and that run needs its screenshots most
       - name: Keep the screenshots and logs of a failed run
         if: failure() || cancelled()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: suites-out
           path: suites-out

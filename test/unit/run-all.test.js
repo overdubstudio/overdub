@@ -77,3 +77,8 @@ test('the real-time list names suites that exist, and only those get a retry', (
   for (const f of ['compat-test.js', 'agent-test.js', 'stack-monitor-test.js', 'unit-test.js'])
     assert.equal(mayRetry(f), false, f);
 });
+
+test("rooms-test gets a second go alone: its CPU ratios (AULA against Stairwell) read the machine's load", () => {
+  // idle on the Mac mini: 5.1x, and 8.69x once from cold; with two other suites beside it: 7.1-7.2x, against 7x
+  assert.equal(mayRetry('rooms-test.js'), true);
+});

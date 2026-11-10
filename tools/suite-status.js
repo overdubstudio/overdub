@@ -2,11 +2,12 @@
 // failed one are worth printing. The check "suites" itself is the job of .github/workflows/suites.yml; nothing here
 // posts anything.
 
-// The suites whose checks hold to the wall clock (live meters, the scheduler), which can miss with three suites sharing
-// the machine: run-all gives these, and only these, a second go alone. Everywhere else a failure is a wrong result, and
-// a wrong result that shows up once is still wrong: it stops the run. Adding a suite here hides its intermittent
-// failures from a live deploy, so fix the check first.
-export const REAL_TIME = new Set(['jam-test.js']);
+// The suites whose checks hold to the wall clock (live meters, the scheduler; rooms: Echo Chamber's cost against
+// Stairwell's, a ratio the machine's load moves), which can miss with three suites sharing the machine: run-all gives
+// these, and only these, a second go alone. Everywhere else a failure is a wrong result, and a wrong result that shows
+// up once is still wrong: it stops the run. Adding a suite here hides its intermittent failures from a live deploy, so
+// fix the check first.
+export const REAL_TIME = new Set(['jam-test.js', 'rooms-test.js']);
 export const mayRetry = (file) => REAL_TIME.has(file);
 
 // The lines of a failed suite worth printing: its FAIL lines first, then anything else that reads as an error. A passing

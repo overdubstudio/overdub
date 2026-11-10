@@ -392,18 +392,16 @@ if (bank) {
   T.note(`a room change's block (the room's taps, planning its partitions, resetting the tail, then the block): median ${median(sw).toFixed(3)} ms, worst ${Math.max(...sw).toFixed(3)} ms${median(sw) > 0.5 ? ' (OVER 0.5 ms: reported to AJ, R23/Q5)' : ''}`);
   ok(worstPhase(plainPh) < 0.5 && worstPhase(fadePh) < 0.5, `the heaviest block of the cycle takes ${worstPhase(plainPh).toFixed(3)} ms, ${worstPhase(fadePh).toFixed(3)} ms during a crossfade (two paths) (under 0.5 ms; the quantum is 2.67 ms)`);
   // R36 (the budget raised by AJ on 2026-10-11, after the listening trial): checkDevice's cpu, Echo Chamber at its
-  // heaviest room (AULA, the longest, its default) against Stairwell at its defaults, the fastest of 5 each, in one
+  // heaviest room (AULA, the longest, its default) against Stairwell at its defaults, the median of 5 each, in one
   // process: at most 4.5x (measured 3.0-3.6x here and 3.0-3.3x in Chromium, 4.2x with the machine saturated: create()'s
   // warm-up is a fixed cost in it, and contention stretches it). The device check renders 4 s from a fresh
   // instance, so a room longer than that has yet to fill its late part, and create() counts: so the steady state
   // too, 4 s timed once AULA has had its whole length of input, against Stairwell's 4 s: at most 7x (measured 5.5x
-  // unloaded, 6.2-6.6x with the machine busy). The fastest of 5, not the median: in the full run this shares the
-  // Mac mini with two other suites, whose work only ever adds time (a median of 5 read 7.18x there once, nothing
-  // changed), so the fastest pass is the nearest to what each costs.
+  // unloaded, 6.2-6.6x with the machine busy).
   const cv = [], cr = [];
   for (let i = 0; i < 5; i++) { cv.push((await checkDeviceNode(verb)).cpu.ms); cr.push((await checkDeviceNode(rooms)).cpu.ms); }
-  const best = (a) => Math.min(...a), ratio = best(cr) / best(cv);
-  ok(ratio <= 4.5, `CPU: Echo Chamber (AULA, the heaviest room) ${best(cr)} ms for the device check's 4 s render against Stairwell's ${best(cv)} ms: ${ratio.toFixed(2)}x (at most 4.5x; fastest of 5)`);
+  const med = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], ratio = med(cr) / med(cv);
+  ok(ratio <= 4.5, `CPU: Echo Chamber (AULA, the heaviest room) ${med(cr)} ms for the device check's 4 s render against Stairwell's ${med(cv)} ms: ${ratio.toFixed(2)}x (at most 4.5x; median of 5)`);
   {
     const steady = (def, data, warm) => {
       const Kd = new Function('return ' + def.kernel)(), inst2 = Kd.create({ sr: SR, seed: 1, dsp: makeDsp(SR), params: kernelSpecs(def), data });
@@ -416,8 +414,8 @@ if (bank) {
     const a = steady(rooms, { aachen: bank }, Math.ceil((bank.samples[0].frames + 3 * 4096) / 128) + 64), v = steady(verb, null, 400);
     const ta = [], tv = [];
     for (let i = 0; i < 5; i++) { ta.push(a()); tv.push(v()); }
-    const sr2 = best(ta) / best(tv);
-    ok(sr2 <= 7, `CPU, steady: 4 s of AULA once it is full ${best(ta).toFixed(1)} ms against Stairwell's ${best(tv).toFixed(1)} ms: ${sr2.toFixed(2)}x (at most 7x; fastest of 5)`);
+    const sr2 = med(ta) / med(tv);
+    ok(sr2 <= 7, `CPU, steady: 4 s of AULA once it is full ${med(ta).toFixed(1)} ms against Stairwell's ${med(tv).toFixed(1)} ms: ${sr2.toFixed(2)}x (at most 7x; median of 5)`);
   }
 }
 

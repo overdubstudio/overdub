@@ -1,0 +1,76 @@
+# The check "suites" that main's ruleset requires: the whole integration suite (node tools/run-all.js: the browsers,
+# the renders, the real-time checks GitHub's shared runners are too slow for) on Peter's self-hosted Mac mini, ghastly,
+# for every push to a branch of this repo. The job is the check: a pull request from such a branch shows it running,
+# with its log, and nobody runs anything by hand.
+#
+# Push and Run workflow only: both take write access to the repo. A self-hosted runner must never take a pull_request
+# job (deploy-live.yml says why; test/unit/workflows.test.js holds it), so a pull request from a fork gets no "suites"
+# until someone who has read it pushes its branch here. main is left out (deploy-live runs the suite again on what it
+# ships), and so are Dependabot's branches: they change the actions this workflow runs, and nothing runs on the machine
+# before someone has read the change (Run workflow on the branch, once it has been).
+#
+# The job holds no environment, no secret, and a token that can only read. Actions are pinned to a commit; the comment
+# names the release.
+name: suites
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - 'dependabot/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a newer push to the branch replaces the run of the one before it
+concurrency:
+  group: suites-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    name: suites
+    runs-on: [self-hosted, macOS, ARM64, overdub-e2e]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # the suites' screenshots and logs, inside this job's workspace (the runner keeps its disk between jobs)
+      OUTDIR: ${{ github.workspace }}/suites-out
+    steps:
+      # clean: true (the default) wipes what an earlier job left in the workspace
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Node from mise.toml: the runner's own PATH is the system's, so nothing on the machine is relied on
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install_args: node
+
+      # the downloads kept on the machine, outside the workspace, as deploy-live keeps them
+      - name: Build the sampled kits this commit names
+        run: KITS_CACHE="$HOME/Library/Caches/overdub-kits" node tools/fetch-kits.js
+
+      - name: Install the browsers the suites drive
+        run: | # zizmor: ignore[adhoc-packages] (package.json has no dependencies by design; the version is pinned here)
+          npm install --no-save --no-package-lock --ignore-scripts playwright-core@1.62.0
+          npx --no-install playwright-core install chromium chromium-headless-shell webkit firefox
+
+      # REQUIRE_ALL: a browser that won't launch fails compat and phone, as on a deploy. shell: bash brings pipefail, so
+      # tee can't pass a failed run.
+      - name: Every suite
+        shell: bash
+        env:
+          REQUIRE_ALL: '1'
+        run: node tools/run-all.js | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # cancelled() too: a job that hits timeout-minutes is cancelled, and that run needs its screenshots most
+      - name: Keep the screenshots and logs of a failed run
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suites-out
+          path: suites-out
+          retention-days: 14

@@ -12,7 +12,9 @@ import {
   windowFor,
   TUNER_TUNINGS,
 } from '../../app/src/input/tuner.js';
+import { noteName as nameOf } from '../../app/src/core/music.js';
 import { string, strum } from '../../tools/strings.js';
+import { checks } from './helpers/check.js';
 
 // a buffer read the way ui/gauges/tuner.js reads the input: a window ending at t, every 40 ms
 function readAll(buf, sr, tuning = 'standard', { until = buf.length / sr + 1.6, step = 0.04 } = {}) {
@@ -155,5 +157,103 @@ describe('the steady tuner', () => {
     assert.ok(live >= late.length * 0.95, `live in ${live} of ${late.length} looks after 9 s`);
     // (and the floor is still the hum's, not the strings')
     assert.ok(late[late.length - 1].r.floor < -55, `floor ${late[late.length - 1].r.floor.toFixed(1)} dBFS`);
+  });
+});
+
+// moved from tools/input-test.js, with the sweep across a guitar's and a bass's range (seconds of Node) staying there
+describe('tuner, on plucked strings', () => {
+  test("nine tunings' open strings, plucked in turn, each read as its note on its own string", () => {
+    const T = checks();
+    // the strings, read in turn: each tuning's open strings, plucked one after another, name themselves
+    const sr = 48000,
+      bad = [];
+    for (const id of [
+      'standard',
+      'drop-d',
+      'd-standard',
+      'drop-c',
+      'b-standard',
+      'drop-b',
+      'drop-a',
+      '7-standard',
+      '7-drop-a',
+    ]) {
+      const t = TUNER_TUNINGS[id],
+        at0 = 0.5,
+        len = at0 + t.strings.length * 1.0 + 1,
+        buf = new Float32Array(Math.round(len * sr));
+      t.strings.forEach((m, i) => {
+        const s = string(m, { sr, dur: 0.95, at: at0 + i, len, peak: -14, seed: 11 + i, hum: -62 });
+        for (let j = 0; j < buf.length; j++) buf[j] += s.buf[j];
+      });
+      const reads = readAll(buf, sr, id, { until: len });
+      t.strings.forEach((m, i) => {
+        const mid = reads.filter((x) => x.t > at0 + i + 0.12 && x.t < at0 + i + 0.5 && x.r.live);
+        const ok =
+          mid.length >= 5 &&
+          mid.every((x) => x.r.p === m && x.r.string?.open === m && x.r.string?.number === t.strings.length - i);
+        if (!ok)
+          bad.push(
+            `${id} string ${t.strings.length - i}: ${
+              mid
+                .slice(0, 2)
+                .map((x) => `${x.r.note}${x.r.octave} as ${x.r.string?.name}`)
+                .join(', ') || 'nothing'
+            }`,
+          );
+      });
+    }
+    T.ok(
+      !bad.length,
+      `tuner: nine tunings' open strings (E standard to a seven-string's drop A), plucked in turn, each read as its note on its own string${bad.length ? '; wrong: ' + bad.slice(0, 4).join('; ') : ''}`,
+    );
+    T.done();
+  });
+
+  test('the low string names the tuning, and the strings heard settle it', () => {
+    const T = checks();
+    const low = [36, 35, 33].map(
+      (m) =>
+        `${nameOf(m)}: ${tuningsFromLow(m)
+          .map((x) => x.name)
+          .join(' or ')}`,
+    );
+    const g = (hs) => guessTuning(hs)[0]?.id;
+    T.ok(
+      tuningsFromLow(36)[0].id === 'drop-c' &&
+        g([35, 42]) === 'drop-b' &&
+        g([35, 40, 45, 50, 54]) === 'b-standard' &&
+        g([35, 40, 45, 50, 55]) === '7-standard' &&
+        g([36, 43]) === 'drop-c' &&
+        g([36, 41]) === 'c-standard',
+      `tuner: a low string asks which tuning (${low.join('; ')}), and the strings heard after it settle it (B then F♯: drop B; B E A D F♯: B standard; B E A D G: seven-string; C then G: drop C; C then F: C standard)`,
+    );
+    T.done();
+  });
+
+  test('a peg turned while the string rings is followed, and reads 0 once it stops', () => {
+    const T = checks();
+    // B1 from 40 cents flat up to pitch over two seconds: the reading follows it
+    const sr = 48000,
+      s = string(35, {
+        sr,
+        dur: 4,
+        cents: -40,
+        at: 0.5,
+        bend: (t) => Math.min(40, Math.max(0, (t - 0.5) * 20)),
+        peak: -12,
+      });
+    const reads = readAll(s.buf, sr, '7-standard', { until: 5 }),
+      half = windowFor(sr) / sr / 2;
+    const live = reads.filter((x) => x.r.live && x.r.settled);
+    const lag = Math.max(
+      ...live.map((x) => Math.abs((x.r.midi - 35) * 100 - (1200 * Math.log2(s.truth(x.t - half) / 440) + 6900 - 3500))),
+    );
+    const end = live.filter((x) => x.t > 3.3).map((x) => x.r.shown);
+    T.ok(
+      lag <= 8 && end.length >= 5 && end.every((c) => c === 0),
+      `tuner: a peg turned 20 cents a second while B1 rings is followed within ${lag.toFixed(1)} cents, and reads 0 once it stops (${[...new Set(end)].join(', ')})`,
+    );
+    T.done();
   });
 });

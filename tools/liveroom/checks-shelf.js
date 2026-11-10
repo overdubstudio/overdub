@@ -1,7 +1,6 @@
 // The live room's checks: the shelf and the tape box [stream F] (docs/research/LIVE-ROOM-MODE.md §2.6, §3.13, §9.6,
 // §11.8). Run by tools/liveroom-test.js (ONLY=shelf), whose header says what a checks module exports.
-//   1. the tape box in Node: its label and its note from the song, and the same three titles from the dice for the same
-//      song (the unit test, test/unit/liveroom-door.test.js, holds the rest)
+//   1. (the tape box, its label, note and dice: test/unit/liveroom-tape-box.test.js and liveroom-door.test.js)
 //   2. the shelf (muted Chromium): a room song's record is written on its autosave (IndexedDB overdub-shelf); two room
 //      songs and two Recent songs show as boxes, newest first; the backup is offered once per browser; a box opens its
 //      song in the room, with where you left it; Take it off the shelf asks first and deletes only the recordings no
@@ -55,13 +54,6 @@ const STORAGE = () => {
 };
 
 export async function run(T, ctx) {
-  // 1. the tape box, in Node
-  const a = roomSong({ id: 'p_box', title: 'Untitled' });
-  const L = labelOf(a);
-  T.ok(L.title === 'Untitled · 132 · drop C' && L.slate === 'METAL CLUB · DROP C · 132 · C MINOR' && L.parts.join(', ') === 'Verse, Chorus, Breakdown', `the tape box’s label from the song: “${L.title}”, “${L.slate}”, ${L.parts.join(', ')}`);
-  T.ok(L.note === 'Verse doubled. Chorus wants its other side. The breakdown’s still empty.', `…and its note from the song: “${L.note}”`);
-  const d1 = titleDice(a), d2 = titleDice(roomSong({ id: 'p_box', title: 'Untitled' }));
-  T.ok(d1.length === 3 && d1.join() === d2.join(), `the dice give the same three titles for the same song: ${d1.join(' · ')}`);
   if (!ctx.pages) return;
 
   const s = await openRoom('/app/?room', { name: 'shelf', webdriver: false, init: STORAGE });

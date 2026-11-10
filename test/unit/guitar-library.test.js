@@ -409,7 +409,7 @@ describe('the riff library with no IndexedDB (memory, for the visit)', () => {
     assert.equal((await riffs.get(first)).name, 'Gallop');
     assert.equal((await riffs.restore(whole)).ok, false);
   });
-  test('2,000 riffs: a page, a search through all of them and the facets stay fast', async () => {
+  test('2,000 riffs: a page, a search through all of them and the facets', async () => {
     const tiny = { sr: SR, channels: [new Float32Array(480)] };
     for (let i = 0; i < 2000; i++) {
       const r = await riffs.add({
@@ -424,21 +424,15 @@ describe('the riff library with no IndexedDB (memory, for the visit)', () => {
       });
       assert.ok(r.ok, r.error);
     }
-    let t0 = performance.now();
     const page = await riffs.list({ limit: 50 });
-    const tPage = performance.now() - t0;
     assert.equal(page.rows.length, 50);
     assert.ok(page.next);
-    t0 = performance.now();
     const hit = await riffs.list({ q: 'needle' });
-    const tSearch = performance.now() - t0;
     assert.deepEqual(
       hit.rows.map((r) => r.name),
       ['Needle'],
     );
-    t0 = performance.now();
     const f = await riffs.facets();
-    const tFacets = performance.now() - t0;
     assert.equal(f.total, 2001);
     assert.equal(f.songs.length, 41);
     assert.equal(f.tunings.length, 3);
@@ -457,11 +451,7 @@ describe('the riff library with no IndexedDB (memory, for the visit)', () => {
     );
     const u = await riffs.usage();
     assert.equal(u.count, 2001);
-    // (generous: memory pages in a few ms; the ceiling is for a loaded machine)
-    assert.ok(
-      tPage < 150 && tSearch < 150 && tFacets < 150,
-      `page ${tPage.toFixed(1)} ms, search ${tSearch.toFixed(1)} ms, facets ${tFacets.toFixed(1)} ms`,
-    );
+    // (that each comes back in under 150 ms is wall clock and is timed in tools/guitar-test.js)
   });
 });
 
@@ -536,4 +526,27 @@ describe('the stack rack with no IndexedDB (memory, for the visit)', () => {
       ['insert.add'],
     );
   });
+});
+
+// moved from tools/liveroom/checks-library.js
+test('a house stack put on a track reads back as the same chain', async () => {
+  const { houseStacks, loadOps, stackOf } = await import('../../app/src/core/liveroom/stacks.js');
+  const { createStore } = await import('../../app/src/core/store.js');
+  const { checks } = await import('./helpers/check.js');
+  const T = checks();
+  {
+    const store = createStore();
+    const r = store.dispatch([
+      { type: 'track.add', ref: 'g', track: { name: 'Guitar L', kind: 'audio' } },
+      { type: 'insert.add', track: '$g', insert: { device: 'core.eq8' } },
+    ]);
+    const h = houseStacks('metal')[0];
+    store.dispatch(loadOps(store.track(r.created.g), h).ops, { by: 'you' });
+    const back = stackOf(store.track(r.created.g));
+    T.ok(
+      back && JSON.stringify(back.chain) === JSON.stringify(h.chain),
+      `a house stack put on a track reads back as the same chain (${h.name}, ${h.chain.length} piece${h.chain.length === 1 ? '' : 's'}, before the guitar's EQ)`,
+    );
+  }
+  T.done();
 });

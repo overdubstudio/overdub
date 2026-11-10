@@ -22,8 +22,10 @@ import { MORE_DEMOS } from '../app/src/core/demos/index.js';
 
 const t = tally('stopping');
 const { page, errors, close } = await open('/app/', { query: 'new&autostart' });
-await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
-await page.evaluate(async () => {
+// (the page's helpers, installed on every page that runs a demo: section 1 runs the demos in parallel pages)
+const prep = async (pg) => {
+await pg.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+await pg.evaluate(async () => {
   window.__sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   window.__db = (x) => (x > 1e-9 ? 20 * Math.log10(x) : -180);
   // the peak of every render quantum a node sends, with its audio time: [[time, peak], ...] until stop()
@@ -45,9 +47,11 @@ await page.evaluate(async () => {
   window.__last = (rows, t, thr) => { const g = Math.pow(10, thr / 20); let last = t; for (const [tt, p] of rows) if (tt >= t && p > g) last = tt; return last - t; };
   await window.overdub.engine.start();
 });
+};
+await prep(page);
 
 // ------------------------------------------------------------------------------------------------ 1. every demo
-const stopAt = async (id, from, playMs) => page.evaluate(async ({ id, from, playMs }) => {
+const stopAt = async (id, from, playMs, pg = page) => pg.evaluate(async ({ id, from, playMs }) => {
   const { store, engine } = window.overdub;
   const { demoById } = await import('/app/src/core/demo.js');
   store.load(demoById(id), { by: 'overdub' });
@@ -76,15 +80,37 @@ const stopAt = async (id, from, playMs) => page.evaluate(async ({ id, from, play
 const runs = [];
 for (const d of [{ id: 'night-shift', title: 'Night Shift' }, ...MORE_DEMOS]) runs.push([d.id, 0.5, 2500]);
 runs.push(['halation', 0.1, 3000], ['halation', 0.8, 2000]);
-for (const [id, from, ms] of runs) {
-  const r = await stopAt(id, from, ms);
+// The tail check below is one more halation run, from the same beat. Every run is its own play, stop and 5.2 s of
+// capture on the page's own audio clock, so they run side by side: STOP_PAGES pages (default 4, 1 for one after the
+// other as before) each take the next run when they finish one. Nothing about a run changes: the same 2.5 s of play,
+// the same 5.2 s after Stop.
+runs.push(['halation', 0.1, 3000]);
+const POOL = Math.max(1, +process.env.STOP_PAGES || 4);
+const extra = [];
+for (let i = 1; i < Math.min(POOL, runs.length); i++) {
+  const o = await open('/app/', { query: 'new&autostart' });
+  await prep(o.page);
+  extra.push(o);
+}
+const results = new Array(runs.length);
+let nextRun = 0;
+await Promise.all([page, ...extra.map((o) => o.page)].map(async (pg) => {
+  for (;;) {
+    const i = nextRun++;
+    if (i >= runs.length) return;
+    results[i] = await stopAt(...runs[i], pg);
+  }
+}));
+for (const o of extra) { errors.push(...o.errors); await o.close(); }
+for (const [i, [, , ms]] of runs.slice(0, -1).entries()) {
+  const r = results[i];
   const f = (x) => x.toFixed(1);
   t.note(`${r.title} from beat ${r.beat}: ${f(r.playing)} dBFS playing; after Stop ${f(r.at05)} at 0.5 s, ${f(r.at15)} at 1.5 s, ${f(r.at3)} at 3 s, ${f(r.after35)} from 3.5 s on`);
   t.ok(r.playing > -30 && r.last <= 3.5 && r.after35 <= -60, `${r.title} (stopped at beat ${r.beat} + ${ms / 1000} s): below -60 dBFS ${r.last.toFixed(2)} s after Stop (from 3.5 s on: ${f(r.after35)} dBFS)`);
 }
 // the tail is still natural for a moment: Halation's delay and pad keep ringing after Stop, they are not cut
 {
-  const r = await stopAt('halation', 0.1, 3000);
+  const r = results[runs.length - 1];
   t.ok(r.at05 > -45 && r.at15 > -60, `Halation's tail rings on after Stop (${r.at05.toFixed(1)} dBFS at 0.5 s, ${r.at15.toFixed(1)} at 1.5 s), then goes (${r.after35.toFixed(1)} from 3.5 s)`);
 }
 

@@ -13,7 +13,7 @@
 //             cellos right), a stereo section
 //   bass      pick brighter than fingers, the bridge pickup brighter than the neck, the string stopping on release
 //
-// Then each passes checkDevice (kernel/check.js, full mode) in Chromium with no warnings.
+// Then each passes checkDevice (kernel/check.js, full mode, run by checkDeviceNode in a child process) with no warnings.
 //   node tools/instruments-test.js            NODE_ONLY=1 skips the browser
 import { tally } from './pw.js';
 import { renderSong } from '../app/src/engine/node/render.js';
@@ -233,24 +233,29 @@ if (defs['core.bassguitar']) {
   t.ok(centred.correlation > 0.99, `bass: in the centre, as engineers put it (L/R correlation ${centred.correlation})`);
 }
 
-// ------------------------------------------------------------------------------------------------ the device check, in Chromium
+// ------------------------------------------------------------------------------------------------ the device check (Node)
+// (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs each registered device at its defaults through checkDevice in Chromium's worklet, and only notes its warnings; presets and kits are not run there)
+{
+  console.log('checkDevice in a child process (full mode)');
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const { summarize } = await import('../app/src/kernel/check.js');
+  const { getDevice } = await import('../app/src/devices/registry.js');
+  for (const id of IDS) {
+    const rep = await checkDeviceNode(getDevice(id));
+    const r = { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), voices: rep.voices, worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed };
+    t.ok(r.ok, `${id}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);
+    t.ok(!r.warnings.length, `${id}: no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
+    t.ok(!(r.failed && r.failed.length), `${id}: every param at min and max renders (worst raw peak ${r.worst} dBFS)`);
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ the studio boots with them, in Chromium
 if (!process.env.NODE_ONLY) {
-  console.log('checkDevice in Chromium (full mode)');
+  console.log('the studio boots with these instruments');
   const { open } = await import('./pw.js');
   const { page, errors, close } = await open('/app/');
   try {
-    for (const id of IDS) {
-      const r = await page.evaluate(async (id) => {
-        const { getDevice } = await import('/app/src/devices/registry.js');
-        const { checkDevice, summarize } = await import('/app/src/kernel/check.js');
-        await import('/app/src/devices/builtin/index.js');
-        const rep = await checkDevice(getDevice(id));
-        return { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), voices: rep.voices, worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed };
-      }, id);
-      t.ok(r.ok, `${id}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);
-      t.ok(!r.warnings.length, `${id}: no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
-      t.ok(!(r.failed && r.failed.length), `${id}: every param at min and max renders (worst raw peak ${r.worst} dBFS)`);
-    }
+    await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
     const mine = errors.filter((e) => /devices\/builtin\/(piano|organ|strings|bassguitar)/.test(e));
     t.ok(!mine.length, `no page errors from these instruments${mine.length ? ': ' + mine.join(' | ') : ''}`);
   } finally { await close(); }

@@ -43,7 +43,7 @@ export function clickSamples(sr, accent = false) {
 // The sticks: two hickory sticks clicked together over the kit. A crack of seeded noise (no Math.random: the count is
 // the same knock in Node and in the page) rings two stiff wooden partials and a hollow under them, and it's over in a
 // few tens of ms. Same peaks as the click (-6 dBFS, the bar -3), and over its first 50 ms, above 1.5 kHz, within a dB
-// or so of it: tools/liveroom/checks-input.js measures both. Every sample comes from adds and multiplies on numbers
+// or so of it: test/unit/liveroom-lamps.test.js measures both. Every sample comes from adds and multiplies on numbers
 // fixed once per call, so Node and Chromium make it bit for bit.
 export const STICKS = { beat: 0.5, bar: 0.71, f: 2650, fBar: 2800, ms: 60 };
 

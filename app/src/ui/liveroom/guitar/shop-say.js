@@ -1,7 +1,7 @@
 // @ts-check
 // What the shop says on the talkback [ui; the guitar room's SHOP stream]: the engineer behind the glass (CLAUDE.md
 // "Copy"; docs/BRAND.md): what was done, then what changed, then the number. House lines, unsigned. Each is a function
-// of its vars; tools/liveroom/checks-shop.js holds every one to the talkback's rules (checks-copy.js: no never-says
+// of its vars; test/unit/guitar-shop.test.js holds every one to the talkback's rules (checks-copy.js: no never-says
 // word, two sentences at most, nothing broken) with SAMPLE's vars.
 //
 //   SAY.<id>(vars) -> string        SAMPLE.<id>: vars to check it with

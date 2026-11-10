@@ -6,8 +6,8 @@
 // its latency is the one it declares; MIX 0 is the clean sound however hard DRIVE pushes; SOFT and TAPE make fewer
 // high harmonics than HARD on the same push; renders repeat. The master: with master.clip 'clean' a -1.1 dBFS peak
 // comes out at -1.1 (the soft clip's curve puts it at -1.36), a sample over full scale is held at 1.0, and Red Line at
-// -1 dBTP is the master's last word; absent, every old song keeps its soft clip. In Chromium (QUIET): the device check
-// passes at the defaults and on every preset. The browser agreeing with Node on the clean master is golden-test's
+// -1 dBTP is the master's last word; absent, every old song keeps its soft clip. The device check (checkDeviceNode, in a child process)
+// passes at the defaults and on every preset; Chromium (QUIET) boots the studio with no page errors. The browser agreeing with Node on the clean master is golden-test's
 // (scene master-clean).
 //   node tools/clipper-test.js
 import { open, tally } from './pw.js';
@@ -109,25 +109,25 @@ console.log('the master');
   ok(Math.abs(db(at(Math.pow(10, -1.1 / 20))) + 1.36) < 0.02, `the soft clip itself is unchanged: -1.1 dBFS in, ${db(at(Math.pow(10, -1.1 / 20))).toFixed(2)} out (what every song without master.clip still gets)`);
 }
 
-console.log('the device check (Chromium)');
+console.log('the device check (a child process)');
+const chk = await (async () => {
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const d = getDevice('core.clipper');
+  const r0 = await checkDeviceNode(d, {});
+  const pre = [];
+  for (const pr of d.presets) {
+    const pd = { ...d, id: 'core.clipper-preset', params: d.params.map((p) => ({ ...p, def: pr.params[p.key] ?? p.def })) };
+    const r = await checkDeviceNode(pd, { quick: true });
+    pre.push({ name: pr.name, ok: r.ok, errors: r.errors, tp: r.truePeak, dLU: r.level?.deltaLU, cpu: r.cpu?.pct });
+  }
+  return { ok: r0.ok, errors: r0.errors, warnings: r0.warnings, dLU: r0.level?.deltaLU, tp: r0.truePeak, cpu: r0.cpu?.pct, det: r0.deterministic, pre };
+})();
+  ok(chk.ok && Math.abs(chk.dLU) <= 0.1 && chk.det, `the device check passes at the defaults: ${chk.dLU} LU, ${chk.tp} dBTP, deterministic, ${chk.cpu}% of real time${chk.errors.length ? ': ' + chk.errors.join(' | ') : ''}`);
+  ok(chk.pre.every((x) => x.ok), `...and on every preset (${chk.pre.map((x) => `${x.name} ${x.dLU} LU, ${x.cpu}%`).join('; ')})${chk.pre.filter((x) => !x.ok).map((x) => ` ${x.name}: ${x.errors.join(' | ')}`).join(';')}`);
+console.log('the studio boots, in Chromium');
 const { page, close, errors } = await open('/app/', { query: 'new' });
 try {
   await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
-  const chk = await page.evaluate(async () => {
-    const { checkDevice } = await import('/app/src/kernel/check.js');
-    const reg = await import('/app/src/devices/registry.js');
-    const d = reg.getDevice('core.clipper');
-    const r0 = await checkDevice(d, {});
-    const pre = [];
-    for (const pr of d.presets) {
-      const pd = { ...d, id: 'core.clipper-preset', params: d.params.map((p) => ({ ...p, def: pr.params[p.key] ?? p.def })) };
-      const r = await checkDevice(pd, { quick: true });
-      pre.push({ name: pr.name, ok: r.ok, errors: r.errors, tp: r.truePeak, dLU: r.level?.deltaLU, cpu: r.cpu?.pct });
-    }
-    return { ok: r0.ok, errors: r0.errors, warnings: r0.warnings, dLU: r0.level?.deltaLU, tp: r0.truePeak, cpu: r0.cpu?.pct, det: r0.deterministic, pre };
-  });
-  ok(chk.ok && Math.abs(chk.dLU) <= 0.1 && chk.det, `the device check passes at the defaults: ${chk.dLU} LU, ${chk.tp} dBTP, deterministic, ${chk.cpu}% of real time${chk.errors.length ? ': ' + chk.errors.join(' | ') : ''}`);
-  ok(chk.pre.every((x) => x.ok), `...and on every preset (${chk.pre.map((x) => `${x.name} ${x.dLU} LU, ${x.cpu}%`).join('; ')})${chk.pre.filter((x) => !x.ok).map((x) => ` ${x.name}: ${x.errors.join(' | ')}`).join(';')}`);
   ok(!errors.filter((e) => !/Failed to load resource|favicon|net::ERR|AudioContext/.test(e)).length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
 } finally {
   await close();

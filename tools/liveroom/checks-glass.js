@@ -1,17 +1,13 @@
 // The live room's checks: the glass [stream C] (docs/research/LIVE-ROOM-MODE.md §3.15, §7.5, §11.6). Run by
 // tools/liveroom-test.js (ONLY=glass), whose header says what a checks module exports.
 //
-// Node: what the room reads back from the control room (ui/liveroom/view.js snapshot and readBack), each change in
-// words with its author.
+// (What the room reads back from the control room, ui/liveroom/view.js: test/unit/liveroom-glass.test.js.)
 // Muted Chromium: G both ways, the console ledge, Control room → and the studio's 40 px Live room key; going through
 // leaves History as it was, the studio doesn't paint under the room (ui.covered) and the room's frame doesn't run
 // behind the glass; a finish previewed as G goes down is released and the part it started stops; an edit made in the
 // control room is said on the way back, signed when an agent made it. The song is
 // the metal club's as the door makes it (core/liveroom/plans.js planPlace, places.js setupOf).
 
-import { createStore } from '../../app/src/core/store.js';
-import { createProject } from '../../app/src/core/project.js';
-import { planPlace } from '../../app/src/core/liveroom/plans.js';
 import { openRoom, history, press } from './harness.js';
 
 export const name = 'glass';
@@ -30,29 +26,6 @@ const TAKE = [
 ];
 
 export async function run(T, ctx) {
-  /* ---------------------------------------------------------------------------------------- the read-back, in Node */
-  {
-    const { snapshot, readBack } = await import('../../app/src/ui/liveroom/view.js');
-    const s = createStore(createProject({ tempo: 120 }));
-    s.dispatch(planPlace(s.get(), { place: 'metal' }).ops, { by: 'you' });
-    const L = s.get().tracks.find((t) => t.name === 'Guitar L').id;
-    s.dispatch(TAKE.map((o) => (o.track === '$L' ? { ...o, track: L } : o)), { by: 'you', label: 'Verse take 1' });
-    const snap = snapshot(s.get());
-    const at = s.history.length;
-    const bass = s.get().tracks.find((t) => t.name === 'Bass').id;
-    s.dispatch({ type: 'track.set', track: bass, patch: { gain: -2 } }, { by: 'mcp:test', label: 'bass up' });
-    s.dispatch({ type: 'track.add', track: { name: 'Synth', kind: 'instrument', instrument: { device: 'core.poly', params: {} } } }, { by: 'mcp:test', label: 'a synth' });
-    s.dispatch({ type: 'section.set', section: 's_glassv', patch: { name: 'Riff' } }, { by: 'you', label: 'rename' });
-    s.dispatch({ type: 'project.set', patch: { tempo: 140 } }, { by: 'you' });
-    const back = readBack(snap, s.get(), s.history.slice(at));
-    const by = Object.fromEntries(back.changes.map((c) => [c.kind, c]));
-    T.ok(by.level?.text === 'the bass came up 2 dB' && by.level.by === 'mcp:test' && by.track?.text === 'a synth track came in' && by.track.by === 'mcp:test' && by.rename?.text === 'verse is called riff now' && by.rename.by === 'you',
-      `the read-back: each change in words with its author (${back.changes.map((c) => `"${c.text}" by ${c.by}`).join('; ')})`);
-    T.ok(json(back.tempo) === json({ bpm: 140, was: 132 }) && back.meter === null, `the tempo moved after takes is named with what the takes were played at (${json(back.tempo)})`);
-    const quiet = readBack(snapshot(s.get()), s.get(), []);
-    T.ok(!quiet.changes.length && !quiet.tempo && !quiet.meter, 'nothing changed, nothing to say');
-  }
-
   if (!ctx.pages) return;
   /* ---------------------------------------------------------------------------------------- the glass, muted Chromium */
   const s = await openRoom('/app/?room', { name: 'glass' });

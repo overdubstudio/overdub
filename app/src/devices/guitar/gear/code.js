@@ -6,7 +6,7 @@
 // share names freely. Nothing runs at import: gear/index.js calls evaluate() once, with Overdub's clock, song key and
 // live context, and the devices (../pedals.js, ../amps.js, ../rigs.js) wrap what it returns. docs/PEDALS.md says how a
 // pack works. Every worklet it builds from a string is also a file in worklets/, byte for byte (WORKLETS, below;
-// tools/guitar-test.js checks the two agree): change both together.
+// test/unit/guitar-gear.test.js checks the two agree): change both together.
 /* eslint-disable */
 // (the live rules, Overdub's: no value curve on a live context, one read of the clock: devices/kit.js, docs/DEVICES.md)
 import { isOffline as pfxOffline, cosineRamp as pfxRamp, LEAD as PFX_LEAD, softReach as pfxSoftReach } from '../../kit.js';

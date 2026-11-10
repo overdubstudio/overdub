@@ -1,6 +1,6 @@
 // @ts-check
 // The soundcheck's readings [ui; stream A] (docs/research/LIVE-ROOM-MODE.md §3.3, §8): what the lamps
-// (ui/liveroom/soundcheck.js) make of the input, pure, so Node checks them (tools/liveroom/checks-input.js).
+// (ui/liveroom/soundcheck.js) make of the input, pure, so Node checks them (test/unit/liveroom-lamps.test.js).
 //
 //   levelVerdict(db) -> 'clip' | 'hot' | 'ok' | 'quiet' | null      a peak (dBFS) against the green, −18 to −6
 //   tuningsFor(midi, tunings) -> [{ id, name }]   the tunings whose open low string is that note (the standard and drop

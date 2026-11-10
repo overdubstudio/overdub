@@ -29,7 +29,8 @@ of overdub-devices at the pinned commit. The preview can still be deployed from 
 
 `DRY_RUN=1` before a script prints what it would do and calls nothing: `DRY_RUN=1 deploy/deploy.sh --skip-tests`,
 `DRY_RUN=1 deploy/deploy.sh --skip-tests --next HEAD~1`, `DRY_RUN=1 deploy/relay/deploy.sh`,
-`DRY_RUN=1 deploy/analytics/setup.sh`. `tools/analytics-test.js` runs them dry with a stub `aws` and checks the plans.
+`DRY_RUN=1 deploy/analytics/setup.sh`. `test/unit/deploy-sites.test.js` runs `deploy/analytics/setup.sh` dry with a stub `aws` and checks the plan;
+`tools/analytics-test.js` runs the whole dry `deploy/deploy.sh` (live and `--next`).
 
 ## The live site
 
@@ -177,7 +178,8 @@ node --test "test/unit/*.test.js"    # unit tests, what CI runs (seconds)
 
 A push to `main` (a merge) whose tests pass is deployed to the preview by its `deploy-staging` job; you can also start
 the workflow by hand on `main` (Actions › ci › Run workflow), which runs the tests and then deploys. CI doesn't run the
-integration suites (browsers, servers, renders), so run `node tools/run-all.js` locally before merging.
+integration suites (browsers, servers, renders): `.github/workflows/suites.yml` runs those on the Mac mini for every
+push to a branch, as the check `suites` that `main` requires.
 The deploy signs in to AWS with GitHub's OIDC token, never a stored key, as a role that can write the preview's bucket
 invalidate its distribution and read the stems model, and nothing else.
 `infra/next/github.tf` holds the role and GitHub's identity provider; `deploy_branches` names the branches whose runs
@@ -193,9 +195,10 @@ browser storage).
 SHA, a tag or `main`; empty is main's head). Two jobs.
 
 **e2e**, first, on Peter's self-hosted Mac mini (`ghastly`, labels `self-hosted, macOS, ARM64, overdub-e2e`): it
-resolves the ref the same way (a commit on main), then runs the whole end-to-end suite, `node tools/run-all.js` one
-suite at a time (`PAR=1`, so the real-time checks have the machine to themselves), the browsers, renders and real-time
-checks GitHub's shared macOS runners are too slow for. It sets itself up each run (Node from `mise.toml`, the kits with
+resolves the ref the same way (a commit on main), then runs the whole end-to-end suite, `node tools/run-all.js` three
+suites at a time (a suite that holds to the wall clock runs again alone if it fails, `REAL_TIME` in
+`tools/suite-status.js`; any other failure stops the deploy the first time, and so does a browser that won't launch),
+the browsers, renders and real-time checks GitHub's shared macOS runners are too slow for. It sets itself up each run (Node from `mise.toml`, the kits with
 their downloads kept in `~/Library/Caches/overdub-kits`, playwright-core and its browsers), so the machine needs nothing
 but the runner. It holds no AWS role, no environment and no secret; a failed run keeps its screenshots as the `e2e-out`
 artifact. A self-hosted runner must never take a job an outsider can start: the repo is public, so a fork's pull request
@@ -209,7 +212,8 @@ ref is main's head, which may have moved in between). It:
    deployment branches are main only, so a run started from another branch never gets that far;
 2. checks that commit is on main again, then checks it out, and checks out overdub-devices (private) with the
    environment's read-only deploy key, `OVERDUB_DEVICES_DEPLOY_KEY`, for the community shelf;
-3. builds the sampled kits (`node tools/fetch-kits.js`, with ci.yml's cache) and installs playwright-core and its
+3. builds the sampled kits (`node tools/fetch-kits.js`: each one the site already serves, held to its pinned SHA-256,
+   so the deploy doesn't wait on the upstream servers they were built from) and installs playwright-core and its
    headless Chromium for the check, before any AWS credentials exist in the job;
 4. signs in to AWS as `overdub-live-deploy-github` with GitHub's OIDC token and runs `deploy/deploy.sh --skip-tests <sha>`;
 5. runs `node tools/prod-check.js` against https://overdubstudio.com, or the distribution's cloudfront.net name before

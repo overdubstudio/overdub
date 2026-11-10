@@ -4,218 +4,73 @@
 // set or a pitched part, never a tapped beat), and a hum moved into the key says so, with Undo. Fresh eyes 6: the
 // tuner over a played guitar phrase (cents only once a note settles; nothing under the low string), and monitoring
 // with no audio track (said once, then it waits and wires itself when one appears).
+// (YIN, the played-guitar tuner, the sloppy-human timing, monitoring, hum, tap, latency, capture and MIDI-input Node
+// checks now live in test/unit/input.test.js and input-timing.test.js, the tuner's strings and tunings in tuner.test.js
+// and the strum calibration in calibrate.test.js; the plucked-string tuner sweep, seconds of Node, stays here.)
 //   node tools/input-test.js        (screenshots: tools/.out/input-*.png)
 import { open, tally, OUTDIR } from './pw.js';
 import path from 'node:path';
 import fs from 'node:fs';
-import { yin, ftom, segment, frames, createPitchTracker } from '../app/src/input/pitch.js';
-import * as PITCH from '../app/src/input/pitch.js';
-import { phrase, render as renderVoice, makePhrase, scoreNotes } from './hum-bench.js';
-import v8 from 'node:v8';
-import vm from 'node:vm';
-import { hear, transcribe, guessKey, keyChosen } from '../app/src/input/hum.js';
-import { beatbox, toDrums, onsets } from '../app/src/input/tap.js';
-import { onset, xcorr, chirp, hits, median } from '../app/src/input/latency.js';
-import * as LAT from '../app/src/input/latency.js';
+import { median } from '../app/src/input/latency.js';
 import { noteName } from '../app/src/core/music.js';
-import { createCapture } from '../app/src/input/capture.js';
-import { createStore } from '../app/src/core/store.js';
-import { createProject } from '../app/src/core/project.js';
-import { snapGentle, fitHits, fitSegs, tightness, blend, placeTake, leanOf } from '../app/src/input/timing.js';
-import { newPartFor } from '../app/src/core/sounds.js';
-import { clickSamples } from '../app/src/engine/click.js';
-import { renderSong } from '../app/src/engine/node/render.js';
-import { perform, sloppyHum, rng, } from './sloppy.js';
+import { createPitchTracker, segment } from '../app/src/input/pitch.js';
+import { render as renderVoice, makePhrase } from './hum-bench.js';
+import { SR, workletScope, RIFF2, session, restoreWorkletNode } from '../test/unit/_tape-kit.js';
 
 const T = tally('input');
-let seed = 12345;
-const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+const AUDIOIN = await import('../app/src/input/audioin.js');
 
-/* ------------------------------------------------------------------ YIN */
+// Wall clock, in Node: the checks of input/pitch.js and the rolling tape that compare a time to a limit. They are timed
+// here and not in test/unit because this runner retries a suite alone when load made it fail; test/unit has no retry.
 {
-  let worst = 0, worstAt = 0;
-  for (const sr of [44100, 48000]) {
-    for (let m = 33; m <= 81; m++) { // A1 .. A5
-      const hz = 440 * 2 ** ((m - 69) / 12), b = new Float32Array(4096);
-      for (let i = 0; i < b.length; i++) b[i] = 0.4 * Math.sin((2 * Math.PI * hz * i) / sr + 0.7) + 0.12 * Math.sin((4 * Math.PI * hz * i) / sr);
-      const y = yin(b, sr, { lo: 40 });
-      const c = y.hz ? Math.abs(ftom(y.hz) - m) * 100 : 999;
-      if (c > worst) { worst = c; worstAt = m; }
-    }
+  // hum live: 128-sample blocks, decoded every 240 ms, under 2 ms of work per 10 ms frame
+  const au = renderVoice(makePhrase(4, { seed: 5 }));
+  const tr = createPitchTracker({ sr: au.sr });
+  const t0 = performance.now();
+  for (let i = 0; i < au.x.length; i += 128) {
+    tr.push(au.x.subarray(i, Math.min(au.x.length, i + 128)));
+    tr.trace();
+    if ((i / 128) % 90 === 0) { tr.decode(); segment(tr.frames); }
   }
-  T.ok(worst < 5, `YIN A1..A5 (49 notes, 44.1 and 48 kHz) within 5 cents (worst ${worst.toFixed(2)}¢ at ${noteName(worstAt)})`);
-  const noise = new Float32Array(4096); for (let i = 0; i < noise.length; i++) noise[i] = 0.3 * (rnd() - 0.5);
-  T.ok(yin(noise, 48000).hz === 0, 'YIN hears no pitch in noise (a breath)');
+  const usFrame = ((performance.now() - t0) * 1000) / tr.n;
+  T.ok(usFrame < 2000, `hum live: ${Math.round(usFrame)} µs of work per 10 ms frame, decodes included (${(usFrame / 100).toFixed(1)}% of real time)`);
+}
+{
+  // the rolling tape: a quantum in well under its time (60 µs of its 2.67 ms), a minute of audio rolled at a time
+  const sc = workletScope(SR);
+  const proc = sc.make(SR * 60);
+  proc.port.postMessage = () => {};
+  let seed = 3;
+  const blocks = Array.from({ length: 375 }, () => {
+    const q = new Float32Array(128);
+    for (let i = 0; i < 128; i++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; q[i] = (seed / 4294967296 * 2 - 1) * 0.3; }
+    return [[q]];
+  });
+  const roll = (n) => { for (let k = 0; k < n; k++) { proc.process(blocks[k % 375]); sc.scope.currentFrame += 128; } };
+  roll(20000); // (warm: compiled)
+  let best = Infinity;
+  for (let tries = 0; tries < 3; tries++) {
+    const t0 = process.hrtime.bigint();
+    roll(22500);
+    best = Math.min(best, Number(process.hrtime.bigint() - t0) / 22500 / 1000);
+  }
+  T.ok(best < 60, `the tape takes a quantum in well under its time (${best.toFixed(2)} µs of its ${((128 / SR) * 1e6).toFixed(0)}; limit 60)`);
+}
+{
+  // a minute of tape is read in slices: the page is never held up for long
+  const s = await session({ riff: RIFF2, passes: 13 });
+  let last = performance.now(), worst = 0, ticks = 0;
+  const iv = setInterval(() => { const n = performance.now(); worst = Math.max(worst, n - last); last = n; ticks++; }, 1);
+  const t0 = performance.now();
+  const sel = await s.tape.select();
+  const total = performance.now() - t0;
+  clearInterval(iv);
+  worst = Math.max(worst, performance.now() - last);
+  s.tape.stop();
+  restoreWorkletNode();
+  T.ok(sel.why === 'repeat' && ticks >= 4 && worst < total / 2, `a minute of tape is read in slices: ${ticks} timer ticks over ${total.toFixed(0)} ms, the longest wait ${worst.toFixed(1)} ms`);
 }
 
-/* ------------------------------------------------------------------ playing in time is hard: what capture makes of it
-   (capture-timing, AJ 2026-10-05: "it's not that the timings are off, it's that it's just HARD to do in time"). Every
-   check plays a sloppy human (tools/sloppy.js: jittered, drifting, rushed taps; a hum with sloppy onsets, let go
-   early) and asks whether what they meant comes out. */
-{
-  const exact = (notes, want) => { const a = new Set(notes.map((n) => `${n.p}@${n.t}`)), b = new Set(want.map((w) => `${w.p}@${w.want}`)); return a.size === b.size && [...b].every((k) => a.has(k)); };
-  // 1. against the click: the forgiving grid (an eighth when near one, else a sixteenth) against the old hard sixteenths.
-  // A beat meant on eighths, played with a 40 ms rush and 30 ms of jitter at 120 BPM: where did each hit go?
-  {
-    const spb = 0.5;
-    let hard = 0, soft = 0, n = 0;
-    for (let sd = 1; sd <= 40; sd++) {
-      const takes = perform([[0, 36], [0.5, 42], [1, 38], [1.5, 42], [2, 36], [2.5, 42], [3, 38], [3.5, 42]], { bpm: 120, jitter: 0.02, rush: { 36: 0.04, 38: 0.04, 42: 0.04 }, seed: sd, start: 0 });
-      for (const h of takes) { const b = h.t / spb; n++; if (Math.abs(Math.round(b / 0.25) * 0.25 - h.want) < 1e-9) hard++; if (Math.abs(snapGentle(b) - h.want) < 1e-9) soft++; }
-    }
-    T.ok(soft / n >= 0.97 && soft > hard, `against the click, every hit rushed 40 ms with 20 ms of slop on top at 120 BPM: ${Math.round((100 * soft) / n)}% of hits land where they were meant (hard sixteenths: ${Math.round((100 * hard) / n)}%)`);
-    const pick = [0.25, 0.75, 1.25, 3.75].map((b) => snapGentle(b + 0.02));
-    T.ok(pick.join() === '0.25,0.75,1.25,3.75', `and a sixteenth played on purpose stays a sixteenth (${pick.join(', ')})`);
-  }
-  // 1b. a steady lean (the capture review, 2026-10-05: a player who waits to hear the click, 85 to 180 ms late, put
-  // every hit on an "and" or a sixteenth, 0 of 8 right, and a rusher 3 of 8). 40 takes of each player, 2 bars at 120
-  // BPM, kick 1 and 3, snare 2 and 4, and the same with eighth hats over it: the take's one lean out, then the gentle grid
-  {
-    const BEAT = Array.from({ length: 8 }, (_, b) => [b, b % 2 ? 38 : 36]), HATS = Array.from({ length: 16 }, (_, e) => [e / 2, 42]);
-    const players = {
-      'waits for the click (120 ms late, 30 ms of slop)': (r) => () => 120 + 30 * r.gauss(),
-      'rushes (95 ms early)': (r) => () => -95 + 30 * r.gauss(),
-      'drags (0 to 130 ms late over the take)': (r) => (b) => (b / 8) * 130 + 20 * r.gauss(),
-      '180 ms late': (r) => () => 180 + 25 * r.gauss(),
-      'steady (18 ms of slop)': (r) => () => 18 * r.gauss(),
-    };
-    const lines = [];
-    let worst = 1, oldBest = 0;
-    for (const [pat, pn] of [[BEAT, 'K/S'], [[...BEAT, ...HATS], 'K/S and hats']]) {
-      for (const [name, mk] of Object.entries(players)) {
-        let ok = 0, old = 0, n = 0;
-        for (let sd = 1; sd <= 40; sd++) {
-          const f = mk(rng(sd)), hits = pat.map(([b, p]) => ({ p, b: b + f(b) / 500, want: b }));
-          const pl = placeTake(hits, { coarse: 0.5, fine: 0.25 }, { from: 0 });
-          hits.forEach((h, i) => { n++; if (Math.abs(pl.t[i] - h.want) < 1e-9) ok++; if (Math.abs(snapGentle(h.b) - h.want) < 1e-9) old++; });
-        }
-        lines.push(`${pn}, ${name}: ${Math.round((100 * ok) / n)}% (was ${Math.round((100 * old) / n)}%)`);
-        worst = Math.min(worst, ok / n);
-        if (!/steady/.test(name)) oldBest = Math.max(oldBest, old / n);
-      }
-    }
-    T.ok(worst >= 0.9 && oldBest < 0.8, `against the click, a player off by a steady amount: the take's lean comes out and the hits land where they were meant (${lines.join('; ')})`);
-    // what it must leave alone: hats on the "and"s on time, a kick on 1 and 3 with the snare on 2-and and 4-and, a lean
-    // under 40 ms; and a nervous start (the first kick and snare 230 ms late) goes on its beats
-    const ands = placeTake(HATS.filter(([b]) => b % 1).map(([b, p]) => ({ p, b: b + 0.02 })), { coarse: 0.5, fine: 0.25 });
-    const sync = [[0, 36], [1.5, 38], [2, 36], [3.5, 38], [4, 36], [5.5, 38], [6, 36], [7.5, 38]].map(([b, p]) => ({ p, b: b + 0.24, want: b }));
-    const syncP = placeTake(sync, { coarse: 0.5, fine: 0.25 }, { from: 0 });
-    const small = leanOf(BEAT.map(([b, p]) => ({ p, b: b + 0.06 })));
-    const nerv = BEAT.map(([b, p], i) => ({ p, b: b + (i < 2 ? 0.46 : 0.01), want: b }));
-    const nervP = placeTake(nerv, { coarse: 0.5, fine: 0.25 }, { from: 0 });
-    T.ok(ands.lean === 0 && ands.t.every((x) => x % 1 === 0.5) && syncP.t.every((x, i) => x === sync[i].want) && Math.abs(syncP.lean - 0.24) < 0.03 && small.lean === 0 && nervP.t.every((x, i) => x === nerv[i].want) && nervP.opening === 2,
-      `and it leaves alone what was meant: hats on the "and"s stay there (lean ${ands.lean}), a syncopated snare 120 ms late keeps its "and"s (${syncP.t.join(' ')}), 30 ms is left to the grid (lean ${small.lean}); a nervous start, the first two hits 230 ms late, lands on its beats (${nervP.t.join(' ')})`);
-  }
-  // 2. free time, taps: the grid follows the human. 40 takes of each, every one sloppy in its own way
-  const runs = [
-    ['a rock beat, kick snare and eighth hats, 96 BPM, 25 ms of slop', [[0, 36], [0, 42], [0.5, 42], [1, 38], [1, 42], [1.5, 42], [2, 36], [2, 42], [2.5, 42], [3, 38], [3, 42], [3.5, 42]], { bpm: 96 }, 96],
-    ['the same, slowing 8% as it goes, 30 ms of slop', [[0, 36], [0, 42], [0.5, 42], [1, 38], [1, 42], [1.5, 42], [2, 36], [2, 42], [2.5, 42], [3, 38], [3, 42], [3.5, 42]], { bpm: 96, jitter: 0.03, drift: -0.08 }, 92.2],
-    ['kick and snare at 80, the snare rushed 50 ms', [[0, 36], [1, 38], [2, 36], [3, 38]], { bpm: 80, bars: 4, rush: { 38: 0.05 } }, 80],
-    ['rushing 10% at 120, eighth hats, 25 ms of slop', [[0, 36], [0.5, 42], [1, 38], [1.5, 42], [2, 36], [2.5, 42], [3, 38], [3.5, 42]], { bpm: 120, bars: 4, jitter: 0.025, drift: 0.1 }, 126],
-    ['syncopated, sparse: kick 1, snare 2-and, kick 3-and, snare 4', [[0, 36], [1.5, 38], [2.5, 36], [3, 38]], { bpm: 100 }, 100],
-    ['half time at 70: a kick and a snare a bar', [[0, 36], [2, 38]], { bpm: 70, bars: 4 }, 70],
-    ['four taps, one bar', [[0, 36], [1, 38], [2, 36], [3, 38]], { bpm: 100, bars: 1 }, 100],
-  ];
-  const lines = [];
-  let allOk = true;
-  for (const [name, pat, o, want] of runs) {
-    let ok = 0, tempoOk = 0;
-    for (let sd = 1; sd <= 40; sd++) {
-      const hits = perform(pat, { ...o, seed: sd * 7 + 3 });
-      const f = fitHits(hits.map((h) => ({ t: h.t, p: h.p, v: 0.8 })));
-      if (f && exact(f.notes, hits)) ok++;
-      if (f && Math.abs(f.bpm / want - 1) < 0.04) tempoOk++;
-    }
-    lines.push(`${name}: ${ok}/40 exact, tempo within 4% in ${tempoOk}/40`);
-    if (ok < 36 || tempoOk < 36) allOk = false;
-  }
-  T.ok(allOk, `free time: the tempo and the downbeat come from the taps, and the beat they meant comes out (${lines.join('; ')})`);
-  {
-    let ok = 0;
-    const pat = [[0, 36], [1, 36], [2, 36], [3, 36], [3.75, 38], [4, 36], [5, 36], [6, 36], [7, 36], [7.75, 38], [8, 36]];
-    for (let sd = 1; sd <= 40; sd++) { const hits = perform(pat, { bpm: 100, bars: 1, bpb: 9, jitter: 0.02, seed: sd * 7 + 3 }); const f = fitHits(hits.map((h) => ({ t: h.t, p: h.p, v: 0.8 }))); if (f && exact(f.notes, hits)) ok++; }
-    // (the hardest case: a hit 150 ms before the next, on a count of 600 ms steps; a kick 60 ms early runs into it)
-    T.ok(ok >= 30, `free time: a sixteenth pickup into the bar, on a count in quarters, with 20 ms of slop: the whole take comes out as meant in ${ok}/40`);
-  }
-  // 3. free time, a hum: sung (the hum-bench voice), onsets up to 60 ms off, notes let go early; heard, then counted.
-  // And the capture review's phrase (a rest after an eighth pair): at 120 BPM with 60 ms of slop it came back at 75 BPM
-  // in sixteenths
-  {
-    const MEL2 = [[64, 1], [67, 1], [69, 0.5], [67, 0.5, 1], [64, 1], [62, 1], [60, 2]];
-    let ok2 = 0, n2 = 0;
-    for (const tempo of [80, 100, 120]) for (let sd = 1; sd <= 9; sd++) {
-      const h = sloppyHum(MEL2, { tempo, sloppy: 0.06, seed: sd }), fit = fitSegs(hear(h.x, h.sr).segs);
-      n2++;
-      if (fit && fit.starts.join() === h.want.map((w) => w.beat).join() && Math.abs(fit.bpm / tempo - 1) < 0.04) ok2++;
-    }
-    T.ok(ok2 >= 25, `free time, the review's hummed phrase (an eighth pair, then a rest) with 60 ms of slop at 80, 100 and 120 BPM: the rhythm and the tempo sung come out in ${ok2}/${n2} (it was 20)`);
-  }
-  {
-    const MEL = [[60, 1], [64, 1], [67, 0.5], [69, 0.5, 1], [67, 1], [64, 0.5], [62, 0.5], [60, 2]];
-    let ok = 0, n = 0, tempoOk = 0;
-    const misses = [];
-    for (const tempo of [80, 100, 120]) for (let sd = 1; sd <= 8; sd++) {
-      const h = sloppyHum(MEL, { tempo, sloppy: 0.06, seed: sd });
-      const { segs } = hear(h.x, h.sr);
-      const fit = fitSegs(segs);
-      n++;
-      if (!fit) { misses.push(`${tempo}/${sd}: no pulse`); continue; }
-      const res = transcribe(segs, { tempo: fit.bpm, gentle: true, place: (g, i) => ({ t: fit.starts[i], e: fit.ends[i], tr: fit.raws[i] }) });
-      const got = res.notes.map((x) => `${x.p}@${x.t}`).join(' '), want = h.want.map((w) => `${w.m}@${w.beat}`).join(' ');
-      if (got === want) ok++; else misses.push(`${tempo}/${sd}`);
-      if (Math.abs(fit.bpm / tempo - 1) < 0.04) tempoOk++;
-    }
-    T.ok(ok >= 20 && tempoOk >= 20, `free time, a sloppy hum (onsets up to 60 ms off, notes let go early) at 80, 100 and 120 BPM: the rhythm sung comes out in ${ok}/${n}, the tempo within 4% in ${tempoOk}/${n}${misses.length ? ` (not: ${misses.join(', ')})` : ''}`);
-  }
-  // 4. a hum against the click: each note placed by the beat it was sung against, gently; one sung in the count-in
-  // keeps its place before the take (the recorder leaves it out) instead of stacking on beat 1
-  {
-    const r = rng(9), spb = 0.6, beats = [0, 1, 2, 2.5, 3, 4, 5.5, 6];
-    const segs = beats.map((b, i) => { const t0 = 2 + b * spb + (r() * 2 - 1) * 0.06; return { t0, t1: t0 + 0.4, midi: 60 + i, db: -20, conf: 0.9, cents: 0 }; });
-    const res = transcribe(segs, { tempo: 100, origin: 2, originBeat: 0, gentle: true, clampStart: false, key: null });
-    T.ok(res.notes.map((x) => x.t).join() === beats.join(), `against the click, sung up to 60 ms off at 100 BPM, every note lands on the beat it was meant for (${res.notes.map((x) => x.t).join(', ')})`);
-    const early = [{ t0: 1.0, t1: 1.3, midi: 60, db: -20, conf: 0.9 }, { t0: 1.3, t1: 1.6, midi: 64, db: -20, conf: 0.9 }, { t0: 2.0, t1: 2.5, midi: 67, db: -20, conf: 0.9 }];
-    const inTake = transcribe(early, { tempo: 100, origin: 2, originBeat: 0, gentle: true, clampStart: false }), old = transcribe(early, { tempo: 100, origin: 2, originBeat: 0 });
-    T.ok(inTake.notes.filter((x) => x.t < 0).length === 2 && old.notes.every((x) => x.t <= 0.25), `notes sung in the count-in keep their place before the take (${inTake.notes.map((x) => x.t).join(', ')}), where they used to stack on beat 1 (${old.notes.map((x) => x.t).join(', ')})`);
-  }
-  // 5. Tight, Loose, As played
-  T.ok(tightness('tight') === 1 && tightness('loose') === 0.5 && tightness('played') === 0 && blend(1.08, 1, 0.5) === 1.04 && blend(1.08, 1, 0) === 1.08, 'the take\'s timing: Tight is where the grid put it, Loose half way back, As played where it was played');
-  // 6. where a take goes when there is no track for it: the ux-instruments rule (docs/INSTRUMENTS-UX.md 1.2)
-  const np = [newPartFor('hum', { tracks: [] }), newPartFor('hum', { tracks: [{ name: 'Melody' }] }), newPartFor('pads', { tracks: [] }), newPartFor('keys', { tracks: [] })];
-  T.ok(np.map((x) => `${x.name}:${x.device}`).join() === 'Melody:core.keys,Melody 2:core.keys,Drums:core.drums,Keys:core.keys', `a new idea is a new track: ${np.map((x) => `${x.name} (${x.device})`).join(', ')}`);
-  // 7. the track made for a take and the take are one undo step (store.dispatch join)
-  {
-    const st = createStore();
-    const a = st.dispatch({ type: 'track.add', ref: 't', track: { name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} } } }, { by: 'you', label: 'add Drums' });
-    const b = st.dispatch({ type: 'clip.add', track: a.created.t, clip: { kind: 'notes', start: 0, length: 4, notes: [{ p: 36, t: 0, d: 0.25, v: 0.8 }] } }, { by: 'you', label: 'record Drums', join: a.txn.id });
-    const n1 = st.history.length;
-    st.undo();
-    T.ok(b.ok && n1 === 1 && st.history.length === 0 && st.get().tracks.length === 0 && st.history.length === 0, `the track made for a take and the take are one undo step (${n1} in History; one undo leaves ${st.get().tracks.length} tracks)`);
-  }
-  // 8. the click, measured: a wood-block knock against Gobo Kit as the Node renderer plays it. Over each hit's first
-  // 50 ms, above 1.5 kHz (where a click is heard over a kit), and in full
-  {
-    const sr = 48000, w = Math.round(0.05 * sr);
-    const db = (x) => 20 * Math.log10(Math.max(1e-9, x));
-    const hp = (x) => { const a = Math.exp((-2 * Math.PI * 1500) / sr); let y = new Float32Array(x.length), px = 0, py = 0; for (let i = 0; i < x.length; i++) { py = a * (py + x[i] - px); px = x[i]; y[i] = py; } const z = new Float32Array(x.length); px = 0; py = 0; for (let i = 0; i < y.length; i++) { py = a * (py + y[i] - px); px = y[i]; z[i] = py; } return z; };
-    const rms = (x, a, b) => { let s2 = 0; for (let i = a; i < b; i++) s2 += x[i] * x[i]; return Math.sqrt(s2 / Math.max(1, b - a)); };
-    const peak = (x) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
-    const beat = clickSamples(sr, false), bar = clickSamples(sr, true);
-    const p = createProject();
-    p.tempo = 120;
-    p.tracks = [{ id: 't1', name: 'Drums', kind: 'instrument', instrument: { device: 'core.drums', params: {} }, clips: [{ id: 'c1', kind: 'notes', start: 0, length: 4, notes: [{ p: 36, t: 0, d: 0.25, v: 0.8 }, { p: 38, t: 1, d: 0.25, v: 0.8 }] }] }];
-    const kit = await renderSong(p, { from: 0, to: 4, sr, tail: 0.3 });
-    const L = kit.channels[0], R = kit.channels[1] || L, mono = new Float32Array(L.length);
-    for (let i = 0; i < L.length; i++) mono[i] = (L[i] + R[i]) / 2;
-    const H = hp(mono), kick = { all: db(rms(mono, 0, w)), hi: db(rms(H, 0, w)) }, snare = { all: db(rms(mono, sr * 0.5, sr * 0.5 + w)), hi: db(rms(H, sr * 0.5, sr * 0.5 + w)) };
-    const cb = { pk: db(peak(beat)), all: db(rms(beat, 0, w)), hi: db(rms(hp(beat), 0, w)) }, cB = { pk: db(peak(bar)), hi: db(rms(hp(bar), 0, w)) };
-    const f1 = (x) => x.toFixed(1);
-    T.ok(Math.abs(cb.pk + 6) < 0.2 && Math.abs(cB.pk + 3) < 0.2 && cb.hi > snare.hi - 2.5 && cB.hi > snare.hi + 2 && cb.hi > kick.hi + 10,
-      `the click is heard over a beat: it peaks at ${f1(cb.pk)} dBFS (the bar ${f1(cB.pk)}); above 1.5 kHz over 50 ms it reads ${f1(cb.hi)} dB (the bar ${f1(cB.hi)}) against Gobo Kit's snare ${f1(snare.hi)} and kick ${f1(kick.hi)} (in full: ${f1(cb.all)} against ${f1(snare.all)} and ${f1(kick.all)}; the old sine blip was -26.2 in full, -35.2 above 1.5 kHz)`);
-  }
-}
-
-/* ------------------------------------------------------------------ the tuner over a played guitar (fresh eyes 6) */
 // A plucked string, made of its harmonics (so its pitch is exact): a pluck's comb on them, the high ones dying first.
 function pluck(buf, sr, midi, t0, dur, { cents = 0, amp = 0.25, rng }) {
   const f = 440 * 2 ** ((midi - 69 + cents / 100) / 12), a = Math.round(t0 * sr), b = Math.min(buf.length, a + Math.round(dur * sr));
@@ -248,42 +103,6 @@ function guitarTake(sr, kinds) {
   return { buf: out, parts };
 }
 const E2 = 440 * 2 ** ((40 - 69) / 12), FRET22 = 440 * 2 ** ((86 - 69) / 12);   // a guitar's range in standard tuning
-{
-  // The tracker on its own: a held A2 that jumps to E3. While the pitch has moved and the held note hasn't caught up,
-  // the reading isn't settled and has no cents (main measured the E3 against the held A2: 700 cents sharp).
-  const tr = PITCH.createTracker(), seen = [];
-  for (let i = 0; i < 20; i++) seen.push({ ...tr.push({ t: i * 0.04, hz: i < 10 ? 110 : 164.814, conf: 0.9 }) });
-  const off = seen.filter((x) => x.cents != null && Math.abs(x.cents) > 50).map((x) => x.cents);
-  const last = seen[seen.length - 1];
-  T.ok(!off.length && seen.some((x) => x.p === 45 && !x.stable) && last.p === 52 && last.stable && last.cents === 0,
-    `tracker: a held A2 that jumps to E3 is never measured against the A2 (${off.length ? 'cents ' + off.join(', ') : 'no cents past ±50'}), reads unsettled while it moves, then settles on E3 (${last.p}, ${last.cents} cents)`);
-
-  // The tuner as audio.tune({ lo, hi }) runs it, over a played phrase: the open strings, a lick, chord stabs. (Main had
-  // no range and no createTuner: YIN down to 38 Hz into the tracker, which is what this falls back to there.)
-  const sr = 48000, { buf, parts } = guitarTake(sr, ['open', 'lick', 'chords']);
-  const tuner = PITCH.createTuner ? PITCH.createTuner({ lo: E2, hi: FRET22 }) : (() => {
-    const tr2 = PITCH.createTracker(), y = {};
-    return { push: (b, r, t) => { yin(b, r, { lo: 38, hi: 1400, out: y }); const x = tr2.push({ t, hz: y.hz, conf: y.conf }); return x.p ? { p: x.p, cents: x.cents, stable: x.stable } : null; } };
-  })();
-  const win = new Float32Array(4096), reads = [];
-  for (let t = 0.1; t * sr < buf.length; t += 0.04) {
-    const e = Math.round(t * sr);
-    for (let i = 0; i < win.length; i++) { const j = e - win.length + i; win[i] = j >= 0 ? buf[j] : 0; }
-    const r = tuner.push(win, sr, t), at = parts.find((x) => t >= x.t0 && t < x.t1 + 0.05);
-    if (r) reads.push({ ...r, t, at });
-  }
-  const opens = parts.filter((x) => x.kind === 'open').map((x) => {
-    const mid = reads.filter((r) => r.at === x && r.t > x.t0 + 0.3 && r.t < x.t1 - 0.1);
-    return { name: noteName(x.m), ok: mid.length >= 10 && mid.every((r) => r.stable && r.p === x.m && Math.abs(r.cents - x.c) <= 2), cents: mid.length ? mid[mid.length >> 1].cents : null };
-  });
-  T.ok(opens.every((x) => x.ok), `tuner: each open string reads its note and cents once settled (${opens.map((x) => `${x.name} ${x.cents}`).join(', ')}; the G was tuned 15 cents flat)`);
-  const loud = reads.filter((r) => r.cents != null && (Math.abs(r.cents) > 50 || !r.stable));
-  T.ok(!loud.length && reads.some((r) => r.at?.kind === 'lick' && r.stable) && reads.some((r) => r.cents == null),
-    `tuner: cents only once a note has settled, never past ±50, through the lick's changes too (${loud.length ? loud.slice(0, 4).map((r) => `${noteName(r.p)} ${r.cents} at ${r.t.toFixed(2)} s`).join(', ') : 'none past ±50 or unsettled'})`);
-  const low = reads.filter((r) => r.p < 40), chordSettled = reads.filter((r) => r.at?.kind === 'chord' && r.stable);
-  T.ok(!low.length && !chordSettled.length, `tuner: with a guitar's range nothing reads under the low E, and nothing settles during the A7, D7, E7 and A5 (${low.length ? low.slice(0, 3).map((r) => noteName(r.p)).join(', ') + ' under it; ' : ''}${chordSettled.length} settled readings on chords)`);
-}
-
 /* ------------------------------------------------------------------ Getting started's tuner, on plucked strings (the guitar room) */
 // input/tuner.js across a guitar's and a bass's range, at 48 and 96 kHz: Karplus-Strong strings (tools/strings.js) with a
 // known pitch, 13 cents flat, through a bridge pickup (which thins a low string's fundamental), read the way
@@ -336,333 +155,6 @@ function readTuner(buf, sr, tuning, until) {
       `tuner, ${k}: ${NOTES.length} strings E1 to E4 (drop C's C2, a seven-string's B1, drop A, a bass's E1) 13 cents flat: the note named within ${ms(mx(R.named))} ms of the pluck, within 3 cents within ${ms(mx(R.settle))} ms, then off by ${f1(med(R.errs))} cents at the median and ${f1(mx(R.errs))} at worst (${R.errs.length} readings; ${R.wrong} wrong notes; ${R.flick} strings whose shown cents flickered)`);
   }
 }
-{
-  // the strings, read in turn: each tuning's open strings, plucked one after another, name themselves
-  const sr = 48000, bad = [];
-  for (const id of ['standard', 'drop-d', 'd-standard', 'drop-c', 'b-standard', 'drop-b', 'drop-a', '7-standard', '7-drop-a']) {
-    const t = TUN.TUNER_TUNINGS[id], at0 = 0.5, len = at0 + t.strings.length * 1.0 + 1, buf = new Float32Array(Math.round(len * sr));
-    t.strings.forEach((m, i) => { const s = STR.string(m, { sr, dur: 0.95, at: at0 + i, len, peak: -14, seed: 11 + i, hum: -62 }); for (let j = 0; j < buf.length; j++) buf[j] += s.buf[j]; });
-    const reads = readTuner(buf, sr, id, len);
-    t.strings.forEach((m, i) => {
-      const mid = reads.filter((x) => x.t > at0 + i + 0.12 && x.t < at0 + i + 0.5 && x.r.live);
-      const ok = mid.length >= 5 && mid.every((x) => x.r.p === m && x.r.string?.open === m && x.r.string?.number === t.strings.length - i);
-      if (!ok) bad.push(`${id} string ${t.strings.length - i}: ${mid.slice(0, 2).map((x) => `${x.r.note}${x.r.octave} as ${x.r.string?.name}`).join(', ') || 'nothing'}`);
-    });
-  }
-  T.ok(!bad.length, `tuner: nine tunings' open strings (E standard to a seven-string's drop A), plucked in turn, each read as its note on its own string${bad.length ? '; wrong: ' + bad.slice(0, 4).join('; ') : ''}`);
-  // the low string names the tuning, and the strings heard settle it
-  const low = [36, 35, 33].map((m) => `${noteName(m)}: ${TUN.tuningsFromLow(m).map((x) => x.name).join(' or ')}`);
-  const g = (hs) => TUN.guessTuning(hs)[0]?.id;
-  T.ok(TUN.tuningsFromLow(36)[0].id === 'drop-c' && g([35, 42]) === 'drop-b' && g([35, 40, 45, 50, 54]) === 'b-standard' && g([35, 40, 45, 50, 55]) === '7-standard' && g([36, 43]) === 'drop-c' && g([36, 41]) === 'c-standard',
-    `tuner: a low string asks which tuning (${low.join('; ')}), and the strings heard after it settle it (B then F♯: drop B; B E A D F♯: B standard; B E A D G: seven-string; C then G: drop C; C then F: C standard)`);
-}
-{
-  // a peg turned while the string rings (B1 from 40 cents flat up to pitch over two seconds): the reading follows it
-  const sr = 48000, s = STR.string(35, { sr, dur: 4, cents: -40, at: 0.5, bend: (t) => Math.min(40, Math.max(0, (t - 0.5) * 20)), peak: -12 });
-  const reads = readTuner(s.buf, sr, '7-standard', 5), half = TUN.windowFor(sr) / sr / 2;
-  const live = reads.filter((x) => x.r.live && x.r.settled);
-  const lag = Math.max(...live.map((x) => Math.abs((x.r.midi - 35) * 100 - (1200 * Math.log2(s.truth(x.t - half) / 440) + 6900 - 3500))));
-  const end = live.filter((x) => x.t > 3.3).map((x) => x.r.shown);
-  T.ok(lag <= 8 && end.length >= 5 && end.every((c) => c === 0), `tuner: a peg turned 20 cents a second while B1 rings is followed within ${lag.toFixed(1)} cents, and reads 0 once it stops (${[...new Set(end)].join(', ')})`);
-}
-{
-  // calibration: a strum along recorded (muted chops, each its own few ms late, one missed, one caught late) through
-  // latency.js's onsets and judgeTaps: the round trip it finds against the one played
-  const sr = 48000, beat = 0.6, t0 = 0.9, clicks = Array.from({ length: 8 }, (_, i) => t0 + i * beat), r = STR.rng(5);
-  const late = [0.004, 0.01, 0.0142, 0.0161, 0.0128, null, 0.0153, 0.0139], hitsAt = clicks.map((c, i) => (late[i] == null ? null : c + late[i]));
-  hitsAt[6] += 0.045; // (one strum caught on the way: 45 ms late)
-  const { buf } = STR.strum([40, 47, 52], hitsAt.filter((x) => x != null), { sr, len: t0 + 8 * beat + 0.6, peak: -12, mute: true });
-  for (let i = 0; i < buf.length; i++) buf[i] += (r() - 0.5) * 2e-4;
-  const hs = hits(buf, sr, clicks.map((c) => Math.round(c * sr)));
-  const j = LAT.judgeTaps(hs), want = median(late.slice(2).filter((x) => x != null)) * 1000;
-  T.ok(j.grade === 'good' && j.dropped != null && j.used === 4 && Math.abs(j.ms - want) <= 1 && j.confidence >= 0.8,
-    `calibration: a strum along with one missed and one 45 ms late finds ${j.ms.toFixed(1)} ms (played ${want.toFixed(1)}), the late one left out, ${j.grade} at ${Math.round(j.confidence * 100)}% sure`);
-}
-
-/* ------------------------------------------------------------------ monitoring by itself, and the feedback guard (AJ, fresh eyes 6) */
-// Monitoring starts by itself for an instrument interface or line input, never for a microphone: what an input is comes
-// from its name. Then the guard that turns monitoring off when a microphone hears itself through the speakers.
-const AUDIOIN = await import('../app/src/input/audioin.js');
-{
-  const kind = AUDIOIN.inputKind || (() => 'none');
-  const ifaces = ['Scarlett 2i2 USB', 'Microphone (Focusrite USB Audio)', 'UMC204HD 192k', 'Audient iD14', 'EVO4', 'Apogee Jam+', 'BOSS KATANA', 'HX Stomp', 'Line 6 POD Go', 'iRig HD 2', 'MOTU M2', 'Steinberg UR22C', 'Volt 2', 'SSL 2+', 'Line In (Realtek Audio)'];
-  const mics = ['MacBook Pro Microphone', 'Built-in Microphone', 'Default - MacBook Pro Microphone (Built-in)', 'Internal Microphone', 'FaceTime HD Camera', 'Logitech Webcam C920', 'AirPods Pro', "AJ's iPhone Microphone", 'Headset Microphone (Jabra EVOLVE 20)', 'Yeti Stereo Microphone', 'Default'];
-  const wrong = [...ifaces.filter((l) => kind(l, { channels: 2 }) !== 'interface'), ...mics.filter((l) => kind(l, { channels: 1 }) !== 'mic')];
-  const other = { def: kind('Default - Scarlett 2i2 USB', { channels: 2 }), loop: kind('BlackHole 2ch', { channels: 2 }), oneCh: kind('USB PnP Sound Device', { channels: 1, isDefault: true }) };
-  T.ok(!wrong.length && other.def === 'interface' && other.loop === 'virtual' && other.oneCh === 'mic',
-    `an input's kind from its name: ${ifaces.length} interfaces and line inputs, ${mics.length} microphones${wrong.length ? '; wrong: ' + wrong.join(', ') : ''}; the browser's default reads as its device, a loopback is virtual, an unnamed one-channel default is a microphone`);
-}
-{
-  // Feedback: a sine ringing up from -60 dBFS at 10-80 dB a second, alone or over a strummed guitar. Guitar playing:
-  // held notes decaying, a lick, chord stabs, volume swells, tremolo crescendos. (A lone howl trips within half a
-  // second of starting; one under strumming once it's as loud as the guitar.)
-  const sr = 48000, mk = (seed) => { let s = seed; return () => (s = (s * 16807) % 2147483647) / 2147483647; };
-  const noise = (b, rng) => { for (let i = 0; i < b.length; i++) b[i] += (rng() - 0.5) * 0.001; return b; };
-  const howl = (b, f, rate, t0) => { const a0 = Math.round(t0 * sr); let ph = 0; for (let i = a0; i < b.length; i++) { const db = Math.min(-3, -60 + (rate * (i - a0)) / sr); ph += (2 * Math.PI * f) / sr; b[i] += 10 ** (db / 20) * Math.SQRT2 * Math.sin(ph); } return b; };
-  const strums = (b, rng) => { for (let k = 0; k < 9; k++) [40, 47, 52, 56, 59, 64].forEach((m, i) => pluck(b, sr, m, 0.2 + k * 0.7 + i * 0.012, 0.69, { amp: 0.12, rng })); return b; };
-  const swell = (m, len, rng) => { const b = new Float32Array(sr * 3); pluck(b, sr, m, 0.2, 2.6, { amp: 0.3, rng }); for (let i = 0; i < b.length; i++) { const t = i / sr - 0.2; b[i] *= t < 0 ? 0 : Math.min(1, (t / len) ** 2); } return b; };
-  const tremolo = (m, rng) => { const b = new Float32Array(sr * 4.5); for (let k = 0; k < 40; k++) pluck(b, sr, m, 0.2 + k * 0.1, 0.12, { amp: 0.02 + k * 0.006, rng }); return b; };
-  const listen = (b) => {
-    if (!AUDIOIN.createFeedbackGuard) return { at: null, ms: 0 };
-    const g = AUDIOIN.createFeedbackGuard(), win = new Float32Array(4096);
-    let ms = 0, n = 0;
-    for (let t = 0.1; t * sr < b.length; t += 0.05) {
-      const e = Math.round(t * sr);
-      for (let i = 0; i < win.length; i++) { const j = e - win.length + i; win[i] = j >= 0 ? b[j] : 0; }
-      const t0 = performance.now(), hit = g.push(win, sr, t); ms += performance.now() - t0; n++;
-      if (hit) return { at: t, ms: ms / n };
-    }
-    return { at: null, ms: ms / n };
-  };
-  const feed = [], cost = [];
-  for (const f of [150, 440, 1250, 2700, 6000]) for (const rate of [10, 40, 80]) { const r = listen(noise(howl(new Float32Array(sr * 3), f, rate, 0.5), mk(f + rate))); cost.push(r.ms); feed.push({ name: `${f} Hz +${rate} dB/s`, at: r.at, ok: r.at != null && r.at - 0.5 <= 0.5 }); }
-  for (const f of [700, 2100]) { const r = listen(noise(howl(strums(new Float32Array(sr * 6.5), mk(f)), f, 40, 1.0), mk(f))); feed.push({ name: `${f} Hz +40 dB/s under strums`, at: r.at, ok: r.at != null }); }
-  const missed = feed.filter((x) => !x.ok), quickest = Math.min(...feed.filter((x) => x.at != null && !/strums/.test(x.name)).map((x) => x.at - 0.5));
-  T.ok(!missed.length && quickest >= 0.3 - 1e-6, `feedback guard: ${feed.length} howls (150 Hz to 6 kHz, 10 to 80 dB/s, two under a strummed guitar) all trip it, the lone ones within ${Math.max(...feed.filter((x) => !/strums/.test(x.name) && x.at != null).map((x) => x.at - 0.5)).toFixed(2)} s of starting and none before ${quickest.toFixed(2)} s${missed.length ? '; missed: ' + missed.map((x) => x.name).join(', ') : ''} (${(cost.reduce((a, b) => a + b, 0) / Math.max(1, cost.length)).toFixed(2)} ms a look)`);
-  const safe = [];
-  const rng = mk(11);
-  { const b = new Float32Array(sr * 17); [40, 50, 59, 69].forEach((m, i) => pluck(b, sr, m, 0.2 + i * 4, 4, { amp: 0.3, rng })); safe.push(['held notes, 4 s each, ringing out', b]); }
-  { const { buf } = guitarTake(sr, ['open', 'lick', 'chords']); safe.push(['the open strings, a lick, stabs', buf]); }
-  for (const m of [40, 52, 64, 76]) for (const len of [0.3, 1]) safe.push([`a swell on ${noteName(m)} over ${len} s`, swell(m, len, rng)]);
-  for (const m of [40, 55, 69, 81]) safe.push([`tremolo picking a crescendo on ${noteName(m)}`, tremolo(m, rng)]);
-  const tripped = safe.map(([name, b]) => ({ name, at: listen(noise(b, rng)).at })).filter((x) => x.at != null);
-  T.ok(AUDIOIN.createFeedbackGuard && !tripped.length, `feedback guard: ${safe.length} kinds of guitar playing never trip it (held notes decaying, a lick, chord stabs, volume swells, tremolo crescendos)${tripped.length ? '; tripped: ' + tripped.map((x) => `${x.name} at ${x.at.toFixed(2)} s`).join(', ') : ''}`);
-}
-
-/* ------------------------------------------------------------------ hum: a synthetic, untrained voice */
-function sing(mel, { sr = 48000, bpm = 100, vibrato = 0.45, glide = 0.07, drift = 0.15, breath = true, legatoRepeat = true } = {}) {
-  const spb = 60 / bpm;
-  let tot = 0.4; const sched = [];
-  for (const [m, b, g = 0] of mel) { tot += g * spb; sched.push({ m, t0: tot, t1: tot + b * spb }); tot += b * spb; }
-  const N = Math.ceil((tot + 0.6) * sr), x = new Float32Array(N);
-  let ph = 0;
-  for (let i = 0; i < N; i++) {
-    const t = i / sr, k = sched.findIndex((s) => t >= s.t0 && t < s.t1);
-    let amp = 0, m = 60;
-    if (k >= 0) {
-      const s = sched[k], into = t - s.t0, left = s.t1 - t, prev = sched[k - 1];
-      m = s.m + drift * Math.sin(t * 0.7);
-      const joined = prev && Math.abs(prev.t1 - s.t0) < 1e-6;
-      if (joined && prev.m !== s.m && into < glide) m = prev.m + (s.m - prev.m) * (into / glide); // a slide into the note
-      if (into > 0.15) m += vibrato * Math.sin(2 * Math.PI * 5.5 * t) * Math.min(1, (into - 0.15) / 0.2);
-      amp = 0.3 * Math.min(1, into / 0.03) * Math.min(1, left / 0.04 + 0.5);
-      // a repeated note sung legato: only a short dip in level between the two syllables
-      if (legatoRepeat && joined && prev.m === s.m) amp *= Math.min(1, 0.15 + into / 0.035);
-    }
-    ph += (2 * Math.PI * 440 * 2 ** ((m - 69) / 12)) / sr;
-    x[i] = amp * (Math.sin(ph) + 0.4 * Math.sin(2 * ph) + 0.15 * Math.sin(3 * ph)) + 0.003 * (rnd() - 0.5);
-    if (breath && ((t > 0.05 && t < 0.3) || (sched[8] && t > sched[8].t0 - 0.25 && t < sched[8].t0 - 0.05))) x[i] += 0.06 * (rnd() - 0.5);
-  }
-  return { x, sched, sr, spb };
-}
-{
-  // A minor: two phrases, slides between notes, vibrato on the long ones, a breath between, and a repeated A sung legato
-  const mel = [[69, 1], [72, 0.5], [76, 0.5], [74, 1], [72, 0.5], [69, 0.5], [67, 1], [69, 1], [69, 1], [69, 0.5, 0.5], [71, 0.5], [72, 1], [64, 1]];
-  const s = sing(mel);
-  const t0 = performance.now();
-  const { segs } = hear(s.x, s.sr);
-  const ms = performance.now() - t0;
-  const want = mel.map(([m]) => m);
-  const got = segs.map((g) => g.p);
-  T.ok(JSON.stringify(got) === JSON.stringify(want), `hum: ${want.length} sung notes recovered through vibrato, slides, drift and breath (${got.map(noteName).join(' ')}) in ${Math.round(ms)} ms`);
-  const r = transcribe(segs, { tempo: 100, key: { root: 'A', scale: 'minor' }, origin: s.sched[0].t0 });
-  const wantT = s.sched.map((x) => Math.round(((x.t0 - s.sched[0].t0) / s.spb) * 4) / 4);
-  T.ok(r.notes.length === want.length && r.notes.every((n, i) => Math.abs(n.t - wantT[i]) < 1e-6), `hum: onsets quantised to the 16th grid at the song's tempo (${r.text.split(' ').slice(0, 5).join(' ')} …)`);
-  T.ok(r.moved.length === 0 && r.low === 0, 'hum: an in-tune, in-key take moves nothing and is sure of every note');
-  T.ok(guessKey(r.notes.map((n) => ({ p: n.p, d: n.d })))?.root === 'A', `hum: key guess from the notes is A (${r.keyGuess.root} ${r.keyGuess.scale})`);
-}
-{
-  // snapping: a flat singer (40 cents low on one note, a C#5 sung where A minor wants C or D) and a lazy rhythm
-  const mel = [[69, 1], [73.4, 1], [76, 1], [72, 1]];
-  const s = sing(mel, { vibrato: 0.2, drift: 0 });
-  const { segs } = hear(s.x, s.sr);
-  const key = { root: 'A', scale: 'minor' };
-  const snapped = transcribe(segs, { tempo: 100, key, snapKey: true, origin: s.sched[0].t0 });
-  const raw = transcribe(segs, { tempo: 100, key, snapKey: false, origin: s.sched[0].t0 });
-  T.ok(snapped.notes[1].p === 74 && snapped.moved.length === 1 && snapped.moved[0].from === 73, `snap to key: the off note (raw ${noteName(raw.notes[1].p)}) moves to ${noteName(snapped.notes[1].p)} and is reported (${snapped.moved.length} moved)`);
-  T.ok(raw.notes[1].p === 73 && raw.moved.length === 0, 'snap off: the note stays where it was sung');
-  // grid vs keep my timing: shift the take 70 ms late against its origin
-  const late = transcribe(segs, { tempo: 100, key, origin: s.sched[0].t0 - 0.07, grid: 0.5 });
-  const kept = transcribe(segs, { tempo: 100, key, origin: s.sched[0].t0 - 0.07, keepTiming: true });
-  T.ok(late.notes.every((n) => Math.abs(n.t / 0.5 - Math.round(n.t / 0.5)) < 1e-9), `grid 1/8: every start on the grid (${late.notes.map((n) => n.t).join(', ')})`);
-  T.ok(kept.notes.some((n) => Math.abs(n.t * 4 - Math.round(n.t * 4)) > 0.01), `keep my timing: starts stay off the grid (${kept.notes.map((n) => n.t).join(', ')})`);
-  const lowConf = segment(frames(new Float32Array(48000).map(() => 0.2 * (rnd() - 0.5)), 48000));
-  T.ok(lowConf.length === 0, 'hum: a breath alone makes no notes');
-}
-/* ------------------------------------------------------------------ hum: whose key it is (fresh eyes 5) */
-{
-  // After the first minute's tapped beat a hum came back in a key nobody picked ("E E G A" as "F F G A#", 13 moved
-  // into C minor): the drum hits counted as the song having a key. Only a key a person set, or a pitched part, counts.
-  const cmin = { root: 'C', scale: 'minor' };
-  const beat = { kind: 'instrument', name: 'Drums', instrument: { device: 'core.drums' }, clips: [{ kind: 'notes', notes: [{ p: 36, t: 0, d: 0.25, v: 0.8 }, { p: 38, t: 1, d: 0.25, v: 0.8 }] }] };
-  const tune = { kind: 'instrument', name: 'Keys', instrument: { device: 'core.keys' }, clips: [{ kind: 'notes', notes: [{ p: 60, t: 0, d: 1, v: 0.8 }] }] };
-  const take = { kind: 'audio', name: 'Audio', clips: [{ kind: 'audio', asset: 'a_x', start: 0, length: 8 }] };
-  const setKey = [{ ops: [{ type: 'project.set', patch: { key: cmin } }] }];
-  const got = { blank: keyChosen({ key: cmin, tracks: [] }), beat: keyChosen({ key: cmin, tracks: [beat] }), audio: keyChosen({ key: cmin, tracks: [take] }), tune: keyChosen({ key: cmin, tracks: [beat, tune] }), set: keyChosen({ key: cmin, tracks: [beat] }, setKey), other: keyChosen({ key: { root: 'A', scale: 'minor' }, tracks: [] }) };
-  T.ok(!got.blank && !got.beat && !got.audio, `a blank song's default C minor isn't a chosen key, and a tapped beat or an audio take doesn't make it one (${JSON.stringify(got)})`);
-  T.ok(got.tune && got.set && got.other, 'a pitched part, a key set by a person, or a key other than the default is the song\'s key');
-  // "13 moved" over 9 notes: what was moved is counted among the notes it became, not the ones that gave their step away
-  const seg = (midi, t0, t1, conf, db = -12) => ({ midi, p: Math.round(midi), t0, t1, conf, db, cents: 0 });
-  const r = transcribe([seg(60, 0, 0.45, 0.95), seg(61.1, 0.01, 0.1, 0.5), seg(67, 0.5, 0.95, 0.9)], { tempo: 120, key: cmin, origin: 0 });
-  T.ok(r.notes.length === 2 && r.moved.length === r.notes.filter((n) => n.moved != null).length, `moved notes are the ones in the take (${r.notes.length} notes, ${r.moved.length} moved; a C#4 that lost its step to C4 isn't one)`);
-  // a key heard in a hum is spelled the way it is written: Eb minor, not D# minor; Db major, not C# major
-  const ebm = guessKey([63, 65, 66, 68, 70, 71, 73, 75, 63, 66, 70].map((p) => ({ p, d: 1 })));
-  const dbM = guessKey([61, 63, 65, 66, 68, 70, 72, 73, 61, 65, 68].map((p) => ({ p, d: 1 })));
-  T.ok(ebm?.root === 'Eb' && ebm.scale === 'minor' && dbM?.root === 'Db' && dbM.scale === 'major', `a heard key's root is spelled as written (${ebm?.root} ${ebm?.scale}, ${dbM?.root} ${dbM?.scale})`);
-}
-
-/* ------------------------------------------------------------------ hum: the hard cases (voices from tools/hum-bench.js) */
-{
-  // a glottal-pulse voice through formants, with breath and room noise: the cases an untrained voice brings
-  const run = (ph) => { const au = renderVoice(ph); const { segs, frames: fr } = hear(au.x, au.sr); return { au, segs, fr, sc: scoreNotes(au.notes, segs) }; };
-  const got = (segs) => segs.map((g) => noteName(g.p)).join(' ');
-  // repeated notes sung legato, only a dip in level between them (no gap, no pitch change)
-  const rep = run(phrase([{ m: 62, beats: 1 }, { m: 62, beats: 0.5, dip: 10 }, { m: 62, beats: 0.5, dip: 8 }, { m: 62, beats: 1, dip: 12 }, { m: 64, beats: 1 }], { tempo: 96 }));
-  T.ok(rep.sc.tp === 5 && rep.segs.length === 5, `hum: three repeats split by a dip in level alone are four D4s, then E4 (${got(rep.segs)})`);
-  // a long note with a wide vibrato (±80 cents at 5 Hz): one note, and its pitch is the vibrato's centre
-  const vib = run(phrase([{ m: 57, beats: 4, vib: [5, 0.8] }, { m: 60, beats: 1 }], { tempo: 90, style: 'sung' }));
-  T.ok(vib.segs.length === 2 && vib.segs[0].p === 57 && Math.abs(vib.segs[0].cents) < 15, `hum: a 2.7 s note with ±80-cent vibrato is one A3 (${got(vib.segs)}, ${vib.segs[0]?.cents} cents)`);
-  // scoops: 2 semitones from below over 180 ms; the note starts where the scoop does and is the note it reaches
-  const sc = run(phrase([{ m: 60, beats: 1, scoop: [2, 0.18] }, { m: 64, beats: 1, scoop: [2.5, 0.16] }, { m: 67, beats: 1, gap: 0.5, scoop: [1.5, 0.15] }], { tempo: 100 }));
-  T.ok(sc.sc.tp === 3 && sc.segs.length === 3, `hum: notes scooped into from below are C4 E4 G4, onsets at the scoop (${got(sc.segs)}; ${sc.segs.map((g, i) => Math.round((g.t0 - sc.au.notes[i]?.t0) * 1000) + ' ms').join(', ')})`);
-  // a low hum through a laptop mic (the fundamental 15 dB down), with a period-doubled pulse: the right octave
-  const low = run(phrase([{ m: 45, beats: 1 }, { m: 43, beats: 1 }, { m: 41, beats: 1 }, { m: 40, beats: 2 }], { tempo: 90, range: 'bass', lowHum: true, fry: true }));
-  T.ok(low.sc.tp === 4 && low.sc.octave === 0, `hum: a low hum through a small mic, fry and all, stays in its octave (${got(low.segs)})`);
-  // drift: the singer sinks 40 cents across the phrase; the notes don't
-  const dr = run(phrase([60, 62, 64, 65, 67, 65, 64, 62, 60].map((m) => ({ m, beats: 1 })), { tempo: 110, drift: -0.4 }));
-  T.ok(dr.sc.tp === 9 && dr.segs.every((g) => Math.abs(g.cents) < 25), `hum: a phrase that sinks 40 cents lands on its nine notes (${got(dr.segs)}; drift taken off: ${dr.segs.map((g) => Math.round(g.tune * 100)).join(' ')} cents)`);
-  // room noise alone (30 dB under a voice that isn't there) makes no notes
-  const room = run({ ...phrase([{ m: 60, beats: 1 }], { room: 0 }), notes: [] });
-  T.ok(room.segs.length === 0, 'hum: room noise alone makes no notes');
-  // the bench in small: twelve generated phrases (three ranges, hummed and sung)
-  let tp = 0, nr = 0, ne = 0;
-  for (let i = 0; i < 12; i++) { const r = run(makePhrase(i, { seed: 5 })); tp += r.sc.tp; nr += r.sc.nRef; ne += r.sc.nEst; }
-  const f1 = (2 * tp) / (nr + ne);
-  T.ok(f1 >= 0.88, `hum: twelve generated phrases, note F1 ${(f1 * 100).toFixed(1)}% (onset ±80 ms, pitch ±50 cents; ${tp} of ${nr} notes, ${ne} heard)`);
-  // real time: fed in 128-sample blocks and decoded every 240 ms, the take ends as the offline one does
-  const au = renderVoice(makePhrase(4, { seed: 5 }));
-  const tr = createPitchTracker({ sr: au.sr });
-  let lastSegs = [];
-  const t0 = performance.now();
-  for (let i = 0; i < au.x.length; i += 128) { tr.push(au.x.subarray(i, Math.min(au.x.length, i + 128))); tr.trace(); if ((i / 128) % 90 === 0) { tr.decode(); lastSegs = segment(tr.frames); } }
-  const usFrame = ((performance.now() - t0) * 1000) / tr.n;
-  tr.decode(); lastSegs = segment(tr.frames);
-  const off = hear(au.x, au.sr).segs;
-  T.ok(JSON.stringify(lastSegs.map((g) => [g.p, Math.round(g.t0 * 100)])) === JSON.stringify(off.map((g) => [g.p, Math.round(g.t0 * 100)])), `hum live: 128-sample blocks, decoded as it goes, end on the offline notes (${lastSegs.length} notes)`);
-  T.ok(usFrame < 2000, `hum live: ${Math.round(usFrame)} µs of work per 10 ms frame, decodes included (${(usFrame / 100).toFixed(1)}% of real time)`);
-  // and the per-frame path allocates nothing: a warm tracker takes 4 s of audio without the heap growing
-  v8.setFlagsFromString('--expose-gc');
-  const gc = vm.runInNewContext('gc');
-  const tr2 = createPitchTracker({ sr: au.sr, chunk: 1024 });
-  tr2.push(au.x.subarray(0, 4096));
-  const blk = new Float32Array(128);
-  gc(); const h0 = process.memoryUsage().heapUsed;
-  for (let i = 4096; i + 128 <= 4096 + 4 * au.sr; i += 128) { blk.set(au.x.subarray(i % (au.x.length - 128), (i % (au.x.length - 128)) + 128)); tr2.push(blk); }
-  gc(); const grew = process.memoryUsage().heapUsed - h0;
-  T.ok(grew < 64 * 1024, `hum live: ${tr2.n} frames analysed with the heap moving ${(grew / 1024).toFixed(1)} KB (no allocation per frame)`);
-}
-
-/* ------------------------------------------------------------------ tap / beatbox */
-function drum(kind, sr, len = 0.25) {
-  const n = Math.round(len * sr), y = new Float32Array(n);
-  let lp = 0, hpPrev = 0;
-  for (let i = 0; i < n; i++) {
-    const t = i / sr;
-    if (kind === 'kick') { const f = 45 + 90 * Math.exp(-t / 0.03); y[i] = 0.9 * Math.exp(-t / 0.12) * Math.sin(2 * Math.PI * (45 * t + 90 * 0.03 * (1 - Math.exp(-t / 0.03)))); void f; }
-    else if (kind === 'snare') { const nz = rnd() * 2 - 1; lp += 0.35 * (nz - lp); y[i] = Math.exp(-t / 0.09) * (0.35 * Math.sin(2 * Math.PI * 190 * t) + 0.6 * lp + 0.25 * nz); }
-    else { const nz = rnd() * 2 - 1, hp = nz - hpPrev; hpPrev = nz; y[i] = 0.45 * Math.exp(-t / 0.03) * hp; }
-  }
-  return y;
-}
-{
-  const sr = 48000, bpm = 120, spb = 60 / bpm, pattern = ['kick', 'hat', 'snare', 'hat', 'kick', 'kick', 'snare', 'hat'];
-  const x = new Float32Array(Math.round((pattern.length * spb * 0.5 + 0.6) * sr));
-  pattern.forEach((k, i) => { const at = Math.round((0.2 + i * spb * 0.5) * sr), d = drum(k, sr); for (let j = 0; j < d.length && at + j < x.length; j++) x[at + j] += d[j] * (k === 'hat' ? 0.7 : 1); });
-  for (let i = 0; i < x.length; i++) x[i] += 0.002 * (rnd() - 0.5);
-  const hs = beatbox(x, sr);
-  T.ok(hs.length === pattern.length, `beatbox: ${hs.length} hits found for ${pattern.length} (no double triggers)`);
-  T.ok(hs.map((h) => h.row).join(' ') === pattern.join(' '), `beatbox: classified kick / snare / hat (${hs.map((h) => h.row).join(' ')})`);
-  const res = toDrums(hs, { tempo: bpm });
-  T.ok(res.notes.length === pattern.length && res.notes.every((n, i) => Math.abs(n.t - i * 0.5) < 1e-9), `beatbox → drums on the grid: ${JSON.stringify(res.grid.rows)}`);
-  T.ok(hs.every((h) => h.v > 0.3 && h.v <= 1) && hs.find((h) => h.row === 'hat').v < hs.find((h) => h.row === 'kick').v, 'beatbox: velocities follow loudness (the hats are softer)');
-  const taps = toDrums([{ t: 1, row: 'kick' }, { t: 1.26, row: 'hat' }, { t: 1.49, row: 'snare' }, { t: 1.52, row: 'snare', v: 1 }], { tempo: 120 });
-  T.ok(taps.notes.length === 3 && taps.notes[2].p === 38 && taps.notes[2].v === 1, 'taps: a double hit on one step merges (the louder wins)');
-  void onsets;
-}
-
-/* ------------------------------------------------------------------ latency math */
-{
-  const sr = 48000, x = new Float32Array(sr * 2), clicks = [Math.round(0.3 * sr), Math.round(0.9 * sr), Math.round(1.5 * sr)], delays = [0.0235, 0.025, 0.022];
-  for (let i = 0; i < x.length; i++) x[i] = 0.002 * (rnd() - 0.5);
-  clicks.forEach((c, k) => { const at = c + Math.round(delays[k] * sr); for (let j = 0; j < 2000; j++) x[at + j] += 0.6 * Math.exp(-j / 300) * (rnd() - 0.5); });
-  const hs = hits(x, sr, clicks);
-  const ok = hs.every((ms, k) => ms != null && Math.abs(ms - delays[k] * 1000) < 0.5);
-  T.ok(ok, `latency: strum onsets found within 0.5 ms (${hs.map((v) => v && v.toFixed(2)).join(', ')} ms; median ${median(hs).toFixed(2)})`);
-  const ref = chirp(sr), y = new Float32Array(sr), lag = 1234;
-  for (let i = 0; i < y.length; i++) y[i] = 0.01 * (rnd() - 0.5);
-  for (let j = 0; j < ref.length; j++) y[lag + j] -= 0.5 * ref[j]; // (a flipped interface)
-  const f = xcorr(ref, y, 0, Math.round(0.45 * sr));
-  T.ok(Math.abs(f.lag - lag) < 0.5 && f.ratio > 8 && f.sign === -1, `latency: loopback chirp found at ${f.lag.toFixed(2)} samples (want ${lag}), either polarity (ratio ${f.ratio.toFixed(1)})`);
-  T.ok(onset(new Float32Array(sr).map(() => 0.01 * (rnd() - 0.5)), sr, 0, sr) === -1, 'latency: no onset in plain noise');
-}
-
-/* ------------------------------------------------------------------ capture across a loop wrap (Node, a fake engine) */
-{
-  // loop beats 8-16: one note a beat at 12, 13, 14, 15, then (wrapped) 8.02, 9, 10, 11, with no gap. Every note is
-  // kept, in the order played, from the bar the phrase started in. With the engine's unwrapped grid, and without it.
-  const realNow = performance.now;
-  let clock = 1000;
-  performance.now = () => clock * 1000;
-  for (const grid of [true, false]) {
-    const eng = { playing: true, beat: 0, gridBeat: null };
-    const cap = createCapture({ store: createStore(), engine: eng }, { emit() {} });
-    const played = [12, 13, 14, 15, 8.02, 9, 10, 11];
-    played.forEach((b, i) => {
-      const u = 12 + i + (i >= 4 ? 0.02 : 0); // the grid keeps counting through the wrap
-      clock = 1000 + (u - 12) * 0.5; eng.beat = b; eng.gridBeat = grid ? u : undefined;
-      cap.noteOn('midi', 60 + i, 0.8);
-      clock += 0.25; eng.beat = b + 0.5; eng.gridBeat = grid ? u + 0.5 : undefined;
-      cap.noteOff('midi', 60 + i);
-    });
-    const ph = cap.flush();
-    const ts = ph.notes.map((n) => n.t);
-    T.ok(ph.notes.length === 8 && ph.beat === 12 && ts.every((t, i) => Math.abs(t - (i + (i >= 4 ? 0.02 : 0))) < 1e-3) && ph.notes.every((n) => Math.abs(n.d - 0.5) < 1e-3),
-      `capture keeps a phrase played across a loop wrap ${grid ? 'on the unwrapped grid' : 'without the grid (from the seconds)'}: ${ph.notes.length} of 8 notes, from beat ${ph.beat} (t ${ts.join(', ')})`);
-  }
-  performance.now = realNow;
-}
-
-/* ------------------------------------------------------------------ MIDI: choosing another input (Node, input/midi.js) */
-{
-  // A key (or the pedal) down on input A when B is chosen in the MIDI menu: A is no longer listened to, so its key's
-  // off (or its pedal's lift) can never arrive. The switch lets them go itself; nothing stays held.
-  const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator'), hadDoc = 'document' in globalThis;
-  const mkPort = (id) => ({ id, name: id, state: 'connected', onmidimessage: null });
-  const run = async (fn) => {
-    const A = mkPort('A'), B = mkPort('B'), calls = [];
-    Object.defineProperty(globalThis, 'navigator', { value: { requestMIDIAccess: async () => ({ inputs: new Map([['A', A], ['B', B]]) }) }, configurable: true, writable: true });
-    if (!hadDoc) globalThis.document = { addEventListener() {}, hidden: false };
-    try {
-      const { createMidi } = await import('../app/src/input/midi.js');
-      const input = { noteOn: (src, p) => calls.push(`on ${src} ${p}`), noteOff: (src, p) => calls.push(`off ${src} ${p}`), expr: (src, x) => calls.push(`expr ${src} ${JSON.stringify(x)}`), emit() {} };
-      const midi = createMidi({ ui: null }, input);
-      await midi.connect();
-      const send = (port, bytes) => port.onmidimessage && port.onmidimessage({ data: bytes });
-      await fn({ A, B, midi, send });
-      return { calls, sustain: midi.state.sustain };
-    } finally {
-      if (nav) Object.defineProperty(globalThis, 'navigator', nav); else delete globalThis.navigator;
-      if (!hadDoc) delete globalThis.document;
-    }
-  };
-  const key = await run(async ({ A, B, midi, send }) => { send(A, [0x90, 60, 100]); midi.setDevice('B'); send(A, [0x80, 60, 0]); send(B, [0x90, 62, 100]); send(B, [0x80, 62, 0]); });
-  T.ok(key.calls.includes('off midi:A 60') && key.calls.includes('off midi:B 62'), `MIDI: a key held on A when B is chosen is let go at the switch (${key.calls.join(', ')})`);
-  const ped = await run(async ({ A, B, midi, send }) => { send(A, [0xb0, 64, 127]); midi.setDevice('B'); send(A, [0xb0, 64, 0]); send(B, [0x90, 62, 100]); send(B, [0x80, 62, 0]); });
-  T.ok(!ped.sustain && ped.calls.includes('expr midi:A {"sustain":false}') && ped.calls.includes('off midi:B 62'), `MIDI: the pedal down on A when B is chosen is lifted at the switch, so B's notes end when let go (${ped.calls.join(', ')})`);
-  const all = await run(async ({ A, B, midi, send }) => { midi.setDevice(''); send(A, [0x90, 60, 100]); send(B, [0xb0, 64, 127]); midi.setDevice('B'); send(B, [0x90, 62, 100]); send(B, [0x80, 62, 0]); });
-  T.ok(all.calls.includes('off midi:A 60') && all.sustain && !all.calls.includes('off midi:B 62'), `MIDI: from every input to B alone, A's key is let go and B's own pedal stays down (${all.calls.join(', ')})`);
-}
-
 /* ------------------------------------------------------------------ the pedal across a change of track (the studio) */
 {
   // Pedal down on track A, a key played and let go (held by the pedal), track B selected, pedal up: the lift reaches A

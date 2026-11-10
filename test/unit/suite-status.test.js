@@ -1,7 +1,7 @@
 // tools/suite-status.js: what `node tools/run-all.js --post` may say about a commit.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CONTEXT, suiteStatus } from '../../tools/suite-status.js';
+import { CONTEXT, failureLines, suiteStatus } from '../../tools/suite-status.js';
 
 const SHA = 'a'.repeat(40);
 const pass = (file, oks = 10) => ({ file, code: 0, oks, fails: 0 });
@@ -59,4 +59,19 @@ test('a suite that passed when run again alone counts, and is named', () => {
   // one that failed again is a failure, retried or not
   const twice = suiteStatus({ results: [pass('studio-test.js'), { ...fail('jam-test.js'), retried: true }], sha: SHA });
   assert.deepEqual(twice, { ok: true, state: 'failure', description: '1 of 2 suites failed: jam' });
+});
+
+test('failureLines: a passing check that mentions errors never crowds out a FAIL', () => {
+  const noise = Array.from({ length: 20 }, (_, i) => `ok ${i}: no page errors`);
+  const out = [...noise, 'TypeError: late', '  FAIL the one that matters', 'ok after'].join('\n');
+  assert.deepEqual(failureLines(out), ['  FAIL the one that matters', 'TypeError: late']);
+});
+
+test('failureLines: FAIL lines come first and the list stops at the limit', () => {
+  const out = ['boom error', ...Array.from({ length: 15 }, (_, i) => `FAIL ${i}`)].join('\n');
+  const got = failureLines(out);
+  assert.equal(got.length, 12);
+  assert.equal(got[0], 'FAIL 0');
+  assert.ok(!got.includes('boom error'));
+  assert.deepEqual(failureLines('all fine\nok 1'), []);
 });

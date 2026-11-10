@@ -2,10 +2,7 @@
 // module, app/src/ui/liveroom/guitar/shop.js, says what it owns and its frozen API). Run by tools/liveroom-test.js
 // (ONLY=shop), whose header says what a checks module exports. The seams it shares with the other streams are
 // checks-guitar.js's.
-//   Node: the catalogue (the amp wall holds every amp once, in its tone's section; the pedal case every pedal once, in
-//     its drawer); a carried amp keeps your cab and mics and comes in at its measured level; the house's stacks and
-//     the club's (rack-db get knows 'house.metal.club'); the shop's own words keep the talkback's rules
-//     (checks-copy.js)
+//   (the catalogue, a carried amp, a stack in words and the shop's own words: test/unit/guitar-shop.test.js)
 //   LEVELS: every amp carried onto the club's stack, rendered offline in muted Chromium with the metal DI fixtures,
 //     reads as the club's stack within 1 LU (shop-data.js AMP_TRIM; SHOP_PRINT=1 prints the measured table)
 //   muted Chromium: the shop through the door, the wall in five sections with name plates and the case in drawers;
@@ -25,53 +22,7 @@ const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : String(x));
 
 export async function run(T, ctx) {
   const D = await import('../../app/src/ui/liveroom/guitar/shop-data.js');
-  const { getDevice, listDevices } = await import('../../app/src/devices/registry.js');
-  const { CLUB_STACK } = await import('../../app/src/core/liveroom/guitar/setup.js');
-
-  /* ---------------------------------------------------------------------------------------- Node */
-  {
-    const secs = D.ampsBySection();
-    const onWall = secs.flatMap((s) => s.amps.map((d) => d.id));
-    const amps = listDevices({ cat: 'amp' }).filter((d) => d.id.startsWith('amp.')).map((d) => d.id);
-    const missing = amps.filter((id) => !onWall.includes(id));
-    const twice = onWall.filter((id, i) => onWall.indexOf(id) !== i);
-    const wrong = secs.flatMap((s) => s.amps.filter((d) => D.toneOf(d) !== s.tone).map((d) => d.id));
-    T.ok(!missing.length && !twice.length && !wrong.length && onWall.includes('core.stack'), `the amp wall holds every amp once, in its tone's section, the Half Stack with the high-gain heads (${secs.map((s) => `${s.label} ${s.amps.length}`).join(', ')})${missing.length ? ': missing ' + missing.join(' ') : ''}${twice.length ? ': twice ' + twice.join(' ') : ''}`);
-    const cats = D.pedalsByCat();
-    const inCase = cats.flatMap((c) => c.pedals.map((d) => d.id));
-    const pedals = listDevices({ kind: 'effect' }).filter((d) => d.id.startsWith('pedal.')).map((d) => d.id);
-    const lost = pedals.filter((id) => !inCase.includes(id));
-    T.ok(!lost.length && inCase.length === pedals.length, `the pedal case holds every pedal once, in its drawer (${cats.map((c) => `${c.word} ${c.pedals.length}`).join(', ')}; ${inCase.length} of ${pedals.length})${lost.length ? ': not in a drawer ' + lost.join(' ') : ''}`);
-    const club = CLUB_STACK.chain.find((l) => l.device === 'amp.recto');
-    const meg = D.carriedAmp('amp.metal', club);
-    const yours = { device: 'amp.recto', params: { cab: 7, mic: 1, micpos: 0.5, micdist: 3, micang: 0 } }, meg2 = D.carriedAmp('amp.metal', yours);
-    const keep = ['cab', 'mic', 'micpos', 'micdist', 'micang'].every((k) => meg2.params[k] === yours.params[k]) && !('cab' in meg.params) && !('mic' in meg.params);
-    const lv = D.carryLevel('amp.metal');
-    const hs = D.carriedAmp('core.stack', club);
-    T.ok(keep && meg.params.level === lv.value && meg.on && !('gain' in meg.params) && !('cab' in hs.params) && hs.params.level === D.carryLevel('core.stack').value,
-      `a carried amp keeps the cab and mics you chose (Megalodon from a Kraken on cab ${yours.params.cab}: cab ${meg2.params.cab}), comes onto its own default off the club's (${D.cabOf(meg).cabName}) and in at its measured level, its own knobs at their defaults (MASTER ${lv.value}; the Half Stack: LEVEL ${hs.params.level} dB)`);
-    const said = D.describeStack(CLUB_STACK.chain);
-    T.ok(/^Kraken on a Modern 4x12, close dynamic, a noise gate and a treble booster in front$/.test(said), `a stack in a phrase: "${said}"`);
-    const cab = D.cabOf(club), des = D.cabOf(yours), bass = D.cabOf({ device: 'amp.whale', params: {} });
-    T.ok(cab.kind === 'clawd' && cab.cab === 'modern-close' && cab.measured && cab.def === 'modern-close' && cab.mic1 === null && cab.mic2 === null
-      && des.cab === 'v412' && !des.measured && des.mic1.type === 'ribbon' && des.mic1.pos === 0.5 && bass.cab === 'own' && bass.def === 'own' && !bass.measured && bass.mic1.type === 'dyn'
-      && D.MEASURED_CABS.length === 6 && D.cabOf({ device: 'core.stack', params: {} }).kind === 'stack',
-    `the cab builder reads the amp's own params, its default when none is set (Kraken: ${cab.cabName}, measured, no mic to place; on cab 7: ${des.cabName}, ${D.MICS[des.mic1.type].name} ${D.onCone(des.mic1.pos)}, ${D.inches(des.mic1.dist)}; Blue Whale: ${bass.cabName})`);
-    // the shop's own words keep the talkback's rules
-    const { SAY, SAMPLE } = await import('../../app/src/ui/liveroom/guitar/shop-say.js');
-    const { NEVER, sentences } = await import('./checks-copy.js');
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const NEVER_RE = Object.entries(NEVER).flatMap(([kind, words]) => words.map((w) => ({ kind, w, re: new RegExp(`(?<![\\p{L}\\p{N}])${esc(w).replace(/ /g, '\\s+')}(?:s|es)?(?![\\p{L}\\p{N}])`, 'iu') })));
-    const bad = [];
-    for (const [k, fn] of Object.entries(SAY)) {
-      let text;
-      try { text = fn(SAMPLE[k] || {}); } catch (e) { bad.push(`${k} throws: ${e.message}`); continue; }
-      for (const { kind, re } of NEVER_RE) { const m = text.match(re); if (m) bad.push(`${k} says "${m[0]}" (${kind})`); }
-      if (sentences(text) > 2) bad.push(`${k}: ${sentences(text)} sentences`);
-      if (/!|undefined|NaN|\[object|\s{2}/.test(text)) bad.push(`${k}: "${text}"`);
-    }
-    T.ok(!bad.length, `the shop's ${Object.keys(SAY).length} lines keep the talkback's rules (no never-says word, two sentences at most, nothing broken)${bad.length ? ': ' + bad.join('; ') : ''}`);
-  }
+  const { getDevice } = await import('../../app/src/devices/registry.js');
 
   if (!ctx.pages) return;
   /* ---------------------------------------------------------------------------------------- muted Chromium */

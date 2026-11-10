@@ -68,3 +68,85 @@ test('the check itself: what it refuses and what it lets through', () => {
   assert.deepEqual(check('on:\n  pull_request:\njobs:\n  a:\n    runs-on: ubuntu-latest\n'), []);
   assert.throws(() => check(`name: x\n${job}`), /no top-level on/);
 });
+
+// A step's default shell is `bash -e`, without pipefail, so `a | tee b` exits with tee's status: a failing `a` goes
+// green, the jobs that need it go ahead, and if: failure() steps never run. `shell: bash` (the explicit form) is
+// `bash --noprofile --norc -eo pipefail {0}`, which is what a step piping into tee must say.
+function maskedTees(yml) {
+  const lines = yml.split('\n').filter((l) => !/^\s*#/.test(l));
+  const steps = lines
+    .join('\n')
+    .split(/^\s*- (?=name:|uses:|run:|id:)/m)
+    .slice(1);
+  return steps
+    .filter((s) => /\|\s*tee\b/.test(s) && !/^\s*shell: bash\s*$/m.test(s) && !/pipefail/.test(s))
+    .map((s) => /name: (.+)/.exec(s)?.[1] ?? s.split('\n')[0]);
+}
+
+test('no step lets tee hide the failure of what it pipes', () => {
+  for (const f of fs.readdirSync(WORKFLOWS).filter((n) => /\.ya?ml$/.test(n)))
+    assert.deepEqual(
+      maskedTees(fs.readFileSync(path.join(WORKFLOWS, f), 'utf8')),
+      [],
+      `${f}: steps that mask a failure`,
+    );
+});
+
+test('the tee check itself: what it refuses and what it lets through', () => {
+  const step = (extra) =>
+    `steps:\n  - name: suite\n    ${extra}run: node a.js | tee -a out\n  - name: next\n    run: ls\n`;
+  assert.deepEqual(maskedTees(step('')), ['suite']);
+  assert.deepEqual(maskedTees(step('shell: bash\n    ')), []);
+  assert.deepEqual(maskedTees(step('shell: bash -eo pipefail {0}\n    ')), []);
+  assert.deepEqual(maskedTees('steps:\n  - name: a\n    run: |\n      set -o pipefail\n      x | tee y\n'), []);
+  assert.deepEqual(maskedTees('steps:\n  - name: a\n    run: |\n      x | tee y\n'), ['a']);
+  // a comment is not a step, and a shell on the next step doesn't cover this one
+  assert.deepEqual(maskedTees('steps:\n  # x | tee y\n  - name: a\n    run: ls\n'), []);
+  assert.deepEqual(maskedTees('steps:\n  - name: a\n    run: x | tee y\n  - name: b\n    shell: bash\n    run: ls\n'), [
+    'a',
+  ]);
+});
+
+// run-all is what deploy-live waits for and it only picks up tools/*-test.js, so a unit test gates a deploy through this.
+test('a live deploy waits on the unit tests: run-all has a suite that runs them', () => {
+  const tools = path.join(path.dirname(WORKFLOWS), '../tools');
+  assert.ok(fs.readdirSync(tools).includes('unit-test.js'));
+  assert.match(fs.readFileSync(path.join(tools, 'unit-test.js'), 'utf8'), /test\/unit\/\*\.test\.js/);
+  assert.match(fs.readFileSync(path.join(WORKFLOWS, 'deploy-live.yml'), 'utf8'), /node tools\/run-all\.js/);
+});
+
+test('a live deploy fails on a browser that will not launch, rather than skipping it', () => {
+  const yml = fs.readFileSync(path.join(WORKFLOWS, 'deploy-live.yml'), 'utf8');
+  const step = yml.slice(yml.indexOf('- name: The end-to-end suite'), yml.indexOf('- name: Keep the screenshots'));
+  assert.match(step, /REQUIRE_ALL: '1'/);
+});
+
+// main's ruleset requires the check "suites": it is this workflow's job, run by itself for every push to a branch here,
+// and never from an event an outsider can cause (the check above) or a branch nobody has read
+test('the required check "suites" runs by itself on a push, on the Mac mini', () => {
+  const yml = fs.readFileSync(path.join(WORKFLOWS, 'suites.yml'), 'utf8');
+  assert.ok(selfHosted(yml), 'suites.yml runs on the self-hosted runner');
+  assert.deepEqual(triggers(yml).sort(), ['push', 'workflow_dispatch']);
+  const ignored = yml.slice(yml.indexOf('branches-ignore:'), yml.indexOf('workflow_dispatch:'));
+  assert.match(ignored, /- main\n/, 'main is left to deploy-live');
+  assert.match(
+    ignored,
+    /- 'dependabot\/\*\*'/,
+    'a Dependabot branch changes the actions: nothing runs it before it is read',
+  );
+  assert.match(yml, /\n {4}name: suites\n/, 'the job is named as the ruleset requires it');
+  assert.match(yml, /fetch-depth: 0/, 'the whole history: analytics-test deploys HEAD~1');
+  const step = yml.slice(yml.indexOf('- name: Every suite'), yml.indexOf('- name: Keep the screenshots'));
+  assert.match(step, /node tools\/run-all\.js/);
+  assert.match(step, /REQUIRE_ALL: '1'/);
+  // the token reads the code and nothing else
+  const perms = yml.slice(yml.indexOf('    permissions:'), yml.indexOf('    env:'));
+  assert.deepEqual(
+    perms
+      .trim()
+      .split('\n')
+      .slice(1)
+      .map((l) => l.trim()),
+    ['contents: read'],
+  );
+});

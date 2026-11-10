@@ -2,7 +2,7 @@
 // The takes' lines [copy; the guitar room's TAKES stream] (docs/BRAND.md "The live room"; docs/research/GUITAR-ROOM.md
 // §2.5-§2.8; design/mock/guitar-room/ for the words). What the house says through the talkback about takes and the part
 // line, one line each, in the engineer's voice: what went in, then what changed, then the number. Two sentences at most,
-// no exclamation mark, a real minus. tools/liveroom/checks-takes.js holds every line here to the room's copy rules
+// no exclamation mark, a real minus. test/unit/guitar-takes-lines.test.js holds every line here to the room's copy rules
 // (tools/liveroom/checks-copy.js breaks()), rendered both ways.
 //
 //   LINES: { [id]: { text(vars) -> string } }   the same shape as core/liveroom/lines/*.js; the room says them with

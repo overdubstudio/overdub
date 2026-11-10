@@ -216,7 +216,7 @@ file on the site, and an `<iframe srcdoc>` with a `data:` script, or a worklet f
 refused; the studio, library, gallery and landing page ask no host but the site for anything, and no policy names a
 font or style host), `brand-test` (each family loads from `/app/style/fonts/`, beside its licence), `pages-test` (the
 docs and press pages ask no other host), `provenance-test` (the report's fonts are the studio's own, inside it when
-saved), `guitar-test` (each guitar-gear worklet file is the source the pedals build, byte for byte), `relay-test`
+saved), `test/unit/guitar-gear.test.js` (each guitar-gear worklet file is the source the pedals build, byte for byte), `relay-test`
 (`?relay=`; the tab secret: the connector URL alone can't open the tab side, take its stream or answer a call, and the
 secret travels in a header, never a URL; `tools/list` is the catalog whatever a tab registers, and other names are
 refused; `relay-catalog.js --check`; errors that don't echo input, bounded batches and nesting; the caps and the rate

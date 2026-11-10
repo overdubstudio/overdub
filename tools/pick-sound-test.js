@@ -3,12 +3,12 @@
 // rest still run. QUIET: tools/pw.js open() launches Chromium with --mute-audio. The fake mic is tools/fake-wav.js's
 // (the hummed line AJ's repro uses, a 4-bar one, and a beatbox: noise bursts on the beat).
 //
-// Node, no browser:
+// Node, no browser (1-4 and the tool catalog's count are test/unit/pick-sound.test.js; 13's MCP listing stays here):
 //   1  kindOfTake: a hum is a hum in any register; bass, chords, drums
 //   2  soundsFor: the hum set, a missing device's fallback, the current sound first, no duplicate preset; every id and
 //      preset in SOUND_SETS is a real device
 //   3  newPartFor: Melody (Lamp Tines), then Melody 2
-//   4  the aim, simple view (in the page, with real commits): a hum with Drums selected makes a track, the next goes
+//   4  the aim, simple view (the real recorder and capture over a stub shell and engine): a hum with Drums selected makes a track, the next goes
 //      onto it; 'new' is one-shot; a newer selection wins; Onto Drums; pads onto the only kit; a stacked take and the
 //      "own track" offer; full studio: the armed track, 'new' disarms, arming clears the choice, no first-pitched fallback
 // Browser, ?view=simple, clean storage:
@@ -38,7 +38,7 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { open, tally, OUTDIR } from './pw.js';
-import { humWav, beatboxWav, HUM_NOTES } from './fake-wav.js';
+import { humWav, beatboxWav } from './fake-wav.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const T = tally('pick-sound');
@@ -53,85 +53,12 @@ const BEATBOX = beatboxWav(path.join(WAVS, 'beatbox.wav'));
 const HUM_KEY_PCS = new Set([0, 2, 4, 5, 7, 9, 11]);   // the hummed line is C major (or A minor): every pitch class in it
 
 /* ======================================================================== Node */
-const reg = await import('../app/src/devices/registry.js');
+await import('../app/src/devices/registry.js');
 await import('../app/src/devices/builtin/index.js');
 await import('../app/src/devices/library/index.js').catch(() => null);
-const sounds = await import('../app/src/core/sounds.js').catch((e) => ({ _missing: e.message }));
-const N = (spec) => spec.map(([p, t, d]) => ({ p, t, d, v: 0.8 }));
-const line = (ps) => N(ps.map((p, i) => [p, i, 0.9]));
 
-await section('1 kindOfTake', async () => {
-  const k = sounds.kindOfTake;
-  T.ok(typeof k === 'function', `1: core/sounds.js exports kindOfTake${sounds._missing ? ` (${sounds._missing})` : ''}`);
-  if (typeof k !== 'function') return;
-  const chords = N([0, 1, 2, 3].flatMap((b) => [[60, b, 1], [64, b, 1], [67, b, 1]]));
-  const got = {
-    hum: k({ kind: 'notes', src: 'hum', notes: line(HUM_NOTES) }),
-    low: k({ kind: 'notes', src: 'hum', notes: line([45, 47, 48, 47, 45]) }),
-    bass: k({ kind: 'notes', src: 'keys', notes: line([36, 38, 40, 43]) }),
-    chords: k({ kind: 'notes', src: 'keys', notes: chords }),
-    drums: k({ kind: 'drums', src: 'tap', notes: line([36, 38, 36, 38]) }),
-  };
-  T.ok(got.hum === 'hum' && got.low === 'hum' && got.bass === 'bass' && got.chords === 'chords' && got.drums === 'drums',
-    `1: a hummed C4-A4 line is hum, a hummed A2-C3 line is hum too, a played line under C3 bass, three notes a beat chords, a tapped beat drums (${JSON.stringify(got)})`);
-});
-
-await section('2 soundsFor', async () => {
-  const sf = sounds.soundsFor;
-  T.ok(typeof sf === 'function' && sounds.SOUND_SETS && typeof sounds.familyOf === 'function', '2: core/sounds.js exports soundsFor, familyOf and SOUND_SETS');
-  if (typeof sf !== 'function') return;
-  const hum = { kind: 'notes', src: 'hum', notes: line(HUM_NOTES) };
-  const has = (id) => !!reg.getDevice(id);
-  const ids = (rows) => rows.map((r) => r.device + (r.preset ? `:${r.preset}` : ''));
-  const a = sf(hum, { has });
-  const b = sf(hum, { has: (id) => id !== 'claude.choir-loft' && has(id) });
-  const c = sf(hum, { has, current: 'core.wavetable' });
-  const d = sf({ kind: 'drums', src: 'tap', notes: [] }, { has, current: 'core.drums', currentPreset: 'Studio kit' });
-  T.ok(ids(a).join() === 'core.keys,core.wavetable,core.strings,claude.choir-loft', `2: the hum set is Lamp Tines, Light Table, Music Stands, Choir Loft (${ids(a).join(', ')})`);
-  T.ok(b.length === 4 && b[3].device === 'core.mallets', `2: without Choir Loft the fourth is Mallet Bag (${ids(b).join(', ')})`);
-  T.ok(c.length === 4 && c[0].device === 'core.wavetable' && c.filter((r) => r.device === 'core.wavetable' && !r.preset).length === 1, `2: the current sound comes first, once, and there are still four (${ids(c).join(', ')})`);
-  T.ok(d.filter((r) => r.device === 'core.drums' && /^studio kit$/i.test(r.preset || '')).length + d.filter((r) => r.device === 'core.drums' && !r.preset).length <= 1, `2: Gobo Kit on Studio kit isn't listed twice (${ids(d).join(', ')})`);
-  T.ok([a, b, c, d].flat().every((r) => typeof r.family === 'string' && r.family.length > 1), '2: every row has a family word');
-  // the sampled instruments are offered where they fit: Parlour Upright for played lines and chords, Virtuosity Kit for a beat
-  const pl = sf({ kind: 'notes', src: 'qwerty', notes: line([60, 62, 64, 65]) }, { has });
-  const ch = sf('chords', { has }), dr = sf({ kind: 'drums', src: 'tap', notes: [] }, { has });
-  const noKit = sf({ kind: 'drums', src: 'tap', notes: [] }, { has: (id) => id !== 'core.drumroom' && has(id) });
-  T.ok(ids(pl)[1] === 'core.upright' && ids(ch)[1] === 'core.upright' && ids(dr)[1] === 'core.drumkit' && !ids(sf(hum, { has })).includes('core.upright') && ids(noKit)[3] === 'core.brushkit' && sounds.SOUND_SETS.drums.fallbacks.some((r) => r.device === 'core.handkit'),
-    `2: the sampled instruments are offered: Parlour Upright second for what you played (${ids(pl).join(', ')}) and for chords (${ids(ch).join(', ')}), Virtuosity Kit second for a beat (${ids(dr).join(', ')}), Rusty Brushes the first fallback and Hand Crate among them (${ids(noKit).join(', ')}); a hum keeps the voices that sing`);
-  // every device and preset the sets name is real: walk SOUND_SETS whatever its shape
-  const named = [];
-  const walk = (x, depth = 0) => {
-    if (depth > 6 || x == null) return;
-    if (typeof x === 'string') { if (/^(core|claude|pedal|amp)\.[a-z0-9-]+$/.test(x)) named.push({ device: x }); return; }
-    if (Array.isArray(x)) { x.forEach((y) => walk(y, depth + 1)); return; }
-    if (typeof x === 'object') { if (typeof x.device === 'string') named.push({ device: x.device, preset: x.preset }); else for (const v of Object.values(x)) walk(v, depth + 1); }
-  };
-  walk(sounds.SOUND_SETS);
-  const bad = named.filter(({ device, preset }) => { const def = reg.getDevice(device); return !def || def.kind !== 'instrument' || (preset && !(def.presets || []).some((p) => p.name.toLowerCase() === String(preset).toLowerCase())); });
-  T.ok(named.length >= 20 && !bad.length, `2: all ${named.length} devices and presets in SOUND_SETS are instruments in the registry${bad.length ? ' (not: ' + bad.map((x) => x.device + (x.preset ? ` "${x.preset}"` : '')).join(', ') + ')' : ''}`);
-});
-
-await section('3 newPartFor', async () => {
-  const np = sounds.newPartFor;
-  T.ok(typeof np === 'function', '3: core/sounds.js exports newPartFor');
-  if (typeof np !== 'function') return;
-  const { createStore } = await import('../app/src/core/store.js');
-  const s = createStore(null, { getDevice: reg.getDevice });
-  const a = np('hum', s.get());
-  s.dispatch({ type: 'track.add', track: { name: 'Melody', instrument: { device: 'core.keys' } } }, { by: 'you' });
-  const b = np('hum', s.get());
-  const k = np('keys', s.get()), p = np('pads', s.get());
-  T.ok(a?.name === 'Melody' && a.device === 'core.keys' && b?.name === 'Melody 2' && k?.name === 'Keys' && p?.name === 'Drums' && p.device === 'core.drums',
-    `3: a hum's new track is Melody (Lamp Tines), then Melody 2; keys make Keys, pads Drums (${JSON.stringify({ a, b, k, p })})`);
-});
-
+// (13's catalog count is test/unit/pick-sound.test.js; the MCP server's listing stays: it starts a process)
 await section('13 the tool, Node', async () => {
-  const tools = await import('../app/src/agent/tools.js');
-  const extra = await import('../app/src/agent/extra-schemas.js');
-  const cat = await tools.catalogSchemas();
-  const S = extra.SUGGEST_SOUNDS_SCHEMA;
-  T.ok(cat.length === 40 && cat.some((x) => x.name === 'suggest_sounds') && extra.EXTRA_SCHEMAS.includes(S) && S.annotations?.readOnlyHint === false && S.annotations?.destructiveHint === false,
-    `13: suggest_sounds is the catalog's 40th tool, from extra-schemas.js, neither read-only nor destructive (${cat.length} tools)`);
   // with no tab open: server/mcp.js lists it
   // (on a free port of its own: mcp.js starts the studio server there, finds no tab and lists the whole catalog)
   const port = await new Promise((res, rej) => { const v = net.createServer(); v.on('error', rej); v.listen(0, '127.0.0.1', () => { const n = v.address().port; v.close(() => res(n)); }); });
@@ -231,85 +158,7 @@ const previewsOf = (P) => P.E(() => { const o = window.overdub; o.__pv = 0; o.st
 try {
   await s.page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
 
-  /* ---------------------------------------------------------------- 4: the aim, in the page */
-  await section('4 the aim', async () => {
-    const P = await fresh();
-    const r = await P.E(async () => {
-      const o = window.overdub, rec = o.input.recorder, st = o.store;
-      const out = {};
-      if (typeof rec.aim !== 'function' || typeof rec.setAim !== 'function') return { missing: true };
-      const name = (id) => st.get().tracks.find((t) => t.id === id)?.name ?? null;
-      const aimName = (k) => { const a = rec.aim(k); return a.track ? name(a.track) : 'new'; };
-      // a hum committed: notes on the grid from bar `bar`, then stop
-      const hum = async (bar = 1, ps = [60, 64, 67]) => {
-        o.engine.seek((bar - 1) * 4);
-        // a hum take, as Hum it's R makes one, without the mic: the notes come in below
-        const start = o.input.hum.start;
-        o.input.hum.start = async () => {};
-        try { await rec.record({ countIn: 0, quantize: false, hum: true }); } finally { o.input.hum.start = start; }
-        rec.addNotes(ps.map((p, i) => ({ p, g: (bar - 1) * 4 + i, d: 0.9, v: 0.8 })), { src: "hum" });
-        await new Promise((res) => setTimeout(res, 150));
-        return rec.stop();
-      };
-      st.dispatch([{ type: 'track.add', ref: 'd', track: { name: 'Drums', instrument: { device: 'core.drums' } } }, { type: 'clip.add', track: '$d', clip: { start: 0, length: 8, notes: 'C2@0:1 D2@1:1' } },
-        { type: 'track.add', ref: 'b', track: { name: 'Bass', instrument: { device: 'core.bass' } } }, { type: 'clip.add', track: '$b', clip: { start: 0, length: 8, notes: 'C2@0:2' } }], { by: 'you' });
-      const ids = Object.fromEntries(st.get().tracks.map((t) => [t.name, t.id]));
-      o.ui.select({ track: ids.Drums });
-      out.first = aimName('hum');
-      await hum(1);
-      out.afterFirst = st.get().tracks.map((t) => t.name);
-      out.selAfter = name(o.ui.state.selection.track);
-      out.second = aimName('hum');
-      // 'new' is one-shot: after its commit the next hum goes onto that track
-      rec.setAim('hum', 'new');
-      await hum(3);
-      const made = st.get().tracks.at(-1);
-      out.oneShot = { made: made.name, next: aimName('hum') };
-      // a newer selection wins over the last take
-      await new Promise((res) => setTimeout(res, 20));
-      o.ui.select({ track: ids.Bass });
-      out.selWins = aimName('hum');
-      rec.setAim('hum', ids.Drums);
-      out.ontoDrums = aimName('hum');
-      rec.setAim('hum', null);
-      out.pads = aimName('pads');
-      // a hum over the same bars stacks; over other bars it's a clip beside
-      o.ui.select({ track: made.id });
-      const c1 = await hum(3, [62, 65]);
-      out.stack = { offer: !!(c1 && (c1.stacked || c1.ownTrack || c1.offer || /own track/i.test(JSON.stringify(c1)))), muted: st.get().tracks.find((t) => t.id === made.id).clips.filter((c) => c.mute).length };
-      const c2 = await hum(7, [64]);
-      out.beside = { muted: st.get().tracks.find((t) => t.id === made.id).clips.filter((c) => c.mute).length, ok: !!c2 };
-      return out;
-    });
-    if (r.missing) { T.ok(false, '4: input/recorder.js has aim() and setAim()'); return; }
-    T.ok(r.first === 'new' && r.afterFirst.includes('Melody') && r.selAfter === 'Melody' && r.second === 'Melody', `4: with Drums selected a hum goes to a new track (Melody, selected), and the next onto Melody (${JSON.stringify(r)})`);
-    T.ok(r.oneShot.next === r.oneShot.made && r.oneShot.made !== 'Melody 3', `4: 'new' is one-shot: the hum after it goes onto ${r.oneShot.made}, not another new track (${r.oneShot.next})`);
-    T.ok(r.selWins === 'Bass' && r.ontoDrums === 'Drums' && r.pads === 'Drums', `4: a newer selection wins (Bass), Onto Drums puts a hum on Drums, pads aim at the only kit (${r.selWins}, ${r.ontoDrums}, ${r.pads})`);
-    T.ok(r.stack.offer && r.stack.muted >= 1 && r.beside.muted === r.stack.muted && r.beside.ok, `4: a hum over the same bars stacks (an earlier take muted, the "own track" offer); over other bars nothing more is muted (${JSON.stringify(r.stack)} → ${JSON.stringify(r.beside)})`);
-
-    // the full studio
-    const F = await fresh({ query: 'view=full' });
-    const f = await F.E(() => {
-      const o = window.overdub, rec = o.input.recorder, st = o.store;
-      if (typeof rec.aim !== 'function') return { missing: true };
-      st.dispatch([{ type: 'track.add', ref: 'd', track: { name: 'Drums', instrument: { device: 'core.drums' } } }, { type: 'track.add', ref: 'b', track: { name: 'Bass', instrument: { device: 'core.bass' } } }, { type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' }, arm: true } }], { by: 'you' });
-      const ids = Object.fromEntries(st.get().tracks.map((t) => [t.name, t.id]));
-      const name = (id) => st.get().tracks.find((t) => t.id === id)?.name ?? 'new';
-      const out = { armed: name(rec.aim('hum').track) };
-      rec.setAim('hum', 'new');
-      out.newAim = name(rec.aim('hum').track);
-      out.armedAfter = st.get().tracks.filter((t) => t.arm).map((t) => t.name);
-      st.dispatch({ type: 'track.set', track: ids.Keys, patch: { arm: true } }, { by: 'you' });
-      out.rearmed = name(rec.aim('hum').track);
-      st.dispatch({ type: 'track.set', track: ids.Keys, patch: { arm: false } }, { by: 'you' });
-      o.ui.select({ track: ids.Drums });
-      out.drumsSel = name(rec.aim('hum').track);
-      return out;
-    });
-    if (f.missing) return;
-    T.ok(f.armed === 'Keys' && f.newAim === 'new' && !f.armedAfter.length && f.rearmed === 'Keys' && f.drumsSel === 'new',
-      `4 (full studio): an armed Keys takes the hum; A new track disarms every track; arming by hand clears the choice; Drums selected with nothing armed aims at a new track, not Bass (${JSON.stringify(f)})`);
-  });
+  // (4, the aim with real commits, is test/unit/pick-sound.test.js)
 
   /* ---------------------------------------------------------------- 5-7, 13, 14: AJ's path, then the card */
   const A = await fresh();

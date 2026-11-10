@@ -5,9 +5,10 @@
 //   node tools/run-all.js --post     a full run of a clean, pushed commit: post its result to the commit on GitHub
 //                                    as the status "suites" (tools/suite-status.js), which its pull request shows
 //
-// These are the integration suites (browsers, servers, renders): run them locally before merging (with --post, so the
-// pull request shows it). CI runs the unit tests instead (node --test "test/unit/*.test.js"); the deploy-live
-// workflow runs these on the Mac mini before production.
+// These are the integration suites (browsers, servers, renders), and the unit tests as one more (tools/unit-test.js).
+// The suites workflow runs them on the Mac mini for every push to a branch, as the check "suites" main requires; run
+// here with --post, they say the same about a commit from another machine. CI runs the unit tests alone (node --test
+// "test/unit/*.test.js"); the deploy-live workflow runs all of this on the Mac mini again before production.
 //
 // First it makes sure the sampled kits are here (app/kits/, gitignored): a kit a device pins and this checkout hasn't
 // built fails suites far from the cause, so a missing one is fetched and built (tools/fetch-kits.js) before anything
@@ -17,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTEXT, suiteStatus } from './suite-status.js';
+import { CONTEXT, failureLines, mayRetry, suiteStatus } from './suite-status.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -52,7 +53,8 @@ function run(file) {
     p.stderr.on('data', (d) => (out += d));
     p.on('close', (code, signal) => {
       const fails = (out.match(/^\s*FAIL /gm) || []).length, oks = (out.match(/^\s*ok /gm) || []).length;
-      resolve({ file, code, signal, oks, fails, secs: ((Date.now() - t0) / 1000).toFixed(1), out });
+      // its exit code alone isn't enough: a FAIL line is a failure, and a suite that checked nothing hasn't passed
+      resolve({ file, code: code === 0 && (fails || !oks) ? 1 : code, signal, oks, fails, secs: ((Date.now() - t0) / 1000).toFixed(1), out });
     });
   });
 }
@@ -68,19 +70,19 @@ await Promise.all(Array.from({ length: Math.min(PAR, queue.length) }, async () =
     const r = await run(f);
     results.push(r);
     console.log(`${r.code === 0 ? 'PASS' : 'FAIL'}  ${f.padEnd(24)} ${String(r.oks).padStart(4)} ok ${String(r.fails).padStart(3)} failed  ${r.secs}s`);
-    if (r.code !== 0) console.log(r.out.split('\n').filter((l) => /FAIL|Error|error/.test(l)).slice(0, 12).map((l) => '      ' + l).join('\n'));
+    if (r.code !== 0) console.log(failureLines(r.out).map((l) => '      ' + l).join('\n'));
     // a suite that exits non-zero without a FAIL line crashed or was killed: its last lines say how
     if (r.code !== 0 && !r.fails) console.log(`      (exit ${r.code}${r.signal ? ', ' + r.signal : ''}, no FAIL line; its last lines:)\n` + r.out.trimEnd().split('\n').slice(-30).map((l) => '      | ' + l).join('\n'));
   }
 }));
-// A suite that failed with others running beside it runs once more on its own: the real-time checks (live meters, the
-// scheduler, CPU budgets) can miss when three suites share the machine. One that passes alone counts as passed but is
-// named as retried, here and in the posted status, and its first failure stays in the log above; a real break fails
-// twice. (Fix a check that keeps turning up here: a retry is a tolerance for load, not for a wrong result.)
-for (const r of results.filter((x) => x.code !== 0)) {
+// A real-time suite (suite-status.js) that failed with others running beside it runs once more on its own: its checks
+// can miss when three suites share the machine. One that passes alone counts as passed but is named as retried, here and
+// in the posted status, and its first failure stays in the log above. No other suite gets this: a retry is a tolerance
+// for load, not for a wrong result. (Fix a check that keeps turning up here.)
+for (const r of results.filter((x) => x.code !== 0 && mayRetry(x.file))) {
   const again = await run(r.file);
   console.log(`${again.code === 0 ? 'PASS' : 'FAIL'}  ${r.file.padEnd(24)} ${String(again.oks).padStart(4)} ok ${String(again.fails).padStart(3)} failed  ${again.secs}s  (run again, alone)`);
-  if (again.code !== 0) console.log(again.out.split('\n').filter((l) => /FAIL|Error|error/.test(l)).slice(0, 12).map((l) => '      ' + l).join('\n'));
+  if (again.code !== 0) console.log(failureLines(again.out).map((l) => '      ' + l).join('\n'));
   results[results.indexOf(r)] = { ...again, retried: true };
 }
 const bad = results.filter((r) => r.code !== 0);

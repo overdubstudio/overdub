@@ -5,7 +5,7 @@
 // periods YIN's difference function dips at (ps): a string still ringing from the note before, or a tracker's octave
 // slip, puts the right pitch second, and a judge that knows what it expects (core/playalong.js) checks the few. One note
 // at a time: a chord comes out as its onset and its pitches as best it can, all the play-along judges a chord by.
-// Pure (no DOM, no audio graph): tools/tabs-test.js feeds it plucked strings and checks where and what it hears.
+// Pure (no DOM, no audio graph): test/unit/tabs.test.js feeds it plucked strings and checks where and what it hears.
 //
 //   createNoteFinder({ sr, lo, hi, floorDb, win, unpitched }) -> finder
 //     win: YIN's window in samples (default 43 ms; it reads pitches down to about two periods in it: 4096 at 48 kHz

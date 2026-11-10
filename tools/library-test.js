@@ -8,7 +8,7 @@
 //                                         re-measure only those (and the library's own checks) and rewrite their
 //                                         lines, each dated (`measured`); every other line stays as it was
 //
-// 1. Every library device passes checkDevice (full) at house levels: instruments -14..-18 LUFS on the test phrase,
+// 1. Every library device passes checkDevice (full; in a child process, checkDeviceNode) at house levels: instruments -14..-18 LUFS on the test phrase,
 //    effects within 1.5 LU of bypass, true peak <= -1 dBTP, tails that die, bit-exact renders; signed by claude,
 //    with a request, semantic params and a look; names that collide with nothing else in the studio.
 // 2. Export -> import round trip; a failing device is refused with its report; ?new&device=<id> puts it on a track
@@ -29,7 +29,7 @@ const pageErrors = (errors) => errors.filter((e) => !/Failed to load resource|fa
 {
   const { page, errors, close } = await open('/app/library.html', { width: 1440, height: 900 });
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
-  const res = await page.evaluate(async ({ all, only }) => {
+  const survey = () => page.evaluate(async ({ all, only }) => {
     const reg = await import('/app/src/devices/registry.js');
     const { checkDevice } = await import('/app/src/kernel/check.js');
     const { LIBRARY_DEFS, LIBRARY } = await import('/app/src/devices/library/index.js');
@@ -55,6 +55,36 @@ const pageErrors = (errors) => errors.filter((e) => !/Failed to load resource|fa
     const stale = shelf.filter((d) => !REPORTS[d.id] || REPORTS[d.id].hash !== d.hash).map((d) => d.id);
     return { rows, meta, stale, shelf: shelf.map((d) => d.id), missingOnly };
   }, { all: WRITE, only: ONLY });
+
+  // The checks run in a child process (checkDeviceNode: the same answer as the page's checkDevice, within 0.2 LU, see
+  // tools/kernel-test.js). WRITE=1 measures in the page instead, because reports.js says it was measured there (cpu is
+  // that machine's render time in the worklet), and the page is already open.
+  const surveyNode = async () => {
+    const reg = await import('../app/src/devices/registry.js');
+    const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+    const { LIBRARY_DEFS, LIBRARY } = await import('../app/src/devices/library/index.js');
+    await import('../app/src/devices/guitar/index.js');
+    const { BUILTINS } = await import('../app/src/devices/builtin/index.js');
+    const { SHOWCASE } = await import('../app/src/devices/showcase.js');
+    let REPORTS = {};
+    try { REPORTS = (await import('../app/src/devices/library/reports.js')).REPORTS; } catch { /* none yet */ }
+    const shelf = [...BUILTINS, ...SHOWCASE.map((s) => reg.getDevice(s.id) || reg.defineDevice({ ...s, source: 'project' }, { replace: true })), ...LIBRARY_DEFS];
+    const names = new Map();
+    for (const d of reg.listDevices()) { const k = d.name.toLowerCase(); names.set(k, (names.get(k) || []).concat(d.id)); }
+    const rows = [];
+    for (const d of LIBRARY_DEFS) {
+      const r = await checkDeviceNode(d);
+      rows.push({ id: d.id, hash: d.hash, kind: d.kind, ok: r.ok, lufs: r.level?.lufs, deltaLU: r.level?.deltaLU, truePeak: r.truePeak, cpu: r.cpu?.pct, tail: r.tail?.seconds, decays: r.tail?.decays, deterministic: r.deterministic, errors: r.errors, warnings: r.warnings, worst: r.extremes?.worstPeak });
+    }
+    const meta = LIBRARY.map((d) => ({
+      id: d.id, kind: d.kind, by: d.by, name: d.name, request: d.request, look: !!d.look && !!d.look.color, blurb: (d.blurb || '').length,
+      params: d.params.map((p) => ({ key: p.key, role: !!p.role, desc: !!p.desc, opts: !!p.opts, unit: p.unit, curve: p.curve, min: p.min, max: p.max })),
+      collide: names.get(d.name.toLowerCase()).filter((id) => id !== d.id),
+    }));
+    const stale = shelf.filter((d) => !REPORTS[d.id] || REPORTS[d.id].hash !== d.hash).map((d) => d.id);
+    return { rows, meta, stale, shelf: shelf.map((d) => d.id), missingOnly: [] };
+  };
+  const res = WRITE ? await survey() : await surveyNode();
 
   const lib = new Set(res.meta.map((m) => m.id));
   for (const r of res.rows.filter((x) => lib.has(x.id))) {

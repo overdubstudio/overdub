@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { TAPE_LINES, plural, bars, secs, barsOf } from '../../app/src/ui/liveroom/guitar/tape-lines.js';
 import { IDEAS, shorten } from '../../app/src/ui/liveroom/guitar/talk-room.js';
 import { breaks } from '../../tools/liveroom/checks-copy.js';
+import { checks } from './helpers/check.js';
 
 const VARS = {
   a: 30,
@@ -65,4 +66,51 @@ test('a reply from Claude, for the talkback', () => {
   assert.ok(s.startsWith('The drummer’s on Double-kick gallop now, at 132.'));
   assert.ok(!/More here/.test(s.slice(0, 120)));
   assert.equal(shorten(''), '');
+});
+
+// moved from tools/liveroom/checks-tape.js
+test('the tape stream keeps the rules, and a long reply comes down to a sentence or two', () => {
+  const T = checks();
+  const vars = {
+    a: 30,
+    b: 33,
+    s: 7.3,
+    name: 'Riff 4',
+    n: 4,
+    tempo: 132,
+    tuning: 'Drop C',
+    bar: 33,
+    what: 'Bars 30–33',
+    names: ['Claude Code'],
+    why: 'the key on the server was turned down',
+  };
+  const bad = [];
+  for (const [id, fn] of Object.entries(TAPE_LINES)) {
+    for (const v of [vars, { ...vars, n: 1, tuning: '', names: [] }]) {
+      let t;
+      try {
+        t = String(fn(v));
+      } catch (e) {
+        bad.push(`${id}: throws (${e?.message || e})`);
+        break;
+      }
+      for (const x of breaks(`tape.${id}`, t)) bad.push(`${id}: ${x.why}`);
+    }
+  }
+  T.ok(
+    !bad.length,
+    `the tape stream's ${Object.keys(TAPE_LINES).length} lines keep the room's copy rules${bad.length ? ': ' + bad.join('; ') : ''}`,
+  );
+  {
+    const long =
+      'The drummer’s on **Double-kick gallop** now, at 132. A d-beat wants 160 or more: say if you want the tempo up. ⌘Z puts the old beat back. ' +
+      'More words here. '.repeat(30);
+    const s = shorten(long);
+    T.ok(
+      s.length <= 280 && s.startsWith('The drummer’s on Double-kick gallop now') && !/\*/.test(s),
+      `a long reply from Claude is a sentence or two in the talkback (${s.length} characters: "${s.slice(0, 60)}…")`,
+    );
+  }
+
+  T.done();
 });

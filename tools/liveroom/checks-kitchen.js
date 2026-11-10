@@ -32,7 +32,7 @@ import { measure } from '../../app/src/audio/measure.js';
 import { checkTargets } from '../../app/src/audio/targets.js';
 import { strum, voice, mix, rng, SR } from './fake.js';
 import { mapBeat, mapSec } from '../../app/src/core/music.js';
-import { openRoom, history, atOnce } from './harness.js';
+import { openRoom, withMark, hearMark, history, atOnce } from './harness.js';
 
 export const name = 'kitchen';
 export const pages = true;
@@ -309,20 +309,20 @@ export async function run(T, ctx) {
 
 /* ------------------------------------------------------------------------------------------------ the flow */
 // §2.5 in muted Chromium, on the room's own deck: the presses counted as a musician makes them. The input is a fake
-// file, played from when the kitchen opens it, and each press is made at a known point in it (the audio clock less the
-// input's first frame): the balance's strum and then a voice over it, then the work tape, a 16-bar take with two
-// seconds of room before it, which the kitchen trims as it goes in (§6.3). The deck's latency is set to 0 (the fake
-// input has none) and its calls are logged.
+// file, played from when the kitchen opens it, and each press is made at a known point in it (the audio clock less where
+// the file started: harness.js hearMark, its mark a second in): the balance's strum and then a voice over it, then the
+// work tape, a 16-bar take with two seconds of room before it, which the kitchen trims as it goes in (§6.3). The deck's
+// latency is set to 0 (the fake input has none) and its calls are logged.
 const PAPER = `Paper Moon\nCapo 3\n\n[Verse]\nG       Em\nSomewhere a paper moon\nC          D\nover the roofs of town\n\n[Chorus]\nC       G\nHold on hold on\nD            G\nuntil the morning\n`;
 
-// the fake input: silence, three seconds of strumming alone, a voice over it, silence, then the take (or, counted, the
-// take played from beat 0 of a one-bar count at 96); its points in seconds
+// the fake input: silence (the mark a second in), three seconds of strumming alone, a voice over it, silence, then the
+// take (or, counted, the take played from beat 0 of a one-bar count at 96); its points in seconds
 function kitchenTape({ counted = false } = {}) {
   const bars = [...V, ...C, ...V, ...C];
   if (counted) {
     const tk = takeOf(bars, { bpm: 96, seed: 33, lead: 0 });
     const at = 15;
-    return { wav: { sr: SR, channels: [mix([{ buf: tk.buf, at }], { length: Math.round((at + tk.buf.length / SR + 4) * SR) })] }, T: { tape: at, end: at + tk.buf.length / SR } };
+    return withMark({ wav: { sr: SR, channels: [mix([{ buf: tk.buf, at }], { length: Math.round((at + tk.buf.length / SR + 4) * SR) })] }, T: { tape: at, end: at + tk.buf.length / SR } });
   }
   const tk = takeOf(bars, { bpm: 96, seed: 31, lead: 2 });
   const alone = strum(V.map((c, i) => ({ beat: i * 4, notes: VOICINGS[c], beats: 4 })), { bpm: 96, seed: 41, peak: -19, tail: 0 });
@@ -333,11 +333,15 @@ function kitchenTape({ counted = false } = {}) {
     { buf: sung.buf.subarray(0, Math.round(5.7 * SR)), at: T.sing },
     { buf: tk.buf, at: T.tape },
   ], { length: Math.round((T.tape + tk.buf.length / SR + 4) * SR) });
-  return { wav: { sr: SR, channels: [buf] }, T: { ...T, end: T.tape + tk.buf.length / SR } };
+  return withMark({ wav: { sr: SR, channels: [buf] }, T: { ...T, end: T.tape + tk.buf.length / SR } });
 }
 
-// in the page, before the door: the deck's calls logged (a counted take's count put at `countAt` s into the file), the
-// room's lines, and pos(): how far into the fake file the input is now
+// in the page, before the door: the deck's calls logged (a counted take's count put at `countAt` s into the file, as it
+// sounds: less the engine's delay compensation as it is when the count is handed over; the shaker's preview, put in
+// after, adds a little more), the room's lines, and pos(): how far into the fake file the input is
+// now, from where its mark was heard (harness.js hearMark; -1 until then). The stereo fakes have no quiet second for a
+// mark and time nothing against the file closer than a second: theirs is from the input's first block
+// (input.audio.state.firstFrame, a few ms off the file's start)
 const INSTALL = async () => {
   const o = window.overdub;
   const { createDeck } = await import('/app/src/ui/liveroom/deck.js');
@@ -346,15 +350,15 @@ const INSTALL = async () => {
   window.__kstate = m.kitchenState;
   o.liveRoom.on('say', (e) => K.lines.push(e.text));
   K.pos = () => {
-    const st = o.input.audio.state, c = o.engine.ctx;
-    if (!st.open || !Number.isFinite(st.firstFrame) || !c) return -1;
-    return c.currentTime - st.firstFrame / (st.sr || c.sampleRate);
+    const st = o.input.audio.state, c = o.engine.ctx, F = window.__lrFile;
+    const t0 = F ? F.t0 : Number.isFinite(st.firstFrame) ? st.firstFrame / (st.sr || c?.sampleRate) : null;
+    return st.open && t0 != null && c ? c.currentTime - t0 : -1;
   };
   const entry = (kind, a = {}) => `${kind}${a.voice ? ':' + a.voice : ''}${a.bars != null ? ':' + a.bars : ''}`;
   const count = deck.countIn, take = deck.take, stop = deck.stop;
   deck.countIn = (a = {}) => {
     K.log.push(entry('countIn', a));
-    if (a.voice === 'sticks' && K.countAt != null) { const st = o.input.audio.state; a = { ...a, at: st.firstFrame / (st.sr || o.engine.ctx.sampleRate) + K.countAt }; }
+    if (a.voice === 'sticks' && K.countAt != null) a = { ...a, at: window.__lrFile.t0 + K.countAt - (o.engine.latency?.total || 0) };
     return count(a);
   };
   deck.take = (a = {}) => { K.log.push(entry('take')); return take(a); };
@@ -378,6 +382,7 @@ async function oneFlow(T, tape, phones) {
   const at = (x, ms = 90000) => page.waitForFunction((x) => window.__k.pos() >= x, x, { timeout: ms, polling: 20 });
   try {
     await E(INSTALL);
+    await hearMark(page);
     // press 1: the door's kitchen table (held off the door while the guitar room is built, door.js OFFERED: picked by
     // its id, as its card would)
     await page.waitForSelector('.lrd-card', { timeout: 15000 });
@@ -388,6 +393,8 @@ async function oneFlow(T, tape, phones) {
     presses++;
     await page.waitForFunction(() => window.__k.pos() >= 0 && window.__kstate()?.step === 'phones', null, { timeout: 15000 });
     await E(() => { window.__k.deck.latency = 0; });
+    // (the balance hears from its first sound: the mark has rung out on the deck's meter before Headphones on? is answered)
+    await page.waitForFunction(() => window.__k.pos() > 1.2 && [window.__k.deck.level?.(), ...(window.__k.deck.level?.()?.channels || [])].every((c) => !(c?.db > -50)), null, { timeout: 10000, polling: 20 });
     const st0 = await E(() => ({ ...window.__kstate(), pos: window.__k.pos(), how: window.__k.lines.find((x) => /^How is it miked\?/.test(x)) || '' }));
     T.ok(st0.mic === 'laptop' && /The laptop’s mic/.test(st0.how), `the flow (${phones ? 'headphones' : 'speakers'}): the input opened by itself, the mic picked from what the room sees (${st0.how}), then Headphones on?`);
     if (st0.pos > tape.T.strum - 0.5) throw new Error(`the input was ${st0.pos.toFixed(1)} s into the fake before the headphones question: too late for its strum at ${tape.T.strum} s`);
@@ -672,6 +679,7 @@ async function countedFlow(T, tape) {
   const { page, E } = S;
   try {
     await E(INSTALL);
+    await hearMark(page);
     await E((x) => { window.__k.countAt = x; }, tape.T.tape - (4 * 60) / 96);
     await page.waitForSelector('.lrd-card', { timeout: 15000 });
     await E(() => window.overdub.liveRoom.press('place:kitchen'));

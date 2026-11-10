@@ -7,7 +7,9 @@
 # job (deploy-live.yml says why; test/unit/workflows.test.js holds it), so a pull request from a fork gets no "suites"
 # until someone who has read it pushes its branch here. main is left out (deploy-live runs the suite again on what it
 # ships), and so are Dependabot's branches: they change the actions this workflow runs, and nothing runs on the machine
-# before someone has read the change (Run workflow on the branch, once it has been).
+# before someone has read the change. Once it has been, its commit goes to a branch of ours and the pull request is
+# opened from there: Run workflow runs the suite too, but GitHub doesn't count a run it started toward a pull
+# request's required checks, only a push's.
 #
 # The job holds no environment, no secret, and a token that can only read. Actions are pinned to a commit; the comment
 # names the release.

@@ -43,8 +43,9 @@ CI runs only the unit tests and the static checks on a pull request. The browser
 mini: every push to a branch of this repo starts `.github/workflows/suites.yml`, whose job is the check `suites` that
 `main` requires, so a pull request shows it running, with its log, on exactly what's being merged. A pull request from a
 fork doesn't run anything on that machine (the repo is public): it gets `suites` once a maintainer has read it and
-pushed its branch here. Dependabot's branches are left out the same way; Actions › suites › Run workflow on one once
-it's been read. On your own machine, `node tools/run-all.js` runs the same suite for you; only the workflow sets `suites`.
+pushed its branch here. Dependabot's branches are left out the same way: once its change has been read, push that
+commit to a branch of your own and open the pull request from there (a run started with Run workflow doesn't count
+toward a pull request's required checks; only a push's does). On your own machine, `node tools/run-all.js` runs the same suite for you; only the workflow sets `suites`.
 Production gets them again either way: the deploy-live workflow runs the whole suite on the Mac mini before it asks
 for approval.
 

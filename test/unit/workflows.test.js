@@ -120,3 +120,33 @@ test('a live deploy fails on a browser that will not launch, rather than skippin
   const step = yml.slice(yml.indexOf('- name: The end-to-end suite'), yml.indexOf('- name: Keep the screenshots'));
   assert.match(step, /REQUIRE_ALL: '1'/);
 });
+
+// main's ruleset requires the check "suites": it is this workflow's job, run by itself for every push to a branch here,
+// and never from an event an outsider can cause (the check above) or a branch nobody has read
+test('the required check "suites" runs by itself on a push, on the Mac mini', () => {
+  const yml = fs.readFileSync(path.join(WORKFLOWS, 'suites.yml'), 'utf8');
+  assert.ok(selfHosted(yml), 'suites.yml runs on the self-hosted runner');
+  assert.deepEqual(triggers(yml).sort(), ['push', 'workflow_dispatch']);
+  const ignored = yml.slice(yml.indexOf('branches-ignore:'), yml.indexOf('workflow_dispatch:'));
+  assert.match(ignored, /- main\n/, 'main is left to deploy-live');
+  assert.match(
+    ignored,
+    /- 'dependabot\/\*\*'/,
+    'a Dependabot branch changes the actions: nothing runs it before it is read',
+  );
+  assert.match(yml, /\n {4}name: suites\n/, 'the job is named as the ruleset requires it');
+  assert.match(yml, /fetch-depth: 0/, 'the whole history: analytics-test deploys HEAD~1');
+  const step = yml.slice(yml.indexOf('- name: Every suite'), yml.indexOf('- name: Keep the screenshots'));
+  assert.match(step, /node tools\/run-all\.js/);
+  assert.match(step, /REQUIRE_ALL: '1'/);
+  // the token reads the code and nothing else
+  const perms = yml.slice(yml.indexOf('    permissions:'), yml.indexOf('    env:'));
+  assert.deepEqual(
+    perms
+      .trim()
+      .split('\n')
+      .slice(1)
+      .map((l) => l.trim()),
+    ['contents: read'],
+  );
+});

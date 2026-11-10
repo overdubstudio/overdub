@@ -1,6 +1,6 @@
 // What a run of tools/run-all.js may say about a commit on GitHub (`--post`): the commit status "suites", which a pull
-// request shows beside CI's checks. CI runs the unit tests and static checks; the browser and render suites run on a
-// developer's machine before merging, and this is how the pull request knows they did, on that exact commit.
+// request shows beside CI's checks. The suites workflow (.github/workflows/suites.yml) is that check for every push to
+// a branch here; --post is for a run on another machine, and says the same about that exact commit.
 //
 //   suiteStatus({ results, only, dirty, sha, host }) -> { ok: true, state, description } | { ok: false, why }
 //

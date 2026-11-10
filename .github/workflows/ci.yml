@@ -5,8 +5,8 @@
 # Run workflow (Actions > ci) on main does the same by hand; on any other branch it runs nothing. Node and the checkers
 # come from mise.toml, as they do locally.
 #
-# The integration suites (node tools/run-all.js: browsers, servers, renders) don't run here: run them locally before
-# merging.
+# The integration suites (node tools/run-all.js: browsers, servers, renders) don't run here: suites.yml runs them on the
+# Mac mini for every push to a branch, as the check "suites" main requires.
 #
 # The deploy job reaches AWS through GitHub's OIDC token: no keys are stored anywhere. The role it assumes can only
 # write the next.overdubstudio.com bucket and invalidate its distribution, and only a run on main may assume it

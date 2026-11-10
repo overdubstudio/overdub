@@ -1021,15 +1021,32 @@ const boot = async (opts = {}) => {
       const rec = new AudioWorkletNode(c, 'ew-cap', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit', processorOptions: { channels: 1 } });
       rec.port.onmessage = (m) => blocks.push(m.data.d[0]);
       s.msplit.connect(rec, 0);
+      // and the guitar's own pluck before the fader and the Band's gain (its chain's end, the same left channel): every
+      // pluck is its own (the string's noise burst is the next of a seeded stream), so the guitar is held by how much
+      // the strip passes of each pluck, not by one pluck against another
+      let pre = null, preBlocks = [];
+      if (kind !== 'band') {
+        const tap = e.chainTaps(id).chain, sp = c.createChannelSplitter(2);
+        pre = { tap, sp, rec: new AudioWorkletNode(c, 'ew-cap', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: 'explicit', processorOptions: { channels: 1 } }) };
+        pre.rec.port.onmessage = (m) => preBlocks.push(m.data.d[0]);
+        tap.connect(sp); sp.connect(pre.rec, 0);
+      }
       if (kind === 'band') { e.seek(0); await e.play(0); } else e.audition(keys, 52, 0.9, 1);
       await new Promise((r) => setTimeout(r, kind === 'band' ? 1400 : 2400));
       rec.port.postMessage('off');
+      if (pre) pre.rec.port.postMessage('off');
       if (e.playing) e.stop(); await new Promise((r) => setTimeout(r, 400));
       try { s.msplit.disconnect(rec); } catch { /* the strip was renewed */ }
+      if (pre) { try { pre.tap.disconnect(pre.sp); } catch { /* the strip was renewed */ } pre.sp.disconnect(); }
       let sq = 0, n = 0, pk = 0;
       for (const b of blocks) for (let i = 0; i < b.length; i++) { const v = b[i]; sq += v * v; n++; if (Math.abs(v) > pk) pk = Math.abs(v); }
       const db = (x) => (x > 1e-6 ? Math.round(200 * Math.log10(x)) / 10 : -120);
-      return { lvl: db(Math.sqrt(sq / Math.max(1, n))), peak: db(pk), secs: Math.round((n / c.sampleRate) * 10) / 10 };
+      let psq = 0;
+      for (const b of preBlocks) for (let i = 0; i < b.length; i++) psq += b[i] * b[i];
+      const lvl = db(Math.sqrt(sq / Math.max(1, n)));
+      // (the strip's pass: the meter branch's energy over the chain end's, the same samples' worth of each)
+      const pass = pre ? Math.round(100 * Math.log10(sq / Math.max(psq, 1e-12))) / 10 : null;
+      return { lvl, peak: db(pk), pass, secs: Math.round((n / c.sampleRate) * 10) / 10 };
     }, arg);
     const loud = await E((ids) => ids[0], ids.band);
     const b0 = await levelWhile(['band', loud]), g0 = await levelWhile(['keys', ids.keys, ids.keys]);
@@ -1040,8 +1057,8 @@ const boot = async (opts = {}) => {
     const b1 = await levelWhile(['band', loud]), g1 = await levelWhile(['keys', ids.keys, ids.keys]);
     const lv = await E(() => window.overdub.engine.bandLevel);
     const heard = [b0, b1, g0, g1].every((x) => x.secs >= 1.2 && x.lvl > -80);
-    T.ok(heard && lv.db === -12 && Math.abs(b0.lvl - b1.lvl - 12) <= 1 && Math.abs(g0.lvl - g1.lvl) <= 0.5 && lv.keep.includes(ids.keys),
-      `the Band fader turns the band down and leaves the guitars as they were, on the meter's branch, every sample: a band track ${b0.lvl} → ${b1.lvl} dBFS at −12 dB (peaks ${b0.peak} → ${b1.peak}), the keys guitar's pluck ${g0.lvl} → ${g1.lvl} (peaks ${g0.peak} → ${g1.peak})`);
+    T.ok(heard && lv.db === -12 && Math.abs(b0.lvl - b1.lvl - 12) <= 1 && g0.pass != null && Math.abs(g0.pass - g1.pass) <= 0.5 && lv.keep.includes(ids.keys),
+      `the Band fader turns the band down and leaves the guitars as they were, on the meter's branch, every sample: a band track ${b0.lvl} → ${b1.lvl} dBFS at −12 dB (peaks ${b0.peak} → ${b1.peak}), the keys guitar's strip passes ${g0.pass} → ${g1.pass} dB of each pluck (plucks ${g0.lvl} → ${g1.lvl}, peaks ${g0.peak} → ${g1.peak})`);
     const shown = await E(() => ({ flag: document.querySelector('.jm-bandflag').hidden ? '' : document.querySelector('.jm-bandflag').textContent, val: document.querySelector('.jm-band-val').textContent, down: document.querySelector('.jm-band-field').classList.contains('jm-down'), note: document.querySelector('.jm-bandnote').textContent }));
     const jam = await E(() => window.overdub.tools.run('get_jam', { tips: false }, { by: 'mcp:test' }));
     T.ok(/^Band−12 dB$/.test(shown.flag) && shown.val === '−12 dB' && shown.down && /^The band is 12 dB down in the room/.test(shown.note) && /^−12 dB \(practice only/.test(jam.room.band), `the room shows it plainly: "Band −12 dB" at the top of the room, the fader in the warning ink ("${shown.note.slice(0, 50)}…"), and get_jam says so`);

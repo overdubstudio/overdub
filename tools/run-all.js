@@ -5,9 +5,10 @@
 //   node tools/run-all.js --post     a full run of a clean, pushed commit: post its result to the commit on GitHub
 //                                    as the status "suites" (tools/suite-status.js), which its pull request shows
 //
-// These are the integration suites (browsers, servers, renders), and the unit tests as one more (tools/unit-test.js):
-// run them locally before merging (with --post, so the pull request shows it). CI runs the unit tests alone (node --test
-// "test/unit/*.test.js"); the deploy-live workflow runs all of this on the Mac mini before production.
+// These are the integration suites (browsers, servers, renders), and the unit tests as one more (tools/unit-test.js).
+// The suites workflow runs them on the Mac mini for every push to a branch, as the check "suites" main requires; run
+// here with --post, they say the same about a commit from another machine. CI runs the unit tests alone (node --test
+// "test/unit/*.test.js"); the deploy-live workflow runs all of this on the Mac mini again before production.
 //
 // First it makes sure the sampled kits are here (app/kits/, gitignored): a kit a device pins and this checkout hasn't
 // built fails suites far from the cause, so a missing one is fetched and built (tools/fetch-kits.js) before anything

@@ -178,7 +178,8 @@ node --test "test/unit/*.test.js"    # unit tests, what CI runs (seconds)
 
 A push to `main` (a merge) whose tests pass is deployed to the preview by its `deploy-staging` job; you can also start
 the workflow by hand on `main` (Actions › ci › Run workflow), which runs the tests and then deploys. CI doesn't run the
-integration suites (browsers, servers, renders), so run `node tools/run-all.js` locally before merging.
+integration suites (browsers, servers, renders): `.github/workflows/suites.yml` runs those on the Mac mini for every
+push to a branch, as the check `suites` that `main` requires.
 The deploy signs in to AWS with GitHub's OIDC token, never a stored key, as a role that can write the preview's bucket
 invalidate its distribution and read the stems model, and nothing else.
 `infra/next/github.tf` holds the role and GitHub's identity provider; `deploy_branches` names the branches whose runs

@@ -39,9 +39,11 @@ jobs:
       # the suites' screenshots and logs, inside this job's workspace (the runner keeps its disk between jobs)
       OUTDIR: ${{ github.workspace }}/suites-out
     steps:
-      # clean: true (the default) wipes what an earlier job left in the workspace
+      # clean: true (the default) wipes what an earlier job left in the workspace; the whole history, since a suite
+      # deploys an earlier commit (analytics-test: deploy.sh --next HEAD~1, dry)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       # Node from mise.toml: the runner's own PATH is the system's, so nothing on the machine is relied on

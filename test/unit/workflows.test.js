@@ -135,6 +135,7 @@ test('the required check "suites" runs by itself on a push, on the Mac mini', ()
     'a Dependabot branch changes the actions: nothing runs it before it is read',
   );
   assert.match(yml, /\n {4}name: suites\n/, 'the job is named as the ruleset requires it');
+  assert.match(yml, /fetch-depth: 0/, 'the whole history: analytics-test deploys HEAD~1');
   const step = yml.slice(yml.indexOf('- name: Every suite'), yml.indexOf('- name: Keep the screenshots'));
   assert.match(step, /node tools\/run-all\.js/);
   assert.match(step, /REQUIRE_ALL: '1'/);

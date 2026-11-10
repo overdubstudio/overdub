@@ -150,3 +150,12 @@ test('the required check "suites" runs by itself on a push, on the Mac mini', ()
     ['contents: read'],
   );
 });
+
+test('nothing but the suites workflow can set the check "suites": no tool posts a commit status', () => {
+  const TOOLS = path.join(WORKFLOWS, '../../tools');
+  const posting = fs
+    .readdirSync(TOOLS)
+    .filter((f) => f.endsWith('.js'))
+    .filter((f) => /\/statuses\/|--post\b/.test(fs.readFileSync(path.join(TOOLS, f), 'utf8')));
+  assert.deepEqual(posting, [], 'the suites run on CI by themselves; a run elsewhere says nothing to GitHub');
+});

@@ -534,9 +534,9 @@ export function ampCabNet(V, T, P, sr, W, has) {
 // AMP_CAB (kernel text; after AMP_VOICED) defines makeAmpCab(sr, dsp, bank, V, T) -> { set(P), process(x, n) (in place) }:
 // the measured IRs through dsp.convolver (direct: 128, so no latency), or a designed cab's six filters (and its mics:
 // each an align delay, seven filters and four room taps, delays read linearly as a DelayNode reads them). A change of
-// what plays (ampCabNet's key) crossfades over 30 ms, linearly (two cabs on one signal are nearly in phase); the rest
-// moves in place, a trim or a mic's level gliding (20 ms). Without the bank a measured cab plays the amp's own designed
-// cab (the wire).
+// what plays (ampCabNet's key) crossfades over 30 ms, raised-cosine (the gains summing to one: two cabs on one signal
+// are nearly in phase; no corner at either end to click); the rest moves in place, a trim or a mic's level gliding
+// (20 ms). Without the bank a measured cab plays the amp's own designed cab (the wire).
 export const AMP_CAB = String.raw`
 ${cabSin}
 ${cabResample}
@@ -653,7 +653,8 @@ function makeAmpCab(sr, dsp, bank, V, T) {
       for (let i = 0; i < n; i++) { A[i] = x[i]; B[i] = x[i]; }
       run(cur, A, n); run(prev, B, n);
       for (let i = 0; i < n; i++) {
-        const g = fade > 0 ? fade / FADE : 0;
+        // (raised-cosine: the two gains still sum to one, and the fade has no corner to click at either end)
+        const g = fade > 0 ? 0.5 - 0.5 * Math.cos((Math.PI * fade) / FADE) : 0;
         if (fade > 0) fade--;
         x[i] = A[i] + (B[i] - A[i]) * g;
       }

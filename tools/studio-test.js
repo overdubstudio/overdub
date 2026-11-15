@@ -49,7 +49,7 @@ function overlaps(rootSel) {
   return out;
 }
 
-for (const [W, H] of [[1440, 900], [1280, 800], [390, 844]]) {
+async function size(T, W, H) {
   const { page, errors, close, shot } = await boot(W, H);
   const E = (fn, arg) => page.evaluate(fn, arg);
   const tag = `${W}`;
@@ -207,7 +207,7 @@ for (const [W, H] of [[1440, 900], [1280, 800], [390, 844]]) {
 
 /* -------- a kept take and a built band land in view, flash once in their author's colour, and the band plays your take
    back from its first bar (not over a song that's already playing); a pill says "waiting for you" while a card waits */
-{
+async function keepBand(T) {
   const { page, errors, close, shot } = await boot(1440, 900);
   const E = (fn, arg) => page.evaluate(fn, arg);
   const view = (ids) => E((ids) => {
@@ -274,4 +274,17 @@ for (const [W, H] of [[1440, 900], [1280, 800], [390, 844]]) {
   await close();
 }
 
+// Each block boots a studio of its own (its own server and browser: a first visit each), so they share nothing: three
+// lanes side by side, the longest alone, and their lines print in the old order.
+const BLOCKS = [(t) => size(t, 1440, 900), (t) => size(t, 1280, 800), (t) => size(t, 390, 844), keepBand];
+const LANES = [[0], [1, 3], [2]];
+const kept = [];
+await Promise.all(LANES.map(async (lane) => {
+  for (const i of lane) {
+    const lines = [];
+    await BLOCKS[i]({ ok: (c, m) => (lines.push([!!c, m]), !!c), note: (m) => lines.push([null, m]) });
+    kept[i] = lines;
+  }
+}));
+for (const lines of kept) for (const [c, m] of lines) if (c === null) T.note(m); else T.ok(c, m);
 T.done();

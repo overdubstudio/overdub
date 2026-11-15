@@ -40,7 +40,11 @@ const warmIn = (page, t, s, half = 9) => page.evaluate(([t, s, half]) => {
   for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - hr) < 40 && Math.abs(d[i + 1] - hg) < 40 && Math.abs(d[i + 2] - hb) < 40) n++;
   return n;
 }, [t, s, half]);
-{
+// The desktop and the phone are studios of their own (each its own server and browser), so they run at once; each
+// one's lines are held and said in the file's order at the end. The desktop's play-along passes run in real time at the
+// song's tempo, untouched.
+const blocks = [];
+blocks.push(async (T) => {
   const { page, errors, close } = await boot();
   const E = (fn, arg) => page.evaluate(fn, arg);
   // (the pictures leave out the toasts, so the lane under them shows)
@@ -342,10 +346,10 @@ E |----------------|----------------|`;
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `no page errors on the desktop${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await close();
-}
+});
 
 /* ============================================================================ 7. a phone */
-{
+blocks.push(async (T) => {
   const { page, errors, close } = await boot({ width: 390, height: 844 });
   const E = (fn, arg) => page.evaluate(fn, arg);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -424,6 +428,10 @@ E |----------------|----------------|`;
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `phone: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await close();
-}
+});
 
+const held = blocks.map(() => ({ lines: [], ok(c, m) { this.lines.push([!!c, m]); return !!c; } }));
+const thrown = await Promise.all(blocks.map(async (fn, i) => { try { await fn(held[i]); } catch (e) { return e; } }));
+for (const h of held) for (const [c, m] of h.lines) T.ok(c, m);
+if (thrown.some(Boolean)) throw thrown.find(Boolean);
 T.done();

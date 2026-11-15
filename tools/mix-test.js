@@ -12,12 +12,13 @@ import { parseWav, parseMidi, parseZip } from '../test/unit/helpers/formats.js';
 import { demoProject } from '../app/src/core/demo.js';
 
 const T = tally('mix');
-const ok = T.ok;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // other areas are being written in parallel: their 404s are not ours
 const ours = (errors) => errors.filter((e) => !/Failed to load resource/.test(e));
 
 /* ---------------------------------------------------------------- the studio */
+async function studio(T) {
+const ok = T.ok;
 const { page, errors, close, shot } = await open('/app/', { query: 'demo' });
 page.setDefaultTimeout(15000);
 try {
@@ -580,12 +581,14 @@ try {
 } finally {
   await close();
 }
+}
 
 /* ---------------------------------------------------------------- a shared song's kept-off devices */
 // Sam's link: Night Shift with an instrument Sam wrote on the Keys and an effect on the Hook (as share-test builds it).
 // Kept off, the ask says "The Devices tab can play them": Devices opens on the first kept-off track (it opened on the
 // Drums), its track picker says which tracks are kept off, and app.rack.showKeptOff() brings them up from anywhere.
-{
+async function keptOff(T) {
+  const ok = T.ok;
   const INST = '({ poly: 4, create({ sr }) { return { voice() { let ph = 0, f = 0, g = 0, on = false; return { start(p, v) { f = 440 * Math.pow(2, (p - 69) / 12) / sr; g = 0.25 * v; on = true; }, release() { on = false; }, render(L, R, n) { if (!on) return false; for (let i = 0; i < n; i++) { ph += f; const y = Math.sin(2 * Math.PI * ph) * g; L[i] += y; R[i] += y; } return true; } }; } }; } })';
   const FX = '({ create() { return { process(L, R, n) { for (let i = 0; i < n; i++) { L[i] *= 0.5; R[i] *= 0.5; } } }; } })';
   const p = demoProject();
@@ -624,7 +627,8 @@ try {
 }
 
 /* ---------------------------------------------------------------- a phone */
-{
+async function phone(T) {
+  const ok = T.ok;
   const { page, errors, close, shot } = await open('/app/', { query: 'demo', width: 390, height: 844 });
   try {
     await page.waitForSelector('html[data-ready="1"]');
@@ -649,4 +653,10 @@ try {
     ok(errs.length === 0, '390 px: no page errors' + (errs.length ? ':\n    ' + errs.slice(0, 4).join('\n    ') : ''));
   } catch (e) { ok(false, 'phone run threw: ' + e.message); } finally { await close(); }
 }
+// Each part opens a studio of its own (its own server and browser), so they share nothing: the kept-off song and the
+// phone run one after the other beside the studio, and their lines print after its, as they always did.
+const keep = () => { const lines = []; return { lines, ok: (c, m) => (lines.push([!!c, m]), !!c), note: (m) => lines.push([null, m]) }; };
+const parts = [keep(), keep(), keep()];
+await Promise.all([studio(parts[0]), (async () => { await keptOff(parts[1]); await phone(parts[2]); })()]);
+for (const { lines } of parts) for (const [c, m] of lines) if (c === null) T.note(m); else T.ok(c, m);
 T.done();

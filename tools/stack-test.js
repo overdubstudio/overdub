@@ -17,7 +17,11 @@ import { tally, OUTDIR } from './pw.js';
 import '../app/src/devices/builtin/index.js';
 import def, { STACK_TRIM } from '../app/src/devices/builtin/stack.js';
 import { tmbAnalog, tmbCoefs, CABS_HASH, CAB_FILTER, CAB_OFF } from '../app/src/devices/builtin/amp-lib.js';
-import { presetParams, getDevice } from '../app/src/devices/registry.js';
+import { presetParams, getDevice, paramValues } from '../app/src/devices/registry.js';
+import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
+import { kernelSpecs } from '../app/src/kernel/host.js';
+import { makeDsp } from '../app/src/kernel/dsp.js';
+import { dataFor } from '../app/src/engine/node/data.js';
 import { lufs, truePeak } from '../app/src/audio/measure.js';
 import * as TS from '../app/src/audio/testsignals.js';
 import { checkDeviceNode } from '../app/src/engine/node/check.js';
@@ -26,15 +30,21 @@ import { SR, run, metalDI, psd, band, guitarBands, aliasing, goldenChecks } from
 import { writeWav } from '../app/src/engine/node/io.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 
-const T = tally('stack');
+// (on a worker thread, this file's lines are kept and sent back to be printed in order: see the end)
+const lines = [];
+const T = isMainThread ? tally('stack') : { ok: (c, m) => (lines.push(['ok', !!c, m]), !!c), note: (m) => lines.push(['note', m]) };
+if (!isMainThread) console.log = (...a) => lines.push(['log', a.join(' ')]);
 const ok = T.ok;
 const L = (x) => lufs({ sr: SR, channels: [x, x] });
 const TP = (x) => truePeak({ sr: SR, channels: [x, x] });
 const rms = (y, a = 0, b = y.length) => { let s = 0; for (let i = a; i < b; i++) s += y[i] * y[i]; return 10 * Math.log10(s / (b - a) + 1e-30); };
 const sine = (f, dbfs, secs) => { const a = Math.pow(10, dbfs / 20), x = new Float32Array(Math.round(secs * SR)); for (let i = 0; i < x.length; i++) x[i] = a * Math.sin(2 * Math.PI * f * i / SR); return x; };
 const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
-function block(title, fn) { console.log(title); try { fn(); } catch (e) { ok(false, `${title}: threw ${e && e.stack}`); } }
+const BLOCKS = [];
+function block(title, fn) { BLOCKS.push([title, fn]); }
+function runBlock(i) { const [title, fn] = BLOCKS[i]; console.log(title); try { fn(); } catch (e) { ok(false, `${title}: threw ${e && e.stack}`); } }
 
 block('the tone stack', () => {
   // the analog response from tmbAnalog, at s = jw; the digital one from tmbCoefs at 4x, on the unit circle
@@ -98,12 +108,30 @@ block('aliasing', () => {
 
 block('cost and latency', () => {
   const chug = metalDI('chug'), secs = chug.length / SR;
-  // (timed against Gaffer Tape, a heavy built-in, in the same moment: a loaded machine slows both alike)
-  const mb = getDevice('core.multiband');
-  const time = (d, p) => { const t0 = performance.now(); run(d, p, chug); return performance.now() - t0; };
+  // (timed against Gaffer Tape, a heavy built-in, in the same moment: a loaded machine slows both alike. So the three
+  // play the chug side by side, a 128-sample block each in turn, and each block is timed: one whole render after
+  // another let the load change between them, and the short Gaffer Tape render, timed last, caught a machine going
+  // quiet that the Half Stack's had not)
+  const mb = getDevice('core.multiband'), K = kernelCore(SR, makeDsp(SR), kernelCompiler);
+  const make = (d, p) => {   // (as run() in tools/amp-scenes.js builds one)
+    const values = paramValues(d, p), errs = [];
+    const c = new K({ source: d.kernel, kind: 'effect', params: kernelSpecs(d), values, seed: 1, data: dataFor(d.data), transport: { bpm: 120, playing: true, beat: 0, time: 0 } }, (m) => { if (m.type === 'error') errs.push(m.message); });
+    c.msg({ type: 'params', values, jump: true });
+    if (errs.length || !c.cur) throw new Error(d.id + ' did not compile: ' + errs.join('; '));
+    return c;
+  };
+  const times = () => {
+    const cs = [make(def, {}), make(def, { quality: 1 }), make(mb, {})], ms = [0, 0, 0];
+    const iL = new Float32Array(128), bL = new Float32Array(128), bR = new Float32Array(128);
+    for (let f = 0; f < chug.length; f += 128) {
+      iL.fill(0); iL.set(chug.subarray(f, f + 128));
+      for (let j = 0; j < 3; j++) { const t0 = performance.now(); cs[j].block(iL, iL, bL, bR, f); ms[j] += performance.now() - t0; }
+    }
+    return ms;
+  };
   run(def, {}, chug.subarray(0, SR)); run(mb, {}, chug.subarray(0, SR));
   let b4 = Infinity, b8 = Infinity, bm = Infinity;
-  for (let k = 0; k < 3; k++) { b4 = Math.min(b4, time(def, {})); b8 = Math.min(b8, time(def, { quality: 1 })); bm = Math.min(bm, time(mb, {})); }
+  for (let k = 0; k < 3; k++) { const [t4, t8, tm] = times(); b4 = Math.min(b4, t4); b8 = Math.min(b8, t8); bm = Math.min(bm, tm); }
   const pc = (ms) => 100 * ms / 1000 / secs, r4 = b4 / bm;
   // (the budget was 2.5% at 4X and 5% at 8X on an idle machine; this reports what it costs against a built-in)
   ok(r4 < 4 && b8 / b4 < 2.3, `one Half Stack with its 2048-tap cab costs ${pc(b4).toFixed(2)}% of real time at 4X (${r4.toFixed(2)}x Gaffer Tape's ${pc(bm).toFixed(2)}%) and ${pc(b8).toFixed(2)}% at 8X (best of three, ${secs.toFixed(1)} s of chug)`);
@@ -195,11 +223,36 @@ block('presets, extremes, determinism, no bank', () => {
   ok(nz === 0, `two seconds of chords, then silence: the last 5 s of 30 are digital silence (${nz} nonzero samples)`);
 });
 
-const nodeCheck = await checkDeviceNode(def);
-ok(nodeCheck.ok && nodeCheck.deterministic && !nodeCheck.nan && !nodeCheck.errors.length, `the device check (Node): ${summarize(nodeCheck)}`);
-
-if (!process.env.NODE_ONLY) {
-  console.log('golden scenes, in Node and in Chromium');
-  await goldenChecks(T, ['fx:core.stack', 'fx:core.stack:cab#' + CABS_HASH.slice(7, 19)], ['/app/src/devices/builtin/stack.js']);
+async function checks() {
+  const nodeCheck = await checkDeviceNode(def);
+  ok(nodeCheck.ok && nodeCheck.deterministic && !nodeCheck.nan && !nodeCheck.errors.length, `the device check (Node): ${summarize(nodeCheck)}`);
+  if (!process.env.NODE_ONLY) {
+    console.log('golden scenes, in Node and in Chromium');
+    await goldenChecks(T, ['fx:core.stack', 'fx:core.stack:cab#' + CABS_HASH.slice(7, 19)], ['/app/src/devices/builtin/stack.js']);
+  }
 }
+
+// Every block is CPU in one thread. The tone and the level, the renders, the presets and the checks run on worker
+// threads of their own while this one runs the tone stack, the stages and the aliasing; then, with every worker gone,
+// the cost is timed here alone, as warm as it always was (after the blocks before it). Lines print in their old order.
+if (!isMainThread) {
+  if (workerData === 'checks') await checks();
+  else for (const i of workerData) runBlock(i);
+  parentPort.postMessage(lines);
+  process.exit(0);
+}
+const COST = BLOCKS.findIndex(([title]) => title === 'cost and latency');
+const onWorker = (job) => new Promise((resolve) => {
+  const w = new Worker(new URL(import.meta.url), { workerData: job });
+  let got = null;
+  w.once('message', (m) => (got = m));
+  w.once('error', (e) => (got = [['ok', false, `the ${job} worker threw: ${e && e.stack}`]]));
+  w.once('exit', (code) => resolve(got || [['ok', false, `the ${job} worker exited (${code}) before it reported`]]));
+});
+const jobs = [...BLOCKS.keys()].filter((i) => i > COST).map((i) => onWorker([i]));
+jobs.push(onWorker('checks'));
+for (let i = 0; i < COST; i++) runBlock(i);
+const done = await Promise.all(jobs);   // (each resolves once its worker has exited)
+runBlock(COST);
+for (const got of done) for (const [kind, a, b] of got) if (kind === 'log') console.log(a); else if (kind === 'note') T.note(a); else T.ok(a, b);
 T.done();

@@ -9,9 +9,14 @@ import { open, tally } from './pw.js';
 const T = tally('shell');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allowed/i.test(e);
+// Each block below is a studio of its own (its own server and browser), so they run in two lanes at once: the desktop's
+// in one, the phone's, the agent's and the meter's one after another in the other. Each block's lines are held and said
+// in the file's order at the end.
+const blocks = [];
+const LANES = [[0], [1, 2, 3]];
 
 /* ================================================================ desktop */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo' });
   const { page, errors } = s;
   const E = (fn, arg) => page.evaluate(fn, arg);
@@ -563,10 +568,10 @@ const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allo
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `desktop: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ================================================================ a phone */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo', width: 390, height: 844 });
   const { page, errors } = s;
   const E = (fn, arg) => page.evaluate(fn, arg);
@@ -581,10 +586,10 @@ const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allo
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `phone: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ================================================================ the agent's first look, and the demo agent on a part you can't hear */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo' });
   const { page, errors } = s;
   const E = (fn, arg) => page.evaluate(fn, arg);
@@ -656,7 +661,7 @@ const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allo
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `agent: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ================================================================ the output meter when the mix goes over */
 // docs/FRESH-EYES-6.md, the producer's Broken 2: a mix summing to +2.4 dBFS read "−0.7" in white, because the meter read
@@ -664,7 +669,7 @@ const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allo
 // (no limiter on its master) whose one track peaks at −1.0 dBFS reads −1.0, in no red; at +3.5 dBFS the bars go red and
 // "Clipping 3.5 dB" takes the number's place, in the top bar and on the mixer's master strip, with nothing on the bar
 // moving; a press pulls the master down 4 dB in one undo step (a master level lane moves down with it).
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { width: 1440, height: 900 });
   const { page, errors, shot } = s;
   const E = (fn, arg) => page.evaluate(fn, arg);
@@ -741,6 +746,10 @@ const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allo
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `meter: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
+const held = blocks.map(() => ({ lines: [], ok(c, m) { this.lines.push(['ok', !!c, m]); return !!c; }, note(m) { this.lines.push(['note', null, m]); } }));
+const thrown = await Promise.all(LANES.map(async (lane) => { try { for (const i of lane) await blocks[i](held[i]); } catch (e) { return e; } }));
+for (const h of held) for (const [k, c, m] of h.lines) if (k === 'ok') T.ok(c, m); else T.note(m);
+if (thrown.some(Boolean)) throw thrown.find(Boolean);
 T.done();

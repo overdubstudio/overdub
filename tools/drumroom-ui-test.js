@@ -23,12 +23,13 @@ import { open, tally, OUTDIR } from './pw.js';
 import path from 'node:path';
 
 const T = tally('drumroom-ui');
-const ok = T.ok;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ours = (errors) => errors.filter((e) => !/Failed to load resource|favicon|net::ERR|fonts\.g|AudioContext|getUserMedia/.test(e));
 
 /* ======================================================================== the window, on a desktop */
 const s = await open('/app/', { query: 'demo' });
+async function desktop(T) {
+const ok = T.ok;
 const { page, errors, shot } = s;
 page.setDefaultTimeout(15000);
 let kitTrack = null;
@@ -351,10 +352,11 @@ try {
 } catch (e) {
   ok(false, 'desktop run threw: ' + (e && e.stack || e));
 }
+}
 
 /* ======================================================================== 1280 by 800: the whole window, no scrolling */
 // (FRESH-EYES-6: the mic faders sat 97 px below the fold there)
-{
+async function at1280(T) {
   const ctx = await s.browser.newContext({ viewport: { width: 1280, height: 800 } });
   const p3 = await ctx.newPage();
   const errs = [];
@@ -389,7 +391,7 @@ try {
 }
 
 /* ======================================================================== a phone: a full sheet, the kit across it */
-{
+async function phone(T) {
   const ctx = await s.browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const page2 = await ctx.newPage();
   const errs = [];
@@ -451,5 +453,12 @@ try {
   }
   await ctx.close();
 }
+
+// The 1280 by 800 window and the phone are pages of their own in contexts of their own (their own storage, their own
+// Kit A), so they run one after the other beside the desktop's page, and their lines print after its, as they did.
+const keep = () => { const lines = []; return { lines, ok: (c, m) => (lines.push([!!c, m]), !!c), note: (m) => lines.push([null, m]) }; };
+const parts = [keep(), keep(), keep()];
+await Promise.all([desktop(parts[0]), (async () => { await at1280(parts[1]); await phone(parts[2]); })()]);
+for (const { lines } of parts) for (const [c, m] of lines) if (c === null) T.note(m); else T.ok(c, m);
 await s.close();
 T.done();

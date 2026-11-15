@@ -235,7 +235,8 @@ const prep = await page.evaluate(async () => {
   window.__darkWav = window.overdub.exporter.encodeWav({ sampleRate: b.sampleRate, channels: ch }, { bits: 24 });
   return { song: M.measure(b).lufs, assets: Object.keys(window.overdub.store.get().assets).length };
 });
-const beforeRender = await page.evaluate(async () => { const M = await import('/app/src/audio/measure.js'); return M.measure(await window.overdub.engine.render({ from: 0, to: 32, tail: 1 })).lufs; });
+// (the song's loudness before a reference is set: the render just made, bars 1-8 with nothing changed since)
+const beforeRender = prep.song;
 await page.evaluate(() => document.querySelectorAll('.ew-toast').forEach((t) => t.remove()));
 const dr = await dropAt('.rf', '__darkWav', 'darker copy.wav', 'audio/wav', { x: 60, y: 40 });
 ok(dr.inside, `the drop lands on the Reference tab (${dr.hit})`);

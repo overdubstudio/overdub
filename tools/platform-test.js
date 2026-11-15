@@ -26,8 +26,11 @@ import { phrase, PHRASE_BEATS } from '../app/src/audio/testsignals.js';
 import * as registry from '../app/src/devices/registry.js';
 import { INSTRUMENTS } from '../app/src/devices/builtin/index.js';
 import { TOOLS } from '../app/src/agent/tools.js';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 
-const t = tally('platform');
+const T = tally('platform');
+// (each section below takes a `t` that keeps its lines, printed at the end in the sections' order)
+const keep = () => { const lines = []; return { lines, ok: (c, m) => (lines.push([!!c, m]), !!c), note: (m) => lines.push([null, m]) }; };
 const SR = 48000, Q = 128, BEAT = 0.5;
 const dB = (x) => 20 * Math.log10(Math.max(1e-12, x));
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -93,8 +96,7 @@ function t60(x, frame = 0.01) {
 const slice = (r, a, b) => ({ sr: r.sr, channels: r.channels.map((x) => x.subarray(Math.round(a * r.sr), Math.round(b * r.sr))) });
 
 /* ------------------------------------------------------------------ 1. expression */
-console.log('expression: existing instruments are bit-identical with the wheels at rest');
-{
+function expression(t) {
   const ph = phrase().slice(0, 40).map((n) => ({ ...n, t: n.t * BEAT, d: n.d * BEAT }));
   const frames = Math.round((ph.reduce((m, n) => Math.max(m, n.t + n.d), 0) + 0.5) * SR);
   const bad = [];
@@ -114,8 +116,7 @@ console.log('expression: existing instruments are bit-identical with the wheels 
 
 /* ------------------------------------------------------------------ 2. MIDI */
 /* ------------------------------------------------------------------ 3. presets */
-console.log('presets');
-{
+function presets(t) {
   const g = registry.getDevice('core.guitar');
   const NEW = ['core.piano', 'core.organ', 'core.strings', 'core.bassguitar', 'core.guitar'];
   // agents see them
@@ -142,9 +143,8 @@ console.log('presets');
 }
 
 /* ------------------------------------------------------------------ 4. core.guitar */
-console.log('core.guitar: DI Box');
-{
-  const ID = 'core.guitar';
+const ID = 'core.guitar';
+function guitar(t) {
   const g = registry.getDevice(ID);
   t.ok(g && g.kind === 'instrument' && g.params.length === 7 && INSTRUMENTS.includes(g), `registered: ${g && g.name}, ${g && g.params.length} params (${g && g.params.map((p) => p.key).join(' ')})`);
   const ph = phrase().map((n) => ({ p: n.p, v: n.v, t: n.t * BEAT, d: n.d * BEAT }));
@@ -198,6 +198,8 @@ console.log('core.guitar: DI Box');
   const rr = play(ID, [{ p: 64, v: 0.8, t: 0, d: 1 }], {}, 3, 0.5);
   const drop = dB(rms(rr.channels[0], 0.8, 0.98)) - dB(rms(rr.channels[0], 1.6, 1.8));
   t.ok(drop >= 40, `let go and the string is damped: ${fmt(drop)} dB down 0.6 s after release`);
+}
+function guitarCpu(t) {
   // CPU: 16 strings held, against core.keys (GRAND) as the reference, as tools/instruments-test.js does
   const sixteen = Array.from({ length: 16 }, (_, k) => ({ p: 40 + k * 2, v: 0.8, t: 0, d: 4 }));
   const time = (id, params) => { let best = Infinity; for (let i = 0; i < 2; i++) { const r = play(id, sixteen, params, 4, 0); best = Math.min(best, r.ms / (r.length / r.sr * 1000) * 100); } return best; };
@@ -206,8 +208,7 @@ console.log('core.guitar: DI Box');
 }
 
 /* ------------------------------------------------------------------ 5. the browser */
-console.log('the browser: the AudioWorklet and the studio');
-{
+async function browser(t) {
   const { page, close, errors } = await open('/app/');
   try {
     await page.waitForFunction(() => window.overdub && window.overdub.engine && window.overdub.input, null, { timeout: 20000 });
@@ -266,4 +267,38 @@ console.log('the browser: the AudioWorklet and the studio');
     await close();
   }
 }
-t.done();
+
+// The expression and the presets are seconds of renders each, in one thread: they run on worker threads of their own
+// while this one runs the browser and then core.guitar. The guitar's CPU check, the one timed against the wall clock,
+// starts only once both workers have exited, so nothing of this suite runs beside it.
+const SECTIONS = { expression, presets };
+if (!isMainThread) {
+  const k = keep();
+  SECTIONS[workerData](k);
+  parentPort.postMessage(k.lines);
+  process.exit(0);
+}
+const onWorker = (job) => new Promise((resolve) => {
+  const w = new Worker(new URL(import.meta.url), { workerData: job });
+  let got = null;
+  w.once('message', (m) => (got = m));
+  w.once('error', (e) => (got = [[false, `the ${job} worker threw: ${e && e.stack}`]]));
+  w.once('exit', (code) => resolve(got || [[false, `the ${job} worker exited (${code}) before it reported`]]));
+});
+const workers = [onWorker('expression'), onWorker('presets')];
+const web = keep(), gtr = keep(), cpu = keep();
+try { await browser(web); } catch (e) { web.ok(false, `the browser threw: ${e && e.stack}`); }
+guitar(gtr);
+const [ex, pr] = await Promise.all(workers);   // (each resolves once its worker has exited)
+guitarCpu(cpu);
+const print = (lines) => { for (const [c, m] of lines) if (c === null) T.note(m); else T.ok(c, m); };
+console.log('expression: existing instruments are bit-identical with the wheels at rest');
+print(ex);
+console.log('presets');
+print(pr);
+console.log('core.guitar: DI Box');
+print(gtr.lines);
+print(cpu.lines);
+console.log('the browser: the AudioWorklet and the studio');
+print(web.lines);
+T.done();

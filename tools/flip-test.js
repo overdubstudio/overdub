@@ -55,7 +55,7 @@ async function fakeJobs(page, timings = { device: 'gpu', msPerSegment: 700 }, st
     return true;
   }, [FILES, timings, stepMs]);
 }
-async function pickFiles(page, paths) {
+async function pickFiles(t, page, paths) {
   const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('.st-way-b[data-way="Flip a song"]')]);
   t.ok(fc.isMultiple(), 'the picker takes one file or several');
   await fc.setFiles(paths);
@@ -81,8 +81,7 @@ async function settle(page) {
 }
 
 /* ================================================================ one file, the split on the graphics card */
-{
-  console.log('\none file, split on the fake runner');
+async function oneFile(t) {
   const o = await blank();
   const { page } = o;
   try {
@@ -90,7 +89,7 @@ async function settle(page) {
     t.ok(ways.join() === 'Tap a beat,Hum a tune,Play the keys,Flip a song', `the door has four rows, Flip a song last (${ways.join(' · ')})`);
     await page.screenshot({ path: path.join(OUTDIR, 'flip-door.png') });
     await fakeJobs(page);
-    await pickFiles(page, [file('mix')]);
+    await pickFiles(t, page, [file('mix')]);
     await page.waitForFunction(() => window.overdub.store.history.length >= 1, null, { timeout: 15000 });
     const s0 = await state(page);
     t.ok(s0.hist[0]?.label === 'Flip: Night Bus' && s0.hist[0]?.by === 'you' && s0.title === 'Night Bus', `the import is one step, "${s0.hist[0]?.label}", by ${s0.hist[0]?.by}; the song is "${s0.title}"`);
@@ -215,12 +214,11 @@ async function settle(page) {
 }
 
 /* ================================================================ the stems brought as files, the runner off */
-{
-  console.log('\nbring your own stems (no runner on this site)');
+async function ownStems(t) {
   const o = await blank();
   const { page } = o;
   try {
-    await pickFiles(page, [file('drums'), file('vocals'), file('mix'), file('other'), file('bass')]);
+    await pickFiles(t, page, [file('drums'), file('vocals'), file('mix'), file('other'), file('bass')]);
     await page.waitForFunction(() => window.overdub.store.history.length >= 1, null, { timeout: 15000 });
     const s0 = await state(page);
     t.ok(s0.hist.length === 1 && s0.hist[0].label === 'Flip: Night Bus' && s0.tracks.map((x) => `${x.name}${x.mute ? '-' : '+'}`).join() === 'Original-,Vocals+,Drums-,Bass-,Other-', `five files, one step: ${s0.tracks.map((x) => `${x.name}${x.mute ? ' (muted)' : ''}`).join(', ')}`);
@@ -235,13 +233,12 @@ async function settle(page) {
 }
 
 /* ================================================================ no WebGPU: the processor's wait is asked; Cancel */
-{
-  console.log('\nno WebGPU: asked first; Cancel stops it');
+async function noWebGpu(t) {
   const o = await blank();
   const { page } = o;
   try {
     await fakeJobs(page, { device: 'cpu', msPerSegment: null }, 800);
-    await pickFiles(page, [file('mix')]);
+    await pickFiles(t, page, [file('mix')]);
     await page.waitForFunction(() => document.querySelectorAll('.ar-job:not([hidden]) button').length === 2, null, { timeout: 15000 });
     const ask = await E(page, () => ({ text: document.querySelector('.ar-job-t').textContent, acts: [...document.querySelectorAll('.ar-job button')].map((b) => b.textContent) }));
     t.ok(/^Split it into stems\? Roughly \d+ (s|min) on this computer's processor\. No WebGPU here, so the processor does the work\./.test(ask.text) && ask.acts.join() === 'Split on the processor,Skip the split', `it says the wait and asks: "${ask.text}" (${ask.acts.join(' / ')})`);
@@ -257,7 +254,7 @@ async function settle(page) {
     // a second flip of the same song, skipping the split: the grid is read from the mix
     await E(page, () => window.overdub.store.undo());
     await page.waitForTimeout(200);
-    await pickFiles(page, [file('mix')]);
+    await pickFiles(t, page, [file('mix')]);
     await page.waitForFunction(() => document.querySelectorAll('.ar-job:not([hidden]) button').length === 2, null, { timeout: 15000 });
     await page.click('.ar-job button:not(.ar-job-go)');
     await settle(page);
@@ -269,13 +266,12 @@ async function settle(page) {
 }
 
 /* ================================================================ a phone */
-{
-  console.log('\na phone (390 × 844)');
+async function phone(t) {
   const o = await blank({ width: 390, height: 844 });
   const { page } = o;
   try {
     const w0 = await E(page, () => document.documentElement.scrollWidth);
-    await pickFiles(page, [file('mix'), file('vocals')]);
+    await pickFiles(t, page, [file('mix'), file('vocals')]);
     await settle(page);
     await page.waitForTimeout(200);
     const s = await state(page);
@@ -296,8 +292,7 @@ async function settle(page) {
 /* ================================================================ in every studio (no switch: merged means shipped) */
 // A blank song's door has Flip a song beside the other three ways, Song ▸ Export has Release, and Find has the guide's
 // Flip a song heading.
-{
-  console.log('\nin every studio');
+async function everyStudio(t) {
   const o = await blank();
   const { page } = o;
   try {
@@ -321,4 +316,20 @@ async function settle(page) {
   finally { await o.close(); }
 }
 
+// The five blocks each open a studio of their own on its own server and browser, and share nothing but the song's
+// files: they run in three lanes side by side (the longest two alone), and their lines print in the old order.
+const BLOCKS = [['one file, split on the fake runner', oneFile], ['bring your own stems (no runner on this site)', ownStems], ['no WebGPU: asked first; Cancel stops it', noWebGpu], ['a phone (390 × 844)', phone], ['in every studio', everyStudio]];
+const LANES = [[0], [2], [1, 3, 4]];
+const kept = [];
+await Promise.all(LANES.map(async (lane) => {
+  for (const i of lane) {
+    const lines = [];
+    await BLOCKS[i][1]({ ok: (c, m) => (lines.push([!!c, m]), !!c), note: (m) => lines.push([null, m]) });
+    kept[i] = lines;
+  }
+}));
+BLOCKS.forEach(([title], i) => {
+  console.log('\n' + title);
+  for (const [c, m] of kept[i]) if (c === null) t.note(m); else t.ok(c, m);
+});
 t.done();

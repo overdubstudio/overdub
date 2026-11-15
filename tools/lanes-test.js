@@ -18,6 +18,100 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const s = await open('/app/', { query: 'demo' });
 const { page, errors, close, shot } = s;
 const E = (fn, a) => page.evaluate(fn, a);
+// The phone runs beside the desktop's gestures from the start: a context of its own (its own storage and page) on the
+// same browser and server, and a song of its own. It held no state from them before either; its checks are held and
+// printed after the desktop's, where they always were.
+async function phoneRun() {
+  const held = [];
+  const T = { ok: (cond, msg) => { held.push([cond, msg]); return !!cond; } };
+  try {
+    /* ---- a phone: a 48 px lane, a tap adds a point, a finger drags it, a hold opens the point's menu */
+    const ctx = await s.browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2, permissions: ['microphone'] });
+    const ph = await ctx.newPage();
+    const perr = [];
+    ph.on('pageerror', (e) => perr.push(String(e)));
+    await ph.goto(s.base + '/app/?demo', { waitUntil: 'load' });
+    await ph.evaluate(() => localStorage.setItem('overdub:welcomed', '1'));
+    await ph.reload({ waitUntil: 'load' });
+    await ph.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+    await ph.waitForTimeout(600);
+    const PE = (fn, a) => ph.evaluate(fn, a);
+    const pt = await PE(() => { const o = window.overdub, p = o.store.get(); const t = p.tracks[0]; o.arranger.zoomTo(0, 16); o.ui.state.snap = 1; return { id: t.id, bpb: p.meter[0] * (4 / p.meter[1]) }; });
+    const ok1 = await PE((id) => window.overdub.arranger.showLane(id, { param: 'gain' }), pt.id);
+    await ph.waitForTimeout(200);
+    const pr = (await PE(() => window.overdub.arranger.laneRows()))[0];
+    T.ok(ok1 && pr && pr.h === 48, `on a phone a lane is 48 px (${pr?.h})`);
+    // its header is all one target: the name's button (Draw and Hide aren't shown here), not a 29x14 word
+    const phHead = await PE((k) => {
+      const head = document.querySelector(`.ar-lhead[data-lane="${k}"]`), r = head.getBoundingClientRect();
+      let n = 0, on = 0;
+      for (let x = r.left + 3; x < r.right - 2; x += 6) for (let y = r.top + 3; y < r.bottom - 2; y += 6) { n++; if (document.elementFromPoint(x, y)?.closest('.ar-lname')) on++; }
+      return { w: Math.round(r.width), h: Math.round(r.height), n, on };
+    }, pr.key);
+    T.ok(phHead.n > 50 && phHead.on === phHead.n, `on a phone the whole lane header (${phHead.w}x${phHead.h}) is the name's button: ${phHead.on} of ${phHead.n} points on it`);
+    const cdp = await ctx.newCDPSession(ph);
+    const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y]) => ({ x, y, radiusX: 4, radiusY: 4, force: 1, id: 1 })) });
+    const pxOf = (b) => PE((b) => window.overdub.arranger.xOf(b), b);
+    const tx = await pxOf(pt.bpb * 1 + 0.1), ty = pr.top + 12;
+    await touch('touchStart', [[tx, ty]]); await sleep(60); await touch('touchEnd', []);
+    await ph.waitForTimeout(250);
+    let PL = await PE((id) => JSON.parse(JSON.stringify(window.overdub.store.get().tracks.find((t) => t.id === id).auto?.gain || null)), pt.id);
+    T.ok(PL && PL.points.length === 2 && PL.points[1].t === pt.bpb, `a tap on the lane adds a point at bar 2 (${JSON.stringify(PL?.points)})`);
+    // a finger on the point, dragged at once, scrolls (as on a clip): the point stays
+    const px0 = await pxOf(pt.bpb), py0 = await PE(([k, v]) => window.overdub.arranger.laneY(k, v), [pr.key, PL.points[1].v]);
+    const px1 = await pxOf(2 * pt.bpb + 0.2);
+    const before1 = JSON.stringify(PL);
+    await ph.waitForTimeout(450);
+    await touch('touchStart', [[px0 + 4, py0 + 4]]);
+    for (let k = 1; k <= 8; k++) { await touch('touchMove', [[px0 + 4 + (px1 - px0) * k / 8, py0 + 4]]); await sleep(16); }
+    await touch('touchEnd', []);
+    await ph.waitForTimeout(250);
+    PL = await PE((id) => JSON.parse(JSON.stringify(window.overdub.store.get().tracks.find((t) => t.id === id).auto?.gain || null)), pt.id);
+    T.ok(JSON.stringify(PL) === before1, `a finger dragged straight off a point scrolls and leaves it where it was (${JSON.stringify(PL?.points[1])})`);
+    await PE(() => window.overdub.arranger.zoomTo(0, 16));
+    await ph.waitForTimeout(200);
+    // held still, the point is picked up (its menu opens); a drag from there moves it a bar on
+    const qx0 = await pxOf(pt.bpb), qx1 = await pxOf(2 * pt.bpb + 0.2);
+    await ph.waitForTimeout(450);
+    await touch('touchStart', [[qx0 + 4, py0 + 4]]); await sleep(700);
+    const liftMenu = await PE(() => document.querySelectorAll('.ek-pop .ek-item').length);
+    for (let k = 1; k <= 8; k++) { await touch('touchMove', [[qx0 + 4 + (qx1 - qx0) * k / 8, py0 + 4]]); await sleep(16); }
+    const menuAfter = await PE(() => document.querySelectorAll('.ek-pop .ek-item').length);
+    await touch('touchEnd', []);
+    await ph.waitForTimeout(250);
+    PL = await PE((id) => JSON.parse(JSON.stringify(window.overdub.store.get().tracks.find((t) => t.id === id).auto?.gain || null)), pt.id);
+    T.ok(liftMenu > 0 && menuAfter === 0 && PL && PL.points.length === 2 && PL.points[1].t === 2 * pt.bpb, `a finger held on the point (a 40 px reach) picks it up, its menu open (${liftMenu} items); dragged from there, the menu goes and the point moves to bar 3 (${JSON.stringify(PL?.points[1])})`);
+    // touch and hold the point: its menu
+    const hx = await pxOf(2 * pt.bpb), hy = await PE(([k, v]) => window.overdub.arranger.laneY(k, v), [pr.key, PL.points[1].v]);
+    await ph.waitForTimeout(450);
+    await touch('touchStart', [[hx + 3, hy - 3]]); await sleep(700); await touch('touchEnd', []);
+    await ph.waitForTimeout(200);
+    const pitems = await PE(() => [...document.querySelectorAll('.ek-pop .ek-item')].map((b) => b.textContent));
+    T.ok(['Delete the point', 'Straight', 'Ease in', 'Ease out', 'Step'].every((w) => pitems.some((t) => t.startsWith(w))) && pitems.some((t) => t.startsWith('Ramp up')), `holding a point opens its menu: curve and shapes (${pitems.slice(0, 6).join(', ')})`);
+    // a dense lane (a point on every beat) is a field of 40 px targets: a vertical swipe across it scrolls the arranger
+    // and moves nothing (it used to grab a point and push Level to +24 dB)
+    await PE(() => document.querySelector('.ek-pop') && document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await PE((id) => { const o = window.overdub; const pts = []; for (let b = 0; b <= 32; b++) pts.push(`${b}:${(-6 + 4 * Math.sin(b)).toFixed(2)}`); o.store.dispatch({ type: 'auto.write', track: id, param: 'gain', points: pts.join(' ') }, { by: 'claude', label: 'dense' }); o.arranger.zoomTo(0, 16); }, pt.id);
+    await ph.waitForTimeout(300);
+    const dense0 = await PE((id) => { const sc = document.querySelector('.ar-scroll'); sc.scrollTop = 0; const o = window.overdub; return { pts: JSON.stringify(o.store.get().tracks.find((t) => t.id === id).auto.gain.points), hist: o.store.history.length, room: sc.scrollHeight - sc.clientHeight }; }, pt.id);
+    const dr = (await PE(() => window.overdub.arranger.laneRows()))[0];
+    const sx2 = await pxOf(2), sy2 = dr.top + dr.h / 2;
+    await ph.waitForTimeout(450);
+    await touch('touchStart', [[sx2, sy2]]);
+    for (let k = 1; k <= 10; k++) { await touch('touchMove', [[sx2, sy2 - 15 * k]]); await sleep(16); }
+    await touch('touchEnd', []);
+    await ph.waitForTimeout(250);
+    const dense1 = await PE((id) => { const o = window.overdub; return { pts: JSON.stringify(o.store.get().tracks.find((t) => t.id === id).auto.gain.points), hist: o.store.history.length, top: document.querySelector('.ar-scroll').scrollTop }; }, pt.id);
+    T.ok(dense0.room > 20 && dense1.top > 20 && dense1.pts === dense0.pts && dense1.hist === dense0.hist, `a one-finger swipe up across a dense lane scrolls the arranger (scrollTop ${dense1.top} of ${dense0.room}) and leaves every point where it was (${dense1.pts === dense0.pts ? 'unchanged' : 'MOVED'}, ${dense1.hist - dense0.hist} new edits)`);
+    await ph.screenshot({ path: path.join(OUTDIR, 'lanes-phone.png') });
+    T.ok(!perr.length, `no page errors on the phone (${perr.slice(0, 2).join(' | ')})`);
+    await ctx.close();
+  } catch (e) {
+    T.ok(false, 'lanes test threw: ' + (e && e.stack || e));
+  }
+  return held;
+}
+const phoneDone = phoneRun();
 try {
   await E(() => { localStorage.setItem('overdub:welcomed', '1'); });
   await page.reload({ waitUntil: 'load' });
@@ -690,90 +784,10 @@ try {
   const bad = errors.filter((e) => !ignorable(e));
   T.ok(!bad.length, `no console errors (${bad.slice(0, 3).join(' | ')})`);
 
-  /* ---- a phone: a 48 px lane, a tap adds a point, a finger drags it, a hold opens the point's menu */
-  const ctx = await s.browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2, permissions: ['microphone'] });
-  const ph = await ctx.newPage();
-  const perr = [];
-  ph.on('pageerror', (e) => perr.push(String(e)));
-  await ph.goto(s.base + '/app/?demo', { waitUntil: 'load' });
-  await ph.evaluate(() => localStorage.setItem('overdub:welcomed', '1'));
-  await ph.reload({ waitUntil: 'load' });
-  await ph.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
-  await ph.waitForTimeout(600);
-  const PE = (fn, a) => ph.evaluate(fn, a);
-  const pt = await PE(() => { const o = window.overdub, p = o.store.get(); const t = p.tracks[0]; o.arranger.zoomTo(0, 16); o.ui.state.snap = 1; return { id: t.id, bpb: p.meter[0] * (4 / p.meter[1]) }; });
-  const ok1 = await PE((id) => window.overdub.arranger.showLane(id, { param: 'gain' }), pt.id);
-  await ph.waitForTimeout(200);
-  const pr = (await PE(() => window.overdub.arranger.laneRows()))[0];
-  T.ok(ok1 && pr && pr.h === 48, `on a phone a lane is 48 px (${pr?.h})`);
-  // its header is all one target: the name's button (Draw and Hide aren't shown here), not a 29x14 word
-  const phHead = await PE((k) => {
-    const head = document.querySelector(`.ar-lhead[data-lane="${k}"]`), r = head.getBoundingClientRect();
-    let n = 0, on = 0;
-    for (let x = r.left + 3; x < r.right - 2; x += 6) for (let y = r.top + 3; y < r.bottom - 2; y += 6) { n++; if (document.elementFromPoint(x, y)?.closest('.ar-lname')) on++; }
-    return { w: Math.round(r.width), h: Math.round(r.height), n, on };
-  }, pr.key);
-  T.ok(phHead.n > 50 && phHead.on === phHead.n, `on a phone the whole lane header (${phHead.w}x${phHead.h}) is the name's button: ${phHead.on} of ${phHead.n} points on it`);
-  const cdp = await ctx.newCDPSession(ph);
-  const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y]) => ({ x, y, radiusX: 4, radiusY: 4, force: 1, id: 1 })) });
-  const pxOf = (b) => PE((b) => window.overdub.arranger.xOf(b), b);
-  const tx = await pxOf(pt.bpb * 1 + 0.1), ty = pr.top + 12;
-  await touch('touchStart', [[tx, ty]]); await sleep(60); await touch('touchEnd', []);
-  await ph.waitForTimeout(250);
-  let PL = await PE((id) => JSON.parse(JSON.stringify(window.overdub.store.get().tracks.find((t) => t.id === id).auto?.gain || null)), pt.id);
-  T.ok(PL && PL.points.length === 2 && PL.points[1].t === pt.bpb, `a tap on the lane adds a point at bar 2 (${JSON.stringify(PL?.points)})`);
-  // a finger on the point, dragged at once, scrolls (as on a clip): the point stays
-  const px0 = await pxOf(pt.bpb), py0 = await PE(([k, v]) => window.overdub.arranger.laneY(k, v), [pr.key, PL.points[1].v]);
-  const px1 = await pxOf(2 * pt.bpb + 0.2);
-  const before1 = JSON.stringify(PL);
-  await ph.waitForTimeout(450);
-  await touch('touchStart', [[px0 + 4, py0 + 4]]);
-  for (let k = 1; k <= 8; k++) { await touch('touchMove', [[px0 + 4 + (px1 - px0) * k / 8, py0 + 4]]); await sleep(16); }
-  await touch('touchEnd', []);
-  await ph.waitForTimeout(250);
-  PL = await PE((id) => JSON.parse(JSON.stringify(window.overdub.store.get().tracks.find((t) => t.id === id).auto?.gain || null)), pt.id);
-  T.ok(JSON.stringify(PL) === before1, `a finger dragged straight off a point scrolls and leaves it where it was (${JSON.stringify(PL?.points[1])})`);
-  await PE(() => window.overdub.arranger.zoomTo(0, 16));
-  await ph.waitForTimeout(200);
-  // held still, the point is picked up (its menu opens); a drag from there moves it a bar on
-  const qx0 = await pxOf(pt.bpb), qx1 = await pxOf(2 * pt.bpb + 0.2);
-  await ph.waitForTimeout(450);
-  await touch('touchStart', [[qx0 + 4, py0 + 4]]); await sleep(700);
-  const liftMenu = await PE(() => document.querySelectorAll('.ek-pop .ek-item').length);
-  for (let k = 1; k <= 8; k++) { await touch('touchMove', [[qx0 + 4 + (qx1 - qx0) * k / 8, py0 + 4]]); await sleep(16); }
-  const menuAfter = await PE(() => document.querySelectorAll('.ek-pop .ek-item').length);
-  await touch('touchEnd', []);
-  await ph.waitForTimeout(250);
-  PL = await PE((id) => JSON.parse(JSON.stringify(window.overdub.store.get().tracks.find((t) => t.id === id).auto?.gain || null)), pt.id);
-  T.ok(liftMenu > 0 && menuAfter === 0 && PL && PL.points.length === 2 && PL.points[1].t === 2 * pt.bpb, `a finger held on the point (a 40 px reach) picks it up, its menu open (${liftMenu} items); dragged from there, the menu goes and the point moves to bar 3 (${JSON.stringify(PL?.points[1])})`);
-  // touch and hold the point: its menu
-  const hx = await pxOf(2 * pt.bpb), hy = await PE(([k, v]) => window.overdub.arranger.laneY(k, v), [pr.key, PL.points[1].v]);
-  await ph.waitForTimeout(450);
-  await touch('touchStart', [[hx + 3, hy - 3]]); await sleep(700); await touch('touchEnd', []);
-  await ph.waitForTimeout(200);
-  const pitems = await PE(() => [...document.querySelectorAll('.ek-pop .ek-item')].map((b) => b.textContent));
-  T.ok(['Delete the point', 'Straight', 'Ease in', 'Ease out', 'Step'].every((w) => pitems.some((t) => t.startsWith(w))) && pitems.some((t) => t.startsWith('Ramp up')), `holding a point opens its menu: curve and shapes (${pitems.slice(0, 6).join(', ')})`);
-  // a dense lane (a point on every beat) is a field of 40 px targets: a vertical swipe across it scrolls the arranger
-  // and moves nothing (it used to grab a point and push Level to +24 dB)
-  await PE(() => document.querySelector('.ek-pop') && document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-  await PE((id) => { const o = window.overdub; const pts = []; for (let b = 0; b <= 32; b++) pts.push(`${b}:${(-6 + 4 * Math.sin(b)).toFixed(2)}`); o.store.dispatch({ type: 'auto.write', track: id, param: 'gain', points: pts.join(' ') }, { by: 'claude', label: 'dense' }); o.arranger.zoomTo(0, 16); }, pt.id);
-  await ph.waitForTimeout(300);
-  const dense0 = await PE((id) => { const sc = document.querySelector('.ar-scroll'); sc.scrollTop = 0; const o = window.overdub; return { pts: JSON.stringify(o.store.get().tracks.find((t) => t.id === id).auto.gain.points), hist: o.store.history.length, room: sc.scrollHeight - sc.clientHeight }; }, pt.id);
-  const dr = (await PE(() => window.overdub.arranger.laneRows()))[0];
-  const sx2 = await pxOf(2), sy2 = dr.top + dr.h / 2;
-  await ph.waitForTimeout(450);
-  await touch('touchStart', [[sx2, sy2]]);
-  for (let k = 1; k <= 10; k++) { await touch('touchMove', [[sx2, sy2 - 15 * k]]); await sleep(16); }
-  await touch('touchEnd', []);
-  await ph.waitForTimeout(250);
-  const dense1 = await PE((id) => { const o = window.overdub; return { pts: JSON.stringify(o.store.get().tracks.find((t) => t.id === id).auto.gain.points), hist: o.store.history.length, top: document.querySelector('.ar-scroll').scrollTop }; }, pt.id);
-  T.ok(dense0.room > 20 && dense1.top > 20 && dense1.pts === dense0.pts && dense1.hist === dense0.hist, `a one-finger swipe up across a dense lane scrolls the arranger (scrollTop ${dense1.top} of ${dense0.room}) and leaves every point where it was (${dense1.pts === dense0.pts ? 'unchanged' : 'MOVED'}, ${dense1.hist - dense0.hist} new edits)`);
-  await ph.screenshot({ path: path.join(OUTDIR, 'lanes-phone.png') });
-  T.ok(!perr.length, `no page errors on the phone (${perr.slice(0, 2).join(' | ')})`);
-  await ctx.close();
 } catch (e) {
   T.ok(false, 'lanes test threw: ' + (e && e.stack || e));
 } finally {
+  for (const [cond, msg] of await phoneDone) T.ok(cond, msg);
   await close();
   T.done();
 }

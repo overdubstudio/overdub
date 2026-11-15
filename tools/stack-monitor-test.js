@@ -64,8 +64,16 @@ try {
       const t0 = Math.ceil((ctx.currentTime + 0.4) * sr) / sr;
       const b = ctx.createBuffer(1, 256, sr); const x = b.getChannelData(0); x[0] = 0.5; x[1] = -0.25;
       const n = ctx.createBufferSource(); n.buffer = b; n.connect(window.__bus); n.start(t0);
-      await w(1200);
       const over = (key, from) => { let at = 0; for (const blk of rec) for (const v of blk[key]) { if (at >= from && Math.abs(v) > 0.01) return at; at++; } return null; };
+      // Recorded until the click has reached both sides and died away at the speakers (the last 4096 samples there
+      // under -40 dBFS, so nothing of it rings into the next click), or 1.2 s at the most, as it always waited. The
+      // first sample over -40 dBFS on each side can't move once it's recorded: later blocks only come after it.
+      const quiet = () => { let m = 0; for (let k = rec.length - 1; k >= 0 && m < 4096; k--) { const x = rec[k].out; for (let i = x.length - 1; i >= 0 && m < 4096; i--, m++) if (Math.abs(x[i]) > 0.01) return false; } return m >= 4096; };
+      for (const until = performance.now() + 1200; performance.now() < until; ) {
+        await w(20);
+        const i0 = over('in', 0);
+        if (i0 != null && over('out', i0) != null && quiet()) break;
+      }
       const inAt = over('in', 0), outAt = inAt == null ? null : over('out', inAt);
       if (inAt == null) { out.lost = (out.lost || 0) + 1; return tries > 1 ? clickOut(tries - 1) : null; }
       return outAt == null ? null : outAt - inAt;

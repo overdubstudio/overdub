@@ -29,9 +29,15 @@ const { sentBack } = await spinCycle();   // Sam's song, made Jo's and sent back
 
 
 /* ================================================================ 2. share, listen, make it yours (in the page) */
-console.log('share links in the studio');
+// Each block below is a studio of its own (its own server and browser), so they run in four lanes at once, one after
+// another in a lane; the lines are held and said in the file's order at the end. The first block makes the link (and
+// the song it came from) that the listener's, the phone's and your song's blocks open: they wait for it.
+const said = [], blocks = [];
+const block = (fn) => { const h = { lines: [], ok(c, m) { this.lines.push([!!c, m]); return !!c; } }; said.push(h); blocks.push({ fn, h }); };
+const LANES = [[0, 1, 12, 13], [7], [3, 4, 5, 8, 9, 2], [10, 11, 6]], NEEDS_LINK = [2, 6];
+said.push('share links in the studio');
 let link = null, sent = null;
-{
+block(async (T) => {
   const { page, errors, close, shot } = await open('/app/', { query: 'demo' });
   await ready(page);
   await page.waitForTimeout(300);
@@ -144,8 +150,8 @@ let link = null, sent = null;
   T.ok(!tooBig.ok && /too big for a link/.test(tooBig.toast) && /Save the file/.test(tooBig.toast) && /Save the project file/.test(tooBig.sheet), `a too-big song is refused, with the way out: "${tooBig.error}"`);
   T.ok(realErrors(errors).length === 0, 'no page errors (sender)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
-{
+});
+block(async (T) => {
   // a different browser (its own server, so its own storage): open the link
   const hash = link.slice(link.indexOf('#'));
   const { page, errors, close, shot } = await open('/app/' + hash);
@@ -233,8 +239,8 @@ let link = null, sent = null;
   T.ok(re.title === 'Shared Reel' && re.ff && !re.listening && re.guest.name === 'Sam' && re.guest.kind === 'human', 'after a reload the fork is your song, and the guest still has their name');
   T.ok(realErrors(errors).length === 0, 'no page errors (listener)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
-{
+});
+block(async (T) => {
   // a phone: the banner wraps, nothing scrolls sideways
   const hash = link.slice(link.indexOf('#'));
   const { page, errors, close, shot } = await open('/app/' + hash, { width: 390, height: 844 });
@@ -263,8 +269,8 @@ let link = null, sent = null;
   T.ok(/didn’t come through whole/.test(bad), 'a broken link pasted into the tab: a clear message, and the song you had stays');
   T.ok(realErrors(errors).length === 0, 'no page errors (phone)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
-{
+});
+block(async (T) => {
   // a crafted link: a title, track name and device name and blurb that are objects ({ html: '<img onerror>' }) are
   // drawn as text, and run nothing: not in the banner, the device list, the device's info, or a link opened later
   const song = richSong();
@@ -289,8 +295,8 @@ let link = null, sent = null;
   T.ok(hx[0] === '' && hx[1] == null && hx[2] === '' && hx[3] == null && hx[4] === '<u>ok</u>', `h(): markup only from rawHtml(), never a plain { html } object; no inline handler, innerHTML or javascript: URL from attrs (${JSON.stringify(hx)})`);
   T.ok(realErrors(errors).length === 0, 'no page errors (crafted text)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
-{
+});
+block(async (T) => {
   // a crafted link whose colours are url(...): the studio drew them as CSS and fetched the address as the song opened,
   // so the sender learned it had (here the address is this test's own server; nothing leaves the machine). A colour
   // is a palette token or hex now, and nothing is fetched
@@ -310,17 +316,17 @@ let link = null, sent = null;
   T.ok(st.listening && !fetched.length && st.colors.every((c) => /^var\(--c-\d\)$/.test(c)), `a link whose colours are url(...) opens and fetches nothing as it draws (${fetched.length} requests${fetched.length ? ': ' + fetched.slice(0, 2).join(', ') : ''}; its tracks get palette colours)`);
   T.ok(realErrors(errors).length === 0, 'no page errors (url colours)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
-{
+});
+block(async (T) => {
   // a well-formed link holding a wrong-shaped song (tracks: [null]): the studio starts, and opens it as far as it goes
   const { page, errors, close } = await open('/app/' + await linkOf({ title: 'Odd', tracks: [null, { clips: [null], inserts: 5 }], sections: {} }));
   const st = await page.waitForSelector('html[data-ready="1"]', { timeout: 15000 }).then(() => page.evaluate(() => ({ listening: !!window.overdub?.share?.listening, tracks: window.overdub.store.get().tracks.length, title: window.overdub.store.get().title })), () => page.evaluate(() => ({ body: document.body.textContent.slice(0, 160) })));
   T.ok(st.listening && st.tracks === 1 && st.title === 'Odd', `a link with tracks: [null] opens instead of stopping the studio (${JSON.stringify(st)})`);
   T.ok(realErrors(errors).length === 0, 'no page errors (wrong-shaped link)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
+});
 
-{
+block(async (T) => {
   // your own saved song survives a link: New song while listening keeps yours (not theirs) as the previous song, and
   // after Make it yours a New song and a demo later, the Song menu still brings it back
   const hash = link.slice(link.indexOf('#'));
@@ -372,7 +378,7 @@ let link = null, sent = null;
     `/app/?demo=lido over a saved song keeps it ("${d.toast.replace(/Undo$/, '')}"; after a fader move, previous "${d.previous}"), and Undo brings it back ("${u.title}")`);
   T.ok(realErrors(errors).length === 0, 'no page errors (your song)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
+});
 
 /* ================================================================ 3. code in a song: asked before it runs */
 // A song's devices are kernels: code from whoever made the song. One this browser doesn't trust is held (not registered,
@@ -381,7 +387,7 @@ let link = null, sent = null;
 // (localStorage overdub:trusted-kernels, by SHA-256) and starts it with no reload. Each kernel below carries a mark,
 // and a script in the page writes down every mark that reaches the audio thread (an AudioWorkletNode's options, a
 // message to one, a worklet module), so a check can say none of their code ran.
-console.log('code in a song: asked before it runs');
+said.push('code in a song: asked before it runs');
 const MARK_INST = `/*MARK-INST*/({ poly: 4, create({ sr }) { return { voice() { let ph = 0, f = 0, g = 0, on = false; return { start(p, v) { f = 440 * Math.pow(2, (p - 69) / 12) / sr; g = 0.25 * v; on = true; }, release() { on = false; }, render(L, R, n) { if (!on) return false; for (let i = 0; i < n; i++) { ph += f; const y = Math.sin(2 * Math.PI * ph) * g; L[i] += y; R[i] += y; } return true; } }; } }; } })`;
 const MARK_FX = `/*MARK-FX*/({ create() { return { process(L, R, n) { for (let i = 0; i < n; i++) { L[i] *= 0.5; R[i] *= 0.5; } } }; } })`;
 const sha = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
@@ -436,7 +442,7 @@ const probe = (page) => page.evaluate(async () => {
 });
 const tap = async (page, sel) => { const el = await page.$(sel); if (!el) return false; await el.click(); await page.waitForTimeout(250); return true; };
 const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).hash;
-{
+block(async (T) => {
   const { page, base, errors, close, shot } = await open('/app/', { query: 'new' });
   await ready(page);
   await page.addInitScript(WATCH);
@@ -546,8 +552,8 @@ const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).h
   T.ok(e.held.length === 0 && same(e.reg, ['project', 'project']) && !e.ask && e.peak > -60 && stored.includes(sha(MARK_INST)) && stored.includes(sha(MARK_FX)) && realErrors(errors).length === 0,
     `reopening the same link doesn't ask again: nothing held, the Keys meter ${e.peak.toFixed(0)} dBFS, and both kernels' SHA-256 are in overdub:trusted-kernels (${stored.length} stored); no page errors${realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''}`);
   await close();
-}
-{
+});
+block(async (T) => {
   // a song sent back: the ask names who made the device and whose link it came through ("Sam wrote, via Jo's link"),
   // and Play it is for trusting the one who sent it (Jo)
   const { page, errors, close } = await open('/app/' + sentBack);
@@ -578,8 +584,8 @@ const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).h
   T.ok(row.text === 'Sam via Jo' && same(row.by, ['Sam', 'Jo']) && /^Written by Sam, via Jo’s link$/.test(row.title), `the browser's row reads "${row.text}" ("${row.title}")`);
   T.ok(info.text === 'Sam via Jo' && same(info.by, ['Sam', 'Jo']) && /^Made by Sam, via Jo’s link$/.test(info.title), `the device's About card: Made by "${info.text}" ("${info.title}")`);
   await close();
-}
-{
+});
+block(async (T) => {
   // a phone (FRESH-EYES round 5): the banner, the ask and a resumed tour left no timeline at all. With the question
   // open the timeline is still in view; answered, the banner is one line; at 390 x 844 and 390 x 664
   for (const [w, hgt] of [[390, 844], [390, 664]]) {
@@ -609,8 +615,8 @@ const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).h
     T.ok(a.banner <= 56 && a.line <= 24 && a.fork && a.back && a.lanes >= a.track && a.wide <= w && !realErrors(errors).length, `${w}x${hgt}, answered: the banner is one line (${a.banner} px: the play key, the title, Make it yours, Back) and the lanes show ${a.lanes} px, a whole track (${a.track} px) or more`);
     await close();
   }
-}
-{
+});
+block(async (T) => {
   // 4. a song file opened from disk asks the same way: Open (the Song menu's file picker), and a file dropped on the
   // studio. A file's signatures are only its own word, so the ask names no author for them
   const text = JSON.stringify(heldSong());
@@ -646,8 +652,8 @@ const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).h
   T.ok(gone && g.held === 2 && /^This file brings 2 devices/.test(g.text) && !g.sent.includes('MARK-INST') && !g.sent.includes('MARK-FX') && realErrors(errors).length === 0,
     `Keep them off takes the ask away; the same file dropped on the studio asks again ("${g.text.slice(0, 60)}…"); no page errors${realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''}`);
   await close();
-}
-{
+});
+block(async (T) => {
   // 5. the first run of this version: the songs this browser kept were already running, so their devices are trusted,
   // once. A song saved after that with a device it never allowed is held when it opens
   const mig = (id, mark) => {
@@ -693,11 +699,11 @@ const LINK_HASH = (await S.encodeShare(heldSong(), { from: { name: 'Sam' } })).h
   T.ok(o1.own && !o1.held.length && o1.reg === 'project' && !o1.ask && o2.own && same(o2.held, ['you.nlk']) && /^This song brings an effect: Old nlk\./.test(o2.ask) && realErrors(errors).length === 0,
     `a link this browser made before its trusted set began opens as yours, its device playing (${o1.reg}); one it made since holds a device it never allowed (${o2.held.join(', ') || 'none'}); no page errors${realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''}`);
   await close();
-}
+});
 
 /* ================================================================ 4. Take one (the coach) */
-console.log('Take one');
-{
+said.push('Take one');
+block(async (T) => {
   const { page, errors, close, shot } = await open('/app/', { query: 'demo&fast' });
   await ready(page);
   await page.waitForTimeout(300);
@@ -753,8 +759,8 @@ console.log('Take one');
   await page.waitForFunction(() => !window.overdub.agent.busy, null, { timeout: 20000 }).catch(() => {});
   T.ok(realErrors(errors).length === 0, 'no page errors (coach)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
-{
+});
+block(async (T) => {
   // ?coach forces it; Skip moves on; the old cue cards come back where you left off; closing is remembered
   const { page, errors, close, shot } = await open('/app/', { query: 'demo&coach', width: 390, height: 844 });
   await ready(page);
@@ -782,7 +788,19 @@ console.log('Take one');
   T.ok(has, 'the Song menu has "Take one" to run it again');
   T.ok(realErrors(errors).length === 0, 'no page errors (coach, phone)' + (realErrors(errors).length ? ': ' + realErrors(errors).join(' | ') : ''));
   await close();
-}
+});
 
+let linkMade;
+const sender = new Promise((r) => { linkMade = r; });
+const thrown = await Promise.all(LANES.map(async (lane) => {
+  try {
+    for (const i of lane) {
+      if (NEEDS_LINK.includes(i)) await sender;
+      try { await blocks[i].fn(blocks[i].h); } finally { if (i === 0) linkMade(); }
+    }
+  } catch (e) { return e; }
+}));
+for (const x of said) if (typeof x === 'string') console.log(x); else for (const [c, m] of x.lines) T.ok(c, m);
+if (thrown.some(Boolean)) throw thrown.find(Boolean);
 T.done();
 process.exit(process.exitCode || 0);

@@ -19,13 +19,29 @@
 //   - the keys that moved on 2 October say so once, in one line, for all of them
 //   node tools/find-test.js      (screenshots: tools/.out/find-*.png)
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { open, tally, OUTDIR } from './pw.js';
 
-const T = tally('find');
+// The studio's sections run side by side, three at a time, each on a fresh context of the one browser (its own storage
+// and page, as before). What each checks is held in its own list and printed in one piece, in the order they're written.
+const tallied = tally('find');
+const held = new AsyncLocalStorage();
+const T = {
+  ok(cond, msg) { const h = held.getStore(); if (!h) return tallied.ok(cond, msg); h.push([cond, msg]); return !!cond; },
+  done: () => tallied.done(),
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ignorable = (e) => /favicon|ERR_CONNECTION|net::|AudioContext was not allowed|fonts\.g|Failed to load resource|getUserMedia|NotAllowedError|NotFoundError/i.test(e);
 // a section that throws is a failure with its reason, and the rest still run
 const section = async (name, fn) => { try { await fn(); } catch (e) { T.ok(false, `${name}: ran to the end (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); } };
+const queued = [];
+const side = (name, fn) => { queued.push({ name, fn, h: [] }); };
+async function sideBySide(n) {
+  let next = 0;
+  const lane = async () => { while (next < queued.length) { const q = queued[next++]; await held.run(q.h, () => section(q.name, q.fn)); } };
+  await Promise.all(Array.from({ length: n }, lane));
+  for (const q of queued) for (const [cond, msg] of q.h) tallied.ok(cond, msg);
+}
 
 /* ======================================================================== the spec's registry, word for word */
 const SPEC = [
@@ -107,13 +123,13 @@ try {
   const S = { page: s.page, errors: s.errors, E: (fn, a) => s.page.evaluate(fn, a) };
 
   /* ---------------------------------------------------------------- the registry */
-  await section('registry', async () => {
+  side('registry', async () => {
     const missing = await S.E((ids) => ids.filter((id) => !window.overdub.ui.panels?.has?.(id)), Object.values(PANEL_OF));
     T.ok(!missing.length, `every mapped panel is a panel the studio registers${missing.length ? ' (missing: ' + missing.join(', ') + ')' : ''}`);
   });
 
   /* ---------------------------------------------------------------- one studio: a person's clean browser */
-  await section('one studio', async () => {
+  side('one studio', async () => {
     const P = await fresh({ init: hideWebdriver });
     // a person's clean browser opens on the live room's door; the studio is the control room behind the glass
     const door = await P.E(() => ({ open: window.overdub.liveRoom?.isOpen?.(), screen: window.overdub.ui.state.liveRoom?.screen }));
@@ -150,7 +166,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- had the simple view saved */
-  await section('merged', async () => {
+  side('merged', async () => {
     const seed = () => { try { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('overdub:workspace', JSON.stringify({ v: 1, view: 'simple', added: { mixer: 'you' } })); } } catch { /* ok */ } };
     const P = await fresh({ init: seed });
     await sleep(400);
@@ -164,7 +180,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- Find */
-  await section('Find', async () => {
+  side('Find', async () => {
     const P = await fresh();
     const h0 = await P.E(() => window.overdub.store.history.length);
     await neutral(P);
@@ -239,7 +255,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- a Sound row, run with the Browser closed */
-  await section('Find a sound', async () => {
+  side('Find a sound', async () => {
     const P = await fresh();
     // (the Browser is closed on a first visit: a trial started from Find must not be the Browser's, which ends when
     // its pane isn't showing)
@@ -265,7 +281,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- a narrow window: Find's button leaves All off clear */
-  await section('narrow top bar', async () => {
+  side('narrow top bar', async () => {
     const P = await fresh({ w: 660, h: 800 });
     for (const w of [641, 660, 684, 700, 760, 800, 801, 830, 899]) {
       await P.page.setViewportSize({ width: w, height: 800 });
@@ -284,7 +300,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- the agent */
-  await section('agent', async () => {
+  side('agent', async () => {
     const P = await fresh({ query: 'agent=mock&fast' });
     const r = await P.E(async () => {
       const o = window.overdub;
@@ -306,7 +322,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- ?view=simple, for one release */
-  await section('?view=simple', async () => {
+  side('?view=simple', async () => {
     const P = await fresh({ query: 'view=simple' });
     const w = await P.E(wsBits);
     T.ok(w.view === 'simple' && w.root === 'simple' && w.off.length > 0 && w.sheet, `?view=simple still opens the simple view (${w.off.length} features put away)`);
@@ -328,7 +344,7 @@ try {
   });
 
   /* ---------------------------------------------------------------- a phone */
-  await section('phone', async () => {
+  side('phone', async () => {
     const P = await fresh({ w: 390, h: 844, mobile: true });
     const wide = await P.E(() => ({ doc: document.documentElement.scrollWidth, vw: innerWidth }));
     T.ok(wide.doc <= wide.vw, `phone: no sideways page scroll (${wide.doc} px in ${wide.vw})`);
@@ -342,12 +358,14 @@ try {
   });
 
   /* ---------------------------------------------------------------- the keys that moved */
-  await section('moved keys', async () => {
+  side('moved keys', async () => {
     const P = await fresh();
     const r = await P.E(() => { const k = window.overdub.ui.keys; return { note: k.movedNote, first: k.firstPress('KeyM'), second: k.firstPress('KeyK'), saved: JSON.parse(localStorage.getItem('overdub:keys-moved') || '{}') }; });
     T.ok(/^Keys changed on 2 October: `M` mutes, `S` solos, `K` is the click\. `\?` lists them all\.$/.test(r.note || ''), `one line for every moved key ("${r.note}")`);
     T.ok(r.first === true && r.second === false && ['KeyM', 'KeyS', 'KeyK', 'shift+KeyK', 'mod+KeyE'].every((k) => r.saved[k]), `said once, for all of them: the first press says it, the next moved key doesn't (${r.first}, ${r.second})`);
   });
+
+  await sideBySide(3);
 
   const all = [...s.errors, ...pages.flatMap((p) => p.errors)].filter((e) => !ignorable(e));
   T.ok(!all.length, `no page or console errors${all.length ? ': ' + all.slice(0, 3).join(' | ') : ''}`);

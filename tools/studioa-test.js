@@ -397,9 +397,10 @@ if (!process.env.NODE_ONLY) {
 
 // ================================================================================================ running them
 // The CPU check runs first and alone: it holds the kit's CPU time to Gobo Kit's in this process, and nothing else may
-// run beside it. Then the rest at once: the renders in three worker threads (pure CPU, each section as it was), the
-// device checks three child processes at a time, and Chromium. Each section's lines are held and said in the file's
-// order, so the suite reads as it did.
+// run beside it. Then the renders in three worker threads (pure CPU, each section as it was) and Chromium, at once. Then,
+// with those gone, the device checks, three child processes at a time: checkDevice's cpu figure is wall clock, held to
+// 25% of real time, and beside this suite's own render workers it read up to 41%. Each section's lines are held and said
+// in the file's order, so the suite reads as it did.
 const LANES = [['levels'], ['the low end: the room is mono under 120 Hz', 'the physics', 'no machine-gun'],
   ['every note sounds, in its part of the spectrum', 'velocity changes the sound', 'the hi-hat', 'the overheads', 'the mic mix']];
 const later = () => { const lines = []; return { lines, ok(c, m) { lines.push(['ok', !!c, m]); return !!c; }, note(m) { lines.push(['note', null, m]); } }; };
@@ -423,8 +424,10 @@ if (!isMainThread && workerData?.studioaLane) {
     w.once('error', reject);
     w.once('exit', (code) => (got ? resolve(got) : reject(new Error(`a render worker exited (${code}) with nothing said`))));
   });
-  const here = SECTIONS.filter((x) => !LANES.flat().includes(x.title) && x.title !== 'CPU').map((x) => runSection(x.title).then(keep));
+  const DEVICE = 'the device check (Node)';
+  const here = SECTIONS.filter((x) => !LANES.flat().includes(x.title) && x.title !== 'CPU' && x.title !== DEVICE).map((x) => runSection(x.title).then(keep));
   await Promise.all([...LANES.map((lane) => inWorker(lane).then((rs) => rs.forEach(keep))), ...here]);
+  keep(await runSection(DEVICE));
   for (const { title } of SECTIONS) {
     const r = said.get(title);
     console.log(title);

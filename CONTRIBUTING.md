@@ -26,8 +26,10 @@ Thanks for wanting to help. Overdub is small on purpose: native ES modules, no d
 node server/serve.js                 # the site at http://localhost:3279/, the studio at /app/
 node tools/<area>-test.js            # one area's checks
 node --test "test/unit/*.test.js"    # the unit tests, what CI runs (seconds)
-node tools/run-all.js                # every check (about 30 min, three at a time; it fetches any missing kit first):
-                                     # what the suites workflow runs on the Mac mini for every push to a branch
+node tools/run-all.js                # every check (about 30 min, three at a time; it fetches any missing kit first)
+node tools/run-all.js --changed      # only the suites your change can reach since origin/main (a change to the studio,
+                                     # the server, the docs or the harness still runs them all): what the suites
+                                     # workflow runs on the Mac mini for every push to a branch
 npm run check                        # the static checks CI runs: lint, format, types, shell, workflows (seconds)
 npm run format                       # format the paths on the formatting ratchet (Biome)
 ```
@@ -41,7 +43,9 @@ npx playwright-core install chromium-headless-shell
 
 CI runs only the unit tests and the static checks on a pull request. The browser and render suites run on the Mac
 mini: every push to a branch of this repo starts `.github/workflows/suites.yml`, whose job is the check `suites` that
-`main` requires, so a pull request shows it running, with its log, on exactly what's being merged. A pull request from a
+`main` requires, so a pull request shows it running, with its log, on exactly what's being merged. A push runs the
+suites its change can reach (`tools/changed.js` says which and why): a change to a suite or its helpers runs those
+suites, and any change to the studio, the server, the docs or the harness runs all of them. A pull request from a
 fork doesn't run anything on that machine (the repo is public): it gets `suites` once a maintainer has read it and
 pushed its branch here. Dependabot's branches are left out the same way: once its change has been read, push that
 commit to a branch of your own and open the pull request from there (a run started with Run workflow doesn't count

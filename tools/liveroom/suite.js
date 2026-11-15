@@ -32,10 +32,13 @@ const ORDER = ['model', 'input', 'band', 'pixels', 'stage', 'glass', 'kitchen', 
 export const PARTS = { 'liveroom-stage': ['stage', 'takes', 'room'], 'liveroom-band': ['band', 'rig', 'shop', 'drummer', 'guitar'] };
 // Each suite's lanes: a Node process each, so one module's synthesis or renders never hold up another's presses (the
 // lanes share the machine, not an event loop). A lane is a module that takes most of the suite's time on its own, or a
-// few that add up to about as much; a module no lane names (a new one) runs here, after them. The drummer is in none, so
-// it runs with nothing of its suite beside it: its taps are timed from Node, and beside the band's renders five taps
-// half a second apart once read as 110 BPM.
+// few that add up to about as much; a module no lane names (a new one) runs here, after them. The tape and the drummer
+// are in none, so they run with nothing of their suite beside them: the tape's grab is held to the fake's file within
+// half a millisecond, and in one of five runs beside another lane it came out exactly one of Chromium's 10 ms
+// fake-capture blocks off; the drummer's taps are timed from Node, and beside the band's renders five taps half a second
+// apart once read as 110 BPM.
 export const LANES = {
+  liveroom: [['model', 'input', 'door', 'shelf', 'copy', 'library'], ['kitchen', 'pixels', 'glass', 'start']],
   'liveroom-band': [['band', 'shop'], ['rig', 'guitar']],
 };
 

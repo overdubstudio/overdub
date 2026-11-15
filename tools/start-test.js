@@ -14,13 +14,24 @@ const ROW = { [K]: 'kick', [S]: 'snare', [H]: 'hat' };
 const ROCK = [[0, K], [2, K], [2.5, K], [1, S], [3, S], ...Array.from({ length: 8 }, (_, i) => [i / 2, H])];
 const real = (errs) => errs.filter((e) => !/status of 404 .*kits|Failed to load resource: the server responded with a status of 404/.test(e));
 
+// the studio up and settled: ready, the fonts in, the door on screen, and two frames drawn after (the top bar fits
+// itself a frame after ready)
+const settled = (page) => holds(page, () => document.documentElement.dataset.ready === '1' && document.fonts.status === 'loaded' && !!document.querySelector('.st-door')?.getClientRects().length, null, 45000).then(() => frames(page));
 async function blank({ width = 1440, height = 900 } = {}) {
   const o = await open('/app/', { query: 'new', width, height });
   await o.page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-  await o.page.waitForTimeout(500);
+  await settled(o.page);
   return o;
 }
 const E = (page, f, a) => page.evaluate(f, a);
+// what a fixed wait stood in for: until fn holds in the page (polled every frame), with a generous timeout; on a
+// timeout the check after it says what it saw
+const holds = (page, fn, a, ms = 15000) => page.waitForFunction(fn, a, { timeout: ms }).then(() => true, () => false);
+// two frames drawn by the shell's loop: what panels draw in frame(now) is on screen
+const frames = (page) => E(page, () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+// a wait anchored to when something started (a take, a fake mic's file): until `ms` after t0, however long the waits
+// for state in between took
+const rest = (page, t0, ms) => page.waitForTimeout(Math.max(0, ms - (Date.now() - t0)));
 const song = (page) => E(page, () => { const o = window.overdub, p = o.store.get(); return { tempo: p.tempo, loop: p.loop, hist: o.store.history.map((x) => ({ label: x.label, by: x.by })), tracks: p.tracks.map((tr) => ({ id: tr.id, name: tr.name, device: tr.instrument?.device, by: tr.by, clips: tr.clips.map((c) => ({ id: c.id, by: c.by, length: c.length, notes: c.notes.map((n) => ({ p: n.p, t: n.t, by: n.by })) })) })) }; });
 // a person playing the rock beat three times round at bpm, as app.start.tap calls (ms on the page's clock)
 async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.04, seed = 3 } = {}) {
@@ -36,6 +47,8 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const o = await blank();
   const { page } = o;
   try {
+    // (nothing pops up by itself: given the time it always had to)
+    await page.waitForTimeout(500);
     const d = await E(page, () => {
       const door = document.querySelector('.st-door'), o = window.overdub;
       const go = [...door.querySelectorAll('.btn-go')].map((b) => b.textContent.trim());
@@ -60,10 +73,10 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await page.screenshot({ path: path.join(OUTDIR, 'start-door.png') });
     // every blank song has it: a song with a track doesn't
     await E(page, () => window.overdub.store.dispatch({ type: 'track.add', track: { name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys' } } }, { by: 'you' }));
-    await page.waitForTimeout(200);
+    await holds(page, () => !document.querySelector('.st-door')?.getClientRects().length);
     const gone = await E(page, () => !document.querySelector('.st-door')?.getClientRects().length);
     await E(page, () => window.overdub.store.undo());
-    await page.waitForTimeout(200);
+    await holds(page, () => !!document.querySelector('.st-door')?.getClientRects().length);
     const back = await E(page, () => !!document.querySelector('.st-door')?.getClientRects().length);
     t.ok(gone && back, `nothing over a song with tracks, and the door is back when it's blank again (${gone}, ${back})`);
     t.ok(!real(o.errors).length, `door: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
@@ -79,7 +92,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   try {
     // press 1: Tap a beat
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'play' && document.querySelectorAll('.st-pad').length === 4 && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     const st = await E(page, () => { const o = window.overdub, stage = document.querySelector('.st-stage'); return { step: o.start.step, busy: o.start.busy, region: stage?.getAttribute('role'), label: stage?.getAttribute('aria-label'), inert: [...document.querySelector('.ew-main').children].filter((c) => c !== stage).every((c) => c.inert), tracks: o.store.get().tracks.length, hist: o.store.history.length, empty: document.querySelector('.st-empty')?.textContent, pads: [...document.querySelectorAll('.st-pad')].map((p) => p.textContent.trim()) }; });
     t.ok(st.step === 'play' && st.region === 'region' && st.label === 'Start a song' && st.inert, `Tap a beat opens the stage over the centre column, the studio inert under it (${JSON.stringify({ step: st.step, inert: st.inert })})`);
     t.ok(st.tracks === 1 && st.hist === 0 && st.empty === 'Your first hit starts the clock.' && st.pads.join() === 'KickF,SnareJ,HatK,OpenL', `the pads play on a previewed Drums track, nothing in History (${st.tracks} track, ${st.hist} changes); "${st.empty}"`);
@@ -101,13 +114,13 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await E(page, () => window.overdub.start.again());
     // three times round, a sloppy drifting player
     const n = await playRock(page);
-    await page.waitForTimeout(200);
+    await holds(page, () => /times round\./.test(document.querySelector('.st-status')?.textContent || '') && /round/.test(document.querySelector('.st-rounds')?.textContent || ''));
     const live = await E(page, () => ({ bpm: document.querySelector('.st-bpm')?.textContent, rounds: document.querySelector('.st-rounds')?.textContent, line: document.querySelector('.st-status')?.textContent, take: window.overdub.start.take() }));
     t.ok(Math.abs(+live.bpm - 98) <= 4 && /round/.test(live.rounds) && /hits\. \d+ BPM, 1 bar round, 3 times round\./.test(live.line), `${n} hits: the BPM, the loop and the rounds come from the playing (${live.bpm} BPM; "${live.line}")`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-play.png') });
     // press 2: Done
     await page.keyboard.press('Space');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'in' && window.overdub.engine.playing && !!document.querySelector('.st-level')?.textContent);
     const a = await song(page);
     const tr = a.tracks[0];
     t.ok(a.hist.length === 1 && a.hist[0].by === 'you' && /^your beat, 1 bar at \d+ BPM$/.test(a.hist[0].label) && a.tracks.length === 1 && tr.name === 'Drums' && tr.device === 'core.drums' && tr.clips.length === 1 && a.loop.on && a.loop.end === 4,
@@ -119,27 +132,28 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await page.screenshot({ path: path.join(OUTDIR, 'start-in.png') });
     // Timing steps join the landing: still one undo step
     await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(150);
+    await holds(page, () => /^Loose /.test(document.querySelector('.st-level')?.textContent || ''));
     const loose = await song(page);
     await page.keyboard.press('ArrowRight');
-    await page.waitForTimeout(150);
+    await holds(page, () => /^Your timing/.test(document.querySelector('.st-level')?.textContent || ''));
     const played = await song(page);
     const lvl = await E(page, () => document.querySelector('.st-level')?.textContent);
     const ts = (s) => s.tracks[0].clips[0].notes.map((x) => x.t).join();
     t.ok(loose.hist.length === 1 && played.hist.length === 1 && ts(loose) !== ts(a) && ts(played) !== ts(loose) && /^Your timing, evened out to \d+ BPM\.$/.test(lvl), `→ Loose, → As played: the notes move, still one undo step (${played.hist.length}); "${lvl}"`);
     await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowLeft');
-    await page.waitForTimeout(150);
+    await holds(page, () => /^Tight /.test(document.querySelector('.st-level')?.textContent || ''));
     // Not quite? lists the other readings; picking one plays it at once, joined; Esc puts back what was there
     const nq = await E(page, () => !!document.querySelector('.st-notquite'));
     if (nq) {
       await page.click('.st-notquite');
-      await page.waitForTimeout(200);
+      await holds(page, () => window.overdub.start.step === 'readings' && !!document.activeElement?.classList.contains('st-reading'));
       const rd = await E(page, () => ({ step: window.overdub.start.step, rows: [...document.querySelectorAll('.st-reading')].map((r) => r.textContent), sel: document.activeElement?.classList.contains('st-reading') }));
+      const sel0 = await E(page, () => [...document.querySelectorAll('.st-reading')].findIndex((r) => r.classList.contains('sel')));
       await page.keyboard.press('ArrowDown');
-      await page.waitForTimeout(200);
+      await holds(page, (i) => [...document.querySelectorAll('.st-reading')].findIndex((r) => r.classList.contains('sel')) !== i, sel0);
       const after = await song(page);
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(200);
+      await holds(page, () => window.overdub.start.step === 'in');
       const backed = await song(page);
       t.ok(rd.step === 'readings' && rd.rows.length >= 2 && rd.sel && after.hist.length === 1 && (after.tempo !== a.tempo || ts(after) !== ts(a)) && backed.tempo === a.tempo && ts(backed) === ts(a),
         `Not quite?: ${rd.rows.length} readings by ear (${rd.rows.join(' | ')}); ↓ plays the next at once, joined; Esc puts back what was there`);
@@ -147,7 +161,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await page.screenshot({ path: path.join(OUTDIR, 'start-readings.png') });
     // ⌘Z once and the song is blank: the door is back
     await E(page, () => window.overdub.store.undo());
-    await page.waitForTimeout(300);
+    await holds(page, () => !window.overdub.start.step && !!document.querySelector('.st-door')?.getClientRects().length);
     const u = await E(page, () => { const o = window.overdub, p = o.store.get(); return { tracks: p.tracks.length, tempo: p.tempo, loop: p.loop.on, step: o.start.step, door: !!document.querySelector('.st-door')?.getClientRects().length }; });
     t.ok(u.tracks === 0 && u.tempo === 120 && !u.loop && !u.step && u.door, `one undo takes out the tempo, the track, the clip and the loop; the door is back (${JSON.stringify(u)})`);
     t.ok(!real(o.errors).length, `tap a beat: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
@@ -166,17 +180,18 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   try {
     const clickWas = await E(page, () => window.overdub.engine.metronome);
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play');
     await page.click('.st-view');
-    await page.waitForTimeout(250);
+    await holds(page, () => window.overdub.start.view === 'click' && window.overdub.engine.playing && /^[1-4]$/.test(document.querySelector('.bw-num')?.textContent || ''));
     const c0 = await E(page, () => { const o = window.overdub; return { step: o.start.step, view: o.start.view, minute: !!o.onboard?.minute, hist: o.store.history.length, playing: o.engine.playing, beat: o.engine.beat, click: o.engine.metronome, tempo: o.store.get().tempo, loop: o.store.get().loop, title: document.querySelector('.st-title')?.textContent, alt: document.querySelector('.st-view')?.textContent, num: document.querySelector('.bw-num')?.textContent, come: document.querySelector('.bw-come')?.textContent, go: [...document.querySelectorAll('.st-stage .btn-go')].length, speed: [...document.querySelectorAll('.st-speed [role="radio"]')].map((b) => `${b.textContent}${b.getAttribute('aria-checked') === 'true' ? '*' : ''}`).join(' '), tapit: document.querySelector('.st-tapit')?.textContent, top: document.querySelector('.tp-tempo-num')?.textContent }; });
     await page.screenshot({ path: path.join(OUTDIR, 'start-click-countin.png') });
     t.ok(c0.step === 'play' && c0.view === 'click' && !c0.minute && c0.hist === 0 && c0.title === 'Tap your beat with the click.' && c0.alt === 'Free time instead', `Play to a click instead stays on the stage, the click view, no first minute and nothing in History (${JSON.stringify({ step: c0.step, view: c0.view, minute: c0.minute, hist: c0.hist })}; "${c0.title}")`);
     t.ok(c0.playing && c0.beat < 0 && /^[1-4]$/.test(c0.num) && c0.come === 'Come in on 1.' && c0.click, `the take starts from a stopped transport with a bar of count-in: "${c0.num}", "${c0.come}" (beat ${c0.beat?.toFixed(2)}, the click lent: ${c0.click})`);
     t.ok(c0.tempo === 100 && c0.loop.on && c0.loop.end === 8 && c0.speed === 'Slow 80 Easy 100* Upbeat 120' && c0.tapit === 'Tap it (T, four times)' && c0.top === '100' && c0.go === 0, `Speed as underlined words, Easy 100 chosen, a 2-bar loop, heard and not kept; the top bar shows the click's tempo (${c0.speed}; ${c0.top})`);
-    // Speed: a preview of the tempo, a fresh take
+    // Speed: a preview of the tempo, a fresh take (waited for until its grid moves: past the count-in's first beat at
+    // -4, so a time read from it is the new take's)
     await page.click('.st-speed [role="radio"]:has-text("Upbeat 120")');
-    await page.waitForTimeout(200);
+    await holds(page, () => window.overdub.store.get().tempo === 120 && (window.overdub.engine.gridBeat ?? -99) > -3.99);
     const sp = await E(page, () => { const o = window.overdub; return { tempo: o.store.get().tempo, hist: o.store.history.length, playAt: o.start.click().playAt, beat: o.engine.beat }; });
     t.ok(sp.tempo === 120 && sp.hist === 0 && sp.beat < 0, `Upbeat 120: the tempo is a preview, History unchanged (${sp.tempo} BPM, ${sp.hist} changes), and the take counts in again (beat ${sp.beat?.toFixed(2)})`);
     // the first hit window opens one bar after play
@@ -197,7 +212,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await page.screenshot({ path: path.join(OUTDIR, 'start-click.png') });
     // reduced motion: no ball, the current beat's cell in reverse print
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.waitForTimeout(150);
+    await holds(page, () => { const w = window.overdub.start.window(); return !w.ball && Number.isInteger(w.cell); });
     const rm = await E(page, () => window.overdub.start.window());
     await page.screenshot({ path: path.join(OUTDIR, 'start-click-reduced.png') });
     t.ok(!rm.ball && Number.isInteger(rm.cell), `with reduced motion there's no ball; beat ${rm.cell + 1}'s cell is lit instead`);
@@ -206,18 +221,19 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await page.keyboard.press('Space');
     await page.waitForTimeout(100);
     await page.keyboard.press('ArrowLeft');
-    await page.waitForTimeout(200);
+    await holds(page, () => window.overdub.store.get().tempo === 100 && window.overdub.engine.playing);
     const ks = await E(page, () => { const o = window.overdub; return { playing: o.engine.playing, step: o.start.step, hist: o.store.history.length, tempo: o.store.get().tempo, bottom: o.ui.isOpen?.('bottom') ?? null }; });
     t.ok(ks.playing && ks.step === 'play' && ks.hist === 0 && ks.tempo === 100, `Space never reaches the transport over the click, and ← is a slower Speed (${JSON.stringify(ks)})`);
     // Tap it: four T presses, then the click moves to them
     const tt = await E(page, () => performance.now());
     const bpmT = await E(page, (t0) => { let r = null; for (let i = 0; i < 5; i++) r = window.overdub.start.tapTempo(t0 + i * 650); return r; }, tt);
     const tline = await E(page, () => document.querySelector('.st-status')?.textContent);
-    await page.waitForTimeout(900);
+    // (the click moves 700 ms after the last tap)
+    await holds(page, (b) => window.overdub.store.get().tempo === b && window.overdub.start.click().bpm === b, bpmT);
     const ta = await E(page, () => ({ tempo: window.overdub.store.get().tempo, bpm: window.overdub.start.click().bpm, hist: window.overdub.store.history.length, beat: window.overdub.engine.beat }));
     t.ok(Math.abs(bpmT - 92) <= 2 && /^About \d+ BPM\. Tap again to change it\.$/.test(tline) && ta.tempo === bpmT && ta.bpm === bpmT && ta.hist === 0, `Tap it: T five times 650 ms apart reads ${bpmT} BPM ("${tline}"), and the click moves there, still a preview (${ta.tempo} BPM)`);
     await page.click('.st-speed [role="radio"]:has-text("Upbeat 120")');
-    await page.waitForTimeout(150);
+    await holds(page, () => window.overdub.store.get().tempo === 120 && (window.overdub.engine.gridBeat ?? -99) > -3.99);
     // rounds fold under you: a kick played only in round 1 of 2 isn't in what plays in round 3, and isn't kept. (R14's
     // "round 2's preview" read as the preview the fold makes once round 2 is played: under round 2 the fold so far is
     // round 1 alone, nothing in it has been missed yet, and the source spec's round-2 frame shows it playing under you)
@@ -236,27 +252,27 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(after.c.rounds === 2 && !has35(after.c.fold) && !has35(after.preview) && after.preview.length === 13 && after.hist === 0 && /^Round 3\. Kept so far: 13 hits\./.test(after.line), `round 3: the kick played only in round 1 of 2 is out of the fold and out of what plays (${after.preview.length} hits under you; "${after.line}")`);
     // Done: lands like a free take, one step by you, at the click's tempo
     await page.keyboard.press('Space');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'in' && window.overdub.store.history.length === 1);
     const a = await song(page);
     const inn = await E(page, () => ({ step: window.overdub.start.step, sub: document.querySelector('.st-sub')?.textContent, notquite: !!document.querySelector('.st-notquite'), click: window.overdub.engine.metronome }));
     const notes = a.tracks[0]?.clips[0]?.notes.map((n) => `${n.p}@${n.t}`) || [];
     t.ok(a.hist.length === 1 && a.hist[0].by === 'you' && a.hist[0].label === 'your beat, 2 bars at 120 BPM' && a.tempo === 120 && a.loop.end === 8 && notes.length === 13 && !has35(notes) && a.tracks[0].clips[0].notes.every((n) => n.by === 'you'), `Done: one History entry by you, "${a.hist[0]?.label}", the 13 hits played both times and not the one-off kick`);
     t.ok(inn.step === 'in' && /You played it twice; kept the 13 hits you played both times, left out 1\./.test(inn.sub) && !inn.notquite && inn.click === clickWas, `it's in: "${inn.sub}"; over a click the 1 is known, so no Not quite?; the click is given back (${inn.click})`);
     await E(page, () => window.overdub.store.undo());
-    await page.waitForTimeout(300);
+    await holds(page, () => !window.overdub.start.step && !!document.querySelector('.st-door')?.getClientRects().length);
     const u = await E(page, () => { const o = window.overdub, p = o.store.get(); return { tracks: p.tracks.length, tempo: p.tempo, loop: p.loop.on, step: o.start.step, door: !!document.querySelector('.st-door')?.getClientRects().length }; });
     t.ok(u.tracks === 0 && u.tempo === 120 && !u.loop && !u.step && u.door, `⌘Z once: a blank song again (${JSON.stringify(u)})`);
     // Free time instead swaps back; the keys: T, Backspace, Enter, ←/→ stay on the stage
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play');
     await E(page, () => window.overdub.start.setView('click'));
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.view === 'click' && (window.overdub.engine.gridBeat ?? -99) > -3.99);
     const before = await E(page, () => ({ bottom: window.overdub.ui.isOpen?.('bottom') ?? null, loopOn: window.overdub.store.get().loop.on }));
     for (const k of ['KeyT', 'Backspace', 'ArrowRight', 'Enter', 'KeyD', 'KeyB']) { await page.keyboard.press(k); await page.waitForTimeout(60); }
     const ks2 = await E(page, () => ({ step: window.overdub.start.step, view: window.overdub.start.view, playing: window.overdub.engine.playing, hist: window.overdub.store.history.length, bottom: window.overdub.ui.isOpen?.('bottom') ?? null }));
     t.ok(ks2.step === 'play' && ks2.view === 'click' && ks2.playing && ks2.hist === 0 && ks2.bottom === before.bottom, `T, ⌫, →, Enter, D and B stay on the stage over a click (${JSON.stringify(ks2)})`);
     await page.click('.st-view');
-    await page.waitForTimeout(250);
+    await holds(page, () => window.overdub.start.view === 'free' && !window.overdub.engine.playing);
     const fr = await E(page, () => ({ view: window.overdub.start.view, title: document.querySelector('.st-title')?.textContent, playing: window.overdub.engine.playing, click: window.overdub.engine.metronome, hist: window.overdub.store.history.length }));
     t.ok(fr.view === 'free' && fr.title === 'Tap your beat.' && !fr.playing && fr.click === clickWas && fr.hist === 0, `Free time instead swaps it back: the click goes back as it was, nothing in History (${JSON.stringify(fr)})`);
     await page.keyboard.press('Escape');
@@ -272,13 +288,13 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const { page } = o;
   try {
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    await holds(page, () => !window.overdub.start.step && !!document.querySelector('.st-door')?.getClientRects().length);
     const shut = await E(page, () => ({ step: window.overdub.start.step, tracks: window.overdub.store.get().tracks.length, door: !!document.querySelector('.st-door')?.getClientRects().length }));
     t.ok(!shut.step && shut.tracks === 0 && shut.door, `Esc before a hit closes the stage and leaves nothing behind (${JSON.stringify(shut)})`);
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await playRock(page, { rounds: 2 });
     // the agent waits while a take is played on the stage
     const ag = await E(page, () => window.overdub.tools.run('apply_ops', { label: 'x', ops: [{ type: 'project.set', patch: { tempo: 90 } }] }, { by: 'claude' }));
@@ -286,21 +302,21 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(ag?.error === 'recording' && !ro?.error, `while you play on the stage an agent's change waits ("${ag?.error}"), and reading the song doesn't (${ro?.error || 'ok'})`);
     const caps0 = await E(page, () => window.overdub.input.capture.list({ all: true }).length);
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(150);
+    await holds(page, () => /^Leave without/.test(document.querySelector('.st-status')?.textContent || ''));
     const ask = await E(page, () => ({ step: window.overdub.start.step, line: document.querySelector('.st-status')?.textContent }));
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    await holds(page, () => !window.overdub.start.step);
     const left = await E(page, () => ({ step: window.overdub.start.step, tracks: window.overdub.store.get().tracks.length, hist: window.overdub.store.history.length, caps: window.overdub.input.capture.list({ all: true }).length }));
     t.ok(ask.step === 'play' && /^Leave without keeping this take\? It stays in Takes\./.test(ask.line) && !left.step && left.tracks === 0 && left.hist === 0 && left.caps === caps0 + 1, `Esc after hits asks once ("${ask.line}"); leaving keeps nothing in the song, the take in Takes (${caps0} → ${left.caps})`);
     // Hum over it: the stage again, over the song (the beat looping over its bars, no Speed, no Beat)
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await playRock(page);
     await page.keyboard.press('Space');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'in');
     const tempo0 = await E(page, () => window.overdub.store.get().tempo);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'hum' && window.overdub.engine.playing);
     const next = await E(page, () => { const o = window.overdub; return { step: o.start.step, hum: o.start.hum(), playing: o.engine.playing, tempo: o.store.get().tempo, speed: !!document.querySelector('.st-stage .st-choice'), alt: document.querySelector('.st-alt')?.textContent, hist: o.store.history.map((x) => x.label) }; });
     t.ok(next.step === 'hum' && next.hum?.over && next.playing && next.tempo === tempo0 && !next.speed && !next.alt && next.hist.length === 1, `Hum over it (Enter): the stage reopens over the song, the beat looping, no Speed or Beat, the tempo as it was (${JSON.stringify(next)})`);
     await E(page, () => window.overdub.start.close({ to: 'song' }));
@@ -316,17 +332,17 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const { page } = o;
   try {
     await page.click('.st-way-b[data-way="Hum a tune"]');
-    await page.waitForTimeout(600);
+    await holds(page, () => window.overdub.start.step === 'hum' && window.overdub.engine.playing && window.overdub.store.get().tracks[0]?.clips.length === 1 && !!document.querySelector('.st-stage .btn-go'));
     const g = await E(page, () => { const o = window.overdub, p = o.store.get(); return { step: o.start.step, playing: o.engine.playing, tempo: p.tempo, tracks: p.tracks.map((tr) => tr.name), clips: p.tracks.map((tr) => tr.clips.length), hist: o.store.history.length, speed: document.querySelector('.st-word[aria-checked="true"]')?.textContent, go: [...document.querySelectorAll('.st-stage .btn-go')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()) }; });
     t.ok(g.step === 'hum' && g.playing && g.tempo === 100 && g.tracks.join() === 'Drums' && g.clips[0] === 1 && g.hist === 0, `Hum a tune: a simple beat already looping at Easy 100, heard and not in History (${JSON.stringify(g)})`);
     t.ok(g.go.length === 1 && /^Hum H$/.test(g.go[0]), `one primary: Hum (${g.go.join(', ')})`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-hum.png') });
     await page.click('.st-word:has-text("Upbeat 120")');
-    await page.waitForTimeout(200);
+    await holds(page, () => window.overdub.store.get().tempo === 120);
     const up = await E(page, () => ({ tempo: window.overdub.store.get().tempo, hist: window.overdub.store.history.length }));
     t.ok(up.tempo === 120 && up.hist === 0, `Speed is a preview too (${up.tempo} BPM, ${up.hist} changes)`);
     await page.keyboard.press('KeyH');
-    await page.waitForTimeout(1200);
+    await holds(page, () => { const r = window.overdub.input.recorder; return window.overdub.store.history.length >= 1 && (r.state === 'count' || r.state === 'rec') && !!r.humming?.(); });
     const h = await E(page, () => { const o = window.overdub, p = o.store.get(); return { step: o.start.step, rec: o.input.recorder.state, humming: o.input.recorder.humming?.(), tempo: p.tempo, hist: o.store.history.map((x) => `${x.label} (${x.by})`), drums: p.tracks.filter((tr) => tr.name === 'Drums').length }; });
     t.ok(h.step === 'hum' && h.tempo === 120 && h.drums === 1 && /^a beat to hum over, 4 bars at 120 BPM \(you\)$/.test(h.hist[0]) && (h.rec === 'count' || h.rec === 'rec') && h.humming, `H: the beat goes in, signed you, and the hum records over it on the stage, with a bar to come in on (${h.step}, ${h.rec}, humming ${h.humming}; ${h.hist.join(' / ')})`);
     await E(page, () => { window.overdub.input.recorder.cancel?.(); window.overdub.start.close({ quiet: true }); });
@@ -342,24 +358,24 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const { page } = o;
   try {
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await playRock(page);
     await page.keyboard.press('Space');
-    await page.waitForTimeout(900);
+    await holds(page, () => window.overdub.start.step === 'in' && document.querySelectorAll('.st-stage .snd-card .snd-row').length >= 2);
     const c = await E(page, () => { const st = document.querySelector('.st-stage'), card = document.querySelector('.snd-card'); return { step: window.overdub.start.step, inStage: !!card && !!st?.contains(card), go: [...st.querySelectorAll('.btn-go')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()), rows: [...st.querySelectorAll('.snd-row')].length, dev: window.overdub.store.get().tracks[0]?.instrument?.device, hist: window.overdub.store.history.length }; });
     t.ok(c.step === 'in' && c.inStage && c.rows >= 2, `on 'in' the stage holds the sound card (.snd-card inside .st-stage, ${c.rows} sounds)`);
     await page.keyboard.press('ArrowDown');
-    await page.waitForTimeout(700);
+    await holds(page, () => !!window.overdub.sounds.trying() && document.querySelectorAll('.st-stage .snd-keep').length === 1);
     const tr = await E(page, () => { const st = document.querySelector('.st-stage'); return { trying: window.overdub.sounds.trying(), keep: [...st.querySelectorAll('.snd-keep')].map((b) => b.className), go: [...st.querySelectorAll('.btn-go')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()), hist: window.overdub.store.history.length }; });
     t.ok(!!tr.trying && tr.hist === c.hist && tr.keep.length === 1 && !/btn-go/.test(tr.keep[0]) && tr.go.length === 1 && /^Hum over it/.test(tr.go[0]),
       `↓ tries the next sound (${tr.trying?.name}), nothing in History; Keep is a plain .btn and the stage's one primary is still the next part (${tr.go.join(', ')})`);
     await page.click('.st-stage .snd-keep');
-    await page.waitForTimeout(400);
+    await holds(page, () => /^Drums plays .* now\.$/.test(document.querySelector('.st-status')?.textContent || ''));
     const k = await E(page, () => ({ line: document.querySelector('.st-status')?.textContent, dev: window.overdub.store.get().tracks[0]?.instrument?.device, hist: window.overdub.store.history.map((x) => x.by), step: window.overdub.start.step }));
     t.ok(k.step === 'in' && k.dev !== c.dev && k.hist.length === c.hist + 1 && k.hist.at(-1) === 'you' && new RegExp(`^Drums plays ${tr.trying?.name} now\\.$`).test(k.line || ''), `Keep is its own undo step by you, and the line says so: "${k.line}" (${c.dev} → ${k.dev})`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-in-card.png') });
     await page.click('.st-back');
-    await page.waitForTimeout(300);
+    await holds(page, () => !window.overdub.start.step);
     const g = await E(page, () => ({ step: window.overdub.start.step, card: !!document.querySelector('.st-stage .snd-card'), host: !!window.overdub.sounds.el?.closest?.('.st-stage') }));
     t.ok(!g.step && !g.card && !g.host, `after Back to the song the card isn't on the stage, and the host is given back (${JSON.stringify(g)})`);
     t.ok(!real(o.errors).length, `the card: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
@@ -379,22 +395,24 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const { page } = o;
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-    await page.waitForTimeout(500);
+    await settled(page);
     await page.click('.st-way-b[data-way="Hum a tune"]');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'hum');
     await page.getByRole('button', { name: 'No beat; I’ll hum freely' }).click();
+    // (the fake mic plays its file from here: what's heard by Space is the time since)
+    const heard = Date.now();
     await page.waitForTimeout(300);
     // the keys stay on the stage: ← → and R reach nothing
     for (const key of ['ArrowLeft', 'ArrowRight', 'KeyR']) await page.keyboard.press(key);
     await page.waitForTimeout(200);
     const f0 = await E(page, () => { const o = window.overdub; return { step: o.start.step, hum: o.start.hum(), playing: o.engine.playing, rec: o.input.recorder.state, tracks: o.store.get().tracks.length, hist: o.store.history.length, busy: o.start.busy }; });
     t.ok(f0.step === 'hum' && f0.hum?.mode === 'free' && f0.hum.on && !f0.playing && f0.rec === 'idle' && f0.tracks === 0 && f0.hist === 0 && f0.busy, `"No beat; I'll hum freely" stays on the stage: the mic listens, nothing plays, nothing is in the song, and ← → R reach nothing (${JSON.stringify(f0)})`);
-    await page.waitForTimeout(secs * 1000 - 300);
+    await rest(page, heard, secs * 1000 + 200);
     const f1 = await E(page, () => ({ hum: window.overdub.start.hum(), line: document.querySelector('.st-status')?.textContent }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-free-hum.png') });
     t.ok(f1.hum.notes >= 6 && /^About \d+ BPM · \d+ notes$/.test(f1.line) && f1.hum.ruler === (f1.hum.fit >= 0.5 || !!f1.hum.ruler), `the notes form as you hum, and the line counts them: "${f1.line}" (fit ${f1.hum.fit}, ruler ${f1.hum.ruler})`);
     await page.keyboard.press('Space');
-    await page.waitForTimeout(1500);
+    await holds(page, () => window.overdub.start.step === 'in' && !!document.querySelector('.st-stage .snd-card') && !!document.querySelector('.st-stage .st-sub')?.textContent);
     const l = await E(page, () => { const o = window.overdub, p = o.store.get(), st = document.querySelector('.st-stage'); return { step: o.start.step, take: o.start.take(), tempo: p.tempo, key: p.key, hist: o.store.history.map((x) => `${x.label} (${x.by})`), tracks: p.tracks.map((tr) => `${tr.name}:${tr.clips.map((c) => c.notes.length).join('+')}`), title: st?.querySelector('.st-title')?.textContent, sub: st?.querySelector('.st-sub')?.textContent, promoted: st?.querySelector('.st-promoted')?.textContent || null, card: !!st?.querySelector('.snd-card'), go: st ? st.querySelectorAll('.btn-go').length : 0, tune: !!st?.querySelector('.st-timing .st-tune'), cap: o.input.capture.ofClip(o.start.landed()?.clip)?.rounds ?? null }; });
     const weak = l.take && l.take.fit < 0.5;
     t.ok(l.step === 'in' && l.hist.length === 1 && / \(you\)$/.test(l.hist[0]) && /^Melody:\d+$/.test(l.tracks.join()) && l.tempo === Math.round(l.take.bpm) && l.key && l.title === 'Your tune is in the song.' && /^Melody, bars? 1(–\d+)? at \d+ BPM, in [A-G][#b]? (major|minor), sung by you\./.test(l.sub),
@@ -406,33 +424,33 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     const ps = () => E(page, () => ({ ps: window.overdub.store.get().tracks[0].clips[0].notes.map((n) => n.p).join(' '), on: document.querySelector('.st-tune')?.getAttribute('aria-pressed'), hist: window.overdub.store.history.length }));
     const t0 = await ps();
     await page.click('.st-tune');
-    await page.waitForTimeout(150);
+    await holds(page, () => document.querySelector('.st-tune')?.getAttribute('aria-pressed') === 'false');
     const t1 = await ps();
     await page.click('.st-tune');
-    await page.waitForTimeout(150);
+    await holds(page, () => document.querySelector('.st-tune')?.getAttribute('aria-pressed') === 'true');
     const t2 = await ps();
     t.ok(t0.on === 'true' && t1.on === 'false' && t2.on === 'true' && t2.ps === t0.ps && t1.hist === 1 && t2.hist === 1, `In tune off and on again: as sung (${t1.ps}), in the key (${t2.ps}), still one undo step`);
     // the readings: three, each with a soft tick under it, Use this one joined to the landing
     await page.click('.st-notquite');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'readings' && document.querySelectorAll('.st-reading').length === 3 && window.overdub.store.get().tracks.some((tr) => tr.name === 'Tick'));
     const rd = await E(page, () => ({ step: window.overdub.start.step, n: document.querySelectorAll('.st-reading').length, rows: [...document.querySelectorAll('.st-reading')].map((r) => r.textContent), tick: window.overdub.store.get().tracks.some((tr) => tr.name === 'Tick'), again: !!document.querySelector('.st-overbeat'), hist: window.overdub.store.history.length }));
     const lvl = await E(page, () => window.overdub.start.tick());
     t.ok(rd.step === 'readings' && rd.n === 3 && rd.again && rd.hist === 1, `Not quite? lists three readings (${rd.rows.join(' | ')}) and Hum it again over a beat`);
     t.ok(rd.tick && lvl && lvl.under >= 12 && lvl.tick > -100, `a soft tick on every beat, on a preview track: measured ${lvl?.tick} dB RMS against the take's ${lvl?.take}, ${lvl?.under} dB under (≥ 12)`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-free-readings.png') });
     await page.click('.st-reading:nth-child(2)');
-    await page.waitForTimeout(300);
+    await holds(page, () => !!document.querySelector('.st-reading:nth-child(2).sel'));
     await page.click('.st-use');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'in' && !window.overdub.store.get().tracks.some((tr) => tr.name === 'Tick'));
     const u = await E(page, () => ({ step: window.overdub.start.step, hist: window.overdub.store.history.length, tick: window.overdub.store.get().tracks.some((tr) => tr.name === 'Tick'), reading: window.overdub.start.take()?.reading, tempo: window.overdub.store.get().tempo }));
     t.ok(u.step === 'in' && u.hist === 1 && !u.tick && u.reading === 1, `Use this one adds no History entry (${u.hist}), the tick goes with the readings, ${u.tempo} BPM now`);
     const fn = await E(page, () => ({ next: document.querySelector('.st-next')?.textContent, back: !!document.querySelector('.st-back:not(.btn-go)'), after: window.overdub.coach.after({ kind: 'hum', free: true, landed: window.overdub.start.landed() })?.label }));
     t.ok(fn.next === 'Put a beat under it' && fn.after === fn.next && fn.back, `a free hum's next part is "${fn.next}" (the strip's run: Tune ✓ · Beat · Band), Back to the song beside it`);
     // Hum it again over a beat: the landing comes back out and the stage hums over a beat at that speed
     await page.click('.st-notquite');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'readings');
     await page.click('.st-overbeat');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'hum' && window.overdub.start.hum()?.mode === 'beat' && !!document.querySelector('.st-choice[aria-label="Speed"] [aria-checked="true"]'));
     const ob = await E(page, () => { const o = window.overdub; return { step: o.start.step, hum: o.start.hum(), hist: o.store.history.length, tempo: o.store.get().tempo, sel: document.querySelector('.st-choice[aria-label="Speed"] [aria-checked="true"]')?.textContent }; });
     t.ok(ob.step === 'hum' && ob.hum?.mode === 'beat' && !ob.hum.rec && ob.hist === 0 && ob.tempo === Math.max(60, Math.min(180, u.tempo)) && /\d+$/.test(ob.sel || ''), `Hum it again over a beat: the landing comes back out and the beat plays at that reading's speed (${ob.tempo} BPM, "${ob.sel}")`);
     await E(page, () => window.overdub.start.close({ quiet: true }));
@@ -454,20 +472,22 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const { page } = o;
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-    await page.waitForTimeout(500);
+    await settled(page);
     await page.click('.st-way-b[data-way="Hum a tune"]');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'hum' && window.overdub.engine.playing);
     const caps0 = await E(page, () => window.overdub.input.capture.list({ all: true }).length);
     await page.keyboard.press('KeyH');
-    await page.waitForTimeout(500);
+    // (the take, and the fake mic's file, start here: round 2 is under way by 13.3 s)
+    const heard = Date.now();
+    await holds(page, () => window.overdub.start.hum()?.state === 'count' && document.querySelector('.st-status')?.textContent === 'Come in on 1.');
     const c = await E(page, () => ({ hum: window.overdub.start.hum(), busy: window.overdub.start.busy, line: document.querySelector('.st-status')?.textContent }));
     t.ok(c.hum?.mode === 'beat' && c.hum.rec && c.hum.state === 'count' && c.busy && c.line === 'Come in on 1.', `H: a bar of count-in on the stage, "${c.line}" (${c.hum?.state})`);
-    await page.waitForTimeout(2400 + 9600 + 800);
+    await rest(page, heard, 500 + 2400 + 9600 + 800);
     const r = await E(page, () => ({ hum: window.overdub.start.hum(), line: document.querySelector('.st-status')?.textContent }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-hum-over.png') });
     t.ok(r.hum?.state === 'rec' && r.hum.round >= 2 && /^Round \d+\. /.test(r.line), `round after round, each a take: "${r.line}"`);
     await page.keyboard.press('Space');
-    await page.waitForTimeout(2500);
+    await holds(page, () => window.overdub.start.step === 'in' && !!document.querySelector('.st-stage .snd-card') && !!document.querySelector('.st-stage .st-sub')?.textContent);
     const l = await E(page, () => { const o = window.overdub, p = o.store.get(), st = document.querySelector('.st-stage'); const mel = p.tracks.find((tr) => tr.name === 'Melody'); return { step: o.start.step, take: o.start.take(), hist: o.store.history.map((x) => `${x.label} (${x.by})`), mel: mel ? mel.clips.map((cl) => ({ name: cl.name, mute: !!cl.mute, take: !!cl.take, at0: cl.notes.filter((n) => n.t === 0).length })) : null, sub: st?.querySelector('.st-sub')?.textContent, card: !!st?.querySelector('.snd-card'), tune: !!st?.querySelector('.st-timing .st-tune'), caps: o.input.capture.list({ all: true }).map((x) => ({ src: x.src, rec: !!x.rec, n: x.notes.length, beat: x.beat })) }; }, caps0);
     const playing = (l.mel || []).filter((x) => !x.mute);
     const left = l.caps.filter((x) => x.src === 'hum' && !x.rec);
@@ -479,14 +499,14 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     // the door "Hum a tune": the next part is the band; the strip docks with both words done and the rows open
     const nx = await E(page, () => document.querySelector('.st-next')?.textContent);
     await page.click('.st-next');
-    await page.waitForTimeout(800);
+    await holds(page, () => window.overdub.coach.state()?.step === 'band' && document.querySelectorAll('.cs-style .cs-sname').length >= 5);
     const cs = await E(page, () => ({ st: window.overdub.coach.state(), words: [...document.querySelectorAll('.cs-word')].map((w) => w.textContent), rows: [...document.querySelectorAll('.cs-style .cs-sname')].map((r) => r.textContent) }));
     t.ok(nx === 'Build a band around it' && cs.st?.door === 'hum' && cs.words.join(' · ') === 'Beat ✓ · Tune ✓ · Band' && cs.st.step === 'band' && cs.st.rows && cs.rows.slice(0, 5).join() === 'Pop,Rock,Lo-fi,House,Ballad',
       `the hum's next part is "${nx}": the strip docks, ${cs.words.join(' · ')}, the style rows open (${cs.rows.join(', ')})`);
     await page.click('.cs-x');
-    await page.waitForTimeout(200);
+    await holds(page, () => !document.querySelector('.cs'));
     await E(page, () => window.overdub.store.undo());
-    await page.waitForTimeout(300);
+    await holds(page, () => !window.overdub.store.get().tracks.length && !window.overdub.start.step);
     const u = await E(page, () => ({ tracks: window.overdub.store.get().tracks.length, step: window.overdub.start.step }));
     t.ok(u.tracks === 0 && !u.step, `one undo takes out the beat and the tune together (${u.tracks} tracks)`);
     t.ok(!real(o.errors).length, `a hum over the beat: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
@@ -503,12 +523,12 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     const tp = () => E(page, () => { const n = document.querySelector('.tp-tempo-num'), t = document.querySelector('.tp-tempo'); return { text: n?.textContent, vt: t?.getAttribute('aria-valuetext'), now: t?.getAttribute('aria-valuenow'), ball: window.overdub.transport.ball, tempo: window.overdub.store.get().tempo, step: window.overdub.start.step }; });
     // the Song menu on a blank song: Start a song under New song, and it opens the stage at once
     await page.click('.sm-btn');
-    await page.waitForTimeout(250);
+    await holds(page, () => !!document.querySelector('.sm-start')?.getClientRects().length);
     const m = await E(page, () => { const rows = [...document.querySelectorAll('.sm > .sm-i')].map((b) => b.querySelector('b')?.textContent); const r = document.querySelector('.sm-start'); return { rows: rows.slice(0, 3), sub: r?.querySelector('small')?.textContent }; });
     await page.screenshot({ path: path.join(OUTDIR, 'start-song-menu.png') });
     t.ok(m.rows[0] === 'New song' && m.rows[1] === 'Start a song' && m.sub === 'a blank reel, then your idea', `Song ▸ Start a song, under New song: "${m.sub}" (${m.rows.join(' · ')})`);
     await page.click('.sm-start');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'play' && !document.querySelector('.ew-pop') && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     const a = await E(page, () => ({ step: window.overdub.start.step, kind: window.overdub.start.kind, hist: window.overdub.store.history.length, pop: !!document.querySelector('.ew-pop') }));
     t.ok(a.step === 'play' && a.kind === 'tap' && a.hist === 0 && !a.pop, `on a blank song it opens the stage at Tap a beat, nothing asked (${JSON.stringify(a)})`);
     // "~" in the top bar until the stage shows a BPM; the tempo holds still meanwhile
@@ -530,16 +550,16 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(t2.tempo === 120 && t2.text === '~' && !typing && t2.step === 'play', `... and the tempo can't be scrolled, stepped, dragged or typed (${t2.tempo} BPM, still "${t2.text}", typing ${typing})`);
     await E(page, () => window.overdub.start.again());
     await playRock(page, { bpm: 96 });
-    await page.waitForTimeout(150);
+    await holds(page, () => /^\d+$/.test(document.querySelector('.st-bpm')?.textContent || '') && document.querySelector('.tp-tempo-num')?.textContent === document.querySelector('.st-bpm')?.textContent);
     const t3 = await tp();
     const stageBpm = await E(page, () => document.querySelector('.st-bpm')?.textContent);
     t.ok(t3.text === stageBpm && t3.vt === `${stageBpm} BPM` && +t3.text !== 120, `once the stage shows a BPM the top bar shows it too (${t3.text}; the stage ${stageBpm})`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-topbar-shown.png'), clip: { x: 0, y: 0, width: 1440, height: 120 } });
     await page.keyboard.press('Space');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'in' && document.querySelector('.tp-tempo-num')?.textContent === String(window.overdub.store.get().tempo));
     const t4 = await tp();
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    await holds(page, () => !window.overdub.start.step && document.querySelector('.tp-tempo')?.getAttribute('aria-valuetext') === `${window.overdub.store.get().tempo} BPM`);
     const t5 = await tp();
     t.ok(t4.step === 'in' && t4.text === String(t4.tempo) && !t5.step && t5.text === String(t5.tempo) && t5.vt === `${t5.tempo} BPM`, `landed and closed, it's the song's tempo again (${t4.text}, then ${t5.text})`);
     // a capture of the landed take carries its clip, what was played as played and the rounds
@@ -547,36 +567,36 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(cp && cp.clip && cp.raw > 20 && cp.rounds === 3 && cp.kept && cp.none === null, `the landed take is in capture under its clip: ${cp?.raw} hits as played, ${cp?.rounds} times round (capture.ofClip)`);
     // a song with something in it: the menu asks New song's question first, then a new song and the stage
     await page.click('.sm-btn');
-    await page.waitForTimeout(250);
+    await holds(page, () => !!document.querySelector('.sm-start')?.getClientRects().length);
     await page.click('.sm-start');
-    await page.waitForTimeout(200);
+    await holds(page, () => /^Start a new song\?/.test(document.querySelector('.sm-confirm')?.textContent || ''));
     const q = await E(page, () => ({ text: document.querySelector('.sm-confirm')?.textContent, go: document.querySelector('.sm-confirm .ew-btn-primary')?.textContent, step: window.overdub.start.step }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-song-menu-ask.png') });
     t.ok(/^Start a new song\? “.*” goes to Recent songs, and Undo brings it back\./.test(q.text || '') && q.go === 'Start a song' && !q.step, `from a song with a track it asks first: "${q.text}"`);
     await page.click('.sm-confirm .ew-btn-primary');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'play' && window.overdub.store.get().tracks.every((tr) => !tr.clips.length) && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     const y = await E(page, () => ({ tracks: window.overdub.store.get().tracks.length, clips: window.overdub.store.get().tracks.reduce((n, tr) => n + tr.clips.length, 0), step: window.overdub.start.step, recent: window.overdub.exporter.recent().length }));
     t.ok(y.clips === 0 && y.step === 'play' && y.recent >= 1, `yes: a blank song with the stage open, the old song in Recent songs (${JSON.stringify(y)})`);
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    await holds(page, () => !window.overdub.start.step);
     // Find: "start" puts Start a song first, and Enter does what the menu does
     const f = await E(page, () => window.overdub.find.search('start').slice(0, 3).map((x) => `${x.kind}:${x.title}`));
     t.ok(f[0] === 'go:Start a song', `Find "start": ${f.join(' · ')}`);
     await E(page, () => window.overdub.find.open({ query: 'start' }));
-    await page.waitForTimeout(300);
+    await holds(page, () => !!document.activeElement?.classList.contains('ws-find') && !!document.querySelector('#ws-find-list')?.children.length);
     await page.screenshot({ path: path.join(OUTDIR, 'start-find.png') });
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     const fe = await E(page, () => ({ step: window.overdub.start.step, kind: window.overdub.start.kind }));
     t.ok(fe.step === 'play' && fe.kind === 'tap', `... Enter opens the stage on a blank song (${JSON.stringify(fe)})`);
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(200);
+    await holds(page, () => !window.overdub.start.step);
     await E(page, () => window.overdub.store.dispatch({ type: 'track.add', ref: 'k', track: { name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys' } } }, { by: 'you' }));
     await E(page, () => { const o = window.overdub, tr = o.store.get().tracks[0]; o.store.dispatch({ type: 'clip.add', track: tr.id, clip: { start: 0, length: 4, notes: [{ p: 60, t: 0, d: 1, v: 0.8 }] } }, { by: 'you' }); });
     await E(page, () => window.overdub.find.open({ query: 'start' }));
-    await page.waitForTimeout(300);
+    await holds(page, () => !!document.activeElement?.classList.contains('ws-find') && !!document.querySelector('#ws-find-list')?.children.length);
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(400);
+    await holds(page, () => /^Start a new song\?/.test(document.querySelector('.sm-confirm:not([hidden])')?.textContent || ''));
     const fa = await E(page, () => ({ step: window.overdub.start.step, ask: document.querySelector('.sm-confirm:not([hidden])')?.textContent || null, clips: window.overdub.store.get().tracks.reduce((n, tr) => n + tr.clips.length, 0) }));
     t.ok(!fa.step && /^Start a new song\?/.test(fa.ask || '') && fa.clips === 1, `... and on a song with clips, the Song menu opens on the same question, nothing replaced yet ("${(fa.ask || '').slice(0, 40)}…")`);
     await page.keyboard.press('Escape');
@@ -599,25 +619,25 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const { page } = o;
   try {
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     const st0 = await E(page, () => performance.now() + 40);
     await E(page, ([hs]) => { for (const x of hs) window.overdub.start.tap(x.row, x.ms); }, [hits.map((x) => ({ row: ROW[x.p], ms: st0 + x.t * 1000 }))]);
-    await page.waitForTimeout(150);
+    await holds(page, () => / BPM/.test(document.querySelector('.st-status')?.textContent || '') && /^Done/.test(document.querySelector('.st-done')?.textContent.trim() || ''));
     const w = await E(page, () => ({ line: document.querySelector('.st-status')?.textContent, done: document.querySelector('.st-done')?.textContent.trim(), go: document.querySelector('.st-done')?.classList.contains('btn-go'), dis: document.querySelector('.st-done')?.getAttribute('aria-disabled') }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-nudge.png') });
     t.ok(/ BPM.*\. One more time round helps the studio hear it\.$/.test(w.line || ''), `a weak pulse (fit ${fit}): "${w.line}"`);
     t.ok(/^Done/.test(w.done) && w.go && w.dis === 'false', `... and Done is still Done, ready (${w.done})`);
     await page.keyboard.press('Space');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'in');
     const l = await E(page, () => ({ step: window.overdub.start.step, hist: window.overdub.store.history.length }));
     t.ok(l.step === 'in' && l.hist === 1, `Done lands it anyway: one step (${JSON.stringify(l)})`);
     // a steady take: no nudge
     await E(page, () => window.overdub.store.undo());
-    await page.waitForTimeout(300);
+    await holds(page, () => !window.overdub.start.step && !!document.querySelector('.st-door')?.getClientRects().length);
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await playRock(page, { jitter: 0.01, drift: 0 });
-    await page.waitForTimeout(150);
+    await holds(page, () => /times round\./.test(document.querySelector('.st-status')?.textContent || ''));
     const s2 = await E(page, () => document.querySelector('.st-status')?.textContent);
     t.ok(!/One more time round/.test(s2 || ''), `a steady take isn't asked ("${s2}")`);
     t.ok(!real(o.errors).length, `the nudge: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
@@ -633,12 +653,13 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const rgb = (v) => E(page, (name) => { const d = document.createElement('i'); d.style.color = `var(${name})`; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; }, v);
   try {
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await playRock(page);
     await page.keyboard.press('Space');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'in' && !!document.querySelector('.st-back'));
     await page.click('.st-back');
-    await page.waitForTimeout(200);
+    // (the strip docked and the crop marks in: their scale-in, ui-point-in, over)
+    await holds(page, () => { const pt = document.querySelector('.ui-point'); return !!document.querySelector('.cs')?.getBoundingClientRect().height && !!pt && pt.getAnimations().every((a) => a.playState === 'finished') && !!document.querySelector('.cs-line')?.textContent; });
     const d = await E(page, () => {
       const o = window.overdub, cs = document.querySelector('.cs'), r = cs?.getBoundingClientRect();
       const arr = document.querySelector('.ew-region-center > .ew-content').getBoundingClientRect(), bot = document.querySelector('.ew-region-bottom').getBoundingClientRect(), main = document.querySelector('.ew-main').getBoundingClientRect();
@@ -655,7 +676,8 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(d.go.join() === 'Hum over it' && d.more.join() === 'Tap more on the drums,Play keys over it' && d.x && /^Hum a tune over your beat\. One bar of it counts you in\./.test(d.line), `one .btn-go (${d.go.join(', ')}), two words beside it (${d.more.join(', ')}) and ×; "${d.line}"`);
     t.ok(d.words.join(' · ') === 'Beat ✓ · Tune · Band' && d.coach?.run === 'start' && d.coach.step === 'tune' && d.coach.done.join() === 'beat' && !d.stored.length, `Tap a beat's run sheet: ${d.words.join(' · ')}; ui.state.coach ${JSON.stringify(d.coach)}, nothing stored`);
     t.ok(d.point && d.point.dx <= 1 && d.point.dy <= 1 && d.point.dw <= 1 && !d.point.label && / ↗ opens it big\.$/.test(d.line), `crop marks on the Drums header's instrument, unsigned (off by ${d.point ? `${d.point.dx}, ${d.point.dy}` : 'none'})`);
-    await page.waitForTimeout(2100);
+    // (until they go, for at most the 2.1 s it always waited from here)
+    await holds(page, () => !document.querySelector('.ui-point'), null, 2100);
     const gone = await E(page, () => !document.querySelector('.ui-point'));
     t.ok(gone, 'the crop marks go after 2 s');
     // the run sheet's words: the step now underlined in cream, done ones --text-2 with ✓, later ones --text-3; no box
@@ -666,10 +688,10 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
       `the words: now ${cur?.color} over a ${cur?.under} rule, done ${done?.color} with ✓, later ${later?.color}; no box, fill or pill`);
     // a word is a button: Band; then Build a band around it: three styles heard, nothing in History
     await page.click('.cs-word[data-word="band"]');
-    await page.waitForTimeout(150);
+    await holds(page, () => window.overdub.coach.state()?.step === 'band' && document.querySelector('.cs-go')?.textContent === 'Build a band around it');
     const bw = await E(page, () => ({ step: window.overdub.coach.state().step, go: document.querySelector('.cs-go')?.textContent, line: document.querySelector('.cs-line')?.textContent }));
     t.ok(bw.step === 'band' && bw.go === 'Build a band around it' && /^Let a band play around your song: chords, bass and keys on new tracks\. Hear each style before you keep it\.$/.test(bw.line), `the word Band goes to its step: [${bw.go}] "${bw.line}"`);
-    const hearing = async (style) => { for (let i = 0; i < 40; i++) { const st = await E(page, () => window.overdub.coach.state()); if (st?.hearing && st.style === style) return true; await page.waitForTimeout(100); } return false; };
+    const hearing = (style) => holds(page, (s) => { const st = window.overdub.coach.state(); return !!st?.hearing && st.style === s; }, style, 4000);
     const t0n = await E(page, () => window.overdub.store.get().tracks.length);
     await page.click('.cs-go');
     const h1 = await hearing('pop');
@@ -693,13 +715,13 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(!bad.length && kit.go === 1, `liner notes in the strip: no pills, side rules or inset stripes, one primary${bad.length ? ' (' + [...new Set(bad)].join(', ') + ')' : ''}`);
     // Not this one: back to the rows, nothing heard; × ends the run and nothing in the song changes
     await page.click('.cs-more');
-    await page.waitForTimeout(200);
+    await holds(page, () => { const st = window.overdub.coach.state(); return !!st?.rows && st.sel === -1 && !st.hearing; });
     const nt = await E(page, () => ({ st: window.overdub.coach.state(), tracks: window.overdub.store.get().tracks.length, dis: document.querySelector('.cs-go')?.getAttribute('aria-disabled') }));
     t.ok(nt.st.rows && nt.st.sel === -1 && !nt.st.hearing && nt.tracks === t0n && nt.dis === 'true', `Not this one: back to the rows, nothing heard, Keep waits for a style (${nt.tracks} track)`);
     await page.keyboard.press('ArrowDown');
     await hearing('pop');
     await page.click('.cs-x');
-    await page.waitForTimeout(200);
+    await holds(page, () => !document.querySelector('.cs'));
     const x = await E(page, () => ({ strip: !!document.querySelector('.cs'), coach: window.overdub.ui.state.coach, hist: window.overdub.store.history.length, tracks: window.overdub.store.get().tracks.length }));
     t.ok(!x.strip && x.coach === null && x.hist === d.hist && x.tracks === t0n, `× (a style still playing): the strip goes, the run ends, History unchanged (${x.hist}) and the band heard is gone (${x.tracks} track)`);
     // a reload ends a run: it isn't kept
@@ -728,41 +750,43 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
   const press = async (sel) => { presses++; await page.click(sel); };
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-    await page.waitForTimeout(500);
+    await settled(page);
     await press('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await playRock(page);
-    await page.waitForTimeout(150);
+    await holds(page, () => /times round\./.test(document.querySelector('.st-status')?.textContent || '') && !!document.querySelector('.st-done.btn-go'));
     await press('.st-done');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'in' && !!document.querySelector('.st-next'));
     const a = await song(page);
     const toBeat = presses;
     t.ok(toBeat === 2 && a.hist.length === 1 && a.tracks.length === 1 && a.tracks[0].clips.length === 1, `blank to a beat in the song: ${toBeat} presses (Tap a beat, Done)`);
     const tempo0 = a.tempo;
     // Hum over it: the stage over the song; Hum: the song made 4 bars, the take over it; Done: the steadiest round
     await press('.st-next');
-    await page.waitForTimeout(600);
+    await holds(page, () => window.overdub.start.step === 'hum' && !!window.overdub.start.hum()?.over && !!document.querySelector('.st-stage .st-hum'));
     const ov = await E(page, () => { const o = window.overdub, p = o.store.get(); return { step: o.start.step, hum: o.start.hum(), loop: p.loop, tempo: p.tempo, speed: !!document.querySelector('.st-stage .st-choice'), hist: o.store.history.length, go: [...document.querySelectorAll('.st-stage .btn-go')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()) }; });
     t.ok(ov.step === 'hum' && ov.hum?.over && !ov.speed && ov.tempo === tempo0 && ov.hist === 1 && ov.loop.end === 4 && /^Hum H$/.test(ov.go.join()), `Hum over it: the stage over the song, its 1-bar loop going round, no Speed or Beat, nothing in History yet (${JSON.stringify({ loop: ov.loop, tempo: ov.tempo })})`);
     await page.screenshot({ path: path.join(OUTDIR, 'start-run-over.png') });
     await press('.st-hum');
-    await page.waitForTimeout(1200);
+    // (the take, and the fake mic's file, start here: Done comes 13.2 s in, as it always did)
+    const heard = Date.now();
+    await holds(page, () => { const o = window.overdub, st = o.start.hum()?.state; return (st === 'count' || st === 'rec') && o.store.get().loop.end === 16 && o.store.get().tracks[0].clips.length === 4; });
     const rec = await E(page, () => { const o = window.overdub, p = o.store.get(); return { hum: o.start.hum(), loop: p.loop, clips: p.tracks[0].clips.length, tempo: p.tempo }; });
     t.ok((rec.hum?.state === 'count' || rec.hum?.state === 'rec') && rec.loop.end === 16 && rec.clips === 4 && rec.tempo === tempo0, `Hum: the beat runs 4 bars now (Make it longer: ${rec.clips} clips, the loop to ${rec.loop.end}), the take counts in over it, the tempo unchanged`);
-    await page.waitForTimeout(12000);
+    await rest(page, heard, 1200 + 12000);
     await press('.st-done');
-    await page.waitForTimeout(2500);
+    await holds(page, () => window.overdub.start.step === 'in' && window.overdub.store.get().tracks.map((tr) => tr.name).join() === 'Drums,Melody' && !!document.querySelector('.st-next'));
     const b = await E(page, () => { const o = window.overdub, p = o.store.get(); return { step: o.start.step, tempo: p.tempo, tracks: p.tracks.map((tr) => tr.name), hist: o.store.history.map((x) => `${x.label} (${x.by})`), next: document.querySelector('.st-next')?.textContent, sub: document.querySelector('.st-sub')?.textContent }; });
     const toTune = presses;
     t.ok(toTune === 5 && b.step === 'in' && b.tracks.join() === 'Drums,Melody' && b.tempo === tempo0 && b.hist.length === 2 && / \(you\)$/.test(b.hist[1]), `a hummed tune over it on its own track by press ${toTune} (Hum over it, Hum, Done): ${b.tracks.join(', ')}, ${b.tempo} BPM as before; History: ${b.hist.join(' / ')}`);
     t.ok(b.next === 'Build a band around it' && /over Drums\./.test(b.sub || ''), `the stage's next part is "${b.next}"; "${b.sub}"`);
     // Build a band around it: the strip, its rows open and the first style heard; Keep the band
     await press('.st-next');
-    for (let i = 0; i < 40; i++) { if (await E(page, () => window.overdub.coach.state()?.hearing)) break; await page.waitForTimeout(100); }
+    await holds(page, () => !!window.overdub.coach.state()?.hearing, null, 4000);
     const r0 = await E(page, () => ({ st: window.overdub.coach.state(), words: [...document.querySelectorAll('.cs-word')].map((w) => w.textContent), hist: window.overdub.store.history.length }));
     t.ok(r0.st?.step === 'band' && r0.st.rows && r0.st.style === 'pop' && r0.words.join(' · ') === 'Beat ✓ · Tune ✓ · Band' && r0.hist === 2, `Build a band around it: ${r0.words.join(' · ')}, the rows open, Pop heard (History still ${r0.hist})`);
     await press('.cs-go');
-    for (let i = 0; i < 80; i++) { if ((await E(page, () => window.overdub.coach.state()?.step)) === 'end') break; await page.waitForTimeout(150); }
+    await holds(page, () => window.overdub.coach.state()?.step === 'end', null, 12000);
     const k = await E(page, () => { const o = window.overdub, p = o.store.get(); const bpb = 4; let end = 0; for (const tr of p.tracks) for (const c of tr.clips) end = Math.max(end, c.start + c.length); return { st: o.coach.state(), hist: o.store.history.map((x) => ({ by: x.by, label: x.label })), tracks: p.tracks.map((tr) => tr.name), n: p.tracks.length, bars: Math.ceil(end / bpb - 1e-6), tempo: p.tempo, line: document.querySelector('.cs-line')?.textContent, go: document.querySelector('.cs-go')?.textContent, more: [...document.querySelectorAll('.cs-more')].map((x) => x.textContent) }; });
     const toBand = presses;
     t.ok(toBand === 7 && k.st?.step === 'end' && k.hist.length === 3 && k.hist[2].by === 'overdub' && k.n > 2, `a band kept by press ${toBand} (Build a band around it, Keep the band): one History entry by overdub, "${k.hist[2]?.label}" (${k.tracks.join(', ')})`);
@@ -771,17 +795,19 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(presses === 7, `the budget, press by press: a beat by 2, a tune by 5, a band by 7 (${toBeat}, ${toTune}, ${toBand})`);
     // Undo takes the whole band out; redo puts it back for the end of the run
     await E(page, () => window.overdub.store.undo());
-    await page.waitForTimeout(200);
+    await holds(page, () => window.overdub.store.get().tracks.length === 2);
     const u = await E(page, () => window.overdub.store.get().tracks.map((tr) => tr.name));
     t.ok(u.join() === 'Drums,Melody', `one undo takes every band track out (${u.join(', ')})`);
     await E(page, () => window.overdub.store.redo());
-    await page.waitForTimeout(200);
+    await holds(page, (n) => window.overdub.store.get().tracks.length === n && document.querySelector('.cs-go')?.textContent === 'Make it longer', k.n);
     // Make it longer: the song repeats to 8 bars, then "Done." for 6 s, and the strip goes
     await page.click('.cs-go');
-    await page.waitForTimeout(250);
+    const longer = Date.now();
+    await holds(page, () => document.querySelector('.cs-line')?.textContent === 'Done. Find (⌘K) gets you anywhere.');
     const lg = await E(page, () => ({ line: document.querySelector('.cs-line')?.textContent, hist: window.overdub.store.history.at(-1), go: document.querySelectorAll('.cs .btn-go').length }));
     t.ok(lg.line === 'Done. Find (⌘K) gets you anywhere.' && lg.hist?.label === 'make it 8 bars' && lg.hist.by === 'you' && lg.go === 0, `Make it longer ("${lg.hist?.label}"), then "${lg.line}"`);
-    await page.waitForTimeout(6200);
+    // (as long as it always had: 6.45 s from the click, the 250 ms it waited and the 6.2 s after)
+    await holds(page, () => !document.querySelector('.cs') && window.overdub.ui.state.coach === null, null, Math.max(1, 6450 - (Date.now() - longer)));
     const bye = await E(page, () => ({ strip: !!document.querySelector('.cs'), coach: window.overdub.ui.state.coach }));
     t.ok(!bye.strip && bye.coach === null, `after 6 s the strip goes and the run is over`);
     t.ok(!real(o.errors).length, `the run: no page errors${real(o.errors).length ? ': ' + real(o.errors).slice(0, 2).join(' | ') : ''}`);
@@ -800,27 +826,27 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     const { page } = o;
     try {
       await page.click('.st-way-b[data-way="Play the keys"]');
-      await page.waitForTimeout(400);
+      await holds(page, () => window.overdub.store.get().tracks.some((tr) => tr.name === 'Keys') && !!window.overdub.input.qwerty?.on && window.overdub.engine.playing);
       await addClip(page, { name: 'Keys', device: 'core.keys', by: 'you', p: 60 });
-      await page.waitForTimeout(200);
+      await holds(page, () => !!window.overdub.coach.state()?.door && !!document.querySelector('.cs-go'));
       const k = await words(page);
       t.ok(k.st?.door === 'keys' && k.words.join(' · ') === 'Tune ✓ · Beat · Band' && k.go === 'Put a beat under it' && k.more.join() === 'Tap a beat over it', `Play the keys: ${k.words.join(' · ')} [${k.go}] ${k.more.join()}`);
       const tempo = await E(page, () => window.overdub.store.get().tempo);
       await page.click('.cs-go');
-      await page.waitForTimeout(500);
+      await holds(page, () => window.overdub.grooves?.view() === 'fit' && !!document.querySelector('.gv-put') && !!document.querySelector('.gv-row .gv-tempo') && !!document.querySelector('.gv-listhead')?.textContent);
       const g = await E(page, () => ({ view: window.overdub.grooves?.view(), put: document.querySelector('.gv-put')?.textContent, head: document.querySelector('.gv-listhead')?.textContent, rows: [...document.querySelectorAll('.gv-row .gv-tempo')].map((x) => x.textContent.split('–').map(Number)), hist: window.overdub.store.history.length }));
       await page.screenshot({ path: path.join(OUTDIR, 'start-strip-grooves.png') });
       t.ok(g.view === 'fit' && g.put === 'Use it' && g.rows.length > 0 && g.rows.every(([lo, hi]) => lo <= tempo && tempo <= hi) && new RegExp(`^At ${tempo} BPM`).test(g.head || ''), `Put a beat under it: Grooves at the song's ${tempo} BPM, ${g.rows.length} that sit there, and Use it ("${g.head}")`);
       await page.click('.gv-put');
-      await page.waitForTimeout(400);
+      await holds(page, () => window.overdub.coach.state()?.step === 'band' && !!document.querySelector('.cs-go'));
       const u = await words(page);
       const h1 = await E(page, () => window.overdub.store.history.at(-1));
       t.ok(u.st?.step === 'band' && u.words.join(' · ') === 'Tune ✓ · Beat ✓ · Band' && h1.by === 'you' && u.go === 'Build a band around it', `Use it lands the groove (by ${h1.by}) and the run moves on: ${u.words.join(' · ')} [${u.go}]`);
       // Tap a beat over it reopens the stage over the tune: the click view at the song's tempo, no Speed
       await E(page, () => window.overdub.coach.go('beat'));
-      await page.waitForTimeout(100);
+      await holds(page, () => window.overdub.coach.state()?.step === 'beat' && document.querySelector('.cs-more')?.textContent === 'Tap a beat over it');
       await page.click('.cs-more');
-      await page.waitForTimeout(500);
+      await holds(page, () => window.overdub.start.step === 'play' && window.overdub.start.view === 'click' && !!window.overdub.start.click());
       const ov = await E(page, () => ({ step: window.overdub.start.step, view: window.overdub.start.view, click: window.overdub.start.click(), speed: !!document.querySelector('.st-speed'), alt: document.querySelector('.st-alt')?.textContent, tempo: window.overdub.store.get().tempo }));
       t.ok(ov.step === 'play' && ov.view === 'click' && ov.click?.bpm === tempo && !ov.speed && !ov.alt && ov.tempo === tempo, `Tap a beat over it: the click view over the tune at its ${ov.click?.bpm} BPM, no Speed and no free time`);
       await E(page, () => window.overdub.start.close({ quiet: true }));
@@ -833,23 +859,23 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     const o = await blank();
     const { page } = o;
     try {
-      if (door === 'draw') { await page.click('.st-notime button:has-text("Draw a beat")'); await page.waitForTimeout(300); await addClip(page, { name: 'Drums', device: 'core.drums', by: 'you', p: 36 }); }
-      if (door === 'groove') { await page.click('.st-notime button:has-text("Pick a groove")'); await page.waitForTimeout(400); await E(page, () => window.overdub.grooves.put()); }
+      if (door === 'draw') { await page.click('.st-notime button:has-text("Draw a beat")'); await holds(page, () => window.overdub.store.get().tracks.some((tr) => tr.name === 'Drums')); await addClip(page, { name: 'Drums', device: 'core.drums', by: 'you', p: 36 }); }
+      if (door === 'groove') { await page.click('.st-notime button:has-text("Pick a groove")'); await holds(page, () => !!document.querySelector('.gv-put')); await E(page, () => window.overdub.grooves.put()); }
       if (door === 'ask') { await page.click('.ar-empty-agent'); await page.waitForTimeout(300); await addClip(page, { name: 'Bass', device: 'core.keys', by: 'claude', p: 40 }); }
-      await page.waitForTimeout(250);
+      await holds(page, (d) => window.overdub.coach.state()?.door === d && !!document.querySelector('.cs-go'), door);
       const w = await words(page);
       const want = door === 'ask' ? /^(Your agent|Claude|The demo agent) ✓ · Band$/ : /^Beat ✓ · Tune · Band$/;
       t.ok(w.st?.door === door && want.test(w.words.join(' · ')) && w.go === (door === 'ask' ? 'Build a band around it' : 'Hum over it'), `${{ draw: 'Draw a beat', groove: 'Pick a groove', ask: 'Ask your agent' }[door]}: ${w.words.join(' · ')} [${w.go}]`);
       if (door === 'draw') {
         // Tap more on the drums: the click view over the Drums clip; Done folds the new hits into it
         await page.click('.cs-more');
-        await page.waitForTimeout(400);
+        await holds(page, () => window.overdub.start.step === 'play' && window.overdub.start.view === 'click');
         const tm = await E(page, () => ({ step: window.overdub.start.step, view: window.overdub.start.view, tracks: window.overdub.store.get().tracks.length }));
         t.ok(tm.step === 'play' && tm.view === 'click' && tm.tracks === 1, `Tap more on the drums: the click view over the Drums clip, no new track (${JSON.stringify(tm)})`);
         await E(page, () => window.overdub.start.close({ quiet: true }));
         // Play keys over it: the stage over the song for the keys, nothing in the song until Play
         await page.click('.cs-more:has-text("Play keys over it")');
-        await page.waitForTimeout(400);
+        await holds(page, () => window.overdub.start.step === 'hum' && window.overdub.start.hum()?.mode === 'keys' && !!document.querySelector('.st-stage .btn-go'));
         const pk = await E(page, () => ({ step: window.overdub.start.step, hum: window.overdub.start.hum(), title: document.querySelector('.st-title')?.textContent, go: [...document.querySelectorAll('.st-stage .btn-go')].map((b) => b.textContent.replace(/\s+/g, ' ').trim()), speed: !!document.querySelector('.st-stage .st-choice'), hist: window.overdub.store.history.length, tracks: window.overdub.store.get().tracks.length }));
         t.ok(pk.step === 'hum' && pk.hum?.mode === 'keys' && pk.hum.over && pk.title === 'Play your part.' && /^Play Space$/.test(pk.go.join()) && !pk.speed && pk.tracks === 1, `Play keys over it: "${pk.title}" over the song, [${pk.go.join()}], no Speed, nothing in the song until Play (${pk.tracks} track)`);
         await E(page, () => window.overdub.start.close({ quiet: true }));
@@ -877,7 +903,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     const w0 = await wide();
     const k0 = await kit();
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     const p1 = await E(page, () => ({ sw: document.documentElement.scrollWidth, pads: [...document.querySelectorAll('.st-pad')].map((p) => Math.round(p.getBoundingClientRect().height)), done: document.querySelector('.st-done').getBoundingClientRect(), vh: innerHeight, vw: innerWidth, full: document.querySelector('.st-stage').getBoundingClientRect().width }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-phone-play.png') });
     const k1 = await kit();
@@ -887,7 +913,7 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     await E(page, () => window.overdub.start.again());
     await playRock(page);
     await page.click('.st-done');
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.step === 'in' && !!document.querySelector('.st-next'));
     const p2 = await E(page, () => ({ sw: document.documentElement.scrollWidth, next: document.querySelector('.st-next')?.getBoundingClientRect(), vh: innerHeight, go: [...document.querySelectorAll('.st-stage .btn-go')].length }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-phone-in.png') });
     const k2 = await kit();
@@ -897,11 +923,11 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(/^1 hit\.$/.test(tapped || ''), `a pad fires on pointerdown ("${tapped}")`);
     // over a click on a phone: the two bars fit, 160 px a bar or more, with no sideways scroll
     await E(page, () => { window.overdub.store.undo(); });
-    await page.waitForTimeout(300);
+    await holds(page, () => !window.overdub.start.step && !!document.querySelector('.st-door')?.getClientRects().length);
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await page.click('.st-view');
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.view === 'click' && (document.querySelector('.bw-num')?.getBoundingClientRect().width || 0) > 0 && !!window.overdub.start.window()?.barPx);
     const pc = await E(page, () => ({ sw: document.documentElement.scrollWidth, w: window.overdub.start.window(), num: document.querySelector('.bw-num')?.getBoundingClientRect().width, done: document.querySelector('.st-done').getBoundingClientRect().bottom, vh: innerHeight }));
     await page.screenshot({ path: path.join(OUTDIR, 'start-phone-click.png') });
     const k3 = await kit();
@@ -931,31 +957,31 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     const steps = [];
     const note = async (where) => { for (const g of await goes()) steps.push({ where, ...g }); };
     await page.click('.st-way-b[data-way="Tap a beat"]');
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.step === 'play' && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await note('play');
     // the click view (the beat window), and back
     await E(page, () => window.overdub.start.setView('click'));
-    await page.waitForTimeout(500);
+    await holds(page, () => window.overdub.start.view === 'click' && window.overdub.engine.playing && /^[1-4]$/.test(document.querySelector('.bw-num')?.textContent || '')).then(() => frames(page));
     await note('click view');
     await E(page, () => window.overdub.start.setView('free'));
-    await page.waitForTimeout(300);
+    await holds(page, () => window.overdub.start.view === 'free' && !window.overdub.engine.playing);
     await playRock(page);
-    await page.waitForTimeout(200);
+    await holds(page, () => /times round\./.test(document.querySelector('.st-status')?.textContent || '') && !!document.querySelector('.st-done.btn-go')).then(() => frames(page));
     await note('play, 3 rounds');
     await E(page, () => window.overdub.start.done());
-    await page.waitForTimeout(400);
+    await holds(page, () => window.overdub.start.step === 'in' && !!document.querySelector('.st-next')).then(() => frames(page));
     await note('in');
     const landed = await E(page, () => window.overdub.start.landed());
     await E(page, () => window.overdub.start.close({ to: 'song' }));
-    await page.waitForTimeout(500);
+    await holds(page, () => !!document.querySelector('.cs .btn-go')?.getClientRects().length).then(() => frames(page));
     await note('strip');
     // the band, kept: one dispatch by the house
     await E(page, () => window.overdub.coach.go('band'));
-    await page.waitForTimeout(150);
+    await holds(page, () => window.overdub.coach.state()?.step === 'band');
     await E(page, () => window.overdub.coach.band());
-    await page.waitForTimeout(150);
+    await holds(page, () => !!window.overdub.coach.state()?.rows);
     await E(page, () => window.overdub.coach.preview(0));
-    for (let i = 0; i < 40 && !(await E(page, () => !!window.overdub.coach.state()?.hearing)); i++) await page.waitForTimeout(100);
+    await holds(page, () => !!window.overdub.coach.state()?.hearing, null, 4000);
     // a style being heard is a preview: a tab closing on it gives it back before the autosave's flush, so the saved song
     // never keeps a band nobody kept
     await page.waitForTimeout(700);
@@ -968,10 +994,10 @@ async function playRock(page, { bpm = 96, rounds = 3, jitter = 0.03, drift = 0.0
     t.ok(pv.during.length > pv.live.length && pv.live.length === 1 && JSON.stringify(pv.saved) === JSON.stringify(pv.live) && !pv.hearing && pv.hist === 1,
       `a style heard when the tab closes is given back before the save: ${JSON.stringify(pv.during)} heard, ${JSON.stringify(pv.saved)} saved, History ${pv.hist}`);
     await E(page, () => window.overdub.coach.preview(0));
-    for (let i = 0; i < 40 && !(await E(page, () => !!window.overdub.coach.state()?.hearing)); i++) await page.waitForTimeout(100);
+    await holds(page, () => !!window.overdub.coach.state()?.hearing, null, 4000);
     await note('band rows');
     await E(page, () => window.overdub.coach.keep());
-    await page.waitForTimeout(600);
+    await holds(page, () => window.overdub.coach.state()?.step === 'end' && !!document.querySelector('.cs-line')?.textContent).then(() => frames(page));
     await note('closing line');
     const sweep = await E(page, () => {
       const rules = [];

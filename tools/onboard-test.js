@@ -24,6 +24,8 @@ const E = (fn, a) => page.evaluate(fn, a);
 const neutral = () => E(() => { document.activeElement?.blur?.(); document.querySelector('.ar-scroll')?.focus({ preventScroll: true }); });
 const waitFor = (fn, a, ms = 8000) => page.waitForFunction(fn, a, { timeout: ms }).catch(() => {});
 const recIdle = () => waitFor(() => window.overdub.input.recorder.state === 'idle', null, 4000);
+// two frames drawn by the shell's loop
+const frames = () => E(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 // a rect that overlaps any of the others
 const overlaps = (a, list) => list.some((b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1);
 // the toast stack and what it must stay off: the detail pane, its Hear / Keep / Agent buttons, the tour card
@@ -48,7 +50,9 @@ async function take(keys, gap = 230) {
 
 try {
   await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-  await sleep(600);
+  // (settled: the fonts in, the welcome up, two frames drawn)
+  await waitFor(() => document.fonts.status === 'loaded' && !!document.querySelector('.ar-welcome .ar-welcome-acts .btn'));
+  await frames();
 
   /* ================================================================ the welcome: Make your own */
   const wel = await E(() => {
@@ -99,8 +103,7 @@ try {
   T.ok(heard.playing && heard.title === 'Night Shift' && heard.card, `one click on "Space plays it" plays Night Shift, and the welcome stays up with Make your own (${JSON.stringify(heard)})`);
 
   await page.click('.ar-welcome-own');
-  await waitFor(() => window.overdub.onboard?.step === 'take' && window.overdub.engine.playing && window.overdub.store.get().tracks.length === 1, null, 8000);
-  await sleep(500);
+  await waitFor(() => window.overdub.onboard?.step === 'take' && window.overdub.engine.playing && window.overdub.store.get().tracks.length === 1 && window.overdub.engine.metronome && document.querySelector('.ob .ob-t')?.textContent === 'Tap a beat.' && !document.querySelector('.ar-welcome:not(.out)'), null, 8000);
   const own = await E(() => {
     const o = window.overdub, p = o.store.get(), lp = p.loop;
     return { title: p.title, tracks: p.tracks.map((t) => `${t.name}:${t.by}`), recent: o.exporter.recent().map((e) => e.title), loop: lp, beat: o.engine.beat, playing: o.engine.playing, click: o.engine.metronome, step: o.onboard.step, card: document.querySelector('.ob .ob-t')?.textContent, welcome: !!document.querySelector('.ar-welcome:not(.out)') };
@@ -131,7 +134,7 @@ try {
   T.ok(/Take 1 is in/.test(tc2.text) && tc2.ts.every((t) => !overlaps(t, [tc2.bottom, ...tc2.btns]) && !(tc2.ob && overlaps(t, [tc2.ob]))), `the keys take's toast stays off the detail pane and the tour card too (${tc2.ts.length} toasts: "${tc2.text.slice(-90)}")`);
   // the last card counts what you played, from the song
   await E(() => { for (let i = 0; i < 4 && window.overdub.onboard.step !== 'done'; i++) window.overdub.onboard.skip(); });
-  await sleep(200);
+  await waitFor(() => window.overdub.onboard.step === 'done' && /your \d+ hits? and \d+ notes?/.test(document.querySelector('.ob')?.textContent || ''));
   const done = await E(() => {
     const o = window.overdub, p = o.store.get(), mine = (t) => t ? t.clips.filter((c) => !c.mute).reduce((n, c) => n + c.notes.filter((x) => (x.by || c.by) === 'you').length, 0) : 0;
     return { step: o.onboard.step, title: document.querySelector('.ob .ob-t')?.textContent, text: document.querySelector('.ob')?.textContent || '', hits: mine(p.tracks.find((t) => t.name === 'Drums')), notes: mine(p.tracks.find((t) => t.name === 'Keys')), played: o.onboard.played() };
@@ -152,7 +155,7 @@ try {
   const s0 = await span();
   T.ok(await E(() => [...document.querySelectorAll('.ob button')].some((b) => b.textContent.trim() === 'Make it 8 bars')), `the last card offers "Make it 8 bars" (the song is ${s0.bars} bars)`);
   await page.click('.ob button:has-text("Make it 8 bars")');
-  await sleep(300);
+  await waitFor((n) => window.overdub.store.history.length === n && /It’s 8 bars now/.test(document.querySelector('.ob')?.textContent || ''), s0.hist + 1);
   const s1 = await span();
   const card8 = await E(() => ({ text: document.querySelector('.ob')?.textContent || '', btn: [...document.querySelectorAll('.ob button')].some((b) => b.textContent.trim() === 'Make it 8 bars'), toast: [...document.querySelectorAll('.ew-toast')].map((t) => t.textContent).join(' | ') }));
   T.ok(s0.bars === 2 && s1.bars === 8 && s1.start === s0.start && s1.drums === s0.drums * 4 && s1.keys === s0.keys * 4 && s1.hist === s0.hist + 1 && (s0.loop.on ? s1.loop.end - s1.loop.start === 32 : JSON.stringify(s1.loop) === JSON.stringify(s0.loop)) && s1.sx === s0.sx, `"Make it 8 bars": ${s0.bars} → ${s1.bars} bars, the beat and the tune 4 times (${s0.drums} → ${s1.drums} hits, ${s0.keys} → ${s1.keys} notes), the loop ${s0.loop.on ? '8 bars' : 'left off, as the tour gave it back'}, one undo step, the view where it was`);
@@ -165,16 +168,16 @@ try {
   /* ================================================================ the demo: the tour from the Song menu */
   await E(() => window.overdub.exporter.openRecent(window.overdub.exporter.recent().findIndex((e) => e.title === 'Night Shift')));
   await waitFor(() => window.overdub.store.get().title === 'Night Shift', null, 5000);
-  await sleep(300);
+  await frames();
   const before = await E(() => { const p = window.overdub.store.get(); return { tracks: p.tracks.map((t) => t.name), drums: p.tracks.find((t) => t.name === 'Drums').clips.reduce((n, c) => n + c.notes.length, 0), keys: JSON.stringify(p.tracks.find((t) => t.name === 'Keys').clips.map((c) => [c.id, c.start, c.length, !!c.mute, c.notes.length])) }; });
   // listened past the loop the tour is about to set
   await E(async () => { const o = window.overdub; o.transport.marker.set(0); await o.engine.start(); await o.engine.play(0); o.engine.seek(12); });
-  await sleep(200);
+  await waitFor(() => window.overdub.engine.playing && window.overdub.engine.beat >= 12);
   await page.click('.sm-btn');
   await page.click('.ew-pop .sm-i:has-text("Take one")');
   await waitFor(() => window.overdub.onboard.step === 'take', null, 5000);
   await page.click('.ob button:has-text("Tap a beat")');
-  await sleep(1200);
+  await waitFor(() => { const o = window.overdub, l = o.store.get().loop; return o.onboard.minute === 'tap' && o.engine.playing && l.on && l.end - l.start === 8 && o.engine.beat >= l.start && o.engine.beat < l.end && /The loop is playing bars 1–2/.test(document.querySelector('.ob')?.textContent || ''); });
   const tap = await E(() => { const o = window.overdub, p = o.store.get(); return { loop: p.loop, beat: o.engine.beat, playing: o.engine.playing, card: document.querySelector('.ob')?.textContent || '', sel: o.store.track(o.ui.state.selection.track)?.name, tracks: p.tracks.map((t) => t.name) }; });
   T.ok(tap.loop.on && tap.loop.end - tap.loop.start === 8 && tap.playing && tap.beat >= tap.loop.start && tap.beat < tap.loop.end && /The loop is playing bars 1–2/.test(tap.card), `listened past bar 2, "Tap a beat" puts the playhead in the loop it sets, as the card says (beat ${tap.beat.toFixed(2)}, loop ${tap.loop.start}–${tap.loop.end})`);
   T.ok(tap.sel === 'Taps' && tap.tracks.filter((n) => n === 'Drums').length === 1, `on the demo the beat gets a track of its own, Taps, beside Night Shift's Drums (${tap.tracks.join(', ')})`);
@@ -186,7 +189,7 @@ try {
   T.ok(/Your beat is in/.test(tc3.text) && tc3.ts.every((t) => !overlaps(t, [tc3.bottom, ...tc3.btns]) && !(tc3.ob && overlaps(t, [tc3.ob]))), `on the demo too, the toast is off the Takes list and the tour card (${tc3.ts.length} toasts: "${tc3.text.slice(-90)}")`);
   await page.click('.ob button:has-text("Play keys over it")');
   await waitFor(() => !!window.overdub.input.qwerty?.on, null, 5000);
-  await sleep(300);
+  await waitFor(() => { const o = window.overdub; return o.store.track(o.ui.state.selection.track)?.name === 'Tune'; });
   const tune = await E(() => { const o = window.overdub; return { sel: o.store.track(o.ui.state.selection.track)?.name, target: o.store.track(o.input.recorder.targetFor('keys')?.id)?.name }; });
   T.ok(tune.sel === 'Tune' && tune.target === 'Tune', `on the demo "Play keys over it" records on a new track, Tune, not the song's Keys (${JSON.stringify(tune)})`);
   await take(['KeyA', 'KeyD', 'KeyG', 'KeyH'], 180);
@@ -194,7 +197,7 @@ try {
   const afterKeys = await E(() => { const p = window.overdub.store.get(); return { keys: JSON.stringify(p.tracks.find((t) => t.name === 'Keys').clips.map((c) => [c.id, c.start, c.length, !!c.mute, c.notes.length])), tune: (p.tracks.find((t) => t.name === 'Tune')?.clips || []).filter((c) => !c.mute).reduce((n, c) => n + c.notes.length, 0), text: document.querySelector('.ob')?.textContent || '' }; });
   T.ok(afterKeys.keys === before.keys && afterKeys.tune > 0, `the song's chords play on, untouched and unmuted; your ${afterKeys.tune} notes are on Tune`);
   await E(() => { for (let i = 0; i < 4 && window.overdub.onboard.step !== 'done'; i++) window.overdub.onboard.skip(); });
-  await sleep(200);
+  await waitFor(() => window.overdub.onboard.step === 'done' && /your \d+ hits? and \d+ notes?/.test(document.querySelector('.ob')?.textContent || ''));
   const dd = await E(() => ({ text: document.querySelector('.ob')?.textContent || '', played: window.overdub.onboard.played() }));
   T.ok(dd.played.hits >= 3 && dd.played.notes === afterKeys.tune && dd.text.includes(`your ${dd.played.hits} hits and ${dd.played.notes} note`), `and the last card credits both: "${(dd.text.match(/(First you|In the song):[^.,]*[.,]/) || [''])[0]}" (not "your 1 hit")`);
   await shot('onboard-demo-done');
@@ -204,12 +207,14 @@ try {
   const ownNow = async () => { await E(() => window.overdub.onboard.ownSong()); await waitFor(() => window.overdub.onboard?.step === 'take' && window.overdub.onboard.minute === 'tap', null, 8000); await sleep(300); };
   const undoToast = () => E(() => [...document.querySelectorAll('.ew-toast button')].reverse().find((b) => b.textContent === 'Undo')?.click());
   await E(async () => { const o = window.overdub; o.engine.stop(); await o.exporter.openDemo('night-shift'); o.transport.click.set({ on: false }); });
-  await sleep(300);
+  await waitFor(() => window.overdub.store.get().title === 'Night Shift' && !window.overdub.engine.metronome);
+  await frames();
   // Undo of Make your own: Night Shift is back, and the tour starts over on it (not "Tap a beat" with the pads live on
   // a track that has gone, which put your taps into Night Shift's own drums)
   await ownNow();
   await undoToast();
-  await sleep(600);
+  await waitFor(() => { const o = window.overdub; return o.store.get().title === 'Night Shift' && o.onboard.minute === null && (o.onboard.step === 'listen' || o.onboard.step === 'take'); });
+  await frames();
   const un = await E(() => { const o = window.overdub; return { title: o.store.get().title, step: o.onboard.step, minute: o.onboard.minute, mode: o.input.mode, card: document.querySelector('.ob .ob-t')?.textContent, click: o.engine.metronome }; });
   T.ok(un.title === 'Night Shift' && un.minute === null && un.mode !== 'tap' && un.card !== 'Tap a beat.' && !un.click && (un.step === 'listen' || un.step === 'take'), `Undo of Make your own: the tour starts over on Night Shift, the pads and the click off (${JSON.stringify(un)})`);
   await E(() => { window.overdub.onboard.stop(); window.overdub.engine.stop(); });
@@ -219,7 +224,7 @@ try {
   await ownNow();
   const lentOn = await E(() => ({ click: window.overdub.engine.metronome, mode: window.overdub.input.mode }));
   await page.click('.ob .ob-x');
-  await sleep(300);
+  await waitFor(() => !window.overdub.engine.metronome && window.overdub.input.mode !== 'tap');
   const closed = await E(() => ({ click: window.overdub.engine.metronome, stored: JSON.parse(localStorage.getItem('overdub:click') || '{}').on, mode: window.overdub.input.mode, sketch: window.overdub.input.sketchMode }));
   T.ok(lentOn.click && lentOn.mode === 'tap' && !closed.click && !closed.stored && closed.mode !== 'tap' && closed.sketch === 'hum', `Close puts the click and Tap back as they were (on during the minute ${JSON.stringify(lentOn)}, after ${JSON.stringify(closed)})`);
   await E(() => window.overdub.engine.stop());
@@ -247,7 +252,7 @@ try {
   await take(['KeyF', 'KeyJ', 'KeyK', 'KeyL']);
   const h0 = await E(() => ({ hist: window.overdub.store.history.length, click: window.overdub.transport.click.get() }));
   await page.click('.ob button:has-text("Hum over it")');
-  await sleep(500);
+  await waitFor((n) => window.overdub.store.history.length === n && window.overdub.input.sketchMode === 'hum' && /The beat runs 8 bars now/.test(document.querySelector('[data-panel="sketch"] .sk-status')?.textContent || ''), h0.hist + 1);
   const ho = await E(() => {
     const o = window.overdub, p = o.store.get(), d = p.tracks.find((t) => t.name === 'Drums'), on = d.clips.filter((c) => !c.mute);
     const last = o.store.history[o.store.history.length - 1];
@@ -263,10 +268,10 @@ try {
     let ph = 0; ps.forEach((p, i) => { const f = 440 * 2 ** ((p - 69) / 12); for (let n = 0; n < sr * seg * 0.9; n++) { ph += 2 * Math.PI * f / sr; x[Math.round(i * seg * sr) + n] = 0.3 * Math.sin(ph) + 0.1 * Math.sin(2 * ph); } });
     await window.overdub.input.hum.fromSamples(x, sr);
   });
-  await sleep(400);
+  await waitFor(() => window.overdub.engine.metronome && !!document.querySelector('[data-panel="sketch"] .sk-acts .btn-go'));
   const back = await E(() => ({ metro: window.overdub.engine.metronome, click: window.overdub.transport.click.get() }));
   await page.click('[data-panel="sketch"] .sk-acts .btn-go');
-  await sleep(500);
+  await waitFor(() => !!window.overdub.store.get().tracks.find((t) => t.name === 'Melody')?.clips.some((c) => c.notes.length) && /Your hum is in/.test(document.querySelector('.ob')?.textContent || ''));
   const hk = await E(() => { const o = window.overdub, p = o.store.get(), m = p.tracks.find((t) => t.name === 'Melody'); return { tracks: p.tracks.map((t) => t.name), notes: m ? m.clips.reduce((n, c) => n + c.notes.length, 0) : 0, sel: o.store.track(o.ui.state.selection.track)?.name, card: document.querySelector('.ob')?.textContent || '', played: o.onboard.played() }; });
   T.ok(back.metro && back.click.on && back.click.takes, `after the hum's take the click is back as it was (${JSON.stringify(back.click)})`);
   T.ok(hk.tracks.join() === 'Drums,Melody' && hk.notes > 0 && /Your hum is in/.test(hk.card) && hk.played.notes === hk.notes, `Keep puts the hum on a new track, Melody (${hk.notes} notes; tracks ${hk.tracks.join(', ')}), and the card moves on to the agent ("${(hk.card.match(/Your hum is in[^.]*\./) || [''])[0]}")`);
@@ -301,7 +306,7 @@ try {
     T.ok(fv.webdriver === false && fv.welcome && !fv.tour && !fv.active, `a first visit opens on the welcome with Make your own, and the tour doesn't close it (${JSON.stringify(fv)})`);
     // the welcome's "The Jam room" opens the room
     if (await fp.$('.ar-welcome .ar-welcome-jamlink')) await fp.click('.ar-welcome .ar-welcome-jamlink');
-    await sleep(400);
+    await fp.waitForFunction(() => window.overdub.ui.active('center') === 'jam' && !document.querySelector('.ar-welcome:not(.out)'), null, { timeout: 8000 }).catch(() => {});
     const room = await fp.evaluate(() => ({ center: window.overdub.ui.active('center'), card: !!document.querySelector('.ar-welcome:not(.out)') }));
     T.ok(room.center === 'jam' && !room.card, `the welcome's "The Jam room" opens the Jam room (${JSON.stringify(room)})`);
     await ctx.close();
@@ -323,6 +328,7 @@ try {
     await ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }));
     const pg = await ctx.newPage();
     const P = (fn, a) => pg.evaluate(fn, a);
+    const PW = (fn, a) => pg.waitForFunction(fn, a, { timeout: 8000 }).catch(() => {});
     // in the full studio (?view=full): a clean, non-webdriver browser opens simple, where the coach never starts by itself
     const full = (url) => { const [a, hash = null] = url.split('#'); return (a.includes('?') ? a.replace('?', '?view=full&') : a + '?view=full') + (hash != null ? '#' + hash : ''); };
     const boot = async (url) => { await pg.goto(s.base + full(url), { waitUntil: 'load' }); await pg.waitForSelector('html[data-ready="1"]', { timeout: 45000 }); await sleep(700); };
@@ -336,16 +342,16 @@ try {
     await boot('/app/' + link);
     const onLink = await card();
     await P(() => window.overdub.share.leave());
-    await sleep(600);
+    await PW(() => !window.overdub.share?.listening && !!document.querySelector('.ob:not(.out)') && window.overdub.onboard.step === 'take');
     const back = await card();
     T.ok(mine.active && mine.step === 'take' && onLink.listening && !onLink.card && !onLink.active && !back.listening && back.card && back.step === 'take',
       `a tour left half-way resumes on your song (${mine.step}), not on a link someone sent (card: ${onLink.card}), and picks up again on Back to my song (${back.step})`);
     // mid-tour, a link opened in the tab: the tour steps aside, and comes back with your song
     await P((h) => window.overdub.share.open(h), link);
-    await sleep(500);
+    await PW(() => !!window.overdub.share?.listening && !document.querySelector('.ob:not(.out)') && !window.overdub.onboard.active);
     const mid = await card();
     await P(() => window.overdub.share.leave());
-    await sleep(600);
+    await PW(() => !window.overdub.share?.listening && !!document.querySelector('.ob:not(.out)') && window.overdub.onboard.active);
     const mid2 = await card();
     T.ok(mid.listening && !mid.card && !mid.active && mid2.card && mid2.active, `a link opened mid-tour sends the tour aside (card: ${mid.card}); your song back, so is the tour (${mid2.step})`);
     // a tour that set its loop on your song, resumed and closed on their link (a reload with the link in it): their
@@ -365,7 +371,7 @@ try {
     await P(() => { window.overdub.onboard.stop(); localStorage.setItem('overdub:onboard', JSON.stringify({ state: 'dismissed' })); });
     const close1 = async (touch) => {
       await P(async () => { const o = window.overdub; o.engine.stop(); o.store.dispatch({ type: 'project.set', patch: { loop: { on: false, start: 0, end: 32 } } }, { by: 'you', label: 'a long loop, off' }); o.transport.marker.set(0); await o.onboard.firstMinute('tap'); });
-      await sleep(500);
+      await PW(() => { const l = window.overdub.store.get().loop; return l.on && l.end - l.start === 8; });
       const set = await P(() => window.overdub.store.get().loop);
       if (touch) await P(() => { const o = window.overdub, l = o.store.get().loop; o.store.dispatch({ type: 'project.set', patch: { loop: { ...l, on: false } } }, { by: 'you', label: 'loop off' }); o.store.dispatch({ type: 'project.set', patch: { loop: { ...l, on: true } } }, { by: 'you', label: 'loop on' }); });
       await P(() => { window.overdub.engine.stop(); document.querySelector('.ob .ob-x')?.click(); });
@@ -388,9 +394,11 @@ try {
     const pg = await ctx.newPage();
     await pg.goto(s.base + '/app/?demo', { waitUntil: 'load' });
     await pg.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
-    await sleep(700);
+    // (settled: the fonts in, the welcome up, two frames drawn; then the welcome put away and its way out over)
+    await pg.waitForFunction(() => document.fonts.status === 'loaded' && !!document.querySelector('.ar-welcome-x'), null, { timeout: 8000 }).catch(() => {});
+    await pg.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     await pg.evaluate(() => document.querySelector('.ar-welcome-x')?.click());
-    await sleep(300);
+    await pg.waitForFunction(() => !document.querySelector('.ar-welcome:not(.out)') && ![...document.querySelectorAll('.ar-welcome')].some((w) => w.getAnimations({ subtree: true }).some((a) => a.playState === 'running')), null, { timeout: 8000 }).catch(() => {});
     const cdp = await ctx.newCDPSession(pg);
     const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], i) => ({ x, y, radiusX: 6, radiusY: 6, force: 1, id: i })) });
     const tapAt = async (x, y) => { await touch('touchStart', [[x, y]]); await sleep(60); await touch('touchEnd', []); await sleep(300); };
@@ -433,7 +441,7 @@ try {
     await boot('/app/?view=simple');
     // (Tap a beat opens Start a song's stage, ui/start.js)
     await pg.evaluate(() => [...document.querySelectorAll('.ar-empty-actions button')].find((b) => b.textContent.trim() === 'Tap a beat')?.click());
-    await sleep(600);
+    await pg.waitForFunction(() => window.overdub.start?.step === 'play' && !!document.querySelector('.st-stage'), null, { timeout: 8000 }).catch(() => {});
     const door = await pg.evaluate(() => { const o = window.overdub; return { step: o.start?.step || null, stage: !!document.querySelector('.st-stage') }; });
     T.ok(door.step === 'play' && door.stage, `Tap a beat on the blank sheet opens Start a song's stage (${JSON.stringify(door)})`);
     await pg.evaluate(() => { const o = window.overdub; o.start?.close?.(); o.engine.stop?.(); });

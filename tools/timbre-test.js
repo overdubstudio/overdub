@@ -32,17 +32,8 @@ import { createProject } from '../app/src/core/project.js';
 import { lufs } from '../app/src/audio/measure.js';
 import { INSTRUMENTS } from '../app/src/devices/builtin/index.js';
 import { drumPhrase, DRUM_PHRASE_BEATS } from '../app/src/audio/testsignals.js';
-import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 
-// (while `rec` is set, a worker thread's lines are kept, to be sent back and printed in order: see the checks below)
-let rec = null;
-const tt = tally('timbre');
-const t = {
-  ok: (c, m) => (rec ? (rec.push(['ok', !!c, m]), !!c) : tt.ok(c, m)),
-  note: (m) => (rec ? rec.push(['note', m]) : tt.note(m)),
-  done: () => tt.done(),
-};
-const say = (m) => (rec ? rec.push(['log', m]) : console.log(m));
+const t = tally('timbre');
 const SR = 48000, BPM = 120, BEAT = 60 / BPM;
 const STAMP = '2026-09-30T00:00:00.000Z';
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -280,12 +271,12 @@ for (const def of INSTRUMENTS) {
   }
 }
 const summary = [];
-function checkProfile(pr) {
-  if (only.length && !only.some((w) => pr.key.includes(w))) return;
-  if (pr.family === 'drums') { drums(pr); return; }
+for (const pr of profiles) {
+  if (only.length && !only.some((w) => pr.key.includes(w))) continue;
+  if (pr.family === 'drums') { drums(pr); continue; }
   const F = { ...FAMILY[pr.family], ...pr };
   const name = `${pr.key} (${pr.def.name}${pr.key.includes('#') ? ' ' + pr.key.split('#')[1].toUpperCase() : ''}, ${pr.family})`;
-  say(name + (pr.unprofiled ? ': no profile of its own yet; held to its family by ' + (BY_ID[pr.id] ? 'id' : 'cat') : ''));
+  console.log(name + (pr.unprofiled ? ': no profile of its own yet; held to its family by ' + (BY_ID[pr.id] ? 'id' : 'cat') : ''));
   const known = pr.known || {};
   const check = (what, cond, msg) => {
     if (cond || !(what in known)) return t.ok(cond, `${pr.key}: ${msg}`);
@@ -434,44 +425,9 @@ function checkProfile(pr) {
   summary.push(row);
 }
 
-// Each instrument's checks are CPU in one thread and read nothing of another's: they run on four worker threads, an
-// instrument at a time to whichever is free, and their lines and summary rows print here in the old order. The CPU
-// timing below starts only once every worker has exited, so nothing of this suite runs beside it.
-if (!isMainThread) {
-  parentPort.on('message', (i) => {
-    if (i < 0) process.exit(0);
-    rec = [];
-    const n = summary.length;
-    checkProfile(profiles[i]);
-    parentPort.postMessage({ i, lines: rec, rows: summary.slice(n) });
-    rec = null;
-  });
-  await new Promise(() => {});   // (the worker ends when it is told to, above)
-}
-{
-  const results = [];
-  await new Promise((resolve, reject) => {
-    let next = 0, live = 0;
-    for (let k = 0; k < Math.min(4, profiles.length); k++) {
-      const w = new Worker(new URL(import.meta.url), { argv: process.argv.slice(2) });   // (an id list, as here)
-      const give = () => w.postMessage(next < profiles.length ? next++ : -1);
-      w.on('message', (r) => { results[r.i] = r; give(); });
-      w.once('error', reject);
-      w.once('exit', () => { if (--live === 0) resolve(); });
-      live++;
-      give();
-    }
-  });
-  profiles.forEach((pr, i) => {
-    if (!results[i]) throw new Error(`no checks came back for ${pr.key}`);
-    for (const [kind, a, b] of results[i].lines) if (kind === 'log') console.log(a); else if (kind === 'note') t.note(a); else t.ok(a, b);
-    summary.push(...results[i].rows);
-  });
-}
-
 // ------------------------------------------------------------------------------------------------ drums
 function drums(pr) {
-  say(`${pr.id} (${pr.def.name}, drums)`);
+  console.log(`${pr.id} (${pr.def.name}, drums)`);
   const kits = (pr.def.params.find((q) => q.key === 'kit') || { opts: ['FIELD'] }).opts;
   for (let kit = 0; kit < kits.length; kit++) {
     const hit = (p, v) => { const r = play(pr.id, { kit }, [{ p, v, t: 0, d: 0.25 }], 1, 0.5); return { l: loud(r, 0, 0.4), c: centroid(r.m, onset(r.m), 2048) }; };

@@ -15,7 +15,8 @@ function runAll(suites) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-all-'));
   const tools = path.join(dir, 'tools');
   fs.mkdirSync(tools);
-  for (const f of ['run-all.js', 'suite-status.js']) fs.copyFileSync(path.join(TOOLS, f), path.join(tools, f));
+  for (const f of ['run-all.js', 'suite-status.js', 'changed.js'])
+    fs.copyFileSync(path.join(TOOLS, f), path.join(tools, f));
   fs.writeFileSync(path.join(tools, 'fetch-kits.js'), '');
   for (const [name, code] of Object.entries(suites)) fs.writeFileSync(path.join(tools, name), code);
   const r = spawnSync(process.execPath, [path.join(tools, 'run-all.js')], { cwd: dir, encoding: 'utf8' });
@@ -81,4 +82,62 @@ test('the real-time list names suites that exist, and only those get a retry', (
 test("rooms-test gets a second go alone: its CPU ratios (AULA against Stairwell) read the machine's load", () => {
   // idle on the Mac mini: 5.1x, and 8.69x once from cold; with two other suites beside it: 7.1-7.2x, against 7x
   assert.equal(mayRetry('rooms-test.js'), true);
+});
+
+// --changed in a real (throwaway) git repo: a base commit with three suites, then a change to one of them
+function runChanged(change) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'run-all-changed-'));
+  const tools = path.join(dir, 'tools');
+  fs.mkdirSync(tools);
+  for (const f of ['run-all.js', 'suite-status.js', 'changed.js'])
+    fs.copyFileSync(path.join(TOOLS, f), path.join(tools, f));
+  fs.writeFileSync(path.join(tools, 'fetch-kits.js'), '');
+  for (const n of ['a', 'b', 'c']) fs.writeFileSync(path.join(tools, `${n}-test.js`), "console.log('  ok ran');");
+  // the machine's own git config stays out: ghastly signs every commit with a key this throwaway repo can't use
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...a) => {
+    const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
+  };
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base', '--allow-empty');
+  git('add', '-A');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'suites');
+  change(dir);
+  const r = spawnSync(process.execPath, [path.join(tools, 'run-all.js'), '--changed', 'HEAD'], {
+    cwd: dir,
+    encoding: 'utf8',
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
+  return r;
+}
+
+test('--changed runs the suite that changed and leaves the others out', () => {
+  const r = runChanged((dir) => fs.appendFileSync(path.join(dir, 'tools', 'b-test.js'), '\n'));
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /PASS {2}b-test\.js/);
+  assert.doesNotMatch(r.stdout, /PASS {2}(a|c)-test\.js/);
+  assert.match(r.stdout, /1 of 3 suites/);
+});
+
+test('--changed runs every suite for a change outside the suites own code', () => {
+  const r = runChanged((dir) => {
+    fs.mkdirSync(path.join(dir, 'app'));
+    fs.writeFileSync(path.join(dir, 'app', 'x.js'), '');
+  });
+  assert.equal(r.status, 0, r.stdout);
+  for (const n of ['a', 'b', 'c']) assert.match(r.stdout, new RegExp(`PASS {2}${n}-test\\.js`));
+});
+
+test('--changed with nothing changed runs nothing and passes', () => {
+  const r = runChanged(() => {});
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /no suite to run/);
+});
+
+test('--changed still fails the run when a picked suite fails', () => {
+  const r = runChanged((dir) =>
+    fs.writeFileSync(path.join(dir, 'tools', 'c-test.js'), "console.log('FAIL c'); process.exit(1);"),
+  );
+  assert.equal(r.status, 1, r.stdout);
 });

@@ -1,7 +1,8 @@
-# The check "suites" that main's ruleset requires: the whole integration suite (node tools/run-all.js: the browsers,
-# the renders, the real-time checks GitHub's shared runners are too slow for) on Peter's self-hosted Mac mini, ghastly,
-# for every push to a branch of this repo. The job is the check: a pull request from such a branch shows it running,
-# with its log, and nobody runs anything by hand.
+# The check "suites" that main's ruleset requires: the integration suite (node tools/run-all.js: the browsers, the
+# renders, the real-time checks GitHub's shared runners are too slow for) on Peter's self-hosted Mac mini, ghastly, for
+# every push to a branch of this repo: the suites that push's change can reach (--changed; all of them for any change
+# to the studio, the server, the docs or the harness), or all of them from Run workflow. The job is the check: a pull
+# request from such a branch shows it running, with its log, and nobody runs anything by hand.
 #
 # Push and Run workflow only: both take write access to the repo. A self-hosted runner must never take a pull_request
 # job (deploy-live.yml says why; test/unit/workflows.test.js holds it), so a pull request from a fork gets no "suites"
@@ -62,13 +63,18 @@ jobs:
           npm install --no-save --no-package-lock --ignore-scripts playwright-core@1.62.0
           npx --no-install playwright-core install chromium chromium-headless-shell webkit firefox
 
-      # REQUIRE_ALL: a browser that won't launch fails compat and phone, as on a deploy. shell: bash brings pipefail, so
-      # tee can't pass a failed run.
-      - name: Every suite
+      # A push runs the suites its change can reach since the merge base with main (tools/changed.js: a change to the
+      # studio, the server, the docs or the harness still runs every suite; a change to a suite or its helpers runs
+      # those). Run workflow runs every suite. REQUIRE_ALL: a browser that won't launch fails compat and phone, as on a
+      # deploy. shell: bash brings pipefail, so tee can't pass a failed run.
+      - name: The suites
         shell: bash
         env:
           REQUIRE_ALL: '1'
-        run: node tools/run-all.js | tee -a "$GITHUB_STEP_SUMMARY"
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = push ]; then pick=(--changed origin/main); else pick=(); fi
+          node tools/run-all.js "${pick[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # cancelled() too: a job that hits timeout-minutes is cancelled, and that run needs its screenshots most
       - name: Keep the screenshots and logs of a failed run

@@ -121,8 +121,9 @@ test('a live deploy fails on a browser that will not launch, rather than skippin
   assert.match(step, /REQUIRE_ALL: '1'/);
 });
 
-// main's ruleset requires the check "suites": it is this workflow's job, run by itself for every push to a branch here,
-// and never from an event an outsider can cause (the check above) or a branch nobody has read
+// main's ruleset requires the check "suites": it is this workflow's job, run by itself for every push to a branch here
+// (the suites that push's change can reach), and never from an event an outsider can cause (the check above) or a
+// branch nobody has read
 test('the required check "suites" runs by itself on a push, on the Mac mini', () => {
   const yml = fs.readFileSync(path.join(WORKFLOWS, 'suites.yml'), 'utf8');
   assert.ok(selfHosted(yml), 'suites.yml runs on the self-hosted runner');
@@ -136,9 +137,12 @@ test('the required check "suites" runs by itself on a push, on the Mac mini', ()
   );
   assert.match(yml, /\n {4}name: suites\n/, 'the job is named as the ruleset requires it');
   assert.match(yml, /fetch-depth: 0/, 'the whole history: analytics-test deploys HEAD~1');
-  const step = yml.slice(yml.indexOf('- name: Every suite'), yml.indexOf('- name: Keep the screenshots'));
+  const step = yml.slice(yml.indexOf('- name: The suites'), yml.indexOf('- name: Keep the screenshots'));
   assert.match(step, /node tools\/run-all\.js/);
   assert.match(step, /REQUIRE_ALL: '1'/);
+  // a push runs what its change can reach since main (tools/changed.js); anything else (Run workflow) runs every suite
+  assert.match(step, /if \[ "\$EVENT" = push \]; then pick=\(--changed origin\/main\); else pick=\(\); fi/);
+  assert.match(step, /EVENT: \$\{\{ github\.event_name \}\}/);
   // the token reads the code and nothing else
   const perms = yml.slice(yml.indexOf('    permissions:'), yml.indexOf('    env:'));
   assert.deepEqual(

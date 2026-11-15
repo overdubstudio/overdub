@@ -2,6 +2,9 @@
 //   node tools/run-all.js            all of them, three at a time
 //   node tools/run-all.js core mix   only those whose name contains one of the words
 //   node tools/run-all.js round-test.js   a whole file name picks that file alone (not arrange-around-test.js)
+//   node tools/run-all.js --changed [BASE]   only the suites a change can affect, since the merge base with BASE
+//                                           (default origin/main), the working tree included: tools/changed.js says
+//                                           which and why; a change to the studio or the harness still runs them all
 //
 // These are the integration suites (browsers, servers, renders), and the unit tests as one more (tools/unit-test.js).
 // The suites workflow runs them on the Mac mini for every push to a branch, as the check "suites" main requires; that
@@ -17,13 +20,37 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { failureLines, mayRetry } from './suite-status.js';
+import { changedFiles, pick, toolsTexts } from './changed.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const args = process.argv.slice(2);
-const only = args;
+const changed = args[0] === '--changed';
+const only = changed ? [] : args;
 const git = (...a) => spawnSync('git', a, { cwd: ROOT, encoding: 'utf8' });
-const tests = fs.readdirSync(HERE).filter((f) => /-test\.js$/.test(f)).filter((f) => !only.length || only.some((w) => (/-test\.js$/.test(w) ? f === w : f.includes(w)))).sort();
+const every = fs.readdirSync(HERE).filter((f) => /-test\.js$/.test(f)).sort();
+let tests = every.filter((f) => !only.length || only.some((w) => (/-test\.js$/.test(w) ? f === w : f.includes(w))));
+// --changed: the suites this change can reach, each with why; git that can't say runs them all
+if (changed) {
+  const base = args[1] && !args[1].startsWith('-') ? args[1] : 'origin/main';
+  let picked;
+  try {
+    picked = pick({ files: changedFiles(base, ROOT), suites: every, tools: toolsTexts(ROOT) });
+  } catch (e) {
+    picked = { all: true, why: `git can't say what changed since ${base} (${e.message})`, suites: new Map(every.map((f) => [f, ''])) };
+  }
+  if (picked.all) console.log(`changed since ${base}: every suite, as ${picked.why}`);
+  else {
+    console.log(`changed since ${base}: ${picked.suites.size} of ${every.length} suites`);
+    for (const [f, why] of picked.suites) console.log(`  ${f.padEnd(24)} ${why}`);
+    console.log(`  (${every.length - picked.suites.size} left out: nothing this change touched names them)`);
+  }
+  tests = every.filter((f) => picked.suites.has(f));
+  if (!tests.length) {
+    console.log('\nno suite to run');
+    process.exit(0);
+  }
+}
 const PAR = Number(process.env.PAR || 3);
 
 // the kits, before anything runs
@@ -87,8 +114,8 @@ const retried = results.filter((r) => r.retried && r.code === 0);
 if (retried.length) console.log(`\nretried alone and passed: ${retried.map((r) => r.file).join(', ')}`);
 console.log(`\n${results.length - bad.length}/${results.length} checks passed`);
 // A full run leaves its totals behind, so tools/pages-test.js can hold the quoted counts (deck, launch drafts) to them.
-// A run that left suites out (named some) isn't one.
-if (!only.length) {
+// A run that left suites out (named some, or --changed picked fewer) isn't one.
+if (!only.length && tests.length === every.length) {
   const oks = results.reduce((s, r) => s + r.oks, 0), fails = results.reduce((s, r) => s + r.fails, 0);
   try {
     fs.mkdirSync(path.join(HERE, '.out'), { recursive: true });

@@ -13,9 +13,11 @@ instrument or effect; [`docs/AGENTS.md`](docs/AGENTS.md) is how an agent drives 
 node server/serve.js                 # http://localhost:3279/ (landing) and /app/ (the studio). No install, no build.
 node server/mcp.js                   # MCP stdio server: `claude mcp add overdub -- node "$PWD/server/mcp.js"`
 node tools/run-all.js                # every check, PAR=3 at a time (each tools/*-test.js prints ok/FAIL, exits 1 on
-                                     # failure); fetches missing kits first. The suites workflow runs it on the Mac mini
-                                     # for every push to a branch (the check "suites" main requires); nothing else
-                                     # sets that check
+                                     # failure); fetches missing kits first
+node tools/run-all.js --changed      # only the suites a change can reach since origin/main (tools/changed.js: the
+                                     # studio, the server, the docs or the harness still run them all). The suites
+                                     # workflow runs this on the Mac mini for every push to a branch (the check
+                                     # "suites" main requires; nothing else sets it); Run workflow runs them all
 node --test "test/unit/*.test.js"    # unit tests, what CI runs (seconds)
 npm run check                        # the static checks, what CI runs too: Biome lint + format check, tsc on the
                                      # // @ts-check files, ShellCheck, actionlint, zizmor, and terraform fmt/validate,

@@ -22,7 +22,7 @@ import { MORE_DEMOS } from '../app/src/core/demos/index.js';
 
 const t = tally('stopping');
 const { page, errors, close } = await open('/app/', { query: 'new&autostart' });
-// (the page's helpers, installed on every page that runs a demo: section 1 runs the demos in parallel pages)
+// (the page's helpers, installed on every page: section 1 runs the demos in pages of their own, section 5 has its own)
 const prep = async (pg) => {
 await pg.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
 await pg.evaluate(async () => {
@@ -85,34 +85,25 @@ runs.push(['halation', 0.1, 3000], ['halation', 0.8, 2000]);
 // other as before) each take the next run when they finish one. Nothing about a run changes: the same 2.5 s of play,
 // the same 5.2 s after Stop.
 runs.push(['halation', 0.1, 3000]);
+// They run on pages of their own while this page plays sections 2, 3, 4 and 6 and one more page section 5 (each its
+// own studio, server and audio clock; every section loads its own song): their checks are printed at the end.
 const POOL = Math.max(1, +process.env.STOP_PAGES || 4);
 const extra = [];
-for (let i = 1; i < Math.min(POOL, runs.length); i++) {
-  const o = await open('/app/', { query: 'new&autostart' });
-  await prep(o.page);
-  extra.push(o);
-}
+const opened = async () => { const o = await open('/app/', { query: 'new&autostart' }); extra.push(o); await prep(o.page); return o.page; };
 const results = new Array(runs.length);
 let nextRun = 0;
-await Promise.all([page, ...extra.map((o) => o.page)].map(async (pg) => {
+const demosDone = Promise.all(Array.from({ length: Math.min(POOL, runs.length) }, async () => {
+  const pg = await opened();
   for (;;) {
     const i = nextRun++;
     if (i >= runs.length) return;
     results[i] = await stopAt(...runs[i], pg);
   }
 }));
-for (const o of extra) { errors.push(...o.errors); await o.close(); }
-for (const [i, [, , ms]] of runs.slice(0, -1).entries()) {
-  const r = results[i];
-  const f = (x) => x.toFixed(1);
-  t.note(`${r.title} from beat ${r.beat}: ${f(r.playing)} dBFS playing; after Stop ${f(r.at05)} at 0.5 s, ${f(r.at15)} at 1.5 s, ${f(r.at3)} at 3 s, ${f(r.after35)} from 3.5 s on`);
-  t.ok(r.playing > -30 && r.last <= 3.5 && r.after35 <= -60, `${r.title} (stopped at beat ${r.beat} + ${ms / 1000} s): below -60 dBFS ${r.last.toFixed(2)} s after Stop (from 3.5 s on: ${f(r.after35)} dBFS)`);
-}
-// the tail is still natural for a moment: Halation's delay and pad keep ringing after Stop, they are not cut
-{
-  const r = results[runs.length - 1];
-  t.ok(r.at05 > -45 && r.at15 > -60, `Halation's tail rings on after Stop (${r.at05.toFixed(1)} dBFS at 0.5 s, ${r.at15.toFixed(1)} at 1.5 s), then goes (${r.after35.toFixed(1)} from 3.5 s)`);
-}
+// (section 5's page, and this one: the metronome off, as section 1's runs left it here before section 2 when they ran here)
+const onlyDone = opened().then(async (pg) => { await pg.evaluate(() => { window.overdub.engine.metronome = false; }); return pg.evaluate(stopOnly); });
+demosDone.catch(() => {}); onlyDone.catch(() => {}); // (awaited below)
+await page.evaluate(() => { window.overdub.engine.metronome = false; });
 
 // ------------------------------------------------------------------------------------------------ 2. live playing
 const live = await page.evaluate(async () => {
@@ -226,7 +217,8 @@ t.ok(end.loopPlaying, 'with the loop on, the loop wraps as before');
 // ------------------------------------------------------------------------------------------------ 5. only what was asked
 // (docs/FRESH-EYES-2.md wave: an agent's play timer cut a take; a play waiting on a renew beat Stop and the killswitch;
 // the song's end and an agent's stop cut the chord the musician held; the polite stop faded a guitar that came back in)
-const only = await page.evaluate(async () => {
+// (on a page of its own, started with section 1: stopOnly is hoisted)
+async function stopOnly() {
   const { store, engine, input, ui, transport, tools } = window.overdub;
   const w = window.__sleep, out = {};
   const tr = (id, dev, clips = []) => ({ id, name: id, kind: 'instrument', instrument: { device: dev, params: {} }, inserts: [], gain: -6, pan: 0, mute: false, solo: false, clips });
@@ -326,7 +318,8 @@ const only = await page.evaluate(async () => {
   engine.monitored(null);
   osc.stop(); gate.disconnect();
   return out;
-});
+}
+const only = await onlyDone;
 t.ok(only.end.held === 2 && !only.end.playing && only.endLetGo === 0, `the song's end stops the transport and the chord the musician is holding plays on (${only.end.held} held after the stop; ${only.endLetGo} once let go)`);
 t.ok(only.agentStop === 1, `an agent's stop leaves a held key sounding (${only.agentStop} held)`);
 t.ok(only.over === 2 && only.agentPlay === 2, `an agent's play over the song keeps the musician's key (held ${only.over} before, ${only.agentPlay} after: theirs and the song's chased note)`);
@@ -374,6 +367,21 @@ const odd = await page.evaluate(async () => {
 const gaps = odd.gaps.slice(0, 8), want = [500, 500, 500, 250, 500, 500, 500, 250];
 t.ok(odd.k && odd.k.beats === 3.5 && odd.k.from === 0 && odd.k.until === 3.5 && gaps.length === 8 && gaps.every((g, i) => Math.abs(g - want[i]) < 15),
   `7/8: a 1-bar count-in from bar 2 is one bar (${JSON.stringify(odd.k)}) and the click starts every bar (gaps ${odd.gaps.join(' ')} ms: 3.5 beats a bar, the last beat an eighth)`);
+
+// ------------------------------------------------------------------------------------------------ 1. every demo (its checks)
+await demosDone;
+for (const o of extra) { errors.push(...o.errors); await o.close(); }
+for (const [i, [, , ms]] of runs.slice(0, -1).entries()) {
+  const r = results[i];
+  const f = (x) => x.toFixed(1);
+  t.note(`${r.title} from beat ${r.beat}: ${f(r.playing)} dBFS playing; after Stop ${f(r.at05)} at 0.5 s, ${f(r.at15)} at 1.5 s, ${f(r.at3)} at 3 s, ${f(r.after35)} from 3.5 s on`);
+  t.ok(r.playing > -30 && r.last <= 3.5 && r.after35 <= -60, `${r.title} (stopped at beat ${r.beat} + ${ms / 1000} s): below -60 dBFS ${r.last.toFixed(2)} s after Stop (from 3.5 s on: ${f(r.after35)} dBFS)`);
+}
+// the tail is still natural for a moment: Halation's delay and pad keep ringing after Stop, they are not cut
+{
+  const r = results[runs.length - 1];
+  t.ok(r.at05 > -45 && r.at15 > -60, `Halation's tail rings on after Stop (${r.at05.toFixed(1)} dBFS at 0.5 s, ${r.at15.toFixed(1)} at 1.5 s), then goes (${r.after35.toFixed(1)} from 3.5 s)`);
+}
 
 t.ok(!errors.filter((e) => !/Failed to load resource/.test(e)).length, 'no page errors ' + errors.slice(0, 3).join(' | '));
 await close();

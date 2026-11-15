@@ -20,6 +20,50 @@ export const pages = true;
 
 const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : String(x));
 
+// In a page: the metal DIs (their float32 bytes, base64) offline through the club's stack (club: the level to read as)
+// and through it with each of `ids` carried on, at the amp's default level and as carried
+const LEVELS = async ({ dis, ids, club: withClub }) => {
+  // (the studio's devices: a page that isn't the studio has none until these load)
+  for (const m of ['builtin', 'guitar', 'library']) await import(`/app/src/devices/${m}/index.js`);
+  const R = await import('/app/src/devices/registry.js');
+  const M = await import('/app/src/audio/measure.js');
+  const D = await import('/app/src/ui/liveroom/guitar/shop-data.js');
+  const { CLUB_STACK } = await import('/app/src/core/liveroom/guitar/setup.js');
+  const SR = 48000;
+  async function render(chain, x) {
+    const c = new OfflineAudioContext(2, x.length, SR), src = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
+    b.copyToChannel(x, 0); src.buffer = b;
+    let at = src;
+    const made = [];
+    for (let k = 0; k < chain.length; k++) {
+      const l = chain[k];
+      if (l.on === false) continue;
+      const inst = await R.instantiate(c, l.device, { uid: `sl${k}`, params: l.params || {}, on: true, bpm: 132 });
+      await inst.ready; made.push(inst); at.connect(inst.input); at = inst.output;
+    }
+    at.connect(c.destination); src.start(0);
+    const r = await c.startRendering();
+    for (const i of made) i.dispose();
+    return r;
+  }
+  const xs = Object.values(dis).map((b64) => new Float32Array(Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)).buffer));
+  const loud = async (chain) => { let s = 0; for (const x of xs) s += M.lufs(await render(chain, x)); return s / xs.length; };
+  const club = CLUB_STACK.chain.map((l) => ({ ...l, params: { ...l.params } }));
+  const ai = club.findIndex((l) => l.device === 'amp.recto');
+  const out = { target: withClub ? await loud(club) : null, amps: {} };
+  for (const id of ids) {
+    const carried = D.carriedAmp(id, club[ai]);
+    // (at the default level: what the trim was measured at; and as carried: what the trim makes it)
+    const lvl = D.carryLevel(id);
+    const atDef = { ...carried, params: { ...carried.params } };
+    delete atDef.params[lvl.key];
+    const chainDef = club.map((l, i) => (i === ai ? atDef : l));
+    const chainNow = club.map((l, i) => (i === ai ? carried : l));
+    out.amps[id] = { def: await loud(chainDef), now: await loud(chainNow), level: lvl.value };
+  }
+  return out;
+};
+
 export async function run(T, ctx) {
   const D = await import('../../app/src/ui/liveroom/guitar/shop-data.js');
   const { getDevice } = await import('../../app/src/devices/registry.js');
@@ -31,47 +75,20 @@ export async function run(T, ctx) {
   try {
     if (ctx.levels) {
       const { metalDI } = await import('../amp-scenes.js');
-      const dis = { chug: Array.from(metalDI('chug')), chords: Array.from(metalDI('chords')) };
-      const lv = await E(async (dis) => {
-        const R = await import('/app/src/devices/registry.js');
-        const M = await import('/app/src/audio/measure.js');
-        const D = await import('/app/src/ui/liveroom/guitar/shop-data.js');
-        const { CLUB_STACK } = await import('/app/src/core/liveroom/guitar/setup.js');
-        const SR = 48000;
-        async function render(chain, x) {
-          const c = new OfflineAudioContext(2, x.length, SR), src = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-          b.copyToChannel(x, 0); src.buffer = b;
-          let at = src;
-          const made = [];
-          for (let k = 0; k < chain.length; k++) {
-            const l = chain[k];
-            if (l.on === false) continue;
-            const inst = await R.instantiate(c, l.device, { uid: `sl${k}`, params: l.params || {}, on: true, bpm: 132 });
-            await inst.ready; made.push(inst); at.connect(inst.input); at = inst.output;
-          }
-          at.connect(c.destination); src.start(0);
-          const r = await c.startRendering();
-          for (const i of made) i.dispose();
-          return r;
-        }
-        const xs = Object.values(dis).map((a) => Float32Array.from(a));
-        const loud = async (chain) => { let s = 0; for (const x of xs) s += M.lufs(await render(chain, x)); return s / xs.length; };
-        const club = CLUB_STACK.chain.map((l) => ({ ...l, params: { ...l.params } }));
-        const ai = club.findIndex((l) => l.device === 'amp.recto');
-        const target = await loud(club);
-        const out = { target, amps: {} };
-        for (const id of Object.keys(D.AMP_TRIM)) {
-          const carried = D.carriedAmp(id, club[ai]);
-          // (at the default level: what the trim was measured at; and as carried: what the trim makes it)
-          const lvl = D.carryLevel(id);
-          const atDef = { ...carried, params: { ...carried.params } };
-          delete atDef.params[lvl.key];
-          const chainDef = club.map((l, i) => (i === ai ? atDef : l));
-          const chainNow = club.map((l, i) => (i === ai ? carried : l));
-          out.amps[id] = { def: await loud(chainDef), now: await loud(chainNow), level: lvl.value };
-        }
-        return out;
-      }, dis);
+      // (the DIs handed over as their float32 bytes: the same samples, in a fraction of the time an Array of numbers
+      // takes; and the renders shared out over four pages of the browser, each a renderer of its own: the club's stack
+      // and every fourth amp on each, the room's page among them)
+      const bytes = (x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength).toString('base64');
+      const dis = { chug: bytes(metalDI('chug')), chords: bytes(metalDI('chords')) };
+      const ids = Object.keys(D.AMP_TRIM);
+      const more = await Promise.all([1, 2, 3].map(async () => { const p = await s.context.newPage(); await p.goto(`${s.base}/`); return p; }));
+      const each = [page, ...more];
+      let parts;
+      try {
+        parts = await Promise.all(each.map((p, k) => p.evaluate(LEVELS, { dis, ids: ids.filter((_, i) => i % each.length === k), club: k === 0 })));
+      } finally { for (const p of more) await p.close(); }
+      const lv = { target: parts[0].target, amps: {} };
+      for (const id of ids) lv.amps[id] = parts.find((x) => id in x.amps).amps[id];
       const rows = Object.entries(lv.amps).map(([id, r]) => ({ id, ...r, trim: Math.round((lv.target - r.def) * 10) / 10 }));
       if (process.env.SHOP_PRINT) console.log('AMP_TRIM', JSON.stringify(Object.fromEntries(rows.map((r) => [r.id, r.trim]))), 'target', f1(lv.target));
       const off = rows.filter((r) => Math.abs(r.now - lv.target) > 1 && !(r.level <= 0 || r.level >= 10));

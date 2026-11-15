@@ -33,6 +33,7 @@ import { checkTargets } from '../../app/src/audio/targets.js';
 import { strum, voice, mix, rng, SR } from './fake.js';
 import { mapBeat, mapSec } from '../../app/src/core/music.js';
 import { openRoom, withMark, hearMark, history, atOnce } from './harness.js';
+import { offThread } from './work.js';
 
 export const name = 'kitchen';
 export const pages = true;
@@ -161,6 +162,18 @@ export async function run(T, ctx) {
   // (KITCHEN_ONLY=flow: the browser part alone, while working on it; KITCHEN_ONLY=two: the two inputs' alone)
   if (process.env.KITCHEN_ONLY === 'flow') { if (ctx.pages) await flow(T, ctx); return; }
   if (process.env.KITCHEN_ONLY === 'two') { if (ctx.pages) await twoFlow(T); return; }
+  // (2 to 4, Node's synthesis and renders, in a worker thread while the flow's browsers wait on their fakes here; the
+  // Node lines print first, then the flow's, as if one ran after the other: ./work.js)
+  const work = offThread([{ module: import.meta.url, fn: 'node', args: [{ levels: ctx.levels }] }]);
+  if (!ctx.pages) { (await work)[0](T); T.note('the flow: skipped (PAGES=0)'); return; }
+  const said = [], heard = { ok(cond, msg) { said.push(() => T.ok(cond, msg)); return !!cond; }, note(msg) { said.push(() => T.note(msg)); } };
+  try { await flow(heard, ctx); } finally {
+    (await work)[0](T);
+    for (const say of said) say();
+  }
+}
+
+export function node(T, ctx) {
   // 2 and 3. the time and the chords, on synthesized takes
   const takes = [];
   for (const [bpm, drift, seed] of [[72, 0.02, 1], [84, 0.04, 2], [96, 0.03, 3], [108, 0, 4], [120, 0.04, 5]]) {
@@ -302,9 +315,6 @@ export async function run(T, ctx) {
       T.ok(m.lufs >= lo && m.lufs <= hi && m.truePeak <= -0.9, `the levels: ${f} at ${r2(m.lufs)} LUFS, ${r2(m.truePeak)} dBTP, PLR ${r2(m.truePeak - m.lufs)}${tp?.ok ? '' : ' (true peak over)'}`);
     }
   } else T.note('the levels: skipped (LEVELS=0)');
-
-  if (!ctx.pages) { T.note('the flow: skipped (PAGES=0)'); return; }
-  await flow(T, ctx);
 }
 
 /* ------------------------------------------------------------------------------------------------ the flow */

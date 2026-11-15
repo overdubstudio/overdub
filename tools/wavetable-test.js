@@ -29,7 +29,7 @@
 //   node tools/wavetable-test.js        CPU=0 skips the timing; GC=0 the allocation count
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tally } from './pw.js';
 import { getDevice } from '../app/src/devices/registry.js';
@@ -74,6 +74,34 @@ if (process.env.LT_MEM_CHILD) {
   console.log(`LT-MEM ${(process.memoryUsage().arrayBuffers - before) / keep.length / 1e6}`);
   process.exit(0);
 }
+// (run as a child of the device check, LT_CHECK_CHILD=<i>/<n>: checks i, i + n, i + 2n, ... of these (the full check at
+// the defaults, then each preset's quick one), one at a time, each report as a line of JSON)
+const checkJobs = () => [{ def, quick: false }, ...def.presets.map((pr) => ({ def: { ...def, params: def.params.map((p) => ({ ...p, def: pr.params[p.key] })) }, quick: true }))];
+if (process.env.LT_CHECK_CHILD) {
+  const [i, n] = process.env.LT_CHECK_CHILD.split('/').map(Number);
+  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
+  const { summarize } = await import('../app/src/kernel/check.js');
+  const jobs = checkJobs();
+  for (let j = i; j < jobs.length; j += n) {
+    const r = await checkDeviceNode(jobs[j].def, { quick: jobs[j].quick });
+    console.log('LT-CHECK ' + JSON.stringify({ j, ok: r.ok, errors: r.errors, warnings: r.warnings, sum: summarize(r), failed: r.extremes && r.extremes.failed, cpu: r.cpu && r.cpu.pct }));
+  }
+  process.exit(0);
+}
+// The device check (at the end) starts now, in two children of this file, and runs beside the renders here: none of
+// them is timed. It's waited for before the allocation count, so that, the table build time and the CPU figures have
+// the machine to themselves as before. (A check whose child ended before it reported fails, with that said.)
+const CHECK_PROCS = 2;
+const deviceChecks = Promise.all(Array.from({ length: CHECK_PROCS }, (_, i) => new Promise((resolve) => {
+  const c = spawn(process.execPath, [path.join(HERE, 'wavetable-test.js')], { env: { ...process.env, LT_CHECK_CHILD: `${i}/${CHECK_PROCS}` }, stdio: ['ignore', 'pipe', 'inherit'] });
+  let out = '';
+  c.stdout.on('data', (d) => { out += d; });
+  c.on('close', (code, sig) => resolve({ out, end: sig || 'exit ' + code }));
+}))).then((kids) => {
+  const reps = [];
+  for (const k of kids) for (const l of k.out.split('\n')) { const m = /^LT-CHECK (\{.*\})/.exec(l); if (m) { const r = JSON.parse(m[1]); reps[r.j] = r; } }
+  return checkJobs().map((_, j) => reps[j] || { ok: false, errors: [`its check process ended (${kids[j % CHECK_PROCS].end}) before this check reported`], warnings: [], sum: 'no report' });
+});
 
 const hash = (a) => crypto.createHash('sha1').update(Buffer.from(a.L.buffer)).update(Buffer.from(a.R.buffer)).digest('hex');
 function fft(re, im) {
@@ -341,6 +369,7 @@ const BPH = bassPhrase().map((n) => ({ p: n.p, v: n.v, t: n.t * BEAT, d: n.d * B
 }
 
 /* ------------------------------------------------------------------------------------------------ allocation */
+const reps = await deviceChecks;
 if (process.env.GC !== '0') {
   console.log('allocation: a long render');
   // the kernel run directly (the worklet's own KernelCore), notes held, 20,000 blocks after a warm-up, with --trace-gc:
@@ -398,17 +427,16 @@ if (process.env.CPU !== '0') {
 // param at 390 px, is tools/wavetable-ui-test.js)
 {
   console.log('the device check (Node)');
-  const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
-  const { summarize } = await import('../app/src/kernel/check.js');
+  // (run since the start, in children: deviceChecks above)
   const def = getDevice('core.wavetable');
-  const r = await checkDeviceNode(def);
-  t.ok(r.ok, `checkDevice (full) at the defaults: ${summarize(r)}`);
+  const r = reps[0];
+  t.ok(r.ok, `checkDevice (full) at the defaults: ${r.sum}`);
   t.ok(!r.warnings.length, `no check warnings${r.warnings.length ? ': ' + r.warnings.join(' | ') : ''}`);
-  t.ok(!(r.extremes && r.extremes.failed && r.extremes.failed.length), 'every param at its min and its max renders (the check\'s 230 extreme cases)');
+  t.ok(!(r.failed && r.failed.length), 'every param at its min and its max renders (the check\'s 230 extreme cases)');
   const presets = [];
-  for (const pr of def.presets) {
-    const rep = await checkDeviceNode({ ...def, params: def.params.map((p) => ({ ...p, def: pr.params[p.key] })) }, { quick: true });
-    presets.push({ name: pr.name, ok: rep.ok, errors: rep.errors, cpu: rep.cpu && rep.cpu.pct });
+  for (const [i, pr] of def.presets.entries()) {
+    const rep = reps[i + 1];
+    presets.push({ name: pr.name, ok: rep.ok, errors: rep.errors, cpu: rep.cpu });
   }
   const bad = presets.filter((p) => !p.ok);
   t.ok(!bad.length, `checkDevice (quick) passes on all ${presets.length} presets (cpu ${Math.min(...presets.map((p) => p.cpu))}-${Math.max(...presets.map((p) => p.cpu))}% of real time)${bad.length ? ': ' + bad.map((p) => p.name + ': ' + p.errors.join('; ')).join(' | ') : ''}`);

@@ -50,6 +50,10 @@ const WAVS = path.join(OUTDIR, 'pick-sound');
 const HUM = humWav(path.join(WAVS, 'hum.wav'));
 const HUM4 = humWav(path.join(WAVS, 'hum-4bars.wav'), { notes: [60, 64, 67, 69, 67, 64, 62, 60, 64, 67, 69, 72, 69, 67, 64, 60], dur: 0.42, gap: 0.08, tail: 4 });   // 16 notes, 8 s: 4 bars at 120
 const BEATBOX = beatboxWav(path.join(WAVS, 'beatbox.wav'));
+// a page settled after a load: the fonts in and two frames drawn (what the 600 ms after ready stood for)
+const settle = (page) => page.waitForFunction(() => document.fonts.status === 'loaded', null, { timeout: 15000 }).catch(() => {}).then(() => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))));
+// Node side: until fn() holds (a request a route saw), or ms
+const nodeUntil = async (fn, ms = 8000) => { const t0 = Date.now(); while (!fn() && Date.now() - t0 < ms) await sleep(25); return !!fn(); };
 const HUM_KEY_PCS = new Set([0, 2, 4, 5, 7, 9, 11]);   // the hummed line is C major (or A minor): every pitch class in it
 
 /* ======================================================================== Node */
@@ -84,7 +88,7 @@ const s = await open('/app/', { query: 'view=simple', width: 1440, height: 900, 
 const pages = [];
 // a fresh context (clean storage) on the same server; mic: which wav the fake mic plays is per browser, so a check that
 // needs another sound opens its own browser
-async function fresh({ w = 1440, h = 900, query = 'view=simple', mobile = false, init = null, browser = s.browser, base = s.base } = {}) {
+async function fresh({ w = 1440, h = 900, query = 'view=simple', mobile = false, init = null, browser = s.browser, base = s.base, held = 0 } = {}) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, permissions: ['microphone'], ...(mobile ? { deviceScaleFactor: 3, isMobile: true, hasTouch: true } : {}) });
   if (init) await ctx.addInitScript(init);
   const page = await ctx.newPage();
@@ -92,7 +96,7 @@ async function fresh({ w = 1440, h = 900, query = 'view=simple', mobile = false,
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + (e && e.stack || e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-  const go = async (q = query) => { await page.goto(base + '/app/' + (q ? '?' + q : ''), { waitUntil: 'load' }); await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 }); await sleep(600); };
+  const go = async (q = query) => { await page.goto(base + '/app/' + (q ? '?' + q : ''), { waitUntil: 'load' }); await page.waitForSelector('html[data-ready="1"]', { timeout: 45000 }); await settle(page); if (held) await sleep(held); };
   await go();
   const P = {
     page, ctx, errors, go, E: (fn, a) => page.evaluate(fn, a),
@@ -126,7 +130,7 @@ const STATE = () => {
 const humIt = async (P) => {
   if (await P.E(() => !!window.overdub.ui.isOpen?.('bottom') && !!document.querySelector('.sk-hum')?.getClientRects().length)) return 0;
   await P.E(() => { const a = window.overdub; a.ui.show('sketch'); if (!a.ui.isOpen?.('bottom')) a.ui.setOpen?.('bottom', true); a.input?.emit?.('sketch:mode', 'hum'); });
-  await sleep(300);
+  await P.until(() => !!document.querySelector('.sk-hum')?.getClientRects().length);
   return 1;
 
 };
@@ -151,7 +155,9 @@ const humTake = async (P, secs = 5) => {
   await sleep(secs * 1000);
   await P.page.keyboard.press('Space');
   await P.until(() => window.overdub.input.recorder.state === 'idle', null, 8000);
-  await sleep(1200);
+  // (the take lands by itself and the card comes up on its track, a row focused)
+  await P.until(() => !!window.overdub.sounds?.current && !!document.activeElement?.closest?.('.ledger-row'));
+  await settle(P.page);
 };
 const previewsOf = (P) => P.E(() => { const o = window.overdub; o.__pv = 0; o.store.on('change', (e) => { if (e.kind === 'preview' && (e.ops || []).some((x) => x.type === 'instrument.set' && !x._restore)) o.__pv++; }); });
 
@@ -161,7 +167,9 @@ try {
   // (4, the aim with real commits, is test/unit/pick-sound.test.js)
 
   /* ---------------------------------------------------------------- 5-7, 13, 14: AJ's path, then the card */
-  const A = await fresh();
+  // (the fake mic's file runs from the browser's first capture, so the time from launch to section 5's take decides
+  // which of its notes the take hears: A's load keeps the 600 ms after ready it always had)
+  const A = await fresh({ held: 600 });
   let melody = null;
   await section('5 AJ\'s path', async () => {
     await tapABeat(A);
@@ -169,6 +177,7 @@ try {
     const drums = beat.tracks.find((t) => t.name === 'Drums');
     T.ok(drums && drums.clips.reduce((n, c) => n + c.n, 0) >= 12, `5: Tap a beat, R, taps, Space: hits on Drums (${drums ? drums.clips.reduce((n, c) => n + c.n, 0) : 'no Drums'})`);
     await A.E(() => { const o = window.overdub; o.ui.show('sketch'); o.input.emit('sketch:mode', 'hum'); });
+    // (as long as it always was: what the fake mic has played by R decides the notes the take hears)
     await sleep(500);
     const onto = await A.E(() => { const el = document.querySelector('.sk-onto'); const sel = el?.querySelector('select'); return { shown: !!el && el.getClientRects().length > 0, text: sel ? sel.selectedOptions[0]?.textContent : el?.textContent || '' }; });
     T.ok(onto.shown && /A new track/.test(onto.text), `5: in Hum it, Onto shows "A new track" in the simple view ("${onto.text}")`);
@@ -197,36 +206,36 @@ try {
     await previewsOf(A);
     const h0 = (await A.E(STATE)).hist;
     await A.page.keyboard.press('ArrowDown');
-    await sleep(700);
+    await A.until((id) => window.overdub.sounds.trying()?.device === 'core.wavetable' && /trying/.test(document.querySelector(`.ar-head[data-track="${id}"] .ar-hinst`)?.textContent || ''), melody?.id);
     const a = await A.E(STATE);
     const head = await A.E((id) => document.querySelector(`.ar-head[data-track="${id}"] .ar-hinst`)?.textContent || '', melody?.id);
     T.ok(a.tracks.find((t) => t.name === 'Melody')?.dev === 'core.wavetable' && a.hist === h0 && /Light Table, trying/.test(head), `6: ↓ to Light Table previews it: Melody on core.wavetable, no History entry, the header says "${head}"`);
     await A.page.keyboard.press('ArrowDown');
-    await sleep(700);
+    await A.until(() => window.overdub.sounds.trying()?.device === 'core.strings');
     const b = await A.E(STATE);
     T.ok(b.hist === h0 && b.trying?.device === 'core.strings', `6: ↓ to Music Stands, still no History entry (${b.trying?.device})`);
     await A.page.keyboard.press('Escape');
-    await sleep(500);
+    await A.until((id) => !window.overdub.sounds.trying() && window.overdub.store.track(id)?.instrument.device === 'core.keys', melody?.id);
     const c = await A.E(STATE);
     T.ok(c.tracks.find((t) => t.name === 'Melody')?.dev === 'core.keys' && c.hist === h0 && !c.trying, `6: Back: Lamp Tines again, nothing in History (${c.tracks.find((t) => t.name === 'Melody')?.dev})`);
     // Light Table again, Keep
     await A.E(() => window.overdub.sounds?.offer?.({ track: window.overdub.ui.state.selection.track, from: 'header' }));
-    await sleep(300);
+    await A.until(() => !!document.querySelector('.snd-card')?.contains(document.activeElement));
     await A.E((id) => window.overdub.sounds.try(id, { device: 'core.wavetable' }), melody?.id);
-    await sleep(500);
+    await A.until(() => window.overdub.sounds.trying()?.device === 'core.wavetable' && !!document.querySelector('.snd-card')?.contains(document.activeElement));
     await A.page.keyboard.press('Enter');
-    await sleep(500);
+    await A.until((n) => window.overdub.store.history.length === n, h0 + 1);
     const d = await A.E(STATE);
     const counted = await A.E(() => { const o = window.overdub; o.ui.show?.('history'); return [...document.querySelectorAll('.hist-row, .ledger-row')].some((x) => /Light Table \(was Lamp Tines\)/.test(x.textContent)); });
     T.ok(d.hist === h0 + 1 && d.last.by === 'you' && !d.last.audition && d.last.label === 'Melody: Light Table (was Lamp Tines)' && counted,
       `6: Keep: one History entry by you, no audition flag, "${d.last?.label}", counted in the History tab (${counted})`);
     await A.page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
-    await sleep(400);
+    await A.until((n) => window.overdub.store.history.length === n, h0);
     const e = await A.E(STATE);
     T.ok(e.tracks.find((t) => t.name === 'Melody')?.dev === 'core.keys' && e.hist === h0, `6: one ⌘Z puts Lamp Tines back (${e.tracks.find((t) => t.name === 'Melody')?.dev})`);
     // held ↓ for 400 ms: at most two trials
     await A.E(() => { window.overdub.sounds?.offer?.({ track: window.overdub.ui.state.selection.track, from: 'header' }); window.overdub.__pv = 0; });
-    await sleep(300);
+    await A.until(() => !!document.querySelector('.snd-card')?.contains(document.activeElement));
     await A.page.keyboard.down('ArrowDown');
     await sleep(400);
     await A.page.keyboard.up('ArrowDown');
@@ -238,49 +247,51 @@ try {
 
   await section('7 what ends a trial', async () => {
     const tryLT = () => A.E((id) => { const o = window.overdub; o.sounds?.offer?.({ track: id, from: 'header' }); return o.sounds?.try?.(id, { device: 'core.wavetable' }); }, melody?.id);
-    await tryLT(); await sleep(400);
+    await tryLT(); await A.until(() => window.overdub.sounds.trying()?.device === 'core.wavetable');
     const read = await A.E(async (id) => { const o = window.overdub; const r = await o.tools.run('get_project', {}, { by: 'claude' }); return { sees: /Lamp Tines/.test(r.song || JSON.stringify(r)), dev: o.store.get().tracks.find((t) => t.id === id).instrument.device, trying: !!o.sounds.trying() }; }, melody?.id);
     const why = (await A.E(STATE)).status.join(' | ');
     T.ok(read.sees && read.dev === 'core.keys' && !read.trying && /while Claude works/.test(why), `7: get_project mid-trial sees Lamp Tines, and the card says why ("${why}")`);
-    await tryLT(); await sleep(400);
+    await tryLT(); await A.until(() => window.overdub.sounds.trying()?.device === 'core.wavetable');
     const kept = await A.E(async () => { const o = window.overdub; await o.tools.run('get_recording', {}, { by: 'claude' }); return !!o.sounds.trying(); });
     T.ok(kept, '7: get_recording mid-trial leaves the trial on');
     // R mid-trial keeps first, said before
     const h0 = (await A.E(STATE)).hist;
     await A.E(() => { const o = window.overdub; o.input.recorder.setCountIn?.(1); });
     await A.page.keyboard.press('r');
-    await sleep(500);
+    await A.until(() => /Recording keeps/.test(document.body.innerText));
     const counting = (await A.E(STATE)).status.join(' | ') + ' ' + (await A.E(() => document.body.innerText.match(/Recording keeps[^.\n]*\./)?.[0] || ''));
     // (R while the loop plays waits for a short loop's top, then counts a bar: capture-timing; so wait for the take)
     await A.until(() => window.overdub.input.recorder.state === 'rec');
     await sleep(2500);
     await A.page.keyboard.press('Space');
     await A.until(() => window.overdub.input.recorder.state === 'idle');
-    await sleep(800);
+    // (the take lands by itself: History has the sound kept first and the take)
+    await A.until((n) => window.overdub.store.history.length >= n, h0 + 2);
     const after = await A.E(STATE);
-    await A.page.keyboard.press('Meta+z'); await sleep(300);
+    await A.page.keyboard.press('Meta+z'); await A.until((n) => window.overdub.store.history.length === n, after.hist - 1);
     const u1 = await A.E(STATE);
-    await A.page.keyboard.press('Meta+z'); await sleep(300);
+    await A.page.keyboard.press('Meta+z'); await A.until((n) => window.overdub.store.history.length === n, after.hist - 2);
     const u2 = await A.E(STATE);
     T.ok(/Recording keeps Light Table on Melody\./.test(counting) && after.hist >= h0 + 2 && u1.tracks.find((t) => t.name === 'Melody').dev === 'core.wavetable' && u2.tracks.find((t) => t.name === 'Melody').dev === 'core.keys',
       `7: R mid-trial says "Recording keeps Light Table on Melody." and keeps it first: ⌘Z takes the take, a second ⌘Z the sound (said "${counting.trim()}"; History +${after.hist - h0}; ${u1.tracks.find((t) => t.name === 'Melody').dev} → ${u2.tracks.find((t) => t.name === 'Melody').dev})`);
     // another track selected: Back, with Keep it
-    await tryLT(); await sleep(400);
+    await tryLT(); await A.until(() => window.overdub.sounds.trying()?.device === 'core.wavetable');
     await A.E(() => { const o = window.overdub; o.ui.select({ track: o.store.get().tracks.find((t) => t.name === 'Drums').id }); });
-    await sleep(500);
+    await A.until(() => [...document.querySelectorAll('.ew-toast button')].some((x) => /Keep it/.test(x.textContent)));
     const toast = (await A.E(STATE)).toasts.join(' | ');
     const keepIt = await A.E(() => { const b = [...document.querySelectorAll('.ew-toast button')].find((x) => /Keep it/.test(x.textContent)); b?.click(); return !!b; });
-    await sleep(400);
+    await A.until((id) => window.overdub.store.track(id)?.instrument.device === 'core.wavetable', melody?.id);
     const k = await A.E(STATE);
     T.ok(/Back to Lamp Tines on Melody; Light Table wasn.t kept\./.test(toast) && keepIt && k.tracks.find((t) => t.name === 'Melody').dev === 'core.wavetable', `7: selecting Drums mid-trial: "${toast}", and its Keep it keeps it`);
     // an undo mid-trial of an earlier change on Melody holds after the release
     await A.E((id) => { const o = window.overdub; o.ui.select({ track: id }); o.sounds.offer?.({ track: id, from: 'header' }); o.sounds.try(id, { device: 'core.strings' }); }, melody?.id);
-    await sleep(400);
+    await A.until(() => window.overdub.sounds.trying()?.device === 'core.strings');
+    // (the undo has to hold after the release: given the time it always had to)
     await A.page.keyboard.press('Meta+z'); await sleep(500);
     const un = await A.E(STATE);
     T.ok(un.tracks.find((t) => t.name === 'Melody').dev === 'core.keys' && !un.trying, `7: ⌘Z of the kept Light Table mid-trial: Back first, and the undo holds (${un.tracks.find((t) => t.name === 'Melody').dev})`);
     // a click on the arranger leaves the card open and the trial on
-    await tryLT(); await sleep(400);
+    await tryLT(); await A.until(() => window.overdub.sounds.trying()?.device === 'core.wavetable');
     await A.page.mouse.click(700, 600);
     await sleep(300);
     const cl = await A.E(STATE);
@@ -292,14 +303,17 @@ try {
     const r = await A.E(async (id) => {
       const o = window.overdub;
       o.ui.select({ track: id });
+      // (until f holds, a frame at a time)
+      const until = async (f, ms = 8000) => { const t0 = performance.now(); while (!f() && performance.now() - t0 < ms) await new Promise((res) => requestAnimationFrame(res)); };
       const ok = await o.tools.run('suggest_sounds', { sounds: [{ device: 'core.brass', why: 'bright, cuts through' }] }, { by: 'claude' });
-      await new Promise((res) => setTimeout(res, 400));
+      await until(() => !![...document.querySelectorAll('.ledger-row')].find((x) => /Brass Rail/.test(x.textContent))?.querySelector('.by-agent'));
       const row = [...document.querySelectorAll('.ledger-row')].find((x) => /Brass Rail/.test(x.textContent));
       const signed = !!row?.querySelector('.by-agent') && /suggested by\s*Claude/.test(row?.textContent || '') && /bright, cuts through/.test(row?.textContent || '');
       o.sounds.try(id, { device: 'core.brass' });
-      await new Promise((res) => setTimeout(res, 300));
+      await until(() => o.sounds.trying()?.device === 'core.brass');
+      const n0 = o.store.history.length;
       o.sounds.keep();
-      await new Promise((res) => setTimeout(res, 300));
+      await until(() => o.store.history.length > n0);
       const last = o.store.history.at(-1);
       const res = await o.tools.run('get_variation_result', { id: ok.id }, { by: 'claude' });
       const bad = await o.tools.run('suggest_sounds', { sounds: [{ device: 'x', why: 'y' }] }, { by: 'claude' });
@@ -337,7 +351,7 @@ try {
     await H.E(() => { const o = window.overdub; o.store.dispatch([{ type: 'track.add', ref: 'm', track: { name: 'Melody', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$m', clip: { start: 0, length: 4, notes: 'C4@0:1' } }], { by: 'you' }); });
     const id = await H.E(() => window.overdub.store.get().tracks[0].id);
     await H.E((id) => { const o = window.overdub; o.ui.select({ track: id }); o.sounds.offer?.({ track: id, from: 'header' }); o.sounds.try(id, { device: 'core.wavetable' }); }, id);
-    await sleep(500);
+    await H.until(() => !!localStorage.getItem('overdub:sound-trying'));
     const key = await H.E(() => localStorage.getItem('overdub:sound-trying'));
     await H.go();
     const back = await H.E(() => ({ dev: window.overdub.store.get().tracks[0]?.instrument.device, hist: window.overdub.store.history.length, key: localStorage.getItem('overdub:sound-trying') }));
@@ -350,24 +364,26 @@ try {
     // the uncommitted take's ghost lane and its In tune lamp are gone with the wait for Keep)
     const K = await fresh();
     await humIt(K);
-    await sleep(600);
+    await K.until(() => !!document.querySelector('.sk-hum')?.getClientRects().length);
     await K.page.locator('.sk-hum').click();
     await K.until(() => window.overdub.input.recorder.state === 'rec' || window.overdub.input.recorder.free, null, 6000);
     await sleep(3000);
     await K.page.locator('.sk-hum').click();
     await K.until(() => window.overdub.input.recorder.state === 'idle');
-    await sleep(1500);
+    // (the take lands by itself on a new Melody, and the card comes up on it, a row focused)
+    await K.until(() => !!window.overdub.store.get().tracks.find((t) => t.name === 'Melody')?.clips.length && !!document.querySelector('.snd-card')?.contains(document.activeElement));
+    await settle(K.page);
     const landed = await K.E(STATE);
     const mel0 = landed.tracks.find((t) => t.name === 'Melody');
     T.ok(mel0 && mel0.clips.length === 1 && mel0.dev === 'core.keys', `9: the hum lands by itself on a new Melody, Lamp Tines, one clip (${JSON.stringify(mel0)})`);
     await K.page.keyboard.press('ArrowDown');
-    await sleep(800);
+    await K.until(() => !!window.overdub.sounds?.trying?.());
     const g = await K.E(() => { const o = window.overdub, tr = o.sounds?.trying?.(); return { tr: tr ? { track: tr.track, device: tr.device, newTrack: !!tr.newTrack } : null, mel: o.store.get().tracks.find((t) => t.name === 'Melody')?.id, h: o.store.history.length, go: document.querySelectorAll('.sketch .btn-go, [data-panel="sketch"] .btn-go').length }; });
     T.ok(g.tr && g.tr.track === g.mel && !g.tr.newTrack && g.go <= 1, `9: ↓ on the card tries a sound on Melody, the track the take made, at most one .btn-go in Sketch (${JSON.stringify(g)})`);
     const h0 = await K.E(() => window.overdub.store.history.length);
     const dev = g.tr?.device;
     await K.E(() => window.overdub.sounds?.keepIfTrying?.(null, { why: 'keep' }));
-    await sleep(600);
+    await K.until((n) => window.overdub.store.history.length > n, h0);
     const k = await K.E(STATE);
     const m = k.tracks.find((t) => t.name === 'Melody');
     T.ok(m && m.dev === dev && m.clips.length === 1 && k.hist - h0 === 1, `9: Keep puts the sound on Melody with its clip, in one undo step (${JSON.stringify(m)}; History +${k.hist - h0})`);
@@ -378,14 +394,16 @@ try {
   await section('10 the header', async () => {
     const R = await fresh();
     await R.E(() => { const o = window.overdub; o.store.dispatch([{ type: 'track.add', ref: 'm', track: { name: 'Melody', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$m', clip: { start: 0, length: 4, notes: 'C4@0:1' } }, { type: 'track.add', ref: 'n', track: { name: 'New', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$n', clip: { start: 0, length: 4, notes: 'E4@0:1' } }], { by: 'you' }); o.ui.select({ track: o.store.get().tracks[0].id }); });
-    await sleep(500);
+    await R.until(() => /Lamp Tines/.test(document.querySelector('.ar-head .ar-hinst')?.textContent || '') && document.querySelectorAll('.ar-head[data-track] .ar-hsounds').length >= 2);
     const h = await R.E(() => { const el = document.querySelector('.ar-head .ar-hinst'); return { text: el?.textContent.trim() || '', glyph: !!el?.querySelector('svg'), glyphShown: el?.querySelector('svg') ? getComputedStyle(el.querySelector('svg')).visibility !== 'hidden' && getComputedStyle(el.querySelector('svg')).opacity !== '0' : false }; });
     T.ok(/Lamp Tines/.test(h.text) && h.glyph && h.glyphShown, `10: .ar-hinst on Melody reads "${h.text}" with the open glyph shown at rest`);
     await R.page.locator('.ar-head .ar-hinst').first().click();
-    await sleep(800);
+    // (open, and its opening animation, pw-in, over: where it sits is where it stays)
+    await R.until(() => !!window.overdub.plugin?.current?.name && !!document.querySelector('.pw') && [...document.querySelectorAll('.pw')].every((w) => w.getAnimations().every((a) => a.playState === 'finished')));
+    await settle(R.page);
     const w = await R.E(() => { const o = window.overdub; const win = document.querySelector('.plugin, .pl-win, [data-plugin]'); const lane = document.querySelector('.ar-lane'); const a = win?.getBoundingClientRect(), b = lane?.getBoundingClientRect(); const over = a && b ? !(a.bottom <= b.top || a.top >= b.bottom || a.right <= b.left || a.left >= b.right) : null; return { name: o.plugin?.current?.name, devices: o.ui.workspace?.has?.('devices'), keys: !!document.querySelector('.plugin .kb, .pl-keys, [data-plugin] .kb'), over }; });
     T.ok(w.name === 'Lamp Tines' && w.devices === false && w.over !== true, `10: a click on the name opens Lamp Tines big with Sound still put away, not over Melody's lane (${JSON.stringify(w)})`);
-    await R.page.keyboard.press('Escape'); await sleep(300);
+    await R.page.keyboard.press('Escape'); await R.until(() => !window.overdub.plugin?.current);
     await R.E(() => document.querySelector('.ar-head .ar-hinst .sw, .ar-head .ar-hsw, .ar-head .ar-swatch')?.click());
     await sleep(300);
     const sw = await R.E(() => window.overdub.plugin?.current?.name || null);
@@ -399,7 +417,7 @@ try {
     T.ok(Math.abs(w1 - w0) < 0.5, `10: the header doesn't change width on hover (${w0} → ${w1})`);
     const F = await fresh({ query: 'view=full' });
     await F.E(() => window.overdub.store.dispatch({ type: 'track.add', track: { name: 'Keys', instrument: { device: 'core.keys' } } }, { by: 'you' }));
-    await sleep(400);
+    await F.until(() => !!document.querySelector('.ar-head .ar-hdev') && !!document.querySelector('.ar-head .ar-hinst'));
     const full = await F.E(() => ({ hdev: !!document.querySelector('.ar-head .ar-hdev'), hinst: !!document.querySelector('.ar-head .ar-hinst') }));
     T.ok(full.hdev && full.hinst, `10: in the full studio .ar-hdev is still there beside .ar-hinst (${JSON.stringify(full)})`);
   });
@@ -408,25 +426,25 @@ try {
   await section('11 the browser', async () => {
     const B = await fresh({ query: 'view=full' });
     await B.E(() => { const o = window.overdub; o.store.dispatch([{ type: 'track.add', ref: 'd', track: { name: 'Drums', instrument: { device: 'core.drums' } } }, { type: 'clip.add', track: '$d', clip: { start: 0, length: 4, notes: 'C2@0:1' } }, { type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } }], { by: 'you' }); o.ui.select({ track: o.store.get().tracks[0].id }); o.ui.show('browser'); });
-    await sleep(600);
+    await B.until(() => [...document.querySelectorAll('.br-row, .browser .ledger-row, [data-device="core.wavetable"]')].some((x) => /Light Table/.test(x.textContent) && x.getClientRects().length));
     const row = () => B.page.locator('.br-row, .browser .ledger-row, [data-device="core.wavetable"]').filter({ hasText: 'Light Table' }).first();
     await row().click();
-    await sleep(400);
+    await B.until(() => [...document.querySelectorAll('.menu button, [role=menuitem]')].some((x) => /New track with Light Table/.test(x.textContent)));
     const m = await B.E(() => ({ dev: window.overdub.store.get().tracks[0].instrument.device, menu: [...document.querySelectorAll('.menu button, [role=menuitem]')].map((x) => x.textContent.trim()) }));
     T.ok(m.dev === 'core.drums' && m.menu.some((x) => /New track with Light Table/.test(x)), `11: Drums selected, a click on Light Table changes nothing and asks (${m.dev}; ${m.menu.join(' / ')})`);
     const h0 = await B.E(() => window.overdub.store.history.length);
     await B.page.getByRole('menuitem', { name: /New track with Light Table/ }).or(B.page.locator('.menu button').filter({ hasText: 'New track with Light Table' })).first().click();
-    await sleep(400);
+    await B.until((n) => window.overdub.store.history.length === n, h0 + 1);
     const n = await B.E(() => ({ names: window.overdub.store.get().tracks.map((t) => `${t.name}:${t.instrument?.device}`), h: window.overdub.store.history.length }));
     T.ok(n.names.includes('Light Table:core.wavetable') && n.names.includes('Drums:core.drums') && n.h === h0 + 1, `11: New track with Light Table adds "Light Table", Drums untouched, one undo step (${n.names.join(', ')})`);
     await B.E(() => { const o = window.overdub; o.ui.select({ track: o.store.get().tracks.find((t) => t.name === 'Keys').id }); });
-    await sleep(300);
+    await settle(B.page);
     const h1 = await B.E(() => window.overdub.store.history.length);
     await row().click();
-    await sleep(500);
+    await B.until(() => window.overdub.store.get().tracks.find((t) => t.name === 'Keys').instrument.device === 'core.wavetable' && /Trying Light Table on Keys/.test(document.querySelector('.br-target, .browser [role=status]')?.textContent || ''));
     const tri = await B.E(() => ({ dev: window.overdub.store.get().tracks.find((t) => t.name === 'Keys').instrument.device, bar: document.querySelector('.br-target, .browser [role=status]')?.textContent || '' }));
     await B.page.getByRole('button', { name: /^Back$/ }).first().click().catch(() => {});
-    await sleep(300);
+    await B.until(() => window.overdub.store.get().tracks.find((t) => t.name === 'Keys').instrument.device === 'core.keys');
     const back = await B.E(() => ({ dev: window.overdub.store.get().tracks.find((t) => t.name === 'Keys').instrument.device, h: window.overdub.store.history.length }));
     T.ok(tri.dev === 'core.wavetable' && /Trying Light Table on Keys/.test(tri.bar) && back.dev === 'core.keys' && back.h === h1, `11: Keys selected, a click tries ("${tri.bar.trim()}"); Back leaves no History entry`);
     // a producer's loop: a browser trial plays the track and never moves it, whether it ends in Back or Keep (it was
@@ -460,7 +478,7 @@ try {
     await tapABeat(M);
     await M.E(() => { const o = window.overdub; o.__live = []; const f = o.engine.liveNoteOn; o.engine.liveNoteOn = function (track, ...a) { o.__live.push(track); return f.call(this, track, ...a); }; o.__said = []; o.input.on('keys:track', (e) => o.__said.push(e.text)); o.input.setMode(null); o.input.qwerty.toggle(true); });
     await M.page.keyboard.press('a');
-    await sleep(500);
+    await M.until(() => { const o = window.overdub; return !!o.store.get().tracks.find((t) => t.name === 'Keys') && o.__live.length > 0 && (o.__said.length > 0 || /Keys play a new track[^.]*\./.test(document.body.innerText)); });
     const r = await M.E(() => { const o = window.overdub, p = o.store.get(); const k = p.tracks.find((t) => t.name === 'Keys'); return { keys: k && { dev: k.instrument.device, id: k.id }, sel: p.tracks.find((t) => t.id === o.ui.state.selection.track)?.name, live: o.__live, drums: p.tracks.find((t) => t.name === 'Drums')?.id, line: o.__said[0] || document.body.innerText.match(/Keys play a new track[^.]*\./)?.[0] || '' }; });
     T.ok(r.keys?.dev === 'core.keys' && r.sel === 'Keys' && r.live.length && r.live.every((x) => x === r.keys.id) && !r.live.includes(r.drums) && /Keys play a new track, Keys \(Lamp Tines\)/.test(r.line),
       `12: musical typing after Tap a beat makes Keys (Lamp Tines), selected, the note sounds there and never on Drums ("${r.line}")`);
@@ -487,11 +505,13 @@ try {
       await sleep(10000);
       await C.page.keyboard.press('Space'); actions++;
       await C.until(() => window.overdub.input.recorder.state === 'idle');
-      await sleep(1500);
+      // (the take lands by itself on a new Melody, and the card comes up on it, a row focused)
+      await C.until(() => !!window.overdub.store.get().tracks.find((t) => t.name === 'Melody')?.clips.length && !!document.querySelector('.snd-card')?.contains(document.activeElement));
+      await settle(C.page);
       const one = await C.E(() => { const m = window.overdub.store.get().tracks.find((t) => t.name === 'Melody'); return m && m.clips.map((c) => ({ start: c.start, length: c.length, take: c.take || null, mute: !!c.mute, n: c.notes.length })); });
       T.ok(one && one.filter((c) => !c.mute).length === 1 && !one.some((c) => c.mute) && one[0].length >= 12 && one[0].length <= 20, `15: a 4-bar hum over the playing beat lands as one clip on Melody, no take folder (${JSON.stringify(one)})`);
       await C.page.keyboard.press('ArrowDown'); actions++;
-      await sleep(900);
+      await C.until(() => !!window.overdub.sounds?.trying?.());
       const hear = await C.E(() => window.overdub.sounds?.trying?.()?.device || null);
       T.ok(actions <= 4 && hear && hear !== 'core.keys', `17: from the beat card, Hum over it, R, Space, ↓ hears the hum on a second instrument in ${actions} actions (${hear})`);
     } finally { await B4.close(); }
@@ -503,14 +523,14 @@ try {
     const Z = await fresh();
     let actions = 0;
     await Z.page.getByRole('button', { name: 'Hum a tune' }).click(); actions++;
-    await sleep(700);
+    await Z.until(() => window.overdub.start?.step === 'hum' && window.overdub.engine.playing && !!document.querySelector('.st-stage')?.contains(document.activeElement));
     await Z.page.keyboard.press('KeyH'); actions++;
     await sleep(6000);
     await Z.page.keyboard.press('Space'); actions++;
-    await sleep(1800);
+    await Z.until(() => window.overdub.start?.step === 'in' && document.querySelectorAll('.st-stage .snd-row').length >= 2);
     // (Space ended the take and the transport with it: the card's ↓ plays the take on the sound it tries)
     await Z.page.keyboard.press('ArrowDown'); actions++;
-    await sleep(900);
+    await Z.until(() => !!window.overdub.sounds?.trying?.() && (!!window.overdub.engine.playing || !!window.overdub.sketch?.hearing?.()));
     const playing = await Z.E(() => !!window.overdub.engine.playing || !!window.overdub.sketch?.hearing?.());
     const hear = await Z.E(() => window.overdub.sounds?.trying?.()?.device || null);
     T.ok(actions <= 4 && playing && hear && hear !== 'core.keys', `17: from the blank song, Hum a tune, H, Space, ↓: the take plays at once and is heard on a second instrument in ${actions} actions (${hear}; playing ${playing})`);
@@ -522,7 +542,7 @@ try {
     const regions = await Z.E(() => [...document.querySelectorAll('section, [role=region], .panel, .sketch')].map((r) => r.querySelectorAll(':scope .btn-go').length).filter((n) => n > 1).length);
     T.ok(css.length > 0 && !/inset\s+-?\d+(\.\d+)?px\s+0\s+0/.test(css) && !/99px/.test(css) && sel?.all && regions === 0,
       `18: the card's CSS has no inset stripe and no 99px pill; the .sel row's text is all in --bg ink (${JSON.stringify(sel)}); no region has two .btn-go (${regions})`);
-    const by = await Z.E(async () => { const o = window.overdub; const id = o.ui.state.selection.track || o.store.get().tracks[0]?.id; if (!id) return null; await o.tools.run('suggest_sounds', { track: id, sounds: [{ device: 'core.brass', why: 'bright' }] }, { by: 'claude' }); await new Promise((r) => setTimeout(r, 300)); return !!document.querySelector('.ledger-row .by-agent'); });
+    const by = await Z.E(async () => { const o = window.overdub; const id = o.ui.state.selection.track || o.store.get().tracks[0]?.id; if (!id) return null; await o.tools.run('suggest_sounds', { track: id, sounds: [{ device: 'core.brass', why: 'bright' }] }, { by: 'claude' }); const t0 = performance.now(); while (!document.querySelector('.ledger-row .by-agent') && performance.now() - t0 < 8000) await new Promise((r) => requestAnimationFrame(r)); return !!document.querySelector('.ledger-row .by-agent'); });
     T.ok(by === true, `18: an agent's row carries its byline in cool ink (${by})`);
   });
 
@@ -531,14 +551,14 @@ try {
     const tune = await (async () => {
       const C = await fresh();
       await C.E(() => { const o = window.overdub; o.ui.show('sketch'); o.input.emit('sketch:mode', 'tap'); });
-      await sleep(600);
+      await C.until(() => !!document.querySelector('.sk-bb')?.getClientRects().length);
       await C.page.locator('.sk-bb').click();
       await sleep(4500);
       await C.page.locator('.sk-bb').click();
-      await sleep(1500);
+      await C.until(() => /That sounded like a tune: \d+ notes\. Keep it as a melody\?/.test(document.body.innerText) && /Keep the beat/.test(document.activeElement?.textContent || ''));
       const offer = await C.E(() => ({ line: document.body.innerText.match(/That sounded like a tune: \d+ notes\. Keep it as a melody\?/)?.[0] || '', focus: document.activeElement?.textContent?.trim() || '' }));
       const mk = await C.page.getByRole('button', { name: 'Make it a melody' }).first().click().then(() => true).catch(() => false);
-      await sleep(800);
+      await C.until(() => !!window.overdub.store.get().tracks.find((t) => t.name === 'Melody' && t.clips.some((c) => c.notes.length)));
       const mel = await C.E(() => !!window.overdub.store.get().tracks.find((t) => t.name === 'Melody' && t.clips.some((c) => c.notes.length)));
       return { offer, mk, mel };
     })();
@@ -547,7 +567,7 @@ try {
     try {
       await BB.page.waitForSelector('html[data-ready="1"]', { timeout: 45000 });
       await BB.page.evaluate(() => { const o = window.overdub; o.ui.show('sketch'); o.input.emit('sketch:mode', 'tap'); });
-      await sleep(600);
+      await BB.page.waitForFunction(() => !!document.querySelector('.sk-bb')?.getClientRects().length, null, { timeout: 8000 }).catch(() => {});
       await BB.page.locator('.sk-bb').click();
       await sleep(4500);
       await BB.page.locator('.sk-bb').click();
@@ -561,9 +581,11 @@ try {
   await section('19 phone', async () => {
     const Ph = await fresh({ w: 390, h: 844, mobile: true });
     await Ph.E(() => { const o = window.overdub; o.store.dispatch([{ type: 'track.add', ref: 'm', track: { name: 'Melody', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$m', clip: { start: 0, length: 4, notes: 'C4@0:1 E4@1:1' } }], { by: 'you' }); const id = o.store.get().tracks[0].id; o.ui.select({ track: id }); o.sounds?.offer?.({ track: id, from: 'header' }); });
-    await sleep(700);
+    // (the sheet up, its rows drawn and its animations over: where it sits is where it stays)
+    await Ph.until(() => [...document.querySelectorAll('.ledger-row')].filter((r) => r.getClientRects().length).length >= 4 && [...document.querySelectorAll('.snd-card')].every((c) => c.getAnimations({ subtree: true }).every((a) => a.playState !== 'running' || a.effect?.getTiming().iterations === Infinity)));
     await Ph.E(() => { const o = window.overdub; o.sounds?.try?.(o.store.get().tracks[0].id, { device: 'core.wavetable' }); });
-    await sleep(600);
+    await Ph.until(() => { const btn = (re) => [...document.querySelectorAll('button')].some((b) => re.test(b.textContent.trim()) && b.getClientRects().length); return !!window.overdub.sounds?.trying?.() && btn(/^Keep/) && btn(/^Back/) && [...document.querySelectorAll('.snd-card')].every((c) => c.getAnimations({ subtree: true }).every((a) => a.playState !== 'running' || a.effect?.getTiming().iterations === Infinity)); });
+    await settle(Ph.page);
     const g = await Ph.E(() => {
       const rows = [...document.querySelectorAll('.ledger-row')].filter((r) => r.getClientRects().length).map((r) => r.getBoundingClientRect().height);
       const sheet = document.querySelector('.ledger-row')?.closest('[role=dialog], .sheet, .snd-sheet, .ew-sounds');
@@ -593,12 +615,12 @@ try {
       await new Promise((r) => setTimeout(r, 150));
       await rec.stop();
     });
-    await sleep(900);
+    await Fu.until(() => { const o = window.overdub, m = o.store.get().tracks.at(-1); return /What should it sound like\?\s*Sounds/.test([...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | ')) && !!o.sounds?.pending?.(m.id) && !!document.querySelector(`.ar-head[data-track="${m.id}"] .ar-hsounds`)?.getClientRects().length; });
     const f = await Fu.E(() => { const o = window.overdub, m = o.store.get().tracks.at(-1); const head = document.querySelector(`.ar-head[data-track="${m.id}"] .ar-hsounds`); return { card: !!o.sounds?.current, toast: [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | '), pending: !!head && head.getClientRects().length > 0 && !!o.sounds?.pending?.(m.id) }; });
     T.ok(!f.card && /What should it sound like\?\s*Sounds/.test(f.toast) && f.pending, `20: in the full studio the card doesn't open by itself; the toast has the Sounds line and the header shows Sounds pending (${JSON.stringify(f)})`);
     T.ok(/back\. What should it sound like\?/.test(f.toast), `20: the toast's two sentences have a space between them ("${f.toast.slice(0, 120)}")`);
     await Fu.page.locator('.ew-toast .snd-tl-b').first().click();
-    await sleep(400);
+    await Fu.until(() => !!window.overdub.sounds?.current && !document.querySelector('.ew-toast .snd-tl'));
     const g = await Fu.E(() => ({ card: !!window.overdub.sounds?.current, line: !!document.querySelector('.ew-toast .snd-tl') }));
     T.ok(g.card && !g.line, `20: Sounds in the toast opens the card, and the toast's line goes, asked and answered (${JSON.stringify(g)})`);
   });
@@ -612,7 +634,8 @@ try {
     const [ens, gtr] = [await hex('core.ensemble'), await hex('core.eguitar')];
     // a chord held four beats on Keys: Rosin is in the chords rows
     await B.E(() => { const o = window.overdub; o.store.dispatch([{ type: 'track.add', ref: 'k', track: { name: 'Keys', instrument: { device: 'core.keys' } } }, { type: 'clip.add', track: '$k', clip: { start: 0, length: 8, notes: 'C4@0:4 E4@0:4 G4@0:4' } }], { by: 'you' }); const id = o.store.get().tracks.at(-1).id; window.__keys = id; o.ui.select({ track: id }); o.sounds.offer({ track: id, from: 'header' }); });
-    await sleep(500);
+    await B.until(() => !!document.querySelector('.snd-row[data-device="core.ensemble"]'));
+    await nodeUntil(() => reqs.some((r) => r.startsWith(ens)));
     const shown = await B.E(() => [...document.querySelectorAll('.snd-row')].map((r) => r.dataset.device));
     T.ok(shown.includes('core.ensemble') && reqs.some((r) => r.startsWith(ens)), `21: the card shows Rosin in the chords rows, and its samples start coming before anything is tried (rows ${shown.join(', ')}; asked for ${reqs.join(', ')})`);
     // what the first chord sounds like, and when the take starts, against when the samples are in
@@ -624,7 +647,7 @@ try {
       window.__k.iv = setInterval(async () => { const v = await o.engine.voices?.(); const p = v?.[id]?.peak; window.__k.peaks.push({ t: performance.now(), p: p == null ? -180 : p }); }, 50);
     }, (await B.E(() => window.overdub.devices.getDevice('core.ensemble').data.kit.slice(7))));
     await B.page.locator('.snd-row[data-device="core.ensemble"]').click();
-    await sleep(500);
+    await B.until(() => { const row = document.querySelector('.snd-row[data-device="core.ensemble"] .kitload'), head = document.querySelector(`.ar-head[data-track="${window.__keys}"] > .kitload`); return !!row && !row.hidden && !!head && !head.hidden && /Loading Rosin/.test(document.querySelector('.snd-status')?.textContent || ''); }, null, 2500);
     const ld = await B.E(() => {
       const row = document.querySelector('.snd-row[data-device="core.ensemble"] .kitload'), head = document.querySelector(`.ar-head[data-track="${window.__keys}"] > .kitload`);
       return { row: row && !row.hidden ? row.textContent : '', head: head && !head.hidden ? head.getAttribute('aria-label') || '' : '', status: document.querySelector('.snd-status')?.textContent || '', playing: !!window.overdub.engine.playing };
@@ -639,12 +662,13 @@ try {
     await B.E(() => { window.overdub.engine.stop?.(); window.overdub.sounds.back?.(); window.overdub.sounds.close?.(); });
     // the browser: resting the pointer on Hollow Body starts its samples, and its row says how far along they are
     await B.E(() => window.overdub.ui.show('browser'));
-    await sleep(500);
+    await B.until(() => !!window.overdub.browser?.search && !!document.querySelector('.br-row')?.getClientRects().length);
     await B.E(() => window.overdub.browser?.search?.('Hollow Body'));
-    await sleep(500);
+    await B.until(() => !!document.querySelector('.br-row[data-device="core.eguitar"]')?.getClientRects().length);
     const n0 = reqs.length;
     await B.page.locator('.br-row[data-device="core.eguitar"]').first().hover();
-    await sleep(400);
+    await nodeUntil(() => reqs.slice(n0).some((x) => x.startsWith(gtr)));
+    await B.until(() => { const k = document.querySelector('.br-row[data-device="core.eguitar"] .kitload'); return !!k && !k.hidden && /Loading samples/.test(k.textContent); });
     const hv = await B.E(() => { const k = document.querySelector('.br-row[data-device="core.eguitar"] .kitload'); return k && !k.hidden ? k.textContent : ''; });
     T.ok(reqs.slice(n0).some((x) => x.startsWith(gtr)) && /Loading samples/.test(hv), `21: in the browser, the pointer on Hollow Body starts its samples, and its row says Loading ("${hv}"; asked for ${reqs.slice(n0).join(', ')})`);
     // a key pressed while they load sounds once they're in, if it is still down

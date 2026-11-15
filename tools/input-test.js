@@ -11,6 +11,7 @@
 import { open, tally, OUTDIR } from './pw.js';
 import path from 'node:path';
 import fs from 'node:fs';
+import { Worker } from 'node:worker_threads';
 import { median } from '../app/src/input/latency.js';
 import { noteName } from '../app/src/core/music.js';
 import { createPitchTracker, segment } from '../app/src/input/pitch.js';
@@ -111,40 +112,53 @@ const E2 = 440 * 2 ** ((40 - 69) / 12), FRET22 = 440 * 2 ** ((86 - 69) / 12);   
 // itself wandering ±1 cent, 25 times a second: the shown cents must hold still); harsh (hum at -48, a floor at -62).
 // The error is the reading against the string's true pitch at the window's middle.
 const STR = await import('./strings.js');
-const TUN = await import('../app/src/input/tuner.js');
-function readTuner(buf, sr, tuning, until) {
-  const W = TUN.windowFor(sr), tu = TUN.createSteadyTuner({ tuning }), win = new Float32Array(W), out = [];
-  for (let t = 0; t < until; t += 0.04) {
-    const e = Math.round(t * sr);
-    for (let i = 0; i < W; i++) { const j = e - W + i; win[i] = j >= 0 && j < buf.length ? buf[j] : 0; }
-    out.push({ t, r: { ...tu.push(win, sr, t) } });
+// One row of the sweep (a rate and a condition), in a worker thread of its own so the eight rows run at once: the same
+// seeded strings through the same functions, each row worked out exactly as it was in turn here, the sweep in a row's time.
+function tunerRow(STR, TUN, { sr, cname, NOTES }) {
+  function readTuner(buf, sr, tuning, until) {
+    const W = TUN.windowFor(sr), tu = TUN.createSteadyTuner({ tuning }), win = new Float32Array(W), out = [];
+    for (let t = 0; t < until; t += 0.04) {
+      const e = Math.round(t * sr);
+      for (let i = 0; i < W; i++) { const j = e - W + i; win[i] = j >= 0 && j < buf.length ? buf[j] : 0; }
+      out.push({ t, r: { ...tu.push(win, sr, t) } });
+    }
+    return out;
   }
-  return out;
+  const wob = (seed) => { const r = STR.rng(seed), v = Array.from({ length: 200 }, () => r() * 2 - 1); return (t) => v[Math.min(199, Math.max(0, Math.floor(t * 25)))]; };
+  const COND = { clean: () => ({}), played: () => ({ glide: 10, hum: -60, noise: -70 }), wobbly: (m) => ({ glide: 10, hum: -60, noise: -70, bend: wob(m) }), harsh: () => ({ glide: 10, hum: -48, noise: -62 }) };
+  const at = 0.5, cents = -13, co = COND[cname];
+  const R = { named: [], settle: [], errs: [], wrong: 0, flick: 0, lows: [] };
+  for (const [m, tuning] of NOTES) {
+    const s = STR.string(m, { sr, dur: 3, cents, at, peak: -14, pickup: 0.1, ...co(m) });
+    const reads = readTuner(s.buf, sr, tuning, at + 3.5), half = TUN.windowFor(sr) / sr / 2;
+    const truth = (t) => 1200 * Math.log2(s.truth(t - half) / 440) + 6900 - m * 100;
+    const after = reads.filter((x) => x.t > at);
+    const named = after.find((x) => x.r.live && x.r.p === m), settle = after.find((x) => x.r.live && x.r.settled && Math.abs((x.r.midi - m) * 100 - truth(x.t)) <= 3);
+    R.named.push(named ? named.t - at : Infinity); R.settle.push(settle ? settle.t - at : Infinity);
+    const live = after.filter((x) => x.r.live && x.r.settled);
+    for (const x of live) R.errs.push(Math.abs((x.r.midi - m) * 100 - truth(x.t)));
+    R.wrong += reads.filter((x) => x.r.p && x.r.p !== m).length;
+    // the shown cents in the steady part (after the glide): one number, or two neighbours at most
+    const shown = new Set(live.filter((x) => x.t > at + 1).map((x) => x.r.shown));
+    if (shown.size > 2) R.flick++;
+    R.lows.push(m);
+  }
+  return R;
 }
+const inWorker = (fn, data) => new Promise((resolve, reject) => {
+  const url = (p) => new URL(p, import.meta.url).href;
+  const src = `const { parentPort, workerData: d } = require('node:worker_threads');
+    Promise.all([import(d.str), import(d.tun)]).then(([STR, TUN]) => parentPort.postMessage((${fn})(STR, TUN, d.data)));`;
+  const w = new Worker(src, { eval: true, workerData: { str: url('./strings.js'), tun: url('../app/src/input/tuner.js'), data } });
+  w.once('message', resolve); w.once('error', reject); w.once('exit', (code) => reject(new Error('tuner row: worker exited ' + code)));
+});
 {
   const NOTES = [[28, { strings: [28, 33, 38, 43] }, 'a bass’s low E1'], [30, { strings: [30, 35, 40, 45, 50, 55, 59, 64] }, 'an eight-string’s F♯1'], [33, '7-drop-a', 'drop A'], [35, '7-standard', 'a seven-string’s B1'],
     [36, 'drop-c', 'drop C'], [38, 'drop-d', 'drop D'], [40, 'standard', 'E2'], [45, 'standard', 'A2'], [50, 'standard', 'D3'], [55, 'standard', 'G3'], [59, 'standard', 'B3'], [64, 'standard', 'E4']];
-  const wob = (seed) => { const r = STR.rng(seed), v = Array.from({ length: 200 }, () => r() * 2 - 1); return (t) => v[Math.min(199, Math.max(0, Math.floor(t * 25)))]; };
-  const COND = { clean: () => ({}), played: () => ({ glide: 10, hum: -60, noise: -70 }), wobbly: (m) => ({ glide: 10, hum: -60, noise: -70, bend: wob(m) }), harsh: () => ({ glide: 10, hum: -48, noise: -62 }) };
-  const at = 0.5, cents = -13, rows = {};
-  for (const sr of [48000, 96000]) for (const [cname, co] of Object.entries(COND)) {
-    const R = (rows[`${sr / 1000} kHz ${cname}`] = { named: [], settle: [], errs: [], wrong: 0, flick: 0, lows: [] });
-    for (const [m, tuning] of NOTES) {
-      const s = STR.string(m, { sr, dur: 3, cents, at, peak: -14, pickup: 0.1, ...co(m) });
-      const reads = readTuner(s.buf, sr, tuning, at + 3.5), half = TUN.windowFor(sr) / sr / 2;
-      const truth = (t) => 1200 * Math.log2(s.truth(t - half) / 440) + 6900 - m * 100;
-      const after = reads.filter((x) => x.t > at);
-      const named = after.find((x) => x.r.live && x.r.p === m), settle = after.find((x) => x.r.live && x.r.settled && Math.abs((x.r.midi - m) * 100 - truth(x.t)) <= 3);
-      R.named.push(named ? named.t - at : Infinity); R.settle.push(settle ? settle.t - at : Infinity);
-      const live = after.filter((x) => x.r.live && x.r.settled);
-      for (const x of live) R.errs.push(Math.abs((x.r.midi - m) * 100 - truth(x.t)));
-      R.wrong += reads.filter((x) => x.r.p && x.r.p !== m).length;
-      // the shown cents in the steady part (after the glide): one number, or two neighbours at most
-      const shown = new Set(live.filter((x) => x.t > at + 1).map((x) => x.r.shown));
-      if (shown.size > 2) R.flick++;
-      R.lows.push(m);
-    }
-  }
+  const rows = {}, keys = [];
+  for (const sr of [48000, 96000]) for (const cname of ['clean', 'played', 'wobbly', 'harsh']) keys.push([sr, cname]);
+  const got = await Promise.all(keys.map(([sr, cname]) => inWorker(tunerRow, { sr, cname, NOTES })));
+  keys.forEach(([sr, cname], i) => { rows[`${sr / 1000} kHz ${cname}`] = got[i]; });
   const med = (a) => median(a), mx = (a) => Math.max(...a);
   const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : '–'), ms = (x) => (Number.isFinite(x) ? Math.round(x * 1000) : '–');
   for (const [k, R] of Object.entries(rows)) {
@@ -156,7 +170,7 @@ function readTuner(buf, sr, tuning, until) {
   }
 }
 /* ------------------------------------------------------------------ the pedal across a change of track (the studio) */
-{
+const pedal = async (T) => {
   // Pedal down on track A, a key played and let go (held by the pedal), track B selected, pedal up: the lift reaches A
   // too (the notes it held sound there), so A's note ends, and A's next notes and the song's don't ring on.
   const { page, errors, close } = await open('/app/', { query: 'new&autostart' });
@@ -185,7 +199,7 @@ function readTuner(buf, sr, tuning, until) {
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `pedal: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
-}
+};
 
 /* ------------------------------------------------------------------ monitoring with no audio track, and the tuner (the studio) */
 // Fresh eyes 6: monitoring on over a song with no audio track toasted at every store change and every engine graph event
@@ -193,7 +207,7 @@ function readTuner(buf, sr, tuning, until) {
 // event, monitorTrack() null), and wires itself the moment an audio track appears. The fake mic is a guitar (the G
 // string 15 cents flat, then A7, D7, E7 and A5 stabs): audio.tune({ lo, hi }) with the guitar's range reads the G and
 // never a note under the low E (main read the A7 as A1 and the E7 as E1).
-{
+const monitorNoTrack = async (T) => {
   const wav = path.join(OUTDIR, 'input-guitar.wav'), sr = 48000, { buf } = guitarTake(sr, ['g', 'chords']);
   const pcm = Buffer.alloc(44 + buf.length * 2);
   pcm.write('RIFF', 0); pcm.writeUInt32LE(36 + buf.length * 2, 4); pcm.write('WAVEfmt ', 8); pcm.writeUInt32LE(16, 16); pcm.writeUInt16LE(1, 20); pcm.writeUInt16LE(1, 22);
@@ -242,7 +256,7 @@ function readTuner(buf, sr, tuning, until) {
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `monitoring and the tuner: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
-}
+};
 
 /* ------------------------------------------------------------------ Getting started's gauges on a fake guitar (the guitar room) */
 // ui/gauges/: the tuner, the level meter and the timing step mounted over the studio in muted Chromium, the input a
@@ -252,7 +266,7 @@ function readTuner(buf, sr, tuning, until) {
 // sound, and nothing may play here): a good one is kept with its confidence, a loose one waits for Keep it. At 1440 and
 // 390 wide (no sideways scroll); then the bench page (design/bench/getting-started/) on the same fake. Screenshots
 // tools/.out/input-gauges-1440.png, -390.png and -bench.png.
-{
+const gauges = async (T) => {
   const sr = 48000, len = 6, buf = new Float32Array(sr * len);
   for (const at of [0.05, 2.05, 4.05]) { const s = STR.string(36, { sr, dur: 1.9, cents: -13, at, len, peak: -9, pickup: 0.1, hum: -66, noise: -78, seed: Math.round(at * 10) }); for (let i = 0; i < buf.length; i++) buf[i] += s.buf[i] * (i < s.buf.length ? 1 : 0); }
   let pk = 0; for (let i = 0; i < buf.length; i++) pk = Math.max(pk, Math.abs(buf[i]));
@@ -353,7 +367,7 @@ function readTuner(buf, sr, tuning, until) {
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `gauges: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
-}
+};
 
 /* ------------------------------------------------------------------ monitoring by itself, and the feedback guard (the studio) */
 // Inputs with names: getUserMedia gives a page-made stream named as the device asked for. The Scarlett starts monitoring
@@ -364,7 +378,7 @@ function readTuner(buf, sr, tuning, until) {
 // remembered is the device's own id, the killswitch leaves an interface monitoring, closing never decides, a hold
 // mutes and lets go, a stale id is chosen again by its label with the voice processing off on every ask, and a first
 // visit (no labels before the grant) chooses again once they're in.
-{
+const monitorGuard = async (T) => {
   const NAMED = `(() => {
     const md = navigator.mediaDevices;
     window.__devs = { 'scarlett-1': 'Scarlett 2i2 USB', 'mbp-mic': 'MacBook Pro Microphone', default: 'Default - Scarlett 2i2 USB' };
@@ -531,11 +545,11 @@ function readTuner(buf, sr, tuning, until) {
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `monitoring by itself and the guard: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
-}
+};
 
 /* ------------------------------------------------------------------ the studio */
 const IGNORE = (e) => /Failed to load resource/.test(e) && !/\/input\/|sketch|spiral/.test(e);
-{
+const studio = async (T) => {
   const { page, errors, close, shot: full } = await open('/app/', { query: 'demo' });
   // each shot twice: the whole studio, and the bottom pane up close (-pane.png)
   const shot = async (name) => { await full(name); await page.locator('.ew-region-bottom').screenshot({ path: path.join(OUTDIR, name + '-pane.png') }).catch(() => {}); };
@@ -735,8 +749,8 @@ const IGNORE = (e) => /Failed to load resource/.test(e) && !/\/input\/|sketch|sp
     const errs = errors.filter((e) => !IGNORE(e));
     T.ok(errs.length === 0, `no page errors at 1440 (${errs.length})${errs.length ? '\n    ' + errs.slice(0, 6).join('\n    ') : ''}`);
   } finally { await close(); }
-}
-{
+};
+const studio390 = async (T) => {
   const { page, errors, close, shot } = await open('/app/', { query: 'demo', width: 390, height: 844 });
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 20000 });
@@ -755,7 +769,7 @@ const IGNORE = (e) => /Failed to load resource/.test(e) && !/\/input\/|sketch|sp
     const errs = errors.filter((e) => !IGNORE(e));
     T.ok(errs.length === 0, `no page errors at 390 (${errs.length})${errs.length ? '\n    ' + errs.slice(0, 6).join('\n    ') : ''}`);
   } finally { await close(); }
-}
+};
 /* ------------------------------------------------------------------ Sketch belongs to the song (fresh eyes, 1440) */
 // A hum on a blank song keeps the notes you sang and hears its key; Sketch's targets and takes are this song's;
 // Keep turns into "Kept ✓"; musical typing docks in Play it and covers no take's buttons; the pad-keys chip says what it does.
@@ -771,7 +785,7 @@ const humLine = (mel, spb = 0.5) => `(() => {
   return window.overdub.input.hum.fromSamples(x, sr);
 })()`;
 const AMIN = [[57, 1], [60, 1], [64, 1], [60, 1], [57, 2]];   // A3 C4 E4 C4 A3: A minor, with A and E outside C minor
-{
+const blankSong = async (T) => {
   const { page, errors, close, shot } = await open('/app/', { query: 'demo', width: 1440, height: 900 });
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 20000 });
@@ -861,9 +875,9 @@ const AMIN = [[57, 1], [60, 1], [64, 1], [60, 1], [57, 2]];   // A3 C4 E4 C4 A3:
     const errs = errors.filter((e) => !IGNORE(e));
     T.ok(errs.length === 0, `no page errors in the blank-song Sketch (${errs.length})${errs.length ? '\n    ' + errs.slice(0, 6).join('\n    ') : ''}`);
   } finally { await close(); }
-}
+};
 /* ------------------------------------------------------------------ Sketch on a phone (touch, 390x844) */
-{
+const phone = async (T) => {
   const { page: p0, browser, url, errors: e0, close } = await open('/app/', { query: 'demo', width: 390, height: 844 });
   try {
     await p0.close();
@@ -941,11 +955,10 @@ const AMIN = [[57, 1], [60, 1], [64, 1], [60, 1], [57, 2]];   // A3 C4 E4 C4 A3:
     const errs = [...errors, ...e0].filter((e) => !IGNORE(e));
     T.ok(errs.length === 0, `no page errors on the touch phone (${errs.length})${errs.length ? '\n    ' + errs.slice(0, 6).join('\n    ') : ''}`);
   } finally { await close(); }
-}
-console.log('  ..   screenshots in ' + path.relative(process.cwd(), OUTDIR));
+};
 // ---- a browser with no Web MIDI (Safari): Play it says why there's no Connect MIDI, even with musical typing on (the
 // button and the status line used to hide together, so there was no reason at all)
-{
+const noMidi = async (T) => {
   const { context, url, close } = await open('/app/', { query: 'demo', width: 1440, height: 900 });
   try {
     const page = await context.newPage();
@@ -959,13 +972,13 @@ console.log('  ..   screenshots in ' + path.relative(process.cwd(), OUTDIR));
     const r = await page.evaluate(() => { const n = document.querySelector('.sk-midinote'), b = [...document.querySelectorAll('button')].find((x) => /Connect MIDI/.test(x.textContent)); const nr = n?.getBoundingClientRect(); return { midi: !!navigator.requestMIDIAccess, typing: window.overdub.input.qwerty.on, text: n?.textContent || '', shown: !!(n && !n.hidden && nr.width > 0 && nr.bottom <= innerHeight), button: !!(b && !b.hidden) }; });
     T.ok(!r.midi && r.typing && r.shown && /Chrome, Edge or Firefox/.test(r.text) && !r.button, `no Web MIDI: Play it says to open it in Chrome, Edge or Firefox, with musical typing on, and offers no dead button (${JSON.stringify(r)})`);
   } finally { await close(); }
-}
+};
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The keys are heard where they'll be recorded (docs/INSTRUMENTS-UX.md 1.1): after Tap a beat in the simple view, the
 // keys aim at a new track, so musical typing makes Keys (Lamp Tines) on the way in, selected and said once, and the
 // first note sounds there, never on the drums. input.target() has no first-instrument fallback any more.
-{
+const keysTrack = async (T) => {
   const { page, errors, close } = await open('/app/', { query: 'view=simple' });
   try {
     await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -992,6 +1005,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const errs = errors.filter((e) => !/Failed to load resource/.test(e));
     T.ok(errs.length === 0, `the keys' track: no page errors (${errs.length})${errs.length ? ' ' + errs.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
+};
+
+// The studio's sections, each on its own server and browser as before. The ones that read a fake mic or the audio
+// clock against the wall in real time (the monitor's 150 ms ramp read 30 ms in, the gauges' and the tuner's readings
+// every 40 ms, a recorded take) run one at a time, alone, as they did: beside other studios booting, on a loaded
+// machine, the audio thread was held up past what they read (0.00 after 30 ms; a level reading out of the window).
+// Then the rest, which only drive the page and read what it shows, two lanes at once. Each section's checks are held
+// and printed in the file's order once all are done; nothing a section waits for or measures is shortened.
+const later = () => { const lines = []; return { lines, ok(c, m) { lines.push(['ok', !!c, m]); return !!c; }, note(m) { lines.push(['note', null, m]); } }; };
+const held = new Map();
+const lane = async (...fns) => { for (const fn of fns) { const B = later(); held.set(fn, B); try { await fn(B); } catch (e) { B.err = e; } } };
+await lane(monitorGuard, gauges, monitorNoTrack, studio);
+await Promise.all([lane(pedal, studio390, noMidi, keysTrack), lane(blankSong, phone)]);
+for (const fn of [pedal, monitorNoTrack, gauges, monitorGuard, studio, studio390, blankSong, phone, 'shots', noMidi, keysTrack]) {
+  if (fn === 'shots') { console.log('  ..   screenshots in ' + path.relative(process.cwd(), OUTDIR)); continue; }
+  const B = held.get(fn);
+  for (const [kind, c, m] of B.lines) if (kind === 'ok') T.ok(c, m); else T.note(m);
+  if (B.err) throw B.err;
 }
 
 T.done();

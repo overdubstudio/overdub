@@ -39,6 +39,8 @@ import { startServer, ready } from '../server/serve.js';
 
 const T = tally('jam');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// n frames drawn: the shell's one loop has run (it draws every panel in frame(now)) and the browser has laid it out
+const frames = (page, n = 2) => page.evaluate((n) => new Promise((r) => { const f = () => (--n <= 0 ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|the server responded with a status of 404/.test(e);
 // a check that can't run (a hook that isn't there) fails with why, and the run goes on
 const step = async (name, fn) => { try { await fn(); } catch (e) { T.ok(false, `${name}: ${String(e && e.message || e).split('\n')[0].slice(0, 160)}`); } };
@@ -92,16 +94,18 @@ const boot = async (opts = {}) => {
   T.ok(st2.now === 'Fmaj7' && st2.next === 'C' && st2.sec === 'Verse', `the stage follows the playhead: at beat ${st2.beat.toFixed(1)}, ${st2.now} now, ${st2.next} next, in the ${st2.sec}`);
   await shot('playing');
   await page.click('#ew-tab-arranger');
-  await sleep(500);
+  await page.waitForFunction(() => !document.querySelector('[data-panel="arranger"]').hidden, null, { timeout: 8000 }).catch(() => {});
+  await frames(page);
   const back = await E(() => ({ playing: window.overdub.engine.playing, arr: !document.querySelector('[data-panel="arranger"]').hidden }));
   T.ok(back.playing && back.arr, 'Arrange again: the arranger is back and the song still plays');
   await E(() => window.overdub.transport.playStop());
-  await sleep(300);
+  await page.waitForFunction(() => !window.overdub.engine.playing, null, { timeout: 8000 }).catch(() => {});
   await page.click('#ew-tab-jam');
-  await sleep(400);
+  await page.waitForFunction(() => !document.querySelector('[data-panel="jam"]').hidden, null, { timeout: 8000 }).catch(() => {});
+  await frames(page);
 
   // ---- the stage follows the marker when stopped, and counts down to the change
-  const at = async (beat) => { await E((b) => window.overdub.transport.marker.set(b), beat); await sleep(250); return E(() => ({ now: document.querySelector('.jm-now-name').textContent, next: document.querySelector('.jm-next-name').textContent, cd: document.querySelector('.jm-next-in').textContent, pos: document.querySelector('.jm-pos').textContent })); };
+  const at = async (beat) => { await E((b) => window.overdub.transport.marker.set(b), beat); await frames(page); return E(() => ({ now: document.querySelector('.jm-now-name').textContent, next: document.querySelector('.jm-next-name').textContent, cd: document.querySelector('.jm-next-in').textContent, pos: document.querySelector('.jm-pos').textContent })); };
   const s8 = await at(8), s14 = await at(14);
   T.ok(s8.now === 'C' && s8.next === 'G7' && /bar 3 of 8/.test(s8.pos), `stopped at bar 3: ${s8.now}, then ${s8.next} (${s8.pos})`);
   T.ok(s14.now === 'G7' && s14.next === 'Am7' && /^2\s*beats$/.test(s14.cd.trim()), `two beats before the change it counts them: "${s14.cd.trim()}"`);
@@ -118,36 +122,36 @@ const boot = async (opts = {}) => {
   const togOf = (label) => page.locator('.jm-togs .tog', { hasText: new RegExp(`^${label}$`) });
   // D on the A string at the 5th fret is in the pentatonic, not in Am7: a pencil dot with Pentatonic on, wood without
   const d1 = await px(1, 5);
-  await togOf('Pentatonic').click(); await sleep(200);
+  await togOf('Pentatonic').click(); await frames(page);
   const d0 = await px(1, 5);
   T.ok(lum(d1) > 80 && lum(d0) < 50, `Pentatonic off takes its dots away (D at the 5th fret, A string: ${lum(d1).toFixed(0)} → ${lum(d0).toFixed(0)})`);
   await togOf('Pentatonic').click();
   // F on the low E (1st fret) is in A minor but not the pentatonic or Am7: Scale on draws its ring
   const f0 = await px(0, 1, -4);
-  await togOf('Scale').click(); await sleep(200);
+  await togOf('Scale').click(); await frames(page);
   const f1 = await px(0, 1, -4);
   T.ok(lum(f1) > lum(f0) + 40, `Scale on rings the key's other notes (F at the 1st fret: ${lum(f0).toFixed(0)} → ${lum(f1).toFixed(0)})`);
   await togOf('Scale').click();
   // A on the low E (5th fret) is Am7's root: a cream square; Chord tones off leaves the pentatonic's smaller square
   const a1 = await px(0, 5, -6);
-  await togOf('Chord tones').click(); await sleep(200);
+  await togOf('Chord tones').click(); await frames(page);
   const a0 = await px(0, 5, -6);
   T.ok(lum(a1) > 200 && lum(a0) < 120, `Chord tones off takes the chord's marks away (the root at the 5th fret: ${lum(a1).toFixed(0)} → ${lum(a0).toFixed(0)})`);
   await togOf('Chord tones').click();
-  await page.selectOption('.jm-tuning', 'drop-d'); await sleep(250);
+  await page.selectOption('.jm-tuning', 'drop-d'); await frames(page);
   const dd = await E(() => ({ low: window.overdub.jam.neck.geometry.T.strings[0], saved: JSON.parse(localStorage.getItem('overdub:jam')).tuning }));
   // in drop D the root A of Am7 on the low string moves up to the 7th fret
   const dA = await px(0, 7, -6);
   T.ok(dd.low === 38 && dd.saved === 'drop-d' && lum(dA) > 200, `drop D tunes the low string to D: A on it is at the 7th fret now (kept in this browser)`);
-  await page.selectOption('.jm-tuning', 'standard'); await sleep(200);
-  await page.locator('.jm-togs .tog', { hasText: 'Left-handed' }).click(); await sleep(250);
+  await page.selectOption('.jm-tuning', 'standard'); await frames(page);
+  await page.locator('.jm-togs .tog', { hasText: 'Left-handed' }).click(); await frames(page);
   const lefty = await E(() => { const n = window.overdub.jam.neck; return { nut: n.at(0, 0).x, fifth: n.at(0, 5).x, W: n.geometry.W }; });
   T.ok(lefty.nut > lefty.fifth && lefty.nut > lefty.W - 60, `left-handed puts the nut on the right (open strings at x ${Math.round(lefty.nut)} of ${lefty.W})`);
   await shot('lefty');
-  await page.locator('.jm-togs .tog', { hasText: 'Left-handed' }).click(); await sleep(200);
+  await page.locator('.jm-togs .tog', { hasText: 'Left-handed' }).click(); await frames(page);
 
   // ---- a tone loads a rig onto the Guitar track, as ops signed by you (the Rig tab)
-  await page.click('#jm-view-rig'); await sleep(300);
+  await page.click('#jm-view-rig'); await frames(page);
   const before = await E(() => ({ h: window.overdub.store.history.length, guitar: window.overdub.jam.guitar()?.name }));
   await page.click('.jm-tone-row .jm-flip:last-child');
   await sleep(700);
@@ -166,7 +170,7 @@ const boot = async (opts = {}) => {
   await E(() => window.overdub.store.undo()); await E(() => window.overdub.store.undo());
   const undone = await E(() => window.overdub.jam.guitar().inserts.map((x) => x.device).join('>'));
   T.ok(/pedal\.gate>pedal\.chorus>amp\.jangle>claude\.tidal-cathedral/.test(undone), `undo puts the song's own chain back (${undone})`);
-  await page.click('#jm-view-neck'); await sleep(200);
+  await page.click('#jm-view-neck'); await frames(page);
 
   // ---- the loop: one tap loops the section you're in; again, it's off
   await page.click('.jm-loop');
@@ -190,12 +194,13 @@ const boot = async (opts = {}) => {
   const reg = await E(async () => { await import('/app/src/engine/render.js'); return window.overdub.engine.beatToSec(4); });
   T.ok(Math.abs(reg - 4 * 60 / 92) < 1e-9, 'the song\'s own clock (beatToSec, renders, exports) is unchanged');
   await page.click('#ew-tab-arranger');
-  await sleep(300);
+  await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /Back to full speed/.test(t.textContent)), null, { timeout: 8000 }).catch(() => {});
+  await frames(page);
   const out = await E(() => ({ rate: window.overdub.engine.rate, playing: window.overdub.engine.playing, toast: [...document.querySelectorAll('.ew-toast')].map((t) => t.textContent).join(' | ') }));
   T.ok(out.rate === 1 && out.playing && /Back to full speed: 92 BPM/.test(out.toast), `leaving the room, the song goes back to full speed and plays on ("${out.toast.slice(0, 60)}")`);
   await E(() => window.overdub.transport.playStop());
   await page.click('#ew-tab-jam');
-  await sleep(300);
+  await frames(page);
 
   // ---- the tools
   const run = (name, input, by = 'mcp:test') => E(([n, i, b]) => window.overdub.tools.run(n, i, { by: b }), [name, input, by]);
@@ -213,7 +218,7 @@ const boot = async (opts = {}) => {
   const sh = await run('show_on_fretboard', { label: 'A minor pentatonic, box 1', scale: 'A minor pentatonic', frets: [5, 8] });
   const shown = await E(() => window.overdub.jam.state.shown);
   T.ok(sh.ok && sh.visible && sh.shown.places.length === 12 && sh.shown.places.every((x) => x.fret >= 5 && x.fret <= 8) && shown.by === 'mcp:test', `show_on_fretboard: the box at the 5th fret, 12 places, drawn for the agent`);
-  await sleep(150);
+  await frames(page);
   const lbl = await E(() => document.querySelector('.jm-neck-label').textContent);
   T.ok(/A minor pentatonic, box 1/.test(lbl) && await E(() => !!document.querySelector('.jm-neck-label .by.by-agent')), `its label reads under the neck, signed in cool ink ("${lbl.slice(0, 50)}")`);
   const sn = await run('show_on_fretboard', { label: 'the turnaround lick', notes: '6:5 6:8 5:5 5:7', play: true });
@@ -224,10 +229,10 @@ const boot = async (opts = {}) => {
   T.ok(/label/.test(n1.error) && /chord/.test(n2.error) && n2.hint && /nothing to show/.test(n3.error) && /can't place/.test(n4.error), `show_on_fretboard's errors say what would work ("${n2.error}"; "${n4.error}")`);
   const cl = await run('show_on_fretboard', { clear: true });
   T.ok(cl.ok && cl.cleared && !(await E(() => window.overdub.jam.state.shown)), 'clear takes it off the neck');
-  await page.click('#ew-tab-arranger'); await sleep(200);
+  await page.click('#ew-tab-arranger'); await frames(page);
   const hid = await run('show_on_fretboard', { label: 'C major scale', scale: 'C major' });
   T.ok(hid.ok && hid.visible === false && /Jam tab is closed/.test(hid.hint), 'with the room closed it still shows it, and says the Jam tab is closed');
-  await page.click('#ew-tab-jam'); await sleep(200);
+  await page.click('#ew-tab-jam'); await frames(page);
   await run('show_on_fretboard', { clear: true });
   // make_jam_track replaces the song the way opening one does, and signs the band as the agent who asked
   const mk = await run('make_jam_track', { style: 'blues', key: 'E', tempo: 70, reason: 'they asked for a slow blues in E' });
@@ -261,12 +266,23 @@ const boot = async (opts = {}) => {
   T.ok(take && take.n === 4 && take.by === 'you' && take.notesBy && take.start === 0 && take.ps === '64 67 69 71', `R records the keys onto the Guitar track at the playhead: ${take ? `${take.n} notes (${take.ps}), signed by you` : 'nothing'}`);
   await shot('jamtrack');
   await page.evaluate(() => { const p = document.querySelector('[data-panel="jam"]'); p.scrollTop = p.scrollHeight; });
-  await sleep(200);
+  await frames(page);
   await shot('ideas');
 
-  // ---- levels: every jam style's band, and a lick on its Guitar track (rendered in the page, measured)
-  if (process.env.LEVELS !== '0') {
-    const lv = await E(async () => {
+  const errs = errors.filter((e) => !ignorable(e));
+  T.ok(!errs.length, `no page errors on the desktop${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
+  await close();
+}
+
+/* ============================================================================ 3. the jam tracks' levels */
+// Every jam style's band, and a lick on its Guitar track, rendered in a studio page of their own and measured. Only
+// offline renders: nothing in them holds to the clock or to another page, so they run in a browser of their own beside
+// the checks that don't either (from the laptop's offline placing on: the loudest demos, the tuner, the keys, the tools,
+// the phone, the rig's layout), and their check is made before anything after them measures the clock again.
+const levels = async () => {
+  const { page, errors, close } = await boot();
+  try {
+    const lv = await page.evaluate(async () => {
       const o = window.overdub, M = await import('/app/src/audio/measure.js'), J = await import('/app/src/core/jam.js'), { renderProject } = await import('/app/src/engine/render.js');
       const out = [];
       for (const id of J.JAM_STYLE_IDS) {
@@ -283,13 +299,19 @@ const boot = async (opts = {}) => {
       }
       return out;
     });
-    const off = lv.filter((x) => !(x.band > -19.5 && x.band < -15.5 && x.tp <= -1 && Math.abs(x.guitar - x.band) <= 2.5));
-    T.ok(!off.length, `every jam style measured: the band at ${Math.min(...lv.map((x) => x.band)).toFixed(1)} to ${Math.max(...lv.map((x) => x.band)).toFixed(1)} LUFS, a lick on the Guitar within 2.5 LU of it, true peak ≤ ${Math.max(...lv.map((x) => x.tp)).toFixed(1)} dBTP${off.length ? ': off ' + off.map((x) => `${x.id} band ${x.band.toFixed(1)} guitar ${x.guitar.toFixed(1)} tp ${x.tp.toFixed(1)}`).join('; ') : ''}`);
-  }
-  const errs = errors.filter((e) => !ignorable(e));
-  T.ok(!errs.length, `no page errors on the desktop${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
-  await close();
-}
+    return { lv, errs: errors.filter((e) => !ignorable(e)) };
+  } finally { await close(); }
+};
+const levelsCheck = async (run) => {
+  const res = await run;
+  if (res.error) { T.ok(false, `the level renders: ${String(res.error && res.error.message || res.error).split('\n')[0].slice(0, 160)}`); return; }
+  const { lv, errs } = res;
+  const off = lv.filter((x) => !(x.band > -19.5 && x.band < -15.5 && x.tp <= -1 && Math.abs(x.guitar - x.band) <= 2.5));
+  T.ok(!off.length, `every jam style measured: the band at ${Math.min(...lv.map((x) => x.band)).toFixed(1)} to ${Math.max(...lv.map((x) => x.band)).toFixed(1)} LUFS, a lick on the Guitar within 2.5 LU of it, true peak ≤ ${Math.max(...lv.map((x) => x.tp)).toFixed(1)} dBTP${off.length ? ': off ' + off.map((x) => `${x.id} band ${x.band.toFixed(1)} guitar ${x.guitar.toFixed(1)} tp ${x.tp.toFixed(1)}`).join('; ') : ''}`);
+  T.ok(!errs.length, `no page errors in the level renders${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
+};
+let levelsRun = null;
+const startLevels = () => { if (!levelsRun && process.env.LEVELS !== '0') levelsRun = levels().catch((error) => ({ error })); };
 
 /* ============================================================================ 9. on a laptop, a guitar plugged in */
 {
@@ -300,8 +322,11 @@ const boot = async (opts = {}) => {
   const clearToasts = () => E(() => document.querySelectorAll('.ew-toast').forEach((t) => t.remove()));
   const toastsNow = () => E(() => [...document.querySelectorAll('.ew-toast')].map((t) => t.textContent));
   const song = () => E(() => { const o = window.overdub, p = o.store.get(); return { title: p.title, tracks: p.tracks.map((t) => t.name).join(', '), h: o.store.history.length }; });
-  const openDemo = async (id) => { await E((d) => window.overdub.exporter.openDemo(d), id); await sleep(700); };
-  const jamTrack = async (style) => { await E((s) => window.overdub.jam.openTrack({ style: s }), style); await sleep(700); };
+  // a song opened: its strips match it (engine.settled) and the room has drawn it. hold: the old fixed wait, where the
+  // room's own reactions to a new song (the input open: setTimeout(remakeLive), its levelling) have no condition to name
+  const settle = async () => { await E(() => window.overdub.engine.settled()); await frames(page); };
+  const openDemo = async (id, { hold = false } = {}) => { await E((d) => window.overdub.exporter.openDemo(d), id); if (hold) await sleep(700); else await settle(); };
+  const jamTrack = async (style, { hold = false } = {}) => { await E((s) => window.overdub.jam.openTrack({ style: s }), style); if (hold) await sleep(700); else await settle(); };
   await E(() => { window.__rooms = []; window.overdub.ui.on('room', (e) => window.__rooms.push(e && e.room ? e.room : 'none')); });
 
   // ---- the room on a laptop: the detail pane steps aside and comes back; the chord and the neck in view at 1280x800
@@ -347,7 +372,8 @@ const boot = async (opts = {}) => {
         if (seen.has(c.name)) continue;
         seen.add(c.name);
         o.transport.marker.set(c.start + 0.01);
-        await new Promise((r) => setTimeout(r, 140));
+        // (the stage redraws in the shell's next frame: two frames drawn)
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
         const n = document.querySelector('.jm-now-name'), x = document.querySelector('.jm-next-name'), st = document.querySelector('.jm-stage').getBoundingClientRect(), nb = n.getBoundingClientRect();
         out.push({ name: c.name, whole: n.textContent === c.name && n.scrollWidth <= n.clientWidth + 1 && nb.right <= st.right + 1 && x.scrollWidth <= x.clientWidth + 1, fs: parseFloat(getComputedStyle(n).fontSize) });
       }
@@ -375,7 +401,7 @@ const boot = async (opts = {}) => {
     await clearToasts();
     const s0 = await song();
     await E(() => { const p = document.querySelector('[data-panel="jam"]'); p.scrollTop = p.scrollHeight; });
-    await sleep(200);
+    await frames(page);
     await page.locator('.jm-tips button', { hasText: /^Show me$/ }).first().click();
     await page.waitForFunction(() => window.overdub.engine.meters.master.peak > -60, null, { timeout: 10000 }).catch(() => {});
     await sleep(600);
@@ -395,7 +421,7 @@ const boot = async (opts = {}) => {
     const rr = await run('show_on_fretboard', { label: 'Dm7 again', chord: 'Dm7', play: true });
     const shownDuring = await E(() => window.overdub.jam.state.shown?.label);
     await E(() => window.overdub.input.recorder.cancel());
-    await sleep(400);
+    await page.waitForFunction(() => window.overdub.input.recorder.state === 'idle', null, { timeout: 8000 }).catch(() => {});
     T.ok(rr.error === 'recording' && /show it without play/.test(rr.hint || '') && shownDuring === shownBefore, `with play, it's refused while the person records, and the neck is left as it was ("${rr.hint}")`);
   });
 
@@ -453,12 +479,12 @@ const boot = async (opts = {}) => {
     T.ok(on.mon && /^Monitoring on: you hear your guitar through .+, on Live guitar\./.test(on.note) && on.peak > -60, `Monitor on: the room says through what you hear your guitar ("${on.note.slice(0, 80)}"; Live guitar at ${on.peak} dBFS)`);
     // one tone for both guitars: the keys' Guitar and Live guitar, one step, both named
     const h0 = await E(() => window.overdub.store.history.length);
-    await page.click('#jm-view-rig'); await sleep(200);
+    await page.click('#jm-view-rig'); await frames(page);
     await page.click('.jm-tone-row .jm-flip:last-child');
     await sleep(700);
     const both = await E(() => { const o = window.overdub, g = o.jam.guitars(), last = o.store.history[o.store.history.length - 1], rig = o.jam.tone(); return { keys: g.keys.inserts.map((x) => x.device).join('>'), live: g.audio.inserts.map((x) => x.device).join('>'), rig: rig?.chain.map((x) => x.device).join('>'), label: last.label, n: o.store.history.length, thru: document.querySelector('.jm-thru').textContent }; });
     T.ok(both.keys === both.rig && both.live === both.rig && both.n === h0 + 1 && /^Guitar and Live guitar: /.test(both.label) && /on Guitar \(the keys\) and Live guitar \(your guitar\)/.test(both.thru), `a tone goes on both guitars, the keys' and yours, in one step ("${both.label}"), and the room says so ("${both.thru}")`);
-    await page.click('#jm-view-neck'); await sleep(200);
+    await page.click('#jm-view-neck'); await frames(page);
     // a new song with the input open and monitoring on: its guitar is there at once, armed and heard, and no toast
     const swap = async (go) => {
       await clearToasts();
@@ -473,7 +499,7 @@ const boot = async (opts = {}) => {
       });
     };
     const was = await E(() => window.overdub.jam.guitars().audio.inserts.map((x) => x.device).join('>'));
-    const funk = await swap(() => jamTrack('funk'));
+    const funk = await swap(() => jamTrack('funk', { hold: true }));
     T.ok(funk.auds === 1 && funk.name === 'Live guitar' && funk.arm && funk.mon && !funk.waiting && funk.peak > -60 && funk.chain === funk.keys && funk.toasts === 0, `a jam track opened with monitoring on: one Live guitar, armed, with the funk's tone, your guitar still heard through it (${funk.peak} dBFS), and no toast (${funk.toasts})`);
     T.ok(/^Monitoring on: you hear your guitar through .+, on Live guitar\./.test(funk.note) && funk.rec === 'R records your guitar onto Live guitar, from the playhead.', `the room names the track you hear and record through ("${funk.rec}")`);
     // Match the band, on the funk: five seconds of your guitar against the band; 3 dB over it, one step by you
@@ -488,13 +514,15 @@ const boot = async (opts = {}) => {
     T.ok(m1.h === m0.h + 1 && m1.by === 'you' && landed && m1.gain !== m0.gain && m1.gain <= 6 && undone === m0.gain, `Match the band measures your guitar against the band and puts it 3 dB over (or at the fader's top, or under the master's clip), one step by you ("${m1.label}": ${M.over} dB over, from ${m0.gain} dB)`);
     T.ok(M.tp <= -1 && (M.held ? /any louder and the master would clip/.test(M.line) : M.top ? /the top of its fader/.test(M.line) : /^Live guitar now sits 3 dB over the band, at [+−][\d.]+ dB\./.test(M.line)), `it says where your guitar landed, plainly, and the master stays clean (${M.tp} dBTP): "${(M.line || '').slice(0, 90)}"`);
     // the next song: its guitar placed from those five seconds, not carried over as a number
-    const hal = await swap(() => openDemo('halation'));
+    const hal = await swap(() => openDemo('halation', { hold: true }));
     const placed = await E(() => window.overdub.jam.place());
     T.ok(hal.auds === 1 && hal.arm && hal.mon && hal.peak > -60 && hal.chain === funk.chain && hal.chain !== was && hal.toasts === 0 && Math.abs(hal.gain - placed.gain) < 0.25 && placed.tp <= -1, `a demo with no guitar: its audio guitar ("${hal.name}") is made at once with the funk's tone and placed from your five seconds (${hal.gain} dB, ${placed.over} dB against the band; the master ${placed.tp} dBTP); no toast`);
     // the master stays clean with your guitar where the room puts it, measured on the two loudest demos
+    // (from here to the rig's Band level nothing measures the clock: the level renders start beside it, section 3)
+    startLevels();
     const clean = [], banded = [];
     for (const d of ['vacancy', 'red-eye']) {
-      await openDemo(d);
+      await openDemo(d, { hold: true });
       await levelled();
       clean.push({ d, ...(await E(() => window.overdub.jam.place({ ref: true }))) });
       banded.push({ d, ...(await E(() => window.overdub.jam.place({ ref: true, band: true }))) });
@@ -589,13 +617,13 @@ const boot = async (opts = {}) => {
   await step('small things', async () => {
     await jamTrack('blues');
     await E(() => window.overdub.transport.marker.set(52));
-    await sleep(500);
+    await frames(page);
     const chip = await E(() => document.querySelector('.jm-ask')?.textContent || '');
     T.ok(/^What scale works over Chorus 2\?$/.test(chip.trim()), `the agent chip names the section you're in, as it's written ("${chip.trim()}")`);
     await openDemo('dust-jacket');
     await clearToasts();
     await E(() => document.querySelector('.jm-neck-scroll').scrollIntoView({ block: 'center' }));
-    await sleep(200);
+    await frames(page);
     const xy = await E(() => { const n = window.overdub.jam.neck, cv = document.querySelector('.jm-neck-cv').getBoundingClientRect(), a = n.at(3, 2); return { x: cv.left + a.x, y: cv.top + a.y }; });
     await page.mouse.click(xy.x, xy.y);
     await sleep(300);
@@ -619,7 +647,7 @@ const boot = async (opts = {}) => {
     const same = () => E(() => ({ rows: [...document.querySelectorAll('.jm-tips li')].every((x, i) => x.__mark === i + 1), text: document.querySelector('.jm-tips').textContent === window.__tipText }));
     // Show doesn't rebuild the list under the button
     await E(() => window.overdub.transport.marker.set(4));
-    await sleep(300);
+    await frames(page);
     await mark();
     await E(() => [...document.querySelectorAll('.jm-tips button')].find((b) => b.textContent === 'Show').click());
     await sleep(300);
@@ -627,7 +655,7 @@ const boot = async (opts = {}) => {
     T.ok(shown.rows && shown.text, 'Show puts a tip on the neck without rebuilding the list under it');
     // the pointer over them holds them through a chord change; let go, they catch up
     await E(() => { window.overdub.transport.marker.set(14); document.querySelector('.jm-tips').scrollIntoView({ block: 'center' }); });
-    await sleep(400);
+    await frames(page);
     const box = await E(() => { const b = document.querySelector('.jm-tips li .what').getBoundingClientRect(); return { x: b.left + 30, y: b.top + 6 }; });
     await page.mouse.move(box.x, box.y);
     await mark();
@@ -649,6 +677,7 @@ const boot = async (opts = {}) => {
 }
 
 /* ============================================================================ 7. a phone */
+startLevels();   // (if the laptop's input step stopped before it started them)
 {
   const require = createRequire(import.meta.url);
   const tries = [process.env.PLAYWRIGHT_CORE, 'playwright-core', path.join(os.homedir(), 'Code/xenobotany/node_modules/playwright-core')].filter(Boolean);
@@ -697,7 +726,7 @@ const boot = async (opts = {}) => {
   T.ok(lay.neckW > lay.neckVis + 300, `phone: the neck scrolls sideways (${lay.neckW} px of neck in ${lay.neckVis})`);
   T.ok(lay.next.left >= lay.now.right - 1 && lay.next.top < lay.now.bottom && lay.next.bottom > lay.now.top, `phone: the stage is one line: the chord now, then the next and its count beside it (${Math.round(lay.now.right)} | ${Math.round(lay.next.left)} px)`);
   T.ok(lay.togs.every((x) => x >= 40), `phone: the neck's toggles are 40 px targets (${lay.togs.join(', ')})`);
-  const scrollTo = async (sel) => { await E((s) => document.querySelector(s)?.scrollIntoView({ block: 'center' }), sel); await sleep(200); };
+  const scrollTo = async (sel) => { await E((s) => document.querySelector(s)?.scrollIntoView({ block: 'center' }), sel); await frames(page); };
   const small = async () => E(() => {
     const out = new Set(), root = document.querySelector('[data-panel="jam"]');
     const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -726,7 +755,7 @@ const boot = async (opts = {}) => {
   await step('phone: a swipe on the neck', async () => {
     const cdp = await context.newCDPSession(page);
     await E(() => { const p = document.querySelector('[data-panel="jam"]'); p.scrollTop = 0; window.__notes = 0; window.overdub.input.on('note', () => { window.__notes++; }); });
-    await sleep(200);
+    await frames(page);
     const at = await E(() => { const b = document.querySelector('.jm-neck-cv').getBoundingClientRect(); return { x: Math.round(b.left + 160), y: Math.round(b.top + b.height / 2) }; });
     const swipe = async (dy) => {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at.x, y: at.y }] });
@@ -749,7 +778,7 @@ const boot = async (opts = {}) => {
   const tp = await E(() => { const o = window.overdub, g = o.jam.guitars().keys; return { keys: g?.name, dev: g?.instrument?.device, target: o.input.target()?.id === g?.id, heard: document.querySelector('.jm-heard').textContent }; });
   T.ok(tp.keys === 'Keys guitar' && tp.dev === 'core.guitar' && tp.target && /^You A: the root of Am7/.test(tp.heard), `phone: a tap on the neck (A, 2nd fret, G string) adds a guitar for the keys and plays it: "${tp.heard}"`);
   await page.evaluate(() => { const p = document.querySelector('[data-panel="jam"]'); p.scrollTop = 0; });
-  await sleep(200);
+  await frames(page);
   await page.screenshot({ path: path.join(OUTDIR, 'jam-phone.png') });
   await scrollTo('.jm-tone');
   await page.screenshot({ path: path.join(OUTDIR, 'jam-phone-tone.png') });
@@ -791,7 +820,7 @@ const boot = async (opts = {}) => {
   // swipe from a pedal's knob scrolls (along the board, or the room), and a hold turns it
   await step('phone: the rig', async () => {
     await page.tap('#jm-view-rig'); await sleep(600);
-    await E(() => { document.querySelector('[data-panel="jam"]').scrollTop = 0; }); await sleep(200);
+    await E(() => { document.querySelector('[data-panel="jam"]').scrollTop = 0; }); await frames(page);
     const r = await E(() => {
       const b = (sel) => document.querySelector(sel).getBoundingClientRect(), board = document.querySelector('.jm-board');
       return { ampBottom: Math.round(b('.jm-amp-face').bottom), ampW: Math.round(b('.jm-amp-face').width), boardTop: Math.round(b('.jm-board').top), vw: innerWidth, doc: document.documentElement.scrollWidth,
@@ -817,7 +846,7 @@ const boot = async (opts = {}) => {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       await sleep(450);
     };
-    const knob = async () => { await E(() => { const d = document.querySelector('.jm-board .jm-fx .kn-dial'); d.scrollIntoView({ block: 'center', inline: 'nearest' }); }); await sleep(250); return E(() => { const d = document.querySelector('.jm-board .jm-fx .kn-dial'), b = d.getBoundingClientRect(), o = window.overdub; return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), kv: d.closest('.kn').style.getPropertyValue('--kv'), sl: document.querySelector('.jm-board').scrollLeft, st: document.querySelector('[data-panel="jam"]').scrollTop, h: o.store.history.length }; }); };
+    const knob = async () => { await E(() => { const d = document.querySelector('.jm-board .jm-fx .kn-dial'); d.scrollIntoView({ block: 'center', inline: 'nearest' }); }); await frames(page); return E(() => { const d = document.querySelector('.jm-board .jm-fx .kn-dial'), b = d.getBoundingClientRect(), o = window.overdub; return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), kv: d.closest('.kn').style.getPropertyValue('--kv'), sl: document.querySelector('.jm-board').scrollLeft, st: document.querySelector('[data-panel="jam"]').scrollTop, h: o.store.history.length }; }); };
     const line = (x0, y0, x1, y1, n = 12) => Array.from({ length: n + 1 }, (_, i) => ({ x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * i) / n }));
     await E(() => { document.querySelector('.jm-board').scrollLeft = 0; });
     const k0 = await knob();
@@ -838,7 +867,7 @@ const boot = async (opts = {}) => {
   });
   await step('phone: the picker', async () => {
     await E(() => { document.querySelector('[data-panel="jam"]').scrollTop = 0; });
-    await sleep(200);
+    await frames(page);
     await page.tap('.jm-new');
     await sleep(400);
     await E(() => { const d = document.querySelector('.jm-pop details.jm-make'); if (d) d.open = true; });
@@ -866,7 +895,7 @@ const boot = async (opts = {}) => {
     await page.setViewportSize({ width: 844, height: 390 });
     await sleep(1200);
     await E(() => { document.querySelector('[data-panel="jam"]').scrollTop = 0; });
-    await sleep(300);
+    await frames(page);
     const side = await E(() => { const g = window.overdub.jam.neck.geometry, n = document.querySelector('.jm-neck-scroll').getBoundingClientRect(), c = document.querySelector('.jm-now-name').getBoundingClientRect(), s = document.querySelector('.ew-region-bottom').getBoundingClientRect(); return { phone: g.phone, gap: g.gap, chordTop: Math.round(c.top), neckTop: Math.round(n.top), neckBottom: Math.round(n.bottom), sheetTop: Math.round(s.top) }; });
     await page.screenshot({ path: path.join(OUTDIR, 'jam-phone-side.png') });
     T.ok(side.phone && side.chordTop >= 0 && side.neckTop >= side.chordTop && side.neckBottom <= side.sheetTop, `phone on its side: the neck is a phone's (strings ${side.gap} px apart, frets a finger wide) and the chord and the whole neck are on screen together (the neck to ${side.neckBottom} px, the sheet from ${side.sheetTop})`);
@@ -900,7 +929,7 @@ const boot = async (opts = {}) => {
     });
     T.ok(a.full && a.w >= 560 && a.dial >= 38 && a.n >= 5 && a.sel === 'true' && a.saved === 'rig', `the Rig tab draws the amp at its full face, ${a.w} px wide in a ${a.room} px room, its ${a.n} knobs ${a.dial} px across (on the board they were drawn at 0.62)`);
     T.ok(!a.stage && !a.neck && a.mini === a.now && /^Cab & mics.+(, measured|cab.+mic)/.test(a.cab), `the stage and the neck step aside for it, the chord now stays in the tabs' row ("${a.mini}"), and the amp's cab and mics are named under it ("${a.cab.slice(0, 64)}")`);
-    await page.click('.jm-cab-btn'); await sleep(200);
+    await page.click('.jm-cab-btn'); await frames(page);
     const c = await E(() => ({ open: document.querySelector('.jm-cab-btn').getAttribute('aria-expanded'), n: [...document.querySelectorAll('#jm-cab .kn-dial, #jm-cab select')].filter((x) => x.getClientRects().length).length, under: document.querySelector('#jm-cab').getBoundingClientRect().top >= document.querySelector('.jm-amp-face .amp').getBoundingClientRect().bottom - 1 }));
     // a measured cab (a guitar amp's default): the CAB menu and the line that says the mic is in the measurement, no
     // mic control to turn; a designed cab picked there brings the mics back, one step by you; undone, they step aside
@@ -913,13 +942,13 @@ const boot = async (opts = {}) => {
     const m0 = await strip();
     await page.locator('.jm-amp-face').screenshot({ path: path.join(OUTDIR, 'jam-cab-measured.png') });
     await E(() => { const sel = [...document.querySelectorAll('#jm-cab select')].find((x) => [...x.options].some((o) => o.text === '4x12 Modern')); sel.value = String([...sel.options].findIndex((o) => o.text === '4x12 Modern')); sel.dispatchEvent(new Event('change')); });
-    await sleep(250);
+    await frames(page);
     const m1 = await strip(), h1 = await hist();
     await page.locator('.jm-amp-face').screenshot({ path: path.join(OUTDIR, 'jam-cab-designed.png') });
     await E(() => window.overdub.store.undo());
-    await sleep(250);
+    await frames(page);
     const m2 = await strip();
-    await page.click('.jm-cab-btn'); await sleep(150);
+    await page.click('.jm-cab-btn'); await frames(page);
     T.ok(c.open === 'true' && c.n >= 1 && c.under, `Adjust opens the cab and mics strip under the amp (${c.n} controls); again, it folds back to its line`);
     T.ok(m0.measured && m0.controls === 1 && m0.note && /, measured$/.test(m0.line) && !m1.measured && m1.controls >= 5 && !m1.note && m1.cab === '4x12 Modern' && h1.by === 'you' && m2.measured && m2.controls === 1 && m2.note,
       `on a measured cab (${m0.cab}) the strip has the CAB menu and the line about the mic, no dead mic control (${m0.controls} control); on the designed 4x12 Modern the mics are back (${m1.controls} controls, one step by you: ${h1.label}); undone, they step aside again (${m2.controls})`);
@@ -929,7 +958,7 @@ const boot = async (opts = {}) => {
     await page.setViewportSize({ width: w, height: hh });
     await sleep(600);
     await E(() => { document.querySelector('[data-panel="jam"]').scrollTop = 0; });
-    await sleep(200);
+    await frames(page);
     const f = await E(() => {
       const vh = innerHeight, room = document.querySelector('[data-panel="jam"]').getBoundingClientRect(), bd = document.querySelector('.jm-board').getBoundingClientRect();
       const inView = (el) => { const b = el.getBoundingClientRect(); return b.width > 0 && b.top >= room.top - 1 && b.bottom <= vh + 1 && b.left >= room.left - 1 && b.right <= room.right + 1; };
@@ -1004,6 +1033,9 @@ const boot = async (opts = {}) => {
     for (let i = 0; i < 4; i++) { await E(() => window.overdub.store.undo()); back.push((await pair())[0]); }
     T.ok(back[0] === p3[0] && back[1] === p2[0] && back[2] === p1[0] && back[3] === p0[0], 'each of them is one undo step: the drag, the move, the take-off, the add, back in turn');
   });
+
+  // (the level renders, section 3: done before anything here measures the clock again)
+  if (levelsRun) await levelsCheck(levelsRun);
 
   await step('the Band level', async () => {
     // a band track's meter while the song plays, at 0 dB and at the Band's -12; the keys guitar's while it plays alone

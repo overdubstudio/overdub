@@ -15,6 +15,8 @@
 // meters while the song plays, each band's held or lifted readout, an agent's change flashes, the keys, the screen
 // reader's words, the phone sheet); adjust on it; no page errors.
 //   node tools/multiband-test.js        screenshots: tools/.out/multiband-*.png
+import { availableParallelism } from 'node:os';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { open, tally } from './pw.js';
 import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
 import { kernelSpecs } from '../app/src/kernel/host.js';
@@ -31,6 +33,8 @@ import { renderSong } from '../app/src/engine/node/render.js';
 import { createProject } from '../app/src/core/project.js';
 import * as GR from '../app/src/core/grooves.js';
 
+// (in a measuring worker, below, this file says nothing: it only answers what it is asked)
+if (!isMainThread) console.log = () => {};
 const T = tally('multiband');
 const ok = T.ok;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -112,16 +116,46 @@ function part(device, params, notes, beats, tempo) {
   return { sr: r.sr, channels: r.channels };
 }
 const pop = () => { const v = GR.groovesFor('pop', 'verse')[0], c = GR.groovesFor('pop', 'chorus')[0]; return [...GR.realize(v.id, { tempo: 124, seed: 1, length: 16, articulations: true }), ...GR.realize(c.id, { tempo: 124, seed: 2, length: 16, articulations: true }).map((n) => ({ ...n, t: n.t + 16 }))]; };
-const KITS = {
+const KITS = isMainThread ? {
   'Studio A': part('core.drumroom', {}, TS.drumPhrase(), TS.DRUM_PHRASE_BEATS, 120),
   'Gobo Kit': part('core.drums', {}, TS.drumPhrase(), TS.DRUM_PHRASE_BEATS, 120),
   'Studio A, Pop': part('core.drumroom', { mix_oh: -6.4, mix_room: -8.1, mix_crush: -23 }, pop(), 32, 124),
-};
+} : workerData.KITS;   // (a measuring worker is handed the same renders)
 const DRUMS = { drums: SIG.drums, ...KITS };   // (the drum loop, then the kits)
 const ALL = { ...SIG, ...KITS };
 const IN = new Map(Object.entries(ALL).map(([k, s]) => [k, { lu: lufs(s), crest: crest(s), tp: truePeak(s) }]));
-// one setting on one signal: its LU against the input, its crest's change, its true peak
-const versus = (params, k) => { const o = through(params, ALL[k]), i = IN.get(k); return { lu: lufs(o) - i.lu, crest: crest(o) - i.crest, tp: truePeak(o) }; };
+// one setting on one signal: its LU against the input, its crest's change, its true peak. Kept by its params' values,
+// as a render through a fresh core is the same every time (renders repeat, below): the ceiling's sweep and the presets'
+// block measure each preset on each signal once between them, not twice
+const measured = new Map();
+const versus = (params, k) => {
+  const key = JSON.stringify(params) + ' on ' + k;
+  if (!measured.has(key)) { const o = through(params, ALL[k]), i = IN.get(k); measured.set(key, { lu: lufs(o) - i.lu, crest: crest(o) - i.crest, tp: truePeak(o) }); }
+  return measured.get(key);
+};
+// The defaults, the ceiling's sweep and the presets' block are 84 of these, seconds of renders one after another. They are measured
+// first, at once, in worker threads that load this same file (so the same render, kernel and measures run on the same
+// signals) and answer versus(params, k) for each they are sent; the blocks then read what they found
+if (!isMainThread) {
+  parentPort.on('message', ({ params, k }) => parentPort.postMessage(versus(params, k)));
+  await new Promise(() => {});   // (a worker stops here, and answers until it is let go)
+}
+async function measureAtOnce(settings) {
+  const jobs = settings.flatMap((params) => Object.keys(ALL).map((k) => ({ params, k })));
+  const n = Math.max(1, Math.min(6, availableParallelism() - 2, jobs.length));
+  const workers = Array.from({ length: n }, () => new Worker(new URL(import.meta.url), { workerData: { KITS } }));
+  try {
+    await Promise.all(workers.map((w, i) => new Promise((resolve, reject) => {
+      const mine = jobs.filter((_, j) => j % n === i);
+      let got = 0;
+      w.on('message', (v) => { const { params, k } = mine[got++]; measured.set(JSON.stringify(params) + ' on ' + k, v); if (got === mine.length) resolve(); });
+      w.on('error', reject);
+      w.on('exit', (code) => { if (got < mine.length) reject(new Error('a measuring worker exited ' + code)); });
+      for (const job of mine) w.postMessage(job);
+    })));
+  } finally { await Promise.all(workers.map((w) => w.terminate())); }
+}
+await measureAtOnce([{}, ...def.presets.map((p) => p.params), { depth: 0 }, { depth: 50 }, { depth: 100 }]).catch((e) => T.note('measured one at a time instead: ' + (e && e.message)));
 
 block('\nat its defaults', () => {
   const rows = Object.keys(ALL).map((k) => [k, versus({}, k)]);
@@ -245,7 +279,7 @@ block('\nnothing goes over -1 dBTP, at any setting', () => {
   // every preset, and the defaults at depth 0, 50 and 100, on the house's signals and the drum parts
   const settings = [...def.presets.map((p) => [p.name, p.params]), ['depth 0', { depth: 0 }], ['depth 50', { depth: 50 }], ['depth 100', { depth: 100 }]];
   const rows = [];
-  for (const [name, p] of settings) for (const k of Object.keys(ALL)) rows.push([name, k, truePeak(through(p, ALL[k]))]);
+  for (const [name, p] of settings) for (const k of Object.keys(ALL)) rows.push([name, k, versus(p, k).tp]);
   const worst = rows.reduce((a, b) => (b[2] > a[2] ? b : a)), over = rows.filter((r) => r[2] > -1);
   ok(worst[2] <= -1, `every preset and depth 0, 50 and 100 on the strum, the drum loop, the program, the bass, Studio A, Gobo Kit and the Pop groove (${rows.length} renders): the loudest is ${worst[2].toFixed(2)} dBTP (${worst[0]} on ${worst[1]})${over.length ? `; over: ${over.slice(0, 4).map((r) => `${r[0]} on ${r[1]} ${r[2].toFixed(2)}`).join(', ')}` : ''}`);
   // pushed: the program 12 dB hotter, through Full depth and through depth 0, with the output 12 dB up; the ceiling

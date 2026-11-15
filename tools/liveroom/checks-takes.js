@@ -37,7 +37,6 @@ export async function run(T, ctx) {
   const shot = (_s, n) => page.screenshot({ path: path.join(ctx.out, `gr-takes-${n}.png`) });
   const waitFor = (fn, arg, ms = 30000) => page.waitForFunction(fn, arg, { timeout: ms, polling: 30 });
   const settle = (ms = 80) => page.evaluate((ms) => new Promise((r) => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), ms)), ms);
-  const beat = () => E(() => window.overdub.engine.beat);
   // the room's state as the checks read it
   const READ = () => E(() => {
     const o = window.overdub, R = document.querySelector('.gr').__gr, L = o.ui.state.liveRoom, p = o.store.get();
@@ -149,8 +148,11 @@ export async function run(T, ctx) {
     const ag = await READ();
     T.ok((await E(() => window.__tk.counts.length)) === nCounts + 1 && !ag.L.length && !ag.sections.length && ag.over, `R in review is Again: the take out and a new count (${ag.run})`);
     await waitFor(() => window.overdub.ui.state.liveRoom.run === 'take', null, 20000);
-    const b1 = await beat();
-    await waitFor((b) => window.overdub.engine.beat >= b, b1 + 8, 30000);
+    // (Space a sixteenth past two bars from where the take starts: a take is placed by where it sounds, a few ms short of
+    // when Space came, and Space right on the bar line made a take a hair short of two bars, a part of one bar, as often
+    // as not; the other side below needs the part's two bars)
+    const b1 = await E(() => window.__tk.takes.at(-1)?.from ?? 0);
+    await waitFor((b) => window.overdub.engine.beat >= b, b1 + 8.25, 30000);
     await press(page, 'Space');
     await waitFor(() => window.overdub.ui.state.liveRoom.gr.overlay === 'review', null, 20000);
     // the out handle dragged back with the pointer (it keeps focus), then Keep with Enter on it: a focused handle

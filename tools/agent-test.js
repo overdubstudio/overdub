@@ -15,6 +15,8 @@ const t = tally('agent');
 const realErrors = (errs) => errs.filter((e) => !/Failed to load resource|favicon|fonts\.g/.test(e));
 const ready = (page) => page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
 const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => window.overdub.tools.run(n, i, { by: b }), [name, input, by]);
+// wait for the state a check reads (a frame drawn, a store change) instead of a fixed sleep; the check itself still decides
+const waitFor = (page, fn, arg, ms = 5000) => page.waitForFunction(fn, arg, { timeout: ms }).catch(() => {});
 
 /* ------------------------------------------------------------------ 1. tools, cards, history (no key) */
 {
@@ -29,7 +31,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const firstLook = await page.evaluate(() => { const k = document.querySelector('.ag-keycard'); return k ? { first: k.classList.contains('ag-kc-firstlook'), text: k.textContent, key: !!k.querySelector('input'), models: !!k.querySelector('.ag-models'), own: !!k.querySelector('.ag-kc-ownbtn') } : null; });
   t.ok(firstLook && firstLook.first && firstLook.own && !firstLook.key && !firstLook.models && /Try the demo agent/.test(firstLook.text) && !/localStorage|API key|Opus|Sonnet|Haiku|MCP/.test(firstLook.text), `the first look is the demo agent, the setup folded behind "Use your own Claude" (${firstLook && firstLook.text.slice(0, 160)})`);
   await page.click('.ag-kc-ownbtn');
-  await page.waitForTimeout(100);
+  await waitFor(page, () => document.activeElement?.closest?.('.ag-keycard') && document.activeElement.tagName === 'H3');
   // the in-browser key is gone: no field to paste one into, and with nothing here that uses a model, no model list
   t.ok(await page.evaluate(() => !!document.querySelector('.ag-keycard.ag-kc-firstlook') === false && !document.querySelector('.ag-keycard input, #ag-keyin') && !document.querySelector('.ag-keycard .ag-models') && document.activeElement?.closest?.('.ag-keycard') && document.activeElement.tagName === 'H3'), '"Use your own Claude" opens the setup, focus on its heading: no key field, and no model list with neither Claude Code nor a server key here');
   const card = await page.evaluate(() => {
@@ -59,7 +61,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     await ready(pub);
     await pub.waitForTimeout(600);
     await pub.click('.ag-kc-ownbtn');
-    await pub.waitForTimeout(100);
+    await waitFor(pub, () => document.activeElement?.closest?.('.ag-keycard') && document.activeElement.tagName === 'H3');
     const pc = await pub.evaluate(() => {
       const k = document.querySelector('.ag-keycard');
       const a = k?.querySelector('.ag-cc-off a');
@@ -213,12 +215,12 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const box = await hold.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.waitForTimeout(150);
+  await waitFor(page, () => !!document.querySelector('.ag-take.on .ag-hold'));
   const during = await page.evaluate(() => { const h = window.overdub.store.history; return { n: h.length, on: !!document.querySelector('.ag-take.on'), notes: window.overdub.store.get().tracks.find((x) => x.name === 'Bass').clips[0].notes.length }; });
   const hearing = await page.evaluate(() => { const b = document.querySelector('.ag-take.on .ag-hold'); return b ? [...b.querySelectorAll('span')].filter((x) => getComputedStyle(x).display !== 'none').map((x) => x.textContent).join('') : ''; });
   t.ok(/^Hearing [A-D]$/.test(hearing), `while held, the button says what you're hearing ("${hearing}")`);
   await page.mouse.up();
-  await page.waitForTimeout(150);
+  await waitFor(page, () => !document.querySelector('.ag-take.on'));
   const afterHold = await page.evaluate(() => ({ n: window.overdub.store.history.length, redo: window.overdub.store.redoable.length, notes: window.overdub.store.get().tracks.find((x) => x.name === 'Bass').clips[0].notes.length }));
   t.ok(during.on && during.n === histLen0 && afterHold.notes === during.notes - 1, 'holding a card previews that take (in the song, not in History)');
   t.ok(afterHold.n === histLen0 && afterHold.redo === 0 && afterHold.notes === during.notes - 1, 'letting go takes it back, leaving no history or redo behind');
@@ -262,7 +264,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   // the feed patches entries in place: a second tool call adds a chip to the same entry, nothing is re-inserted
   await page.evaluate(() => { window.overdub.ui.setOpen('right', true); window.overdub.ui.show('agent'); });
   await run(page, 'apply_ops', { label: 'feed one', ops: [{ type: 'track.set', track: 'Keys', patch: { gain: -7 } }] }, 'mcp:feedtest');
-  await page.waitForTimeout(120);
+  await waitFor(page, () => !!document.querySelector('.ag-activity[data-by="mcp:feedtest"] .ag-chip'));
   await page.evaluate(() => {
     const en = document.querySelector('.ag-activity[data-by="mcp:feedtest"]');
     en.__mark = 1; en.querySelector('.ag-chip').__mark = 1;
@@ -283,7 +285,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await page.evaluate(() => window.overdub.ui.show('history'));
   await run(page, 'apply_ops', { label: 'probe nudge', ops: [{ type: 'track.set', track: 'Keys', patch: { gain: -5 } }] }, 'mcp:probe');
   await run(page, 'say', { text: 'Keys sit lower now.' }, 'mcp:probe');
-  await page.waitForTimeout(700);
+  await waitFor(page, () => /^probe: probe nudge; says “Keys sit lower now\.”\.$/.test(document.querySelector('.ew-announce')?.textContent || ''));
   const spoken = await page.evaluate(() => { const a = document.querySelector('.ew-announce'); return a && { text: a.textContent, role: a.getAttribute('role'), live: a.getAttribute('aria-live') }; });
   t.ok(spoken && spoken.role === 'status' && spoken.live === 'polite' && /^probe: probe nudge; says “Keys sit lower now\.”\.$/.test(spoken.text), 'with the Agent tab hidden, agent work is announced: ' + spoken?.text);
   await page.evaluate(() => window.overdub.ui.show('agent'));
@@ -302,7 +304,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 
   // say, from an outside agent
   await run(page, 'say', { text: 'Hi from **outside**: I nudged the bass.' }, 'mcp:claude-code');
-  await page.waitForTimeout(120);
+  await waitFor(page, () => [...document.querySelectorAll('.ag-agent[data-k="say"]')].some((e) => /Hi from outside/.test(e.textContent)));
   const said = await page.evaluate(() => [...document.querySelectorAll('.ag-agent[data-k="say"]')].map((e) => e.textContent).join(' '));
   t.ok(/Hi from outside/.test(said), 'say posts a message in the panel');
 
@@ -314,7 +316,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 
   // history panel + undo grains
   await page.evaluate(() => window.overdub.ui.show('history'));
-  await page.waitForTimeout(200);
+  await waitFor(page, () => document.querySelectorAll('.hi-row').length >= 5 && [...document.querySelectorAll('.hi-row.k-agent')].some((r) => /a soft bed under the chorus/.test(r.textContent)) && !!document.querySelector('.hi-actions') && !!document.querySelector('.hi-legend'));
   const rows = await page.evaluate(() => [...document.querySelectorAll('.hi-row')].map((r) => ({ k: r.className, t: r.textContent })));
   t.ok(rows.length >= 5 && rows.some((r) => /k-agent/.test(r.k) && /a soft bed under the chorus/.test(r.t)), `History shows ${rows.length} signed rows with reasons`);
   t.ok(await page.evaluate(() => /Revert all Claude/.test(document.querySelector('.hi-actions')?.textContent || '')), 'History offers "Revert all Claude\'s changes (keep mine)"');
@@ -329,7 +331,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   t.ok(r.ok && r.undid, 'undo takes back the agent\'s latest: ' + r.undid);
   const agentBefore = await page.evaluate(() => window.overdub.store.history.filter((x) => x.by === 'claude').map((x) => x.label).join(' | '));
   await page.click('.hi-revert');
-  await page.waitForTimeout(150);
+  await waitFor(page, () => !window.overdub.store.history.some((x) => x.by === 'claude'));
   const reverted = await page.evaluate(() => { const s = window.overdub.store; return { agentLeft: s.history.filter((x) => x.by === 'claude').length, mine: s.get().tracks[0].name, pad: s.get().tracks.some((x) => x.name === 'Pad') }; });
   t.ok(reverted.agentLeft === 0 && reverted.mine === 'My Drums' && !reverted.pad, 'Revert all removes every Claude change and keeps the human\'s rename');
   // FRESH-EYES-5 producer: a revert from History can be redone. ⌘⇧Z after Revert all puts Claude's changes back (my
@@ -338,20 +340,20 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const toasts = () => page.evaluate(() => [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' | '));
   await page.evaluate(() => document.activeElement?.blur());
   await page.keyboard.press('ControlOrMeta+Shift+KeyZ');
-  await page.waitForTimeout(150);
+  await waitFor(page, () => window.overdub.store.get().tracks.some((x) => x.name === 'Pad'));
   const redone = await page.evaluate(() => { const s = window.overdub.store; return { agent: s.history.filter((x) => x.by === 'claude').map((x) => x.label).join(' | '), mine: s.get().tracks[0].name, pad: s.get().tracks.some((x) => x.name === 'Pad') }; });
   t.ok(agentBefore && redone.agent === agentBefore && redone.pad && redone.mine === 'My Drums' && !/nothing to redo/.test(await toasts()), `⌘⇧Z after Revert all puts Claude's changes back and keeps my rename (${redone.agent})`);
   await page.evaluate(() => window.overdub.store.dispatch({ type: 'track.set', track: window.overdub.store.get().tracks[0].id, patch: { gain: -3 } }, { by: 'you', label: 'drums down' }));
-  await page.waitForTimeout(150);
+  await waitFor(page, () => [...document.querySelectorAll('.hi-row')].some((r) => /drums down/.test(r.textContent)));
   const claudeRow = page.locator('.hi-row.k-agent').first();
   const undoneLabel = await claudeRow.locator('.hi-label').evaluate((x) => x.firstChild?.textContent || '');
   await claudeRow.hover();
   await claudeRow.locator('.hi-undo').click();
-  await page.waitForTimeout(150);
+  await waitFor(page, () => [...document.querySelectorAll('.ew-toast')].some((x) => /Undid/.test(x.textContent)));
   const one = await page.evaluate(() => { const s = window.overdub.store; return { n: s.history.filter((x) => x.by === 'claude').length, gain: s.get().tracks[0].gain, redo: s.canRedo() }; });
   const undoToast = await toasts();
   await page.keyboard.press('ControlOrMeta+Shift+KeyZ');
-  await page.waitForTimeout(150);
+  await waitFor(page, (n) => window.overdub.store.history.filter((x) => x.by === 'claude').length === n, one.n + 1);
   const two = await page.evaluate(() => { const s = window.overdub.store; return { n: s.history.filter((x) => x.by === 'claude').length, gain: s.get().tracks[0].gain, last: s.history[s.history.length - 1].label }; });
   t.ok(one.n === redone.agent.split(' | ').length - 1 && one.gain === -3 && one.redo && /Undid/.test(undoToast) && /Redo/.test(undoToast) && two.n === one.n + 1 && two.gain === -3 && two.last === undoneLabel && !/nothing to redo/.test(await toasts()),
     `Undo on Claude's line keeps my later edit, and ⌘⇧Z redoes it ("${undoneLabel}": ${redone.agent.split(' | ').length} → ${one.n} → ${two.n} of Claude's changes; my −3 dB stays; toast "${undoToast.slice(0, 80)}")`);
@@ -388,7 +390,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   // your own Claude is the other half of the choice: the setup opens when asked for, and the words stay put
   if (held.own) {
     await page.click('.ag-held-own');
-    await page.waitForTimeout(150);
+    await waitFor(page, () => document.activeElement?.closest?.('.ag-keycard') && document.activeElement.tagName === 'H3');
     const own = await page.evaluate(() => ({ head: !!document.activeElement?.closest?.('.ag-keycard') && document.activeElement.tagName === 'H3', field: !!document.querySelector('.ag-keycard input'), box: document.querySelector('.ag-input').value, still: !document.querySelector('.ag-held')?.hidden }));
     t.ok(own.head && !own.field && own.box === ASK && own.still, `"Use your own Claude" opens the setup (no key field), focus on its heading, the message still in the box and the choice still there (${JSON.stringify(own)})`);
   } else t.ok(false, '"Use your own Claude" beside the demo agent for a typed message (there is no choice under the box)');
@@ -501,7 +503,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await page.evaluate(() => window.overdub.ui.emit('agent:compose', { text: 'Write a counter-melody for the hook' }));
   t.ok(await page.evaluate(() => document.querySelector('.ag-input').value === 'Write a counter-melody for the hook'), "ui 'agent:compose' prefills the input");
   await page.evaluate(() => { document.querySelector('.ag-input').value = ''; window.overdub.ui.setOpen('right', false); window.overdub.presence.status('rendering the chorus', 'claude'); });
-  await page.waitForTimeout(100);
+  await waitFor(page, () => { const p = document.querySelector('.ew-presence-pill'); return p && !p.hidden && /rendering the chorus/.test(p.textContent); });
   t.ok(await page.evaluate(() => { const p = document.querySelector('.ew-presence-pill'); return p && !p.hidden && /rendering the chorus/.test(p.textContent); }), 'with the agent pane closed, a presence pill says what the agent is doing');
   await shot('agent-pill');
   await page.evaluate(() => { window.overdub.presence.status('', 'claude'); window.overdub.ui.setOpen('right', true); });
@@ -760,8 +762,10 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const state = () => page.evaluate(() => { const o = window.overdub; return { h: o.store.history.length, r: o.tools.requests.size, song: JSON.stringify(o.store.get().tracks.map((t) => t.clips.map((c) => [c.id, c.start, c.length, c.notes?.length]))) }; });
   const ask = async (text, { keep = false } = {}) => {
     const s0 = await state();
+    const n = await page.evaluate(() => document.querySelectorAll('.ag-user').length);
     await page.click('.ag-input'); await page.keyboard.type(text); await page.keyboard.press('Enter');
-    await page.waitForTimeout(200);
+    // (busy is on before your message is drawn: once it's there, the loop below can tell a turn from none)
+    await waitFor(page, (k) => document.querySelectorAll('.ag-user').length > k, n);
     // the takes it offers, read before they're let go
     for (let i = 0; i < 300; i++) { if (await page.evaluate(() => !window.overdub.agent.busy || [...window.overdub.tools.requests.values()].some((r) => r.status === 'pending'))) break; await page.waitForTimeout(50); }
     const cards = await page.evaluate(() => { const r = [...window.overdub.tools.requests.values()].find((x) => x.status === 'pending'); return r ? r.cards.filter((c) => !c.original).map((c) => ({ label: c.label, ops: c.ops })) : null; });
@@ -877,9 +881,12 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       shown: sh ? { label: sh.label, by: sh.by, n: sh.places.length, frets: sh.frets || [], line: !!sh.line } : null, edits: o.store.history.length, tracks: o.store.get().tracks.length, title: o.store.get().title };
   });
   const clickChip = async (re) => { const i = (await chips()).findIndex((c) => re.test(c)); if (i < 0) return false; await page.locator('.jm-ask').nth(i).click(); return true; };
-  const askChip = async (re) => { const ok = await clickChip(re); await page.waitForTimeout(150); await idle(); return ok ? turn() : null; };
+  // (a send puts the agent to work before your message is drawn: once it's on screen, idle() waits out the turn)
+  const users = () => page.evaluate(() => document.querySelectorAll('.ag-user').length);
+  const sent = (n) => waitFor(page, (k) => document.querySelectorAll('.ag-user').length > k, n);
+  const askChip = async (re) => { const n = await users(); const ok = await clickChip(re); if (ok) await sent(n); else await page.waitForTimeout(150); await idle(); return ok ? turn() : null; };
   const askCard = async (re) => { await clickChip(re); await page.waitForSelector('.ag-q', { timeout: 15000 }).catch(() => {}); await page.waitForTimeout(300); return turn(); };
-  const typed = async (text) => { await page.evaluate((x) => window.overdub.ui.emit('agent:compose', { text: x, send: true }), text); await page.waitForTimeout(150); await idle(); return turn(); };
+  const typed = async (text) => { const n = await users(); await page.evaluate((x) => window.overdub.ui.emit('agent:compose', { text: x, send: true }), text); await sent(n); await idle(); return turn(); };
   const chain = () => page.evaluate(() => JSON.stringify(window.overdub.store.get().tracks.find((x) => x.name === 'Guitar')?.inserts.map((x) => x.device)));
   const c0 = await chips();
   t.ok(c0.join(' · ') === 'What scale works over Verse? · Show me a lick into the Fmaj7 at bar 2 · What tone would suit this song? · Make me a slow blues in E', `fresh6: on Night Shift the Jam room asks its four questions (${c0.join(' · ')})`);
@@ -1005,7 +1012,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     o.presence.join('mcp:supercali', { name: 'Supercalifragilisticexpialidocious', source: 'mcp' });
     await o.tools.run('say', { text: 'Here too.' }, { by: 'mcp:supercali' });
   });
-  await page.waitForTimeout(300);
+  await waitFor(page, () => [...document.querySelectorAll('.ag-feed .ag-msg')].filter((m) => /Claude Code|Supercali/.test(m.querySelector('.ag-spk')?.textContent || '')).length >= 3);
   const margin = () => page.evaluate(() => [...document.querySelectorAll('.ag-feed .ag-msg')].filter((m) => /Claude Code|Supercali/.test(m.querySelector('.ag-spk')?.textContent || '')).map((m) => { const s = m.querySelector('.ag-spk .by').getBoundingClientRect(), b = m.querySelector('.ag-body').getBoundingClientRect(); return { name: m.querySelector('.ag-spk .by').textContent.slice(0, 12), right: Math.round(s.right), body: Math.round(b.left), w: Math.round(s.width) }; }));
   const m1 = await margin();
   t.ok(m1.length >= 3 && m1.some((x) => /^Supercali/.test(x.name)) && m1.every((x) => x.w > 0 && x.right <= x.body), `fresh6: "Claude Code" and a long one-word name stay in the speaker's margin, clear of the message (${JSON.stringify(m1)})`);
@@ -1013,7 +1020,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   // chips and cards in words: an effect by its name, a param by its label and unit
   const ap = await page.evaluate(() => window.overdub.tools.run('apply_ops', { label: 'pump the bass', ops: [{ type: 'insert.add', track: 'Bass', insert: { device: 'core.shaper' } }] }, { by: 'mcp:claude-code' }));
   const pv = await page.evaluate(() => window.overdub.tools.run('propose_variations', { title: 'a gate on the keys', variations: [{ label: 'tight', ops: [{ type: 'insert.add', track: 'Keys', insert: { device: 'pedal.gate', params: { th: -80 } } }] }, { label: 'loose', ops: [{ type: 'insert.add', track: 'Keys', insert: { device: 'pedal.gate', params: { th: -40 } } }] }], wait_seconds: 0 }, { by: 'mcp:claude-code' }));
-  await page.waitForTimeout(300);
+  await waitFor(page, (id) => [...document.querySelectorAll('.ag-chip')].some((c) => /\+Scribble Strip/.test(c.textContent)) && !!document.querySelector(`.ag-vars[data-id="${id}"] .ag-take-diff`), pv.id);
   const words = await page.evaluate((id) => ({ chips: [...document.querySelectorAll('.ag-chip')].map((c) => c.textContent).filter((x) => /Scribble|shaper/.test(x)), card: [...document.querySelectorAll(`.ag-vars[data-id="${id}"] .ag-take-diff`)].map((x) => x.textContent) }), pv.id);
   await page.evaluate((id) => window.overdub.tools.answer(id, -1), pv.id);
   t.ok(ap.summary === '+Scribble Strip · Bass' && words.chips.some((x) => /\+Scribble Strip/.test(x)) && words.card.includes('Keys: + Snapper, threshold -80 dB'), `fresh6: the chip says "+Scribble Strip", the take card "threshold -80 dB", not device ids and param keys (${ap.summary}; ${words.chips.join(' | ')}; ${words.card.join(' | ')})`);
@@ -1045,11 +1052,11 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await page.waitForTimeout(500);
   await page.evaluate(() => { window.overdub.welcome?.close?.(); window.overdub.ui.setOpen('right', true); window.overdub.ui.show('agent'); });
   const r = await run(page, 'apply_ops', { label: 'clear the bass', ops: [{ type: 'track.remove', track: 'Bass' }] });
-  await page.waitForTimeout(300);
+  await waitFor(page, (id) => !!document.querySelector(`.ag-asks[data-id="${id}"] .ag-asks-fine`)?.textContent, r.id);
   const fine = () => page.evaluate((id) => document.querySelector(`.ag-asks[data-id="${id}"] .ag-asks-fine`)?.textContent || '', r.id);
   const f0 = await fine();
   await page.evaluate(() => window.overdub.share.fork());
-  await page.waitForTimeout(400);
+  await waitFor(page, (id) => /The song is yours now/.test(document.querySelector(`.ag-asks[data-id="${id}"] .ag-asks-fine`)?.textContent || ''), r.id);
   const f1 = await fine();
   t.ok(r.offered && /came from a link, so this waits for you/.test(f0) && /The song is yours now, and this still waits for you\./.test(f1) && (await page.evaluate((id) => window.overdub.tools.requests.get(id)?.status, r.id)) === 'pending',
     `fresh6: a card asked while the song came from a link says, after Make it yours, that the song is yours and it still waits ("${f0}" → "${f1}")`);
@@ -1073,13 +1080,13 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   await page.reload({ waitUntil: 'load' });
   await ready(page);
   await page.evaluate(() => { window.overdub.welcome?.close?.(); window.overdub.ui.setOpen('right', true); window.overdub.ui.show('agent'); });
-  await page.waitForTimeout(400);
+  await waitFor(page, () => !!document.querySelector('.ag-note[data-action="retired"]'));
   const m1 = await page.evaluate(() => ({ key: localStorage.getItem('overdub:anthropic-key'), flag: localStorage.getItem('overdub:agent:key-retired'), note: document.querySelector('.ag-note[data-action="retired"]')?.textContent || '' }));
   t.ok(m1.key === null && m1.flag === '1' && /saved API key is deleted from this browser/.test(m1.note) && /revoke it in the Anthropic Console/.test(m1.note) && /Claude Code/.test(m1.note) && /demo agent/.test(m1.note) && /OVERDUB_ANTHROPIC_KEY/.test(m1.note) && !/free ways|Free ways/.test(m1.note) && !/sk-ant/.test(m1.note),
     `an old saved key is deleted on load, and the Agent panel says so once, with the ways to keep an agent, the server key among them; it stays until dismissed ("${m1.note.slice(0, 200)}…")`);
   await shot('agent-key-retired');
   await page.click('.ag-note[data-action="retired"] .ag-note-x');
-  await page.waitForTimeout(400);
+  await waitFor(page, () => !document.querySelector('.ag-note[data-action="retired"]'));
   const gone = await page.evaluate(() => !document.querySelector('.ag-note[data-action="retired"]') && localStorage.getItem('overdub:agent:key-retired') === null);
   await page.reload({ waitUntil: 'load' });
   await ready(page);
@@ -1307,7 +1314,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
       t.ok(sp.result.content.some((c) => c.type === 'image' && c.mimeType === 'image/png' && c.data.length > 1000), 'MCP returns the spectrogram as image content');
     }
     await rpc('tools/call', { name: 'say', arguments: { text: 'Added a counter-line on the chorus. Undo it in History if it clutters.' } });
-    await page.waitForTimeout(300);
+    await waitFor(page, () => /counter-line/.test(document.querySelector('.ag-agent[data-k="say"]')?.textContent || '') && [...document.querySelectorAll('.ag-pill')].some((p) => /Claude Code/.test(p.textContent)));
     const panel = await page.evaluate(() => ({ pills: [...document.querySelectorAll('.ag-pill')].map((p) => p.textContent), say: document.querySelector('.ag-agent[data-k="say"]')?.textContent || '', act: [...document.querySelectorAll('.ag-activity .ag-chip')].map((c) => c.textContent) }));
     t.ok(panel.pills.some((p) => /Claude Code/.test(p)), 'the MCP agent shows as a presence in the panel header: ' + panel.pills.join(' | '));
     t.ok(/counter-line/.test(panel.say) && panel.act.length >= 2, `its messages and tool activity are visible (${panel.act.join(' · ')})`);
@@ -1320,7 +1327,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   } catch (e) { t.ok(false, 'MCP end to end: ' + e.message); }
   mcp.stdin.end();
   await new Promise((r) => { mcp.on('close', r); setTimeout(r, 3000); });
-  await page.waitForTimeout(400);
+  await waitFor(page, () => !document.querySelector('.ag-pill.mcp'));
   t.ok(await page.evaluate(() => !document.querySelector('.ag-pill.mcp')), 'when the MCP client leaves, its presence goes');
   // no studio open: a clear error
   await close();
@@ -1478,7 +1485,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     const autos = pj.song.split('\n').filter((l) => /^\s+auto:/.test(l));
     t.ok(autos.length === 2 && autos.some((l) => /cutoff/.test(l) && /by claude/.test(l)), 'get_project lists the lanes under their tracks: ' + autos.map((l) => l.trim()).join(' | '));
     await page.evaluate(() => { window.overdub.ui.setOpen('right', true); window.overdub.ui.show('history'); });
-    await page.waitForTimeout(300);
+    await waitFor(page, () => document.querySelectorAll('.hi-row .hi-sum').length >= 2);
     const sums = await page.evaluate(() => [...document.querySelectorAll('.hi-row .hi-sum')].slice(0, 2).map((x) => x.textContent));
     t.ok(sums.some((x) => /wrote .*cutoff, bars 5–8: .*Hz → .*Hz/.test(x)) && sums.some((x) => /wrote level, bars 1–4: -60 dB → -3 dB/.test(x)), 'History describes lane edits in words: ' + sums.join(' | '));
     await shot('agent-history-lanes');
@@ -1550,10 +1557,10 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   const o = await open('/app/', { query: 'new' });
   await ready(o.page);
   const mine = await run(o.page, 'define_device', { device: { id: 'bell-glass', name: 'Bell Glass', kind: 'effect', cat: 'utility', kernel: BELL }, use_on: { track: 'master' } }, 'mcp:dogfood');
-  await o.page.waitForTimeout(900);   // (autosave)
+  await waitFor(o.page, () => (localStorage.getItem('overdub:project') || '').includes('dogfood.bell-glass'));   // (autosave)
   await o.page.reload();
   await ready(o.page);
-  await o.page.waitForTimeout(300);
+  await waitFor(o.page, () => !!window.overdub.devices.getDevice('dogfood.bell-glass') || !!window.overdub.trust?.held().length);
   const re = await o.page.evaluate(() => ({ reg: window.overdub.devices.getDevice('dogfood.bell-glass')?.source || null, held: window.overdub.trust ? window.overdub.trust.held().length : null, inSong: !!window.overdub.store.get().devices['dogfood.bell-glass'], stored: JSON.parse(localStorage.getItem('overdub:trusted-kernels') || '{}').sha256 || [] }));
   t.ok(mine.ok && re.inSong && re.reg === 'project' && re.held === 0 && re.stored.includes(sha(BELL)) && realErrors(o.errors).length === 0,
     `a device the agent defines is trusted on reload: Bell Glass plays (${re.reg}), nothing held, its kernel's SHA-256 is in overdub:trusted-kernels; no page errors${realErrors(o.errors).length ? ': ' + realErrors(o.errors).slice(0, 3).join(' | ') : ''}`);
@@ -1609,16 +1616,16 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
   if (holdBox) {
     await page.mouse.move(holdBox.x + holdBox.width / 2, holdBox.y + holdBox.height / 2);
     await page.mouse.down();
-    await page.waitForTimeout(150);
+    await waitFor(page, () => !!document.querySelector('.ag-asks.on'));
     heard = await page.evaluate(() => ({ bass: !!window.overdub.store.get().tracks.find((x) => x.name === 'Bass'), on: !!document.querySelector('.ag-asks.on'), n: window.overdub.store.history.length }));
     await page.mouse.up();
-    await page.waitForTimeout(150);
+    await waitFor(page, () => !document.querySelector('.ag-asks.on'));
   }
   t.ok(!heard.bass && heard.on && heard.n === h0 && (await songNow()) === before, 'holding the card plays the song as it would be (no Bass), letting go puts it back; History never saw it');
   if (r.offered) await press(`.ag-asks[data-id="${r.id}"] .ag-keep:not(.ag-keep-orig)`);
   await page.waitForSelector('.ag-card-done', { timeout: 5000 }).catch(() => {});
   await page.evaluate(() => window.overdub.ui.show('history'));
-  await page.waitForTimeout(250);
+  await waitFor(page, () => /clear the bass, kept by you/i.test(document.querySelector('.hi-row')?.textContent || ''));
   const kept = await page.evaluate(() => { const s = window.overdub.store, l = s.history[s.history.length - 1]; const row = document.querySelector('.hi-row'); return { bass: !!s.get().tracks.find((x) => x.name === 'Bass'), by: l?.by, label: l?.label, row: row?.textContent || '', agentRow: !!row?.querySelector('.hi-who .by.by-agent') }; });
   const res = await run(page, 'get_variation_result', { id: r.id });
   t.ok(!kept.bass && kept.by === 'claude' && kept.label === 'clear the bass' && /clear the bass, kept by you/i.test(kept.row) && kept.agentRow && res.kept === true,
@@ -1678,7 +1685,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
     const call = await rpc('tools/call', { name: 'apply_ops', arguments: { label: 'no hook', ops: [{ type: 'clip.remove', track: 'Keys', clip: 'c_hook' }] } });
     const text = call.result?.content?.[0]?.text || '';
     const json = JSON.parse(text.slice(text.indexOf('{')));
-    await page.waitForTimeout(200);
+    await waitFor(page, (id) => !!document.querySelector(`.ag-asks[data-id="${id}"] .ag-asks-line`)?.textContent, json.id);
     const mc = await page.evaluate((id) => ({ card: document.querySelector(`.ag-asks[data-id="${id}"] .ag-asks-line`)?.textContent || '', by: window.overdub.tools.requests.get(id)?.by }), json.id);
     t.ok(!call.result.isError && json.offered === true && /delete the clip Hook on Keys/.test(json.what) && (await songNow()) === b4 && mc.by === 'mcp:claude-code' && /^Claude Code wants to delete the clip Hook on Keys/.test(mc.card),
       `over MCP, Claude Code's deletion comes back offered and the person gets the card ("${mc.card}")`);
@@ -1688,7 +1695,7 @@ const run = (page, name, input, by = 'claude') => page.evaluate(([n, i, b]) => w
 
   // Make it yours: from then on a deletion applies directly
   await page.evaluate(() => window.overdub.share.fork());
-  await page.waitForTimeout(200);
+  await waitFor(page, () => !window.overdub.share.listening);
   const after = await run(page, 'apply_ops', { label: 'no sparks', ops: [{ type: 'track.remove', track: 'Sparks' }] });
   t.ok(after.ok && !after.offered && await page.evaluate(() => !window.overdub.share.listening && !window.overdub.store.get().tracks.find((x) => x.name === 'Sparks')), 'after Make it yours, an agent\'s deletion applies directly, as it always did');
   t.ok(realErrors(errors).length === 0, 'no page errors (a song from a link)' + (realErrors(errors).length ? ': ' + realErrors(errors).slice(0, 3).join(' | ') : ''));

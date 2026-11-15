@@ -992,6 +992,8 @@ const fake = await fakeCloud();
     fake.saveElsewhere(who, first, { title: 'Night Ride (laptop)' });
     const n0 = songPosts().length;
     await edit(page, 'Night Ride (phone)');
+    // (the save goes at once with the tab hidden: 8d checks the 5 s wait; here it's the account's answer that matters)
+    await hide(page);
     await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save/.test(t.textContent)), null, { timeout: 9000 });
     const tx = (await toasts(page)).find((x) => /newer save/.test(x)) || '';
     const s = fake.songsOf(who).find((x) => x.row.songId === first);
@@ -1024,6 +1026,7 @@ const fake = await fakeCloud();
     const second = l.songId;
     fake.saveElsewhere(who, second, { title: 'Night Ride (tablet)' });
     await edit(page, 'Night Ride (phone 3)');
+    await hide(page);
     await page.waitForFunction(() => [...document.querySelectorAll('.ew-toast')].some((t) => /newer save/.test(t.textContent)), null, { timeout: 9000 });
     await page.click('.ew-toast .ew-toast-act');
     await page.waitForFunction(() => window.overdub.store.get().title === 'Night Ride (tablet)', null, { timeout: 5000 });
@@ -1034,6 +1037,7 @@ const fake = await fakeCloud();
     // saves go on from there
     const n2 = songPosts().length;
     await edit(page, 'Night Ride (tablet, edited)');
+    await hide(page);
     await until(() => songPosts().length > n2, 9000);
     t.ok(songPosts().at(-1).body.baseRev === 2 && songPosts().at(-1).path === `/v1/songs/${second}`, 'and saves go on from the newer one');
   }

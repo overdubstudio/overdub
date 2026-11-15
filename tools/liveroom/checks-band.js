@@ -28,6 +28,7 @@ import { createHash } from 'node:crypto';
 import { riffDI, SR } from './fake.js';
 import { roomSong, clean, stem, fixtureRiff, readFixtures, } from './band-scene.js';
 import { open } from '../pw.js';
+import { offThread } from './work.js';
 
 export const name = 'band';
 export const pages = true;
@@ -35,7 +36,12 @@ export const pages = true;
 const f1 = (x) => (x == null || !Number.isFinite(x) ? String(x) : (x >= 0 ? '+' : '') + x.toFixed(1));
 const n1 = (x) => (x == null || !Number.isFinite(x) ? String(x) : x.toFixed(1));
 const REF_PEAK = -12;
+const PLACES3 = ['metal', 'basement', 'bluesbar'];
 export async function run(T, ctx) {
+  // (8 and 9 are renders: each in a worker thread of its own, started now, the metal club's first as it takes longest;
+  // their lines are printed below in their order, as if they ran here: ./work.js)
+  const me = import.meta.url, jobs = [...(ctx.levels ? [{ module: me, fn: 'levels', args: ['metal'] }] : []), { module: me, fn: 'amp' }, ...(ctx.levels ? PLACES3.slice(1).map((place) => ({ module: me, fn: 'levels', args: [place] })) : [])];
+  const work = offThread(jobs);
   /* ---------------------------------------------------------------------------------------------- 4. the read */
   for (const x of readFixtures()) {
     T.ok(x.kick >= 0.95 && x.wrong === 0 && x.roots / x.beats >= 0.9 && x.key === x.want,
@@ -89,7 +95,14 @@ export async function run(T, ctx) {
     T.ok(fast.limit === 18.8 && base2.limit === 25 && LIMIT_MS === 20, `the limit: ${LIMIT_MS} ms, a quarter of a sixteenth when that's less (${fast.limit} at 200), 25 at the basement (${base2.limit})`);
   }
 
-  /* ---------------------------------------------------------------------------------------------- 8. the amp */
+  const said = await work, of = (fn, place) => said[jobs.findIndex((j) => j.fn === fn && (place == null || j.args[0] === place))];
+  of('amp')(T);
+  if (!ctx.levels) { T.note('LEVELS=0: the level renders skipped'); return; }
+  for (const place of PLACES3) of('levels', place)(T);
+}
+
+/* ---------------------------------------------------------------------------------------------- 8. the amp */
+export function amp(T) {
   {
     const def = getDevice('core.stack'), norm = (x, db) => { let pk = 0; for (const v of x) pk = Math.max(pk, Math.abs(v)); return x.map((v) => (v * 10 ** (db / 20)) / pk); };
     const dis = ['chords', 'chug'].map((k) => norm(metalDI(k), REF_PEAK));
@@ -131,11 +144,12 @@ export async function run(T, ctx) {
     const br = Object.keys(PLACES).map((pid) => ({ pid, id: PLACES[pid].rigs[0], b: breakup(runAmp(def, rigChain(PLACES[pid].rigs[0])[0].params, tones)[0]) }));
     T.ok(br.every((x) => x.b >= FLOOR[x.pid]), `each place's amp breaks up with your guitar coming in at -24 dBFS: ${br.map((x) => `${PLACES[x.pid].name.toLowerCase()} (${rigLabel(x.id)}) ${(x.b * 100).toFixed(0)}%, at least ${FLOOR[x.pid] * 100}%`).join('; ')}`);
   }
+}
 
-  /* ---------------------------------------------------------------------------------------------- 9. the levels */
-  if (!ctx.levels) { T.note('LEVELS=0: the level renders skipped'); return; }
-  const FIN = { metal: ['tight', 'loud', 'room'], basement: ['raw', 'loud', 'room'], bluesbar: ['bar', 'close', 'loud'] };
-  for (const place of ['metal', 'basement', 'bluesbar']) {
+/* ---------------------------------------------------------------------------------------------- 9. the levels */
+const FIN = { metal: ['tight', 'loud', 'room'], basement: ['raw', 'loud', 'room'], bluesbar: ['bar', 'close', 'loud'] };
+export function levels(T, place) {
+  {
     const P = PLACES[place], t0 = Date.now();
     const S = roomSong(place);
     const q = clean(S.p), A = S.assets, id = S.ids, gs = [id.guitarL || id.guitar, id.guitarR].filter(Boolean);

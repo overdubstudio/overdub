@@ -20,6 +20,8 @@
 // Then each passes checkDevice (kernel/check.js, full mode, run by checkDeviceNode in a child process) with no warnings, the drums once per new kit.
 //   node tools/instruments2-test.js            NODE_ONLY=1 skips the browser
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tally } from './pw.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { createProject } from '../app/src/core/project.js';
@@ -28,6 +30,8 @@ import { phrase, drumPhrase, PHRASE_BEATS, DRUM_PHRASE_BEATS } from '../app/src/
 import { INSTRUMENTS } from '../app/src/devices/builtin/index.js';
 
 const t = tally('instruments2');
+// (the device checks, run as a child of this file: see "the device check" below)
+if (process.env.INST2_CHECKS) { await deviceChecks(); t.done(); process.exit(); }
 const SR = 48000, BPM = 120, BEAT = 60 / BPM;
 const STAMP = '2026-09-30T00:00:00.000Z';
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -348,6 +352,16 @@ if (defs['core.drums']) {
   const ratio = (kit) => best[kit] / best[0], pct = (ms) => ms / (secs * 1000) * 100;
   t.ok([3, 4, 5].every((kit) => ratio(kit) <= DRUM_BUDGET), `drums: the new kits cost about what FIELD does on the drum phrase (808, 909, ACOUSTIC+ at ${[3, 4, 5].map((kit) => fmt(ratio(kit), 2)).join(', ')} x FIELD's ${fmt(pct(best[0]))}% of a core in CPU time; budget ${DRUM_BUDGET}x; best of ${rounds} interleaved)`);
 }
+// The device checks (below) start here, in a child of this file (INST2_CHECKS=1), and run beside the presets: every CPU
+// figure above has been measured by now, and the checks time their renders on a main thread of their own, which the
+// presets' renders here would hold up
+const checks = new Promise((resolve) => {
+  const c = spawn(process.execPath, [fileURLToPath(import.meta.url)], { env: { ...process.env, INST2_CHECKS: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '', err = '';
+  c.stdout.on('data', (d) => { out += d; });
+  c.stderr.on('data', (d) => { err += d; });
+  c.on('close', (code, sig) => resolve({ out, err, code, sig }));
+});
 // ------------------------------------------------------------------------------------------------ presets
 console.log('presets: a sound by name');
 {
@@ -367,16 +381,34 @@ console.log('\n  ' + ['id', 'setting', 'LUFS', 'dBTP', 'colour', 'register / hat
 
 // ------------------------------------------------------------------------------------------------ the device check (Node)
 // (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs each registered device at its defaults through checkDevice in Chromium's worklet, and only notes its warnings; presets and kits are not run there)
+// What the child found, its checks counted here; a child that ends without a FAIL line but not cleanly fails the run.
 {
+  const r = await checks;
+  let failed = false;
+  for (const line of r.out.replace(/\n$/, '').split('\n')) {
+    let m;
+    if ((m = /^ {2}ok {3}(.*)$/.exec(line))) t.ok(true, m[1]);
+    else if ((m = /^ {2}FAIL (.*)$/.exec(line))) { t.ok(false, m[1]); failed = true; }
+    else if ((m = /^ {2}\.\. {3}(.*)$/.exec(line))) t.note(m[1]);
+    else if (!/^instruments2: \d+ ok, \d+ failed$/.test(line)) console.log(line);
+  }
+  if (r.err) process.stderr.write(r.err);
+  if ((r.code !== 0 || r.sig) && !failed) t.ok(false, `the device checks' process ended (${r.sig || 'exit ' + r.code}) before they finished${r.err ? ': ' + r.err.trim().split('\n').pop() : ''}`);
+}
+// (the checks themselves, two at a time: each renders in a process of its own, and they're reported in this order)
+async function deviceChecks() {
   console.log('checkDevice in a child process (full mode)');
   const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
   const { summarize } = await import('../app/src/kernel/check.js');
   const { getDevice } = await import('../app/src/devices/registry.js');
   // the two new instruments, and the kit with each new option as its default (a def under a test id)
-  for (const [id, kit] of [['core.ep'], ['core.mallets'], ['core.drums', 3], ['core.drums', 4], ['core.drums', 5]]) {
-    let def = getDevice(id);
-    if (kit != null) def = { ...def, id: 'test.drums-' + kit, params: def.params.map((p) => (p.key === 'kit' ? { ...p, def: kit } : p)) };
-    const rep = await checkDeviceNode(def);
+  const list = [['core.ep'], ['core.mallets'], ['core.drums', 3], ['core.drums', 4], ['core.drums', 5]];
+  const defOf = ([id, kit]) => { const def = getDevice(id); return kit != null ? { ...def, id: 'test.drums-' + kit, params: def.params.map((p) => (p.key === 'kit' ? { ...p, def: kit } : p)) } : def; };
+  const reps = new Array(list.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: 2 }, async () => { while (next < list.length) { const i = next++; reps[i] = await checkDeviceNode(defOf(list[i])); } }));
+  for (const [i, [id, kit]] of list.entries()) {
+    const rep = reps[i];
     const r = { ok: rep.ok, errors: rep.errors, warnings: rep.warnings, sum: summarize(rep), worst: rep.extremes && rep.extremes.worstPeak, failed: rep.extremes && rep.extremes.failed };
     const tag = kit != null ? `${id} (KIT ${['FIELD', 'MACHINE', 'DUST', '808', '909', 'ACOUSTIC+'][kit]})` : id;
     t.ok(r.ok, `${tag}: checkDevice ok: ${r.sum}${r.ok ? '' : ' | ' + r.errors.join(' | ')}`);

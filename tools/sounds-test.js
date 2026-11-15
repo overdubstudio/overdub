@@ -101,11 +101,30 @@ if (process.env.NODE_ONLY) { t.done(); process.exit(); }
 const { open } = await import('./pw.js');
 const only = process.env.ONLY ? process.env.ONLY.split(',') : null;
 console.log('built-in devices (checkDevice in Chromium' + (process.env.QUICK ? ', quick' : '') + ')');
-let { page, errors, close } = await open('/app/');
+const { page, errors, close } = await open('/app/');
 // a sampled kit's samples stay in the page once decoded (Rusty Sticks alone is 24 MB), so after each sampled device the
 // page is opened afresh: fourteen kits in one tab run it out of memory
-const allErrors = [];
-async function fresh() { allErrors.push(...errors); await close(); ({ page, errors, close } = await open('/app/')); }
+const pageErrors = [errors], closers = new Set([close]);
+// The devices are checked on PAR pages at once, each in a browser of its own (the first is the page above), and
+// reported below in the order they're registered. A page that has checked a sampled device is closed and, if there's
+// more to check, opened afresh; every page's errors are kept (pageErrors: each page's list).
+const PAR = 3;
+async function lanes(todo, checkOne, quick) {
+  const got = new Map(todo.map((id) => { let ok, no; const p = new Promise((a, b) => { ok = a; no = b; }); p.catch(() => {}); return [id, { p, ok, no }]; }));
+  const queue = [...todo];
+  const lane = async (L) => {
+    while (queue.length) {
+      const id = queue.shift();
+      try { got.get(id).ok(await L.page.evaluate(checkOne, { id, quick })); } catch (e) { got.get(id).no(e); }
+      if (SAMPLED.some((d) => d.id === id) && queue.length) { closers.delete(L.close); await L.close(); L = await open('/app/'); closers.add(L.close); pageErrors.push(L.errors); }
+    }
+  };
+  // (a page that can't be opened stops the run, as it did with one page: what's still waiting is failed with its error)
+  const fail = (e) => { for (const g of got.values()) g.no(e); };
+  const others = Array.from({ length: Math.max(0, Math.min(PAR, todo.length) - 1) }, () => open('/app/').then((L) => { closers.add(L.close); pageErrors.push(L.errors); return lane(L); }));
+  const done = Promise.all([lane({ page, errors, close }), ...others]).catch(fail);
+  return { checked: (id) => got.get(id).p, done };
+}
 const wav = (file, chans, sr) => {
   const n = chans[0].length, w = Buffer.alloc(44 + n * 4);
   w.write('RIFF', 0); w.writeUInt32LE(36 + n * 4, 4); w.write('WAVEfmt ', 8); w.writeUInt32LE(16, 16); w.writeUInt16LE(1, 20); w.writeUInt16LE(2, 22);
@@ -134,45 +153,49 @@ try {
   });
   t.ok(near(ears.lufs, -20, 0.1) && near(ears.tp, -20, 0.1), `in the page: an OfflineAudioContext 1 kHz sine at -20 dBFS reads ${ears.lufs} LUFS, ${ears.tp} dBTP`);
   t.ok(ears.png === 'data:image/png;base64,' && ears.len > 500, `in the page: spectrogram() returns a PNG (${ears.len} chars)`);
+  const checkOne = async ({ id, quick }) => {
+    const { getDevice } = await import('/app/src/devices/registry.js');
+    // (a page opened afresh may not have registered the built-ins yet: the studio's boot races this evaluate)
+    await import('/app/src/devices/builtin/index.js');
+    const { checkDevice } = await import('/app/src/kernel/check.js');
+    const { kernelInstance, ensureKernelWorklet } = await import('/app/src/kernel/host.js');
+    const T = await import('/app/src/audio/testsignals.js');
+    const def = getDevice(id);
+    const report = await checkDevice(def, { quick });
+    // a render to listen to: the instrument's phrase (drums: the kit phrase; bass: the bass phrase), or the effect
+    // on the test program, at default params
+    const SR = 48000, bpm = T.PHRASE_BPM, beat = 60 / bpm;
+    let secs, notes = null, input = null;
+    if (def.kind === 'instrument') {
+      const ph = def.cat === 'drums' ? T.drumPhrase() : def.id === 'core.bass' ? T.bassPhrase() : T.phrase();
+      notes = ph.map((n) => ({ p: n.p, v: n.v, t: 0.05 + n.t * beat, d: n.d * beat }));
+      secs = notes.reduce((m, n) => Math.max(m, n.t + n.d), 0) + Math.min(4, (def.tail || 1) + 1);
+    } else { input = T.program(8, SR).channels; secs = 8 + Math.min(4, (def.tail || 0) + 0.5); }
+    const c = new OfflineAudioContext(2, Math.round(secs * SR), SR);
+    await ensureKernelWorklet(c);
+    const params = Object.fromEntries(def.params.map((p) => [p.key, p.def]));
+    const inst = await kernelInstance(c, def, { seed: 1, params, bpm });
+    await inst.ready;
+    inst.set(params, { first: true });
+    if (input) {
+      const b = c.createBuffer(2, input[0].length, SR); b.copyToChannel(input[0], 0); b.copyToChannel(input[1], 1);
+      const src = c.createBufferSource(); src.buffer = b; src.connect(inst.input); src.start(0);
+    }
+    if (notes) for (const n of notes) { inst.noteOn(n.p, n.v, n.t); inst.noteOff(n.p, n.t + n.d); }
+    inst.output.connect(c.destination);
+    const buf = await c.startRendering();
+    inst.dispose();
+    const enc = (a) => { const u = new Uint8Array(a.buffer.slice(0)); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+    return { report, kind: def.kind, L: enc(buf.getChannelData(0)), R: enc(buf.getChannelData(1)), sr: SR, programSecs: input ? 8 : 0 };
+  };
+  const { checked, done } = await lanes(ids.filter((id) => !(only && !only.includes(id)) && !unfetched.includes(id)), checkOne, !!process.env.QUICK);
   const rows = [];
+  // (the dry program's level, for the effects: the same signal every time, so measured once)
+  const dryLufs = measure(T.program(8, SR)).lufs;
   for (const id of ids) {
     if (only && !only.includes(id)) continue;
     if (unfetched.includes(id)) continue;
-    const res = await page.evaluate(async ({ id, quick }) => {
-      const { getDevice } = await import('/app/src/devices/registry.js');
-      // (a page opened afresh may not have registered the built-ins yet: the studio's boot races this evaluate)
-      await import('/app/src/devices/builtin/index.js');
-      const { checkDevice } = await import('/app/src/kernel/check.js');
-      const { kernelInstance, ensureKernelWorklet } = await import('/app/src/kernel/host.js');
-      const T = await import('/app/src/audio/testsignals.js');
-      const def = getDevice(id);
-      const report = await checkDevice(def, { quick });
-      // a render to listen to: the instrument's phrase (drums: the kit phrase; bass: the bass phrase), or the effect
-      // on the test program, at default params
-      const SR = 48000, bpm = T.PHRASE_BPM, beat = 60 / bpm;
-      let secs, notes = null, input = null;
-      if (def.kind === 'instrument') {
-        const ph = def.cat === 'drums' ? T.drumPhrase() : def.id === 'core.bass' ? T.bassPhrase() : T.phrase();
-        notes = ph.map((n) => ({ p: n.p, v: n.v, t: 0.05 + n.t * beat, d: n.d * beat }));
-        secs = notes.reduce((m, n) => Math.max(m, n.t + n.d), 0) + Math.min(4, (def.tail || 1) + 1);
-      } else { input = T.program(8, SR).channels; secs = 8 + Math.min(4, (def.tail || 0) + 0.5); }
-      const c = new OfflineAudioContext(2, Math.round(secs * SR), SR);
-      await ensureKernelWorklet(c);
-      const params = Object.fromEntries(def.params.map((p) => [p.key, p.def]));
-      const inst = await kernelInstance(c, def, { seed: 1, params, bpm });
-      await inst.ready;
-      inst.set(params, { first: true });
-      if (input) {
-        const b = c.createBuffer(2, input[0].length, SR); b.copyToChannel(input[0], 0); b.copyToChannel(input[1], 1);
-        const src = c.createBufferSource(); src.buffer = b; src.connect(inst.input); src.start(0);
-      }
-      if (notes) for (const n of notes) { inst.noteOn(n.p, n.v, n.t); inst.noteOff(n.p, n.t + n.d); }
-      inst.output.connect(c.destination);
-      const buf = await c.startRendering();
-      inst.dispose();
-      const enc = (a) => { const u = new Uint8Array(a.buffer.slice(0)); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
-      return { report, kind: def.kind, L: enc(buf.getChannelData(0)), R: enc(buf.getChannelData(1)), sr: SR, programSecs: input ? 8 : 0 };
-    }, { id, quick: !!process.env.QUICK });
+    const res = await checked(id);
     const r = res.report, L = unpack(res.L), R = unpack(res.R);
     wav(path.join(SOUNDS, id + '.wav'), [L, R], res.sr);
     // our own measure of the listening render (the effect against the dry program)
@@ -182,7 +205,7 @@ try {
       level = `${r.level && r.level.lufs} LUFS (own phrase ${mine.lufs})`;
       levelOk = r.level && r.level.lufs >= -18.5 && r.level.lufs <= -13.5 && mine.lufs >= -18.5 && mine.lufs <= -13.5;
     } else {
-      const dry = measure(T.program(8, res.sr)).lufs, d = Math.round((mine.lufs - dry) * 100) / 100;
+      const dry = dryLufs, d = Math.round((mine.lufs - dry) * 100) / 100;
       level = `ΔLU strum ${r.level && r.level.deltaLU} / drums ${r.level && r.level.drumsDeltaLU} / program ${d}`;
       const lo = id === 'core.drive' ? 0 : -1.5, hi = id === 'core.drive' ? 3 : 1.5;
       // an amp's output barely follows its input (as Hot Print's), so drums and the program read far under: Half Stack
@@ -199,19 +222,19 @@ try {
     t.ok(r.deterministic === true, `${id}: deterministic`);
     t.ok(!r.nan && !(r.extremes && r.extremes.failed && r.extremes.failed.length), `${id}: no NaN, every extreme setting renders${r.extremes && r.extremes.failed && r.extremes.failed.length ? ': ' + JSON.stringify(r.extremes.failed.slice(0, 3)) : ''} (worst peak ${r.extremes && r.extremes.worstPeak} dBFS)`);
     if (id === 'core.limiter') t.ok(r.latency && Math.abs(r.latency.samples - r.latency.declared) <= 2, `core.limiter: reports its latency (${r.latency && r.latency.declared} samples; an impulse comes out at ${r.latency && r.latency.samples})`);
-    if (SAMPLED.some((d) => d.id === id)) await fresh();
   }
   const head = ['id', 'level', 'true peak', 'cpu', 'tail', 'deterministic', 'latency (seen/declared)'];
   const w = head.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
   const line = (r) => '  ' + r.map((c, i) => String(c).padEnd(w[i])).join(' | ');
   console.log('\n' + line(head) + '\n  ' + w.map((n) => '-'.repeat(n)).join('-+-') + '\n' + rows.map(line).join('\n') + '\n');
   t.note(`WAV renders in ${path.relative(process.cwd(), SOUNDS)}/`);
-  // page errors: ours fail the run, anyone else's are noted
-  errors.push(...allErrors);
-  const mineErr = errors.filter((e) => /devices\/builtin|audio\/(measure|testsignals)/.test(e));
-  for (const e of errors) if (!mineErr.includes(e)) t.note('page error (another area): ' + e.slice(0, 200));
+  // page errors: ours fail the run, anyone else's are noted (every page's)
+  await done;
+  const errs = pageErrors.flat();
+  const mineErr = errs.filter((e) => /devices\/builtin|audio\/(measure|testsignals)/.test(e));
+  for (const e of errs) if (!mineErr.includes(e)) t.note('page error (another area): ' + e.slice(0, 200));
   t.ok(!mineErr.length, `no page errors from the sounds area${mineErr.length ? ': ' + mineErr.join(' | ') : ''}`);
 } finally {
-  await close();
+  await Promise.all([...closers].map((c) => c()));
 }
 t.done();

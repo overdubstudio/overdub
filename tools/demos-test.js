@@ -182,22 +182,16 @@ const PARITY = inNode[0]; // rendered in the page as well, and the two held toge
 const inPage = MORE_DEMOS.filter((d) => !inNode.includes(d));
 t.ok(inNode.length > 0, `${inNode.length} of ${MORE_DEMOS.length} demos render in Node (${inNode.map((d) => d.id).join(', ')}); in the page: ${inPage.map((d) => d.id).join(', ') || 'none'}`);
 
-const nodeSounds = soundsInNode(inNode); // (rendering on the worker threads while the page does its own)
+// (rendering on the worker threads while the pages do their own work, the sound and how they look; the Node renders'
+// checks, and the parity check that needs them, are read at the end)
+const nodeSounds = soundsInNode(inNode);
 nodeSounds.catch(() => {});
 
 const { page, errors, close } = await open('/app/', { query: 'new&autostart' });
 await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
 for (const d of inPage) holdSound(d, await soundInPage(page, d), 'page');
-// the preview and the canonical render agree on a demo's loudness, peak, key and every stem
-if (PARITY) {
-  const a = (await nodeSounds).get(PARITY.id), b = await soundInPage(page, PARITY);
-  const dl = Math.abs(a.lufs - b.lufs), dt = Math.abs(a.tp - b.tp);
-  const stems = Object.keys(a.tracks).map((n) => Math.abs(a.tracks[n].lufs - (b.tracks[n]?.lufs ?? Infinity)));
-  t.ok(dl <= PARITY_LU && dt <= PARITY_DB && Math.max(...stems) <= PARITY_LU && a.key?.root === b.key?.root && a.key?.scale === b.key?.scale,
-    `${PARITY.title}: the page and Node render agree (mix ${b.lufs} vs ${a.lufs} LUFS, peak ${b.tp} vs ${a.tp} dBTP, stems within ${Math.max(...stems).toFixed(2)} LU, key ${b.key?.root} ${b.key?.scale} vs ${a.key?.root} ${a.key?.scale})`);
-}
+const parityInPage = PARITY ? await soundInPage(page, PARITY) : null;
 t.ok(!errors.filter((e) => !/Failed to load resource/.test(e)).length, 'no page errors while rendering ' + errors.slice(0, 3).join(' | '));
-for (const d of inNode) holdSound(d, (await nodeSounds).get(d.id), 'Node');
 await close();
 
 /* ------------------------------------------------------------------ how they look */
@@ -259,10 +253,21 @@ await close();
   await o.shot('demos-menu');
   await o.page.click(`.sm-demos .sm-i:has-text("${MORE_DEMOS[2].title}")`);
   await o.page.click('.sm-confirm .ew-btn-primary');   // (it asks first, the way New song does: ui/export.js)
-  await o.page.waitForFunction((title) => window.overdub.store.get().title === title, MORE_DEMOS[2].title, { timeout: 5000 }).catch(() => {});
+  await o.page.waitForFunction((title) => window.overdub.store.get().title === title, MORE_DEMOS[2].title, { timeout: 30000 }).catch(() => {}); // (generous: the Node renders may still be running)
   const now = await o.page.evaluate(() => window.overdub.store.get().title);
   t.ok(now === MORE_DEMOS[2].title, `picking “${MORE_DEMOS[2].title}” opens it (now “${now}”)`);
   t.ok(!o.errors.filter((e) => !/Failed to load resource/.test(e)).length, 'no page errors in the menu ' + o.errors.slice(0, 3).join(' | '));
   await o.close();
 }
+
+/* ------------------------------------------------------------------ the sound, from Node */
+// the preview and the canonical render agree on a demo's loudness, peak, key and every stem
+if (PARITY) {
+  const a = (await nodeSounds).get(PARITY.id), b = parityInPage;
+  const dl = Math.abs(a.lufs - b.lufs), dt = Math.abs(a.tp - b.tp);
+  const stems = Object.keys(a.tracks).map((n) => Math.abs(a.tracks[n].lufs - (b.tracks[n]?.lufs ?? Infinity)));
+  t.ok(dl <= PARITY_LU && dt <= PARITY_DB && Math.max(...stems) <= PARITY_LU && a.key?.root === b.key?.root && a.key?.scale === b.key?.scale,
+    `${PARITY.title}: the page and Node render agree (mix ${b.lufs} vs ${a.lufs} LUFS, peak ${b.tp} vs ${a.tp} dBTP, stems within ${Math.max(...stems).toFixed(2)} LU, key ${b.key?.root} ${b.key?.scale} vs ${a.key?.root} ${a.key?.scale})`);
+}
+for (const d of inNode) holdSound(d, (await nodeSounds).get(d.id), 'Node');
 t.done();

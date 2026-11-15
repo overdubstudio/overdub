@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as G from '../app/src/core/grooves.js';
-import { rng } from '../app/src/core/transforms.js';
+import { inThread } from './grooves-taps.js';
 import { open, tally, OUTDIR } from './pw.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -25,52 +25,17 @@ console.log('\nthe library');
 const L = G.library();
 /* ================================================================== tap-to-find */
 console.log('\ntap-to-find');
-const voiceOf = (p) => (G.familyOf(p) === 'kick' ? 'kick' : G.familyOf(p) === 'snare' ? 'snare' : 'hat');
-// the onsets of a groove as a drummer would tap them: every hit (ghosts too), at its middle tempo with its swing and
-// lay, each jittered up to ±jitter ms (seeded); skip drops the first beats (a shifted start)
-function tapsOf(g, { skip = 0, jitter = 12, seed = 7, main = false } = {}) {
-  const tempo = Math.round((g.tempo[0] + g.tempo[1]) / 2), len = Math.max(8, g.length * 2) + skip;
-  const played = G.realize(g, { tempo, seed, length: len, human: 0 });
-  const R = rng(`taps:${seed}:${g.id}`), out = [], seen = new Set();
-  for (let k = 0; k * g.length < len; k++) {
-    for (const h of g.hits) {
-      const t = k * g.length + h.t, v = voiceOf(h.p);
-      if (t < skip - 1e-6 || t >= len || h.v < (main ? 0.6 : 0.44) || (main && v === 'hat')) continue;
-      const n = played.find((x) => x.p === h.p && Math.abs(x.t - t) < 0.2), key = `${v}:${Math.round(t * 48)}`;
-      if (!n || seen.has(key)) continue;
-      seen.add(key);
-      out.push({ t: (n.t * 60) / tempo + ((R() - 0.5) * 2 * jitter) / 1000, voice: v });
-    }
-  }
-  return { tempo, taps: out.sort((a, b) => a.t - b.t) };
-}
-const sig = (g) => { const o = G.onsetsOf(g); return JSON.stringify([g.length, o.kick.main, o.snare.main, o.all.main]); };
-{
-  // every main groove from its own jittered onsets: first, or tied first with a groove that has the same hits
-  const main = L.grooves.filter((g) => G.MAIN_PARTS.includes(g.part));
-  for (const [label, opt] of [['from the downbeat', {}], ['from a shifted start (the taps begin on beat 2 and a half)', { skip: 1.5 }]]) {
-    const miss = [], terr = [];
-    let first = 0, tied = 0, top5 = 0;
-    for (const g of main) {
-      const { tempo, taps } = tapsOf(g, opt);
-      const m = G.matchTaps(taps);
-      const r0 = m?.results[0];
-      if (!r0) { miss.push(`${g.id}: nothing`); continue; }
-      terr.push(Math.abs(r0.bpm - tempo) / tempo);
-      const mine = m.results.find((r) => r.groove.id === g.id);
-      if (mine) top5++;
-      if (r0.groove.id === g.id) first++;
-      else if (sig(r0.groove) === sig(g) || (mine && r0.score - mine.score < 0.001)) tied++;
-      else miss.push(`${g.id} came after ${r0.groove.id} (${mine ? mine.score : 'not in the five'} vs ${r0.score})`);
-    }
-    terr.sort((a, b) => a - b);
-    T.ok(first + tied >= main.length - 1 && top5 === main.length, `${label}: ${first} of ${main.length} main grooves come back first from their own taps, ${tied} tie with one that plays the same hits, all ${top5} in the closest five${say(miss)}`);
-    T.ok(terr[terr.length - 1] < 0.02, `${label}: the tempo read from the taps is within 2% for all of them (worst ${(terr[terr.length - 1] * 100).toFixed(2)}%)`);
-  }
-}
+// (tools/grooves-taps.js: each start a pass over every main groove, in a worker thread of its own, started now and
+// said here once the pages below are done)
+const sweeps = Promise.all([['from the downbeat', {}], ['from a shifted start (the taps begin on beat 2 and a half)', { skip: 1.5 }]].map(([label, opt]) => inThread(label, opt)));
+sweeps.catch(() => {}); // (awaited below)
 
 /* ================================================================== the song creator */
-console.log('\nthe song creator');
+// (from here on the lines are held, and said in the file's order once the sweeps above are done: the song creator's, then
+// the studio's, whose checks run in two lanes at once, each its own browser)
+const held = (head) => { const lines = head ? [['log', head]] : []; return { lines, ok(c, m) { lines.push(['ok', !!c, m]); return !!c; } }; };
+const replay = (h) => { for (const [k, c, m] of h.lines) if (k === 'ok') T.ok(c, m); else console.log(c); };
+const creator = await (async (T) => {
 {
   // what agents read (extra-schemas.js): use_groove's track "new"; drum_track's ending and crashes, and no ending by
   // default when the loop goes round; and that find_grooves returns the studio's own library, no song text (the page
@@ -80,9 +45,10 @@ console.log('\nthe song creator');
   T.ok(D.input_schema.properties.ending?.type === 'boolean' && D.input_schema.properties.crashes?.type === 'boolean' && /when the loop is on and reaches the song's end: then no ending/.test(D.description) && /fills, crashes, ending, loops/.test(D.description), 'drum_track\'s schema has ending and crashes, and says there\'s no ending when the loop goes round');
   T.ok(/returns no song text: every name, blurb and grid in it is the studio's own library/.test(F.description), 'find_grooves\' schema says its results are the studio\'s own library, no song text');
 }
+  return T;
+})(held('\nthe song creator'));
 
 /* ================================================================== the studio */
-console.log('\nthe studio');
 const errs = [];
 // two bars of a rock beat (straight eighths) as [beat, pads] at 100 BPM, for app.grooves.tap
 const ROCK_TAPS = [[0, ['kick', 'hat']], [0.5, ['hat']], [1, ['snare', 'hat']], [1.5, ['hat']], [2, ['kick', 'hat']], [2.5, ['kick', 'hat']], [3, ['snare', 'hat']], [3.5, ['hat']]];
@@ -101,6 +67,7 @@ const floorCheck = (E, label) => E((label) => {
   }
   return { label, small, tiny: [...new Set(tiny)], wide: document.documentElement.scrollWidth - innerWidth, rows: root.querySelectorAll('.gv-row').length };
 }, label);
+const desk = (async (T) => {
 {
   const s = await open('/app/', { width: 1600, height: 1000, query: 'demo' });
   const { page, errors } = s;
@@ -212,6 +179,8 @@ const floorCheck = (E, label) => E((label) => {
   // tap-to-find, from taps on the pads: a rock beat at 100 BPM, two bars
   await page.click('.gv-style[data-style="rock"]');
   const pad = async (voice) => { const b = await page.$(`.gv-pad[data-voice="${voice}"]`); const r = await b.boundingBox(); await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2); await page.mouse.down(); await page.mouse.up(); };
+  // (the taps are timed on the wall clock: they wait until both tap sweeps are done, so no worker runs beside them)
+  await sweeps.catch(() => {});
   // The taps are played in the page, on its own clock: five round trips a pad from here took longer than an eighth on
   // a slower machine (a CI runner read 66 BPM). Each is a pointerdown on the pad, which the pad stamps with the event's
   // timeStamp; the real mouse on a pad is checked below (F J K)
@@ -317,6 +286,11 @@ const floorCheck = (E, label) => E((label) => {
   errs.push(...errors.filter((e) => !ignorable(e)));
   await s.close();
 }
+  return T;
+})(held('\nthe studio'));
+desk.catch(() => {}); // (awaited below)
+// (the reload, the phone and the phone on its side, each a browser of its own, one after another beside the desktop's)
+const sideLane = (async (T) => {
 {
   // a tab closed while a groove was heard: the autosave had the preview in it; the next boot takes it back out
   const s = await open('/app/', { width: 1280, height: 860, query: 'demo' });
@@ -419,6 +393,14 @@ const floorCheck = (E, label) => E((label) => {
   errs.push(...errors.filter((e) => !ignorable(e)));
   await s.close();
 }
+  return T;
+})(held());
+sideLane.catch(() => {}); // (awaited below)
+
+for (const [c, m] of (await sweeps).flat()) T.ok(c, m);
+replay(creator);
+replay(await desk);
+replay(await sideLane);
 
 /* ================================================================== the look */
 {

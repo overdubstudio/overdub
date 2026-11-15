@@ -16,9 +16,14 @@ import { open, tally, OUTDIR } from './pw.js';
 const T = tally('a11y');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|AudioContext|getUserMedia|NotAllowedError|NotFoundError/.test(e);
+// Each block below is a studio of its own (its own server and browser, nothing shared but the helpers), so they run in
+// four lanes at once, one after another in a lane (the space block, the longest, in one of its own): each block's lines
+// are held and said in the file's order at the end.
+const blocks = [];
+const LANES = [[5], [0, 3, 1], [2, 6], [4]];   // desktop, coach, coach by keyboard, band picker, phone, space, find
 
 /* ======================================================================== desktop: keyboard */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo' });
   const { page, errors } = s;
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -267,10 +272,10 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `desktop: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ======================================================================== desktop: the coach keeps focus and talks */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo&coach' });
   const { page, errors } = s;
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -326,12 +331,12 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `coach: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ======================================================================== desktop: the coach's path by keyboard */
 // Play the keys → Show me → Enter on Keep → Enter on the menu → the agent's take → Enter on Keep: the strip never
 // covers Keep, and focus never falls to <body>
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo&coach', width: 1440, height: 900 });
   const { page, errors } = s;
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -399,10 +404,10 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `coach by keyboard: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ======================================================================== the band picker: focus in, arrows, focus back */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo', width: 1440, height: 900 });
   const { page, errors } = s;
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -428,10 +433,10 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `band picker: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ======================================================================== phone: touch */
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo', width: 390, height: 844 });
   const ctx = await s.browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, permissions: ['microphone'] });
   const page = await ctx.newPage();
@@ -601,7 +606,7 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   T.ok(!errs.length, `phone: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await ctx.close();
   await s.close();
-}
+});
 
 /* ======================================================================== Space after a mouse click: the transport's */
 // AJ, on guitar: "space doesn't usually work... some element can take focus and space just selects that element". A
@@ -609,7 +614,7 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
 // open or toggle that control, on keydown or keyup. Real controls where the studio has them (Fit, the inspector's
 // Instrument select and Level slider), probes for the kinds its first screen doesn't show (a checkbox, a link, a
 // summary, a menu). An open menu owns Space only while no take runs; a text field always types it.
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { query: 'demo' });
   const { page, errors } = s;
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -745,7 +750,7 @@ const ignorable = (e) => /Failed to load resource|favicon|net::ERR|fonts\.g|Audi
   const errs = errors.filter((e) => !ignorable(e));
   T.ok(!errs.length, `space: no page errors${errs.length ? ': ' + errs.slice(0, 3).join(' | ') : ''}`);
   await s.close();
-}
+});
 
 /* ======================================================================== Find anything: the first screen and Find */
 // (each in-page function carries its own accessible name, roughly as the browser computes it: labelledby, aria-label,
@@ -768,7 +773,7 @@ const findState = () => {
     listbox: list?.getAttribute('role') === 'listbox' && !!list.getAttribute('aria-label'), options: list ? list.querySelectorAll('[role=option]').length : 0,
     active: act ? { role: act.getAttribute('role'), selected: act.getAttribute('aria-selected'), text: act.textContent.trim().slice(0, 40) } : null };
 };
-{
+blocks.push(async (T) => {
   const s = await open('/app/', { width: 1440, height: 900 });
   const { page, errors } = s;
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
@@ -829,6 +834,10 @@ const findState = () => {
   T.ok(!perr.length, `find phone: no page errors${perr.length ? ': ' + perr.slice(0, 3).join(' | ') : ''}`);
   await ctx.close();
   await s.close();
-}
+});
 
+const held = blocks.map(() => ({ lines: [], ok(c, m) { this.lines.push([!!c, m]); return !!c; } }));
+const thrown = await Promise.all(LANES.map(async (lane) => { try { for (const i of lane) await blocks[i](held[i]); } catch (e) { return e; } }));
+for (const h of held) for (const [c, m] of h.lines) T.ok(c, m);
+if (thrown.some(Boolean)) throw thrown.find(Boolean);
 T.done();

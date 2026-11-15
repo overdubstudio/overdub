@@ -16,12 +16,15 @@
 //   phone     one section at a time under seven tabs, 44 px targets, 12 px text, nothing running out sideways; a patch
 //             made across tabs
 //   node tools/wavetable-ui-test.js        NODE_ONLY=1 skips the browser; screenshots: tools/.out/wavetable-ui-*.png
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { open, tally } from './pw.js';
 import '../app/src/devices/builtin/index.js';
 import { TABLE_NAMES } from '../app/src/devices/builtin/wavetables.js';
 
 const t = tally('wavetable-ui');
-const ok = t.ok;
+// (a block run beside others keeps its checks in its own list, printed in one piece when it's done)
+const held = new AsyncLocalStorage();
+const ok = (cond, msg) => { const h = held.getStore(); if (!h) return t.ok(cond, msg); h.push([cond, msg]); return !!cond; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmt = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
 const ours = (errors) => errors.filter((e) => !/Failed to load resource|favicon|net::ERR|fonts\.g|AudioContext|getUserMedia/.test(e));
@@ -38,7 +41,7 @@ async function openLT(page) {
   // (toasts float over the window: none in the way)
   await page.evaluate(() => { document.querySelectorAll('.ew-toast').forEach((x) => x.remove()); });
 }
-{
+async function desktop() {
   const s = await open('/app/', { query: 'device=core.wavetable', width: 1440, height: 900 });
   const { page, errors, shot } = s;
   page.setDefaultTimeout(15000);
@@ -428,7 +431,7 @@ async function openLT(page) {
 }
 
 /* ======================================================================== Chromium: a 2x screen, the frame time */
-{
+async function twoX() {
   const s = await open('/app/', { query: 'device=core.wavetable', width: 1440, height: 900 });
   const ctx2 = await s.browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
   const page = await ctx2.newPage();
@@ -458,7 +461,7 @@ async function openLT(page) {
 /* ======================================================================== Chromium: a 1280 x 800 laptop */
 // The window's frame takes what the screen has under its bar (here 499 px) and the keyboard below: the whole synth
 // fits in that, the matrix and the macros too, with nothing to scroll, and still does with all 8 slots' rings on
-{
+async function laptop() {
   const s = await open('/app/', { query: 'device=core.wavetable', width: 1280, height: 800 });
   const { page, errors, shot } = s;
   page.setDefaultTimeout(15000);
@@ -491,7 +494,7 @@ async function openLT(page) {
 // On a phone (touch, pointer: coarse) the window says tap, slide and the matrix's ×, never right-click, Alt, click or
 // drag: in its line (patching, all 8 slots in use) and in every name and tip it writes. (The kit's own knob tips,
 // ui/plugin-kit.js, are the kit's, and a touch screen never shows a tip.)
-{
+async function touch() {
   const s = await open('/app/', { query: 'device=core.wavetable', width: 390, height: 844 });
   const ctx3 = await s.browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   const page = await ctx3.newPage();
@@ -547,7 +550,7 @@ async function openLT(page) {
 }
 
 /* ======================================================================== Chromium: a phone */
-{
+async function phone() {
   const s = await open('/app/', { query: 'device=core.wavetable', width: 390, height: 844 });
   const { page, errors, shot } = s;
   page.setDefaultTimeout(15000);
@@ -609,4 +612,11 @@ async function openLT(page) {
   }
   await s.close();
 }
+// The three blocks that time nothing run side by side first, each its own browser and server, their checks held and
+// printed after the others in the order above; the desktop and the 2x screen, which time their frames, run alone.
+const small = [laptop, touch, phone].map((fn) => { const h = []; return { h, done: held.run(h, fn) }; });
+await Promise.all(small.map((r) => r.done));
+await desktop();
+await twoX();
+for (const r of small) for (const [cond, msg] of r.h) t.ok(cond, msg);
 t.done();

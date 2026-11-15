@@ -60,6 +60,19 @@ async function rolling(T, ctx) {
   const { errors, E } = room;
   try {
     await hearMark(room.page);
+    // (the input as it came in, each block at its audio-clock frame, from half a second before bar 1 to nine after: what
+    // the tape is held to. Chromium's fake capture can hand the file over a 10 ms block late on a busy machine, and the
+    // input then runs that much behind the file from there on, on the tape and the deck's take alike)
+    await E((bar1) => {
+      const o = window.overdub, keep = (window.__tpIn = []);
+      const off = o.input.audio.listen((b) => {
+        const F = window.__lrFile, sr = o.input.audio.state.sr;
+        if (F?.t0 == null || !sr) return;
+        const a = Math.round((F.t0 + bar1 - 0.5) * sr), z = Math.round((F.t0 + bar1 + 9) * sr);
+        if (b.f + b.d[0].length > a && b.f < z) keep.push({ f: b.f, d: Float32Array.from(b.d[0]) });
+        if (b.f >= z) off();
+      });
+    }, bar1);
     const setup = await E(async () => {
       const app = window.overdub, { store, input } = app;
       const { createProject } = await import('/app/src/core/project.js');
@@ -117,6 +130,14 @@ async function rolling(T, ctx) {
         const q = (x) => (x < 0 ? Math.round(x * 32768) : Math.round(x * 32767));
         const cmp = (shift) => { let ok = 0, n = 0; for (let i = 0; i + off < a.length && lead + i + shift < g.data.length && i < buf.sampleRate * 8; i++) { n++; if (q(a[i + off]) === q(g.data[lead + i + shift])) ok++; } return { ok, n }; };
         same = { at: cmp(0), before: cmp(-1), after: cmp(1) };
+        // (when they don't agree: the shift that lines the take up with the grab, for the line to say)
+        if (same.at.ok !== same.at.n) {
+          let i0 = 0; while (i0 + off < a.length && Math.abs(a[i0 + off]) < 0.05) i0++;
+          for (let sh = 0; sh <= buf.sampleRate && same.shift == null; sh++) for (const x of sh ? [sh, -sh] : [0]) {
+            let k = 0; while (k < 128 && lead + i0 + k + x >= 0 && q(a[i0 + off + k]) === q(g.data[lead + i0 + k + x])) k++;
+            if (k === 128) { same.shift = x; break; }
+          }
+        }
       }
       // the grab's samples as 16 bits, for Node to hold against the file
       let b64 = null;
@@ -127,8 +148,18 @@ async function rolling(T, ctx) {
         for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
         b64 = btoa(s);
       }
+      // the input as it came in, as 16 bits from its first block on (up to a frame it skipped, if any)
+      const blocks = window.__tpIn.slice().sort((x, y) => x.f - y.f), inF = blocks[0]?.f ?? null;
+      let n = 0;
+      for (const b of blocks) { if (b.f !== inF + n) break; n += b.d.length; }
+      const v = new Int16Array(n);
+      n = 0;
+      for (const b of blocks) { if (b.f !== inF + n) break; for (const x of b.d) v[n++] = x < 0 ? Math.round(x * 32768) : Math.round(x * 32767); }
+      const u = new Uint8Array(v.buffer); let s = '';
+      for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+      const input = { f: inF, b64: btoa(s) };
       const f0 = Math.round(window.__lrFile.t0 * app.input.audio.state.sr);
-      return { sel, g: g && { ok: g.ok, error: g.error, asset: g.asset, frames: g.frames, place: g.place, seconds: g.seconds, peak: g.peak, lead: g.lead }, b64, hist, h0, loud, same, take, f0, inAssets: g?.ok ? !!(await app.engine.assets.get(g.asset.id)) : false };
+      return { sel, g: g && { ok: g.ok, error: g.error, asset: g.asset, frames: g.frames, place: g.place, seconds: g.seconds, peak: g.peak, lead: g.lead }, b64, hist, h0, loud, same, take, f0, input, inAssets: g?.ok ? !!(await app.engine.assets.get(g.asset.id)) : false };
     });
     const sel = r.sel;
     T.ok(sel && sel.snapped && sel.beats?.from === 0 && sel.beats?.to === 16 && sel.bars === 4 && sel.bar === 1,
@@ -151,14 +182,32 @@ async function rolling(T, ctx) {
     }
     let bad = -1;
     if (off != null) { bad = 0; for (let i = 0; i < got.length; i++) if (got[i] !== v16[off + i]) bad++; }
-    T.ok(off != null && bad === 0, `grab: the asset's ${got.length} samples are the fake's, every one (${off == null ? 'not found in the file' : `${bad} differ`}), ${fmt(r.g.seconds, 3)} s at ${r.g.asset.sr} Hz, peaking at ${fmt(r.g.peak, 2)} dBFS`);
-    const lineErr = off == null ? null : r.g.frames.at - r.g.frames.from + off - Math.round(bar1 * sr);
+    // the grab against the input as it came in, frame for frame: the tape holds what the input gave it at each frame
+    const inp = new Int16Array(Uint8Array.from(Buffer.from(r.input.b64, 'base64')).buffer), at0 = r.g.frames.from - r.input.f;
+    let badIn = 0;
+    for (let i = 0; i < got.length; i++) if (at0 + i < 0 || at0 + i >= inp.length || got[i] !== inp[at0 + i]) badIn++;
+    T.ok(off != null && badIn === 0, `grab: the asset's ${got.length} samples are the fake's, every one, at the frames the input gave them (${off == null ? 'not found in the file' : `${badIn} differ${bad ? `; ${bad} from the file, the input a block late` : ''}`}), ${fmt(r.g.seconds, 3)} s at ${r.g.asset.sr} Hz, peaking at ${fmt(r.g.peak, 2)} dBFS`);
+    // the line against the file where the input had it at bar 1: how much later on the audio clock the file came in there
+    // than the mark (4 s before it) said, found by the input's samples from 10 ms on (the riff's first note in them)
+    let late = null;
+    {
+      const k0 = Math.round((r.f0 + (bar1 + 0.01) * sr) - r.input.f), want = k0 + r.input.f - r.f0;
+      for (let d = 0; k0 >= 0 && k0 + 512 <= inp.length && d <= 4096 && late == null; d++) {
+        for (const s0 of d ? [want + d, want - d] : [want]) {
+          if (s0 < 0 || s0 + 512 > v16.length) continue;
+          let k = 0;
+          while (k < 512 && inp[k0 + k] === v16[s0 + k]) k++;
+          if (k === 512) { late = want - s0; break; }
+        }
+      }
+    }
+    const lineErr = off == null || late == null ? null : r.g.frames.at - r.g.frames.from + off - Math.round(bar1 * sr) + late;
     // (the band was counted in to the file as the mark lined it up, harness.js alignCount: the tape's line is the band's
     // bar 1, so this holds that lining up and the tape's frames to the band's clock at once)
-    T.ok(lineErr != null && Math.abs(lineErr) <= 0.0005 * sr, `its line is the fake's bar 1 to ${lineErr} samples (${fmt((lineErr / sr) * 1000, 2)} ms, the file lined up by its mark; within 0.5 ms)`);
+    T.ok(lineErr != null && Math.abs(lineErr) <= 0.0005 * sr, `its line is the fake's bar 1 to ${lineErr} samples (${fmt((lineErr / sr) * 1000, 2)} ms, the file lined up by its mark${late ? `, and the input ${fmt((late / sr) * 1000, 2)} ms behind it by bar 1` : ''}; within 0.5 ms)`);
     const sm = r.same;
     T.ok(sm && sm.at.n > sr * 4 && sm.at.ok === sm.at.n && sm.before.ok < sm.before.n * 0.5 && sm.after.ok < sm.after.n * 0.5,
-      `and the deck's: the take's first sample (beat ${r.take?.start}, offset ${r.take?.offset}) is the grab's at its line, and they agree for ${sm?.at.ok} of ${sm?.at.n} samples (a sample either way: ${sm?.before.ok}, ${sm?.after.ok})`);
+      `and the deck's: the take's first sample (beat ${r.take?.start}, offset ${r.take?.offset}) is the grab's at its line, and they agree for ${sm?.at.ok} of ${sm?.at.n} samples (a sample either way: ${sm?.before.ok}, ${sm?.after.ok})${sm && sm.at.ok !== sm.at.n ? `; the take lines up with the grab ${sm.shift == null ? 'nowhere within a second' : `${sm.shift} samples on`}` : ''}`);
     const p = r.g.place;
     T.ok(p && p.from === 0 && p.to === 16 && p.beats === 16 && p.bars === 4 && p.bpm === 120 && Math.abs(p.start + 0.06) < 0.002 && Math.abs(p.length - 16.06) < 0.002 && r.g.lead === Math.round(0.03 * sr) / sr,
       `its place: beats ${p?.from}–${p?.to} (${p?.bars} bars at ${p?.bpm}), the first sample at beat ${fmt(p?.start, 4)} (the 30 ms lead), ${fmt(p?.length, 4)} beats long`);

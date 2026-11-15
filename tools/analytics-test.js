@@ -201,67 +201,8 @@ try {
     await context.close();
   }
 
-  /* ---------------------------------------------------------------- 5.'s dry deploys start here, while 4 runs */
-  // the scripts, dry: a stub aws comes first on PATH and there are no credentials, so nothing here reaches AWS
-  const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'next-dry-'));
-  fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
-  // and a stub gzip: compressing every kit (about 1 GB) was 97% of a dry deploy, and nothing goes up to need it
-  fs.writeFileSync(path.join(stub, 'gzip'), '#!/bin/sh\necho "gzip was called: $*" >&2\nexit 97\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', NEXT_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
-  // DEPLOY_ENV=/dev/null: the scripts would otherwise read deploy/.env;
-  // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from REF's deploy/live-config.json;
-  // NEXT_CONFIG=/dev/null: and lay REF's deploy/next-config.json over it on --next (checked below without it);
-  // COMMUNITY_PIN=/dev/null (dry runs only): no shelf, so no overdub-devices checkout is needed (tools/community-test.js
-  // checks the shelf's part)
-  for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF',
-    'LIVE_DISTRIBUTION', 'LOCAL_LIVE_DEPLOY', 'GITHUB_ACTIONS']) delete env[k];
-  // 600 s each: a dry deploy still hashes and unpacks every kit (about 1 GB). Each is a child process of its own (its
-  // own stage, PIN and kit dirs from mktemp; the cache only read), so they all start here, a few at a time, and each
-  // is read where it was before; each config file they read is its own file, written before any starts
-  const queue = [];
-  let running = 0;
-  const pump = () => { while (running < 4 && queue.length) { running++; queue.shift()(); } };
-  const spawned = (argv, env) => new Promise((resolve) => {
-    queue.push(() => {
-      const c = spawn(argv[0], argv.slice(1), { cwd: ROOT, env, timeout: 600000 });
-      let so = '', se = '';
-      c.stdout.setEncoding('utf8').on('data', (d) => { so += d; });
-      c.stderr.setEncoding('utf8').on('data', (d) => { se += d; });
-      c.on('error', (e) => { se += String(e); });
-      c.on('close', (status) => { running--; pump(); resolve({ status, out: so + se }); });
-    });
-    pump();
-  });
-  const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; return spawned(['bash', path.join(ROOT, script), ...args], { ...env, ...extra }); };
-  const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
-  // the config files the runs below read: a base for both sites, a base and an overlay to merge, an overlay that
-  // isn't an object, a base with "toggles"
-  const file = (dir, name, text) => { fs.mkdirSync(path.join(stub, dir), { recursive: true }); fs.writeFileSync(path.join(stub, dir, name), text); return path.join(stub, dir, name); };
-  const base = file('both', 'site-config.json', JSON.stringify({ other: { api: 'https://switch.example' } }));
-  const baseM = file('merged', 'site-config.json', JSON.stringify({ stems: { id: 'a', keep: 1 }, other: 1 }));
-  const overlay = file('merged', 'next-config.json', JSON.stringify({ stems: { id: 'b' }, cloud: { api: 'https://api.example' }, preview: false }));
-  const overlayBad = file('bad', 'next-config.json', '[1]');
-  const baseT = file('toggles', 'site-config.json', JSON.stringify({ toggles: { relay: 'on' }, other: 1 }));
-  const noBase = { ...env };
-  delete noBase.SITE_CONFIG;
-  const dry = {
-    next: run('deploy/deploy.sh', '--skip-tests', '--next', 'HEAD~1'),
-    live: run('deploy/deploy.sh', '--skip-tests'),
-    hatch: run('deploy/deploy.sh', { DRY_RUN: '', LOCAL_LIVE_DEPLOY: '1', LIVE_DISTRIBUTION: 'ELIVE', COMMUNITY_PIN: '', OVERDUB_DEVICES_DIR: path.join(stub, 'no-devices') }, '--skip-tests'),
-    liveRef: run('deploy/deploy.sh', '--skip-tests', 'HEAD~1'),
-    committed: spawned(['bash', path.join(ROOT, 'deploy/deploy.sh'), '--skip-tests'], noBase),
-    nextB: run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests', '--next', 'HEAD~1'),
-    liveB: run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'),
-    nextO: run('deploy/deploy.sh', { NEXT_CONFIG: '' }, '--skip-tests', '--next', 'HEAD'),
-    merged: run('deploy/deploy.sh', { SITE_CONFIG: baseM, NEXT_CONFIG: overlay }, '--skip-tests', '--next', 'HEAD~1'),
-    badO: run('deploy/deploy.sh', { NEXT_CONFIG: overlayBad }, '--skip-tests', '--next', 'HEAD~1'),
-    oldR: run('deploy/deploy.sh', { SITE_CONFIG: baseT }, '--skip-tests'),
-  };
-
   /* ---------------------------------------------------------------- 4. DNT, GPC, automation */
-  // (the three at once, each in a context of its own; their checks held and printed in this order)
-  const quiet = async ([label, opts]) => {
-    const t = later();
+  for (const [label, opts] of [['Do Not Track', { dnt: true }], ['Global Privacy Control', { gpc: true }], ['automation (navigator.webdriver)', { webdriver: true }]]) {
     const { browser, base } = session;
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['microphone'] });
     const beacons = await fakeProd(context, base, opts);
@@ -274,12 +215,68 @@ try {
     await settle(page);
     t.ok(off && beacons.length === 0, `${label}: nothing sent (${beacons.length})`);
     await context.close();
-    return t;
-  };
-  for (const held of await Promise.all([['Do Not Track', { dnt: true }], ['Global Privacy Control', { gpc: true }], ['automation (navigator.webdriver)', { webdriver: true }]].map(quiet))) held.flush();
+  }
 
   /* ---------------------------------------------------------------- 5. the two sites' deploys */
   {
+    // (the dry deploys start only now: the checks above that nothing was sent ran with nothing else loading the machine,
+    // and the preview's below run once every deploy has finished)
+    // the scripts, dry: a stub aws comes first on PATH and there are no credentials, so nothing here reaches AWS
+    const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'next-dry-'));
+    fs.writeFileSync(path.join(stub, 'aws'), '#!/bin/sh\necho "aws was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    // and a stub gzip: compressing every kit (about 1 GB) was 97% of a dry deploy, and nothing goes up to need it
+    fs.writeFileSync(path.join(stub, 'gzip'), '#!/bin/sh\necho "gzip was called: $*" >&2\nexit 97\n', { mode: 0o755 });
+    const env = { ...process.env, PATH: `${stub}${path.delimiter}${process.env.PATH}`, DRY_RUN: '1', AWS_CONFIG_FILE: '/dev/null', AWS_SHARED_CREDENTIALS_FILE: '/dev/null', DEPLOY_ENV: '/dev/null', SITE_CONFIG: '/dev/null', NEXT_CONFIG: '/dev/null', COMMUNITY_PIN: '/dev/null' };
+    // DEPLOY_ENV=/dev/null: the scripts would otherwise read deploy/.env;
+    // SITE_CONFIG=/dev/null: deploy.sh would otherwise start the site config from REF's deploy/live-config.json;
+    // NEXT_CONFIG=/dev/null: and lay REF's deploy/next-config.json over it on --next (checked below without it);
+    // COMMUNITY_PIN=/dev/null (dry runs only): no shelf, so no overdub-devices checkout is needed (tools/community-test.js
+    // checks the shelf's part)
+    for (const k of ['AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'NEXT_ZONE', 'NEXT_OAC', 'NEXT_CERT', 'OAC', 'ZONE', 'CERT', 'REF',
+      'LIVE_DISTRIBUTION', 'LOCAL_LIVE_DEPLOY', 'GITHUB_ACTIONS']) delete env[k];
+    // 600 s each: a dry deploy still hashes and unpacks every kit (about 1 GB). Each is a child process of its own (its
+    // own stage, PIN and kit dirs from mktemp; the cache only read), so they all start here, a few at a time, and each
+    // is read where it was before; each config file they read is its own file, written before any starts
+    const queue = [];
+    let running = 0;
+    const pump = () => { while (running < 4 && queue.length) { running++; queue.shift()(); } };
+    const spawned = (argv, env) => new Promise((resolve) => {
+      queue.push(() => {
+        const c = spawn(argv[0], argv.slice(1), { cwd: ROOT, env, timeout: 600000 });
+        let so = '', se = '';
+        c.stdout.setEncoding('utf8').on('data', (d) => { so += d; });
+        c.stderr.setEncoding('utf8').on('data', (d) => { se += d; });
+        c.on('error', (e) => { se += String(e); });
+        c.on('close', (status) => { running--; pump(); resolve({ status, out: so + se }); });
+      });
+      pump();
+    });
+    const run = (script, ...args) => { const extra = typeof args[0] === 'object' ? args.shift() : {}; return spawned(['bash', path.join(ROOT, script), ...args], { ...env, ...extra }); };
+    const clean = (r) => r.status === 0 && !/aws was called/.test(r.out);
+    // the config files the runs below read: a base for both sites, a base and an overlay to merge, an overlay that
+    // isn't an object, a base with "toggles"
+    const file = (dir, name, text) => { fs.mkdirSync(path.join(stub, dir), { recursive: true }); fs.writeFileSync(path.join(stub, dir, name), text); return path.join(stub, dir, name); };
+    const base = file('both', 'site-config.json', JSON.stringify({ other: { api: 'https://switch.example' } }));
+    const baseM = file('merged', 'site-config.json', JSON.stringify({ stems: { id: 'a', keep: 1 }, other: 1 }));
+    const overlay = file('merged', 'next-config.json', JSON.stringify({ stems: { id: 'b' }, cloud: { api: 'https://api.example' }, preview: false }));
+    const overlayBad = file('bad', 'next-config.json', '[1]');
+    const baseT = file('toggles', 'site-config.json', JSON.stringify({ toggles: { relay: 'on' }, other: 1 }));
+    const noBase = { ...env };
+    delete noBase.SITE_CONFIG;
+    const dry = {
+      next: run('deploy/deploy.sh', '--skip-tests', '--next', 'HEAD~1'),
+      live: run('deploy/deploy.sh', '--skip-tests'),
+      hatch: run('deploy/deploy.sh', { DRY_RUN: '', LOCAL_LIVE_DEPLOY: '1', LIVE_DISTRIBUTION: 'ELIVE', COMMUNITY_PIN: '', OVERDUB_DEVICES_DIR: path.join(stub, 'no-devices') }, '--skip-tests'),
+      liveRef: run('deploy/deploy.sh', '--skip-tests', 'HEAD~1'),
+      committed: spawned(['bash', path.join(ROOT, 'deploy/deploy.sh'), '--skip-tests'], noBase),
+      nextB: run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests', '--next', 'HEAD~1'),
+      liveB: run('deploy/deploy.sh', { SITE_CONFIG: base }, '--skip-tests'),
+      nextO: run('deploy/deploy.sh', { NEXT_CONFIG: '' }, '--skip-tests', '--next', 'HEAD'),
+      merged: run('deploy/deploy.sh', { SITE_CONFIG: baseM, NEXT_CONFIG: overlay }, '--skip-tests', '--next', 'HEAD~1'),
+      badO: run('deploy/deploy.sh', { NEXT_CONFIG: overlayBad }, '--skip-tests', '--next', 'HEAD~1'),
+      oldR: run('deploy/deploy.sh', { SITE_CONFIG: baseT }, '--skip-tests'),
+    };
+
     const ref = spawnSync('git', ['rev-parse', '--short', 'HEAD~1'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
     const next = await dry.next;
     const live = await dry.live;

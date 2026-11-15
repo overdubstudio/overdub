@@ -20,12 +20,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { startServer, ready, byteRange, addRoute } from '../server/serve.js';
 import { OUTDIR, tally, QUIET, TEXT } from './pw.js';
 import { FIXED_TWIDDLES_SHA, FIXED_CONVOLUTION_SHA } from './fixtures/convolve-fixed.js';
 
 const require = createRequire(import.meta.url);
-const T = tally('compat');
+// The browsers run side by side (each its own browser, context and pages; they share only the server). What each one
+// checks is held in its own list and printed in one piece, in the order asked for, when it is done.
+const tallied = tally('compat');
+const held = new AsyncLocalStorage();
+const T = {
+  ok(cond, msg) { const h = held.getStore(); if (!h) return tallied.ok(cond, msg); h.push(['ok', cond, msg]); return !!cond; },
+  note(msg) { const h = held.getStore(); if (!h) return tallied.note(msg); h.push(['note', msg]); },
+  done: () => tallied.done(),
+};
+const flush = (h) => { for (const [k, ...a] of h) tallied[k](...a); };
 const ALL = ['chromium', 'webkit', 'firefox', 'chromium-phone'];
 const want = (process.argv.slice(2).length ? process.argv.slice(2) : (process.env.BROWSERS || ALL.join(',')).split(',')).map((s) => s.trim()).filter(Boolean);
 const HEADED = !!process.env.HEADED;
@@ -762,24 +772,29 @@ async function simple(b, base, tag) {
 // ------------------------------------------------------------------------------------------------ run
 await ready;
 const srv = await startServer({ port: 0, quiet: true });
+async function one(kind) {
+  let b;
+  try { b = await launch(kind); } catch (e) {
+    const msg = String(e && e.message || e).split('\n')[0];
+    if (process.env.REQUIRE_ALL) T.ok(false, `${kind}: launches (${msg})`);
+    else T.note(`${kind}: not available here, skipped (${msg}). Install: node <playwright-core>/cli.js install ${kind.replace(/-phone$/, '')}`);
+    return;
+  }
+  const t0 = Date.now();
+  try {
+    if (b.phone) await phoneLoop(b, srv.url, kind);
+    else { await studio(b, srv.url, kind); await landing(b, srv.url, kind); await pages(b, srv.url, kind); await shelf(b, srv.url, kind); }
+  } catch (e) { T.ok(false, `${kind}: the run finished (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); }
+  try { await simple(b, srv.url, kind); } catch (e) { T.ok(false, `${kind}: the simple view's run finished (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); }
+  T.note(`${kind}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  await b.browser.close().catch(() => {});
+}
 try {
-  for (const kind of want) {
-    console.log(`\n${kind}`);
-    let b;
-    try { b = await launch(kind); } catch (e) {
-      const msg = String(e && e.message || e).split('\n')[0];
-      if (process.env.REQUIRE_ALL) T.ok(false, `${kind}: launches (${msg})`);
-      else T.note(`${kind}: not available here, skipped (${msg}). Install: node <playwright-core>/cli.js install ${kind.replace(/-phone$/, '')}`);
-      continue;
-    }
-    const t0 = Date.now();
-    try {
-      if (b.phone) await phoneLoop(b, srv.url, kind);
-      else { await studio(b, srv.url, kind); await landing(b, srv.url, kind); await pages(b, srv.url, kind); await shelf(b, srv.url, kind); }
-    } catch (e) { T.ok(false, `${kind}: the run finished (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); }
-    try { await simple(b, srv.url, kind); } catch (e) { T.ok(false, `${kind}: the simple view's run finished (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); }
-    T.note(`${kind}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-    await b.browser.close().catch(() => {});
+  const runs = want.map((kind) => { const h = []; return { kind, h, done: held.run(h, () => one(kind)) }; });
+  for (const r of runs) {
+    await r.done;
+    console.log(`\n${r.kind}`);
+    flush(r.h);
   }
 } finally { await srv.close(); }
 T.done();

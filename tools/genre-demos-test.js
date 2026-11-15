@@ -11,14 +11,14 @@
 // skipped, and said so.
 //   node tools/genre-demos-test.js
 import fs from 'node:fs';
+import os from 'node:os';
+import { Worker } from 'node:worker_threads';
 import { tally } from './pw.js';
 import '../app/src/devices/builtin/index.js';
 import { getDevice } from '../app/src/devices/registry.js';
 import { MORE_DEMOS } from '../app/src/core/demos/index.js';
 import { demoById } from '../app/src/core/demo.js';
 import { validateProject } from '../app/src/core/project.js';
-import { renderSong } from '../app/src/engine/node/render.js';
-import { sha256 } from '../app/src/engine/node/io.js';
 import { dataPath } from '../app/src/engine/node/data.js';
 import { measure } from '../app/src/audio/measure.js';
 import { checkTargets, targetWords, TARGETS } from '../app/src/audio/targets.js';
@@ -33,10 +33,64 @@ const devicesOf = (p) => [...p.tracks.flatMap((t) => [t.instrument?.device, ...t
 const missingData = (p) => [...new Set(devicesOf(p))].flatMap((id) => Object.values(getDevice(id)?.data || {})).filter((h) => !fs.existsSync(dataPath(h)));
 const r2 = (x) => Math.round(x * 100) / 100;
 
+// The renders run on a few worker threads (tools/genre-demos-worker.js; CI runs this beside two other suites): each is
+// independent (the song, its second render, the metal demo's guitar stems), so they are all queued first, the longest
+// songs first, and the checks below read them in order. Only the samples the checks measure come back.
+const WORKERS = Math.max(1, Math.min(Number(process.env.GENRE_WORKERS) || 3, os.availableParallelism()));
+function renderPool(size) {
+  const queue = [], pending = new Map(), workers = [];
+  let count = 0;
+  const next = (w) => {
+    const job = queue.shift();
+    w.busy = !!job;
+    if (job) w.postMessage(job);
+  };
+  const spawnOne = () => {
+    const w = new Worker(new URL('./genre-demos-worker.js', import.meta.url));
+    w.on('message', (m) => { const k = pending.get(m.n); pending.delete(m.n); if (m.error) k.reject(new Error(m.error)); else k.resolve(m.ok); next(w); });
+    w.on('error', (e) => { for (const k of pending.values()) k.reject(e); pending.clear(); });
+    workers.push(w);
+    return w;
+  };
+  return {
+    render(project, opts, keep = false) {
+      const n = count++;
+      const done = new Promise((resolve, reject) => pending.set(n, { resolve, reject }));
+      done.catch(() => {}); // (read, and thrown, where the checks await it)
+      queue.push({ n, project, opts, keep });
+      const free = workers.find((w) => !w.busy) || (workers.length < size ? spawnOne() : null);
+      if (free) next(free);
+      return done;
+    },
+    close: () => Promise.all(workers.map((w) => w.terminate())),
+  };
+}
+const pool = renderPool(WORKERS);
+// the metal demo's rhythm guitars alone (their stems, summed), before the master, over the heavy section
+function guitarsSong(p, drop) {
+  const L = p.tracks.find((t) => t.name === 'Guitar L'), R = p.tracks.find((t) => t.name === 'Guitar R');
+  const q = JSON.parse(JSON.stringify(p));
+  q.master.inserts = []; delete q.master.clip;
+  for (const t of q.tracks) t.mute = t.id !== L.id && t.id !== R.id;
+  const [, s, l] = drop;
+  return [q, { from: s * 4, to: (s + l) * 4, tail: 0 }];
+}
+const runs = new Map();
+for (const d of GENRE.map((d) => [d, demoById(d.id)]).sort((a, b) => b[1].loop.end * b[1].tracks.length - a[1].loop.end * a[1].tracks.length).map(([d]) => d)) {
+  const mod = await import(`../app/src/core/demos/${d.id}.js`);
+  const p = demoById(d.id);
+  if (missingData(p).length) continue;
+  const opts = { from: 0, to: p.loop.end, tail: 2 };
+  const r = { p, out: pool.render(p, opts, true), again: pool.render(p, opts) };
+  if (d.targets === 'metal') r.guitars = pool.render(...guitarsSong(p, mod.DROPS[0]), true);
+  runs.set(d.id, r);
+}
+
 for (const d of GENRE) {
   console.log(`${d.title} (${d.genre}, ${d.targets})`);
   const mod = await import(`../app/src/core/demos/${d.id}.js`);
-  const p = demoById(d.id);
+  const run = runs.get(d.id);
+  const p = run ? run.p : demoById(d.id);
   const miss = missingData(p);
   if (miss.length) { T.note(`${d.title}: skipped, its kernel data isn't fetched (${miss.map((h) => h.slice(7, 19)).join(', ')}): node tools/fetch-kits.js`); continue; }
   ok(validateProject(p).length === 0, `${d.title}: a valid song, ${p.tracks.length} tracks, ${p.sections.length} sections (${p.sections.map((s) => s.name).join(', ')})`);
@@ -44,10 +98,10 @@ for (const d of GENRE) {
   const by = (w) => p.tracks.flatMap((t) => t.clips.flatMap((c) => c.notes)).filter((n) => n.by === w).length;
   ok(by('overdub') > 0 && by('claude') > 0, `${d.title}: ${by('overdub')} notes by the house, ${by('claude')} by Claude`);
   const sec = (60 / p.tempo) * 4;
-  const out = renderSong(p, { from: 0, to: p.loop.end, tail: 2 });
+  const out = await run.out;
   ok(!out.warnings.length, `${d.title}: renders ${(out.length / out.sr).toFixed(1)} s with no warnings${out.warnings.length ? ' ' + JSON.stringify(out.warnings.slice(0, 2)) : ''}`);
-  const h = sha256(out);
-  ok(sha256(renderSong(p, { from: 0, to: p.loop.end, tail: 2 })) === h, `${d.title}: a second render is bit-identical (${h.slice(0, 16)})`);
+  const h = out.sha256;
+  ok((await run.again).sha256 === h, `${d.title}: a second render is bit-identical (${h.slice(0, 16)})`);
   const m = measure(out);
   const song = checkTargets(m, d.targets, { window: 'song' });
   for (const r of song) ok(r.ok, `${d.title}, the song: ${targetWords(r)}`);
@@ -72,11 +126,9 @@ for (const d of GENRE) {
     const a = new Set(notes(L)), same = notes(R).filter((x) => a.has(x)).length;
     ok(L.pan === -1 && R.pan === 1 && same / a.size < 0.05, `${d.title}: two rhythm performances, hard left and right (${same} of ${a.size} notes the same in time and touch)`);
     // the guitar stems, summed, before the master, over the heavy section
-    const q = JSON.parse(JSON.stringify(p));
-    q.master.inserts = []; delete q.master.clip;
-    for (const t of q.tracks) t.mute = t.id !== L.id && t.id !== R.id;
-    const [name, s, l] = mod.DROPS[0];
-    const g = renderSong(q, { from: s * 4, to: (s + l) * 4, tail: 0 });
+    // (guitarsSong: L and R alone, the master off; rendered on the pool with the rest)
+    const [name] = mod.DROPS[0];
+    const g = await run.guitars;
     const mono = new Float32Array(g.length); for (let i = 0; i < g.length; i++) mono[i] = 0.5 * (g.channels[0][i] + g.channels[1][i]);
     const b = guitarBands(mono), P = TARGETS.metal.parts.guitars;
     const row = (k, v, [lo, hi], unit) => ok(v >= lo && v <= hi, `${d.title}, the rhythm guitars in the ${name}: ${k} ${r2(v)}${unit} (want ${lo === -Infinity ? `${hi} or under` : hi === Infinity ? `${lo} or over` : `${lo} to ${hi}`})`);
@@ -86,4 +138,5 @@ for (const d of GENRE) {
     row('2-4 kHz against 500 Hz-2 kHz', b.hm - b.mid, P.highmidVsMid, ' dB');
   }
 }
+await pool.close();
 T.done();

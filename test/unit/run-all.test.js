@@ -93,7 +93,12 @@ function runChanged(change) {
     fs.copyFileSync(path.join(TOOLS, f), path.join(tools, f));
   fs.writeFileSync(path.join(tools, 'fetch-kits.js'), '');
   for (const n of ['a', 'b', 'c']) fs.writeFileSync(path.join(tools, `${n}-test.js`), "console.log('  ok ran');");
-  const git = (...a) => spawnSync('git', a, { cwd: dir, encoding: 'utf8' });
+  // the machine's own git config stays out: ghastly signs every commit with a key this throwaway repo can't use
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (...a) => {
+    const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8', env });
+    assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`);
+  };
   git('init', '-q', '-b', 'main');
   git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'base', '--allow-empty');
   git('add', '-A');

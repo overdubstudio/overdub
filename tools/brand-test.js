@@ -22,11 +22,33 @@
 //   Cathedral Below: plays, meters, and its LEVELS hold when rendered offline and measured (BS.1770 LUFS, true peak)
 import fs from 'node:fs';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
 import { open, tally, OUTDIR } from './pw.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const T = tally('brand');
+// The sections that time nothing (the type, the session notes, reduced motion, Cathedral Below's offline renders, the
+// bylines) run side by side, three at a time, each its own browser and server as before; the ones that count frames
+// or time them (desktop, the phone's 4x CPU throttle) and the hum (a fake mic whose file runs from the first capture)
+// run alone after them. What each checks is held in its own list and printed in one piece, in the order written.
+const tallied = tally('brand');
+const held = new AsyncLocalStorage();
+const T = {
+  ok(cond, msg) { const h = held.getStore(); if (!h) return tallied.ok(cond, msg); h.push(['ok', cond, msg]); return !!cond; },
+  note(msg) { const h = held.getStore(); if (!h) return tallied.note(msg); h.push(['note', msg]); },
+  done: () => tallied.done(),
+};
+const queued = [];
+const side = (name, fn) => { queued.push({ name, fn, alone: false, h: [] }); };
+const alone = (name, fn) => { queued.push({ name, fn, alone: true, h: [] }); };
+async function runSections(n) {
+  const run = (q) => held.run(q.h, async () => { try { await q.fn(); } catch (e) { T.ok(false, `${q.name}: ran to the end (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); } });
+  const pool = queued.filter((q) => !q.alone);
+  let next = 0;
+  await Promise.all(Array.from({ length: n }, async () => { while (next < pool.length) await run(pool[next++]); }));
+  for (const q of queued.filter((x) => x.alone)) await run(q);
+  for (const q of queued) for (const [k, ...a] of q.h) tallied[k](...a);
+}
 
 // ---- tokens (the contract and the contrast checks are test/unit/brand.test.js)
 const tokensSrc = fs.readFileSync(path.join(ROOT, 'app/style/tokens.css'), 'utf8');
@@ -35,7 +57,7 @@ for (const m of tokensSrc.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) tok[m[1]] 
 const canvasShot = (page) => page.locator('#weave').screenshot();
 
 // ---- desktop
-{
+alone('desktop', async () => {
   const { page, errors, close } = await open('/', { width: 1440, height: 900 });
   await page.waitForFunction(() => window.__overdub_site && window.__overdub_site.ready, null, { timeout: 10000 });
   await page.waitForTimeout(900);
@@ -112,11 +134,11 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   await page.screenshot({ path: path.join(OUTDIR, 'landing-1440-fold.png') });
   T.ok(!errors.length, `desktop: no console or page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- the type, from the site: app/style/fonts.css (tokens.css imports it) declares the five families, each file a
 // woff2 beside its licence, and every page draws in them with nothing fetched from another host
-{
+side('type', async () => {
   const FONTS = path.join(ROOT, 'app/style/fonts');
   const readOr = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
   const css = readOr(path.join(ROOT, 'app/style/fonts.css'));
@@ -178,10 +200,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   }
   T.ok(!off.length && !errors.length, `and none of those pages asked another host for anything${off.length ? ' (' + [...new Set(off)].join(', ') + ')' : ''}${errors.length ? '; errors: ' + errors.slice(0, 3).join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- session notes in the page: every link resolves, and a demo link opens that song in the studio
-{
+side('session notes', async () => {
   const { page, base, errors, close } = await open('/', { width: 1440, height: 900 });
   const links = await page.$$eval('.reel a[href], .studio-cta a[href], footer a[href]', (as) => as.map((a) => a.getAttribute('href')));
   const bad = [];
@@ -197,10 +219,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   T.ok(title && title === want, `session notes: ${href} opens “${title}” in the studio (want “${want}”)`);
   T.ok(!errors.length, `session notes: no errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- phone
-{
+alone('phone', async () => {
   const { page, errors, close } = await open('/', { width: 390, height: 844 });
   await page.waitForFunction(() => window.__overdub_site && window.__overdub_site.ready, null, { timeout: 10000 });
   await page.waitForTimeout(1200);
@@ -230,10 +252,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   await page.screenshot({ path: path.join(OUTDIR, 'landing-390-fold.png') });
   T.ok(!errors.length, `390: no console or page errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- reduced motion
-{
+side('reduced motion', async () => {
   const { page, errors, close } = await open('/', { width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.reload({ waitUntil: 'load' });
@@ -250,10 +272,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   await page.screenshot({ path: path.join(OUTDIR, 'landing-reduced-fold.png') });
   T.ok(!errors.length, `reduced motion: no errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- hum into it, with a fake mic humming A3, C4, E4
-{
+alone('hum', async () => {
   const sr = 48000, seq = [[57, 0.9], [null, 0.35], [60, 0.9], [null, 0.35], [64, 0.9], [null, 0.6]];
   const total = seq.reduce((s, x) => s + x[1], 0), n = Math.round(sr * total);
   const pcm = new Int16Array(n); let i = 0, ph = 0;
@@ -289,10 +311,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   T.ok(off === 'demo', 'hum: pressing again stops listening and the demo resumes');
   T.ok(!errors.length, `hum: no errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- Cathedral Below, measured offline (BS.1770-4 integrated loudness with gating; true peak, 4x oversampled)
-{
+side('Cathedral Below', async () => {
   const { page, errors, close } = await open('/', { width: 800, height: 600 });
   const r = await page.evaluate(async () => {
     const { buildCathedral, renderStrum, LEVELS } = await import('/site/assets/pedal.js');
@@ -368,10 +390,10 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   T.ok(r.diffDb < -90, `pedal: renders the same every time (largest difference between two renders ${r.diffDb.toFixed(0)} dBFS)`);
   T.ok(!errors.length, `pedal render: no errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
 // ---- bylines in the studio: byline() and the old class names, as the browser draws them
-{
+side('bylines', async () => {
   const { page, errors, close } = await open('/app/', { query: 'demo', width: 1280, height: 800 });
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
   const r = await page.evaluate(async () => {
@@ -417,6 +439,9 @@ const canvasShot = (page) => page.locator('#weave').screenshot();
   T.ok(r.icon[0] === 1 && r.icon[1] && r.icon[2] === 0, `icon('sparkle') and icon('agent') draw one cool stroke (${JSON.stringify(r.icon)})`);
   T.ok(!errors.length, `studio bylines: no errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
   await close();
-}
+});
 
+await runSections(3);
 T.done();
+// (a section that threw has left its browser open: nothing else is waited for)
+process.exit();

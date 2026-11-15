@@ -47,6 +47,7 @@ import { open, tally, OUTDIR } from './pw.js';
 import { boot } from './guitar-page.js';
 import path from 'node:path';
 import fs from 'node:fs';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { run, goldenChecks, ampScenes } from './amp-scenes.js';
 import { halfOct, shape, thd, alias, sine } from './amp-measure.js';
 import { FIXTURE } from './amp-voices.js';
@@ -62,28 +63,6 @@ import * as riffs from '../app/src/ui/liveroom/riffs-db.js';
 
 const t = tally('guitar');
 
-// The riff library on its memory side (no IndexedDB, as Node runs it): 2,000 riffs, then a page, a search through all
-// of them and the facets each under 150 ms. Wall clock, so here and not in test/unit (this runner retries a suite alone
-// when load made it fail). The IndexedDB side is timed in tools/liveroom/checks-library.js.
-{
-  const tiny = { sr: 48000, channels: [new Float32Array(480)] };
-  for (let i = 0; i < 2000; i++) {
-    const r = await riffs.add({ audio: tiny, tempo: 90 + (i % 80), beats: 4, name: i === 1234 ? 'Needle' : '',
-      tuning: ['standard', 'drop-c', 'drop-b'][i % 3], song: { id: 'p_' + (i % 40), title: i % 40 ? 'Song ' + (i % 40) : 'Untitled' },
-      starred: i % 25 === 0, at: 2e12 + i * 1000 });
-    if (!r.ok) throw new Error(r.error);
-  }
-  let t0 = performance.now();
-  await riffs.list({ limit: 50 });
-  const tPage = performance.now() - t0;
-  t0 = performance.now();
-  await riffs.list({ q: 'needle' });
-  const tSearch = performance.now() - t0;
-  t0 = performance.now();
-  await riffs.facets();
-  const tFacets = performance.now() - t0;
-  t.ok(tPage < 150 && tSearch < 150 && tFacets < 150, `2,000 riffs in memory: page ${tPage.toFixed(1)} ms, search ${tSearch.toFixed(1)} ms, facets ${tFacets.toFixed(1)} ms (each under 150)`);
-}
 const FAST = process.env.FAST === '1';
 const ONLY = process.env.PEDALS ? process.env.PEDALS.split(',') : null;
 
@@ -103,7 +82,7 @@ const FIT_GATE = {
   abyss: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 5 dB under the graph amp, whose octave was the same' },
   urchin: { alias: 5, why: 'the octave down (f0/2 and its odd harmonics) is no harmonic of f0, so the measure counts it: at 1 kHz it reads 27 dB under the graph amp, whose octave was the same' },
 };
-{
+async function nodeAmps(t) {
   const fx = JSON.parse(fs.readFileSync(FIXTURE, 'utf8')).amps, own = AMP_CABS.indexOf('own'), x = diStrum(8, 48000), bass = bassDI(8, 48000);
   const r1 = (v) => v.toFixed(1), stack = getDevice('core.stack');
   for (const id of KERNEL_AMPS) {
@@ -154,9 +133,70 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     const a = run(hs, p, x)[0], b = run(stackDef, P, x)[0], sp = shape(halfOct(a), halfOct(b)), ta = thd(run(hs, p, sine(196, -18, 2.5))[0]), tb = thd(run(stackDef, P, sine(196, -18, 2.5))[0]);
     t.ok(sp.rms <= 0.5 && Math.abs(ta / tb - 1) <= 0.1, `Half Stack's chain as a voicing reads as Half Stack: spectrum within ${sp.rms.toFixed(2)} dB rms (${sp.max.toFixed(2)} at worst), THD ${ta.toFixed(1)} % against ${tb.toFixed(1)} %`);
   }
-  // the golden scenes, in Node (pinned) and Chromium (sample for sample)
-  const names = ampScenes().map((q) => q.name).filter((n) => n.startsWith('fx:amp.'));
-  if (names.length) await goldenChecks(t, names, ['/app/src/devices/guitar/index.js']);
+}
+
+// the golden scenes, in Node (pinned) and Chromium (sample for sample)
+const goldenNames = () => ampScenes().map((q) => q.name).filter((n) => n.startsWith('fx:amp.'));
+
+// The Node checks above are CPU in this process for a minute and more each: on worker threads of their own (this file,
+// below), alongside the browser's offline checks. Each sends back its lines, which print here in order; the live
+// checks wait for them to finish, so nothing else of this suite is busy while they listen to the clock.
+if (!isMainThread) {
+  const lines = [], T = { ok: (c, m) => (lines.push([!!c, m]), !!c), note: (m) => lines.push([null, m]) };
+  if (workerData === 'amps') await nodeAmps(T);
+  else if (goldenNames().length) await goldenChecks(T, goldenNames(), ['/app/src/devices/guitar/index.js']);
+  parentPort.postMessage(lines);
+  process.exit(0);
+}
+const replay = (lines) => { for (const [c, m] of lines) if (c === null) t.note(m); else t.ok(c, m); };
+const onWorker = (job) => new Promise((resolve, reject) => {
+  const w = new Worker(new URL(import.meta.url), { workerData: job });
+  w.once('message', resolve); w.once('error', reject);
+  w.once('exit', (code) => reject(new Error(`the ${job} worker exited (${code}) before it reported`)));
+});
+
+// The riff library on its memory side (no IndexedDB, as Node runs it): 2,000 riffs, then a page, a search through all
+// of them and the facets each under 150 ms. Wall clock, so here and not in test/unit (this runner retries a suite alone
+// when load made it fail). The IndexedDB side is timed in tools/liveroom/checks-library.js.
+{
+  const tiny = { sr: 48000, channels: [new Float32Array(480)] };
+  for (let i = 0; i < 2000; i++) {
+    const r = await riffs.add({ audio: tiny, tempo: 90 + (i % 80), beats: 4, name: i === 1234 ? 'Needle' : '',
+      tuning: ['standard', 'drop-c', 'drop-b'][i % 3], song: { id: 'p_' + (i % 40), title: i % 40 ? 'Song ' + (i % 40) : 'Untitled' },
+      starred: i % 25 === 0, at: 2e12 + i * 1000 });
+    if (!r.ok) throw new Error(r.error);
+  }
+  let t0 = performance.now();
+  await riffs.list({ limit: 50 });
+  const tPage = performance.now() - t0;
+  t0 = performance.now();
+  await riffs.list({ q: 'needle' });
+  const tSearch = performance.now() - t0;
+  t0 = performance.now();
+  await riffs.facets();
+  const tFacets = performance.now() - t0;
+  t.ok(tPage < 150 && tSearch < 150 && tFacets < 150, `2,000 riffs in memory: page ${tPage.toFixed(1)} ms, search ${tSearch.toFixed(1)} ms, facets ${tFacets.toFixed(1)} ms (each under 150)`);
+}
+const nodeChecks = [onWorker('amps'), onWorker('golden')];
+nodeChecks.forEach((q) => q.catch(() => {})); // (awaited below)
+
+// 5. the rigs: each preset through its whole chain on the DI (or the bass DI), offline, in batches
+async function rigRows(page, ids) {
+  const rows = [];
+  for (let k = 0; k < ids.length; k += 16) {
+    rows.push(...await page.evaluate(async (batch) => {
+      const { G, render, input, clawdLufs, check, tp } = window.__gt, out = [];
+      for (const id of batch) {
+        const r = G.rigById(id), kind = r.bank.id === 'bass' ? 'bass' : r.bank.id === 'keys' ? 'keys' : 'di';
+        try {
+          const y = await render(r.chain, input(kind === 'keys' ? 'di' : kind, 6), { band: true });
+          out.push({ id, bank: r.bank.id, lead: r.tags.includes('lead'), kind, lufs: clawdLufs(y[0], y[1]), tp: tp(y), ...check(y) });
+        } catch (e) { out.push({ id, err: String(e.message || e) }); }
+      }
+      return out;
+    }, ids.slice(k, k + 16)));
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------------------------------- audio
@@ -164,6 +204,23 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
   const { page, errors, close } = await open('/app/style/tokens.css');
   page.setDefaultTimeout(600000);
   await boot(page);
+  // the rigs (5, below) are a minute of offline renders: most of them on a second page, alongside the checks here;
+  // the faces (7) after them
+  const rigIds = FAST ? [] : await page.evaluate(() => window.__gt.G.RIGS.map((r) => r.id)), mine = Math.floor(rigIds.length * 0.4);
+  const side = (async () => {
+    const rows = [], errs = [];
+    if (rigIds.length) {
+      const s = await open('/app/style/tokens.css');
+      s.page.setDefaultTimeout(600000);
+      await boot(s.page);
+      rows.push(...await rigRows(s.page, rigIds.slice(mine)));
+      errs.push(...s.errors);
+      await s.close();
+    }
+    await faces();
+    return { rows, errs };
+  })();
+  side.catch(() => {}); // (awaited below)
 
   // the kit's own envelope follower (PFX.ENV, for a graph device of Overdub's that calls kit.envelope(); no built-in
   // does yet): its file loads behind END and it follows a tone
@@ -178,50 +235,6 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
     return { ok, end: d[d.length - 1], url: new URL(K.PFX.ENV).pathname };
   });
   t.ok(env.ok && Math.abs(env.end - 0.5) < 0.05, `the kit's own envelope follower (${env.url}) loads from its file and follows a 0.5 sine (${env.ok ? env.end.toFixed(3) : 'did not load'})`);
-
-  // 2b. automation (docs/research/AUTOMATION.md 3.5): the engine moves a pedal's knob with set(values, { at }) ahead
-  // of time. A param that changes the sound before `at` (the pedal writes .value, or rebuilds, in set()) would land up
-  // to 120 ms early: those are marked auto: false in devices/guitar/pedals.js (no lane), and every other one waits.
-  {
-    const early = await page.evaluate(async (ONLY) => {
-      const { R, input } = window.__gt;
-      const SR = 48000, x = input('di', 1.2).slice(0, Math.round(1.2 * SR)), AT = 0.8, until = Math.round((AT - 0.03) * SR);
-      const go = async (id, params, move) => {
-        const c = new OfflineAudioContext(2, x.length, SR), src = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
-        b.copyToChannel(x, 0); src.buffer = b;
-        const inst = await R.instantiate(c, id, { uid: 'auto-' + id, params, on: true, bpm: 120 });
-        await inst.ready;
-        src.connect(inst.input); inst.output.connect(c.destination); src.start(0);
-        inst.set({ ...params, ...move }, { at: AT });
-        const r = await c.startRendering();
-        inst.dispose();
-        return [r.getChannelData(0).slice(0, until), r.getChannelData(1).slice(0, until)];
-      };
-      const out = { found: [], marked: [], wrong: [], params: 0 };
-      for (const d of R.listDevices().filter((q) => q.id.startsWith('pedal.') && (!ONLY || ONLY.includes(q.id.slice(6))))) {
-        const base = {};
-        for (const p of d.params) base[p.key] = p.def;
-        const ref = await go(d.id, base, {}), ref2 = await go(d.id, base, {});
-        // (a pedal whose renders differ by a hair on their own: its own floor, times ten)
-        let floor = 0;
-        for (let ch = 0; ch < 2; ch++) for (let i = 0; i < until; i++) floor = Math.max(floor, Math.abs(ref2[ch][i] - ref[ch][i]));
-        for (const p of d.params) {
-          if (p.auto === false) out.marked.push(d.id + '.' + p.key);
-          if (p.opts || p.tap || p.step >= (p.max - p.min)) continue;
-          out.params++;
-          const to = p.def > (p.min + p.max) / 2 ? p.min : p.max;
-          const got = await go(d.id, base, { [p.key]: to });
-          let dmax = 0;
-          for (let ch = 0; ch < 2; ch++) for (let i = 0; i < until; i++) dmax = Math.max(dmax, Math.abs(got[ch][i] - ref[ch][i]));
-          if (dmax > Math.max(1e-4, 10 * floor)) out.found.push(d.id + '.' + p.key);
-        }
-      }
-      return out;
-    }, ONLY);
-    const unmarked = early.found.filter((k) => !early.marked.includes(k));
-    t.note(`automation: ${early.found.length} of ${early.params} continuous pedal params change the sound before their set()'s time${early.found.length ? ': ' + early.found.join(' ') : ''}`);
-    t.ok(!unmarked.length, `every pedal param that ignores set()'s time is marked auto: false (no lane), so a lane never lands early${unmarked.length ? '; unmarked: ' + unmarked.join(' ') : ''}`);
-  }
 
   // 2. every pedal renders, finite; deterministic
   const ids = await page.evaluate((only) => window.__gt.R.listDevices().filter((d) => d.id.startsWith('pedal.') && (!only || only.includes(d.pedal))).map((d) => d.id), ONLY);
@@ -244,22 +257,6 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
   }
   t.ok(!bad.length, `${ids.length} pedals render the DI strum on an OfflineAudioContext, finite${bad.length ? ': ' + bad.slice(0, 6).join('; ') : ''}`);
   t.ok(!loud.length, `no pedal's raw peak over +6 dBFS at its defaults (loudest ${worst.id} ${worst.peak.toFixed(1)} dBFS)${loud.length ? ': ' + loud.join(', ') : ''}`);
-
-  const det = await page.evaluate(async () => {
-    const { render, input } = window.__gt, x = input('di', 2), out = [];
-    for (const id of ['pedal.bitreef', 'pedal.verb', 'pedal.krillroll', 'pedal.chewedcable', 'pedal.planktoncloud', 'pedal.seasick', 'amp.abyss']) {
-      const a = await render([{ device: id }], x), b = await render([{ device: id }], x);
-      let d = 0; for (let ch = 0; ch < 2; ch++) for (let i = 0; i < a[ch].length; i++) d = Math.max(d, Math.abs(a[ch][i] - b[ch][i]));
-      out.push([id, d]);
-    }
-    return out;
-  });
-  // Kernels are bit-exact. A few of the gear's pedals drive their modulation from main-thread timers (they predate the
-  // clock), so under heavy CPU load two renders can differ by a render quantum's worth of wobble: allowed up to
-  // -80 dB, and named here so it stays visible.
-  const inexact = det.filter(([, d]) => d > 0);
-  if (inexact.length) t.note(`not bit-exact under load: ${inexact.map(([id, d]) => id.split('.')[1] + ' ' + d.toExponential(1)).join(', ')}`);
-  t.ok(det.every(([, d]) => d <= 1e-4), `renders are deterministic (twice the same to -80 dB; ${det.length - inexact.length}/${det.length} sample for sample)`);
 
   // 2c. soft clippers (devices/kit.js softReach, docs PEDALS.md "The kit"). A WaveShaperNode clamps its input to its
   // curve: past the ends it holds the end value, so a soft clipper whose curve is still climbing there (tanh at a small
@@ -476,42 +473,6 @@ return { create({ sr, dsp }) { const a = makeVoiced(sr, dsp, V); return { latenc
       if (rv.freeze) t.ok(Math.abs(rv.freeze.held) < 3 && rv.freeze.free < -40, `Frostbite's HOLD, pressed while a chord rings, holds it (from 6 s to 12 s, ${rv.freeze.held >= 0 ? '+' : ''}${rv.freeze.held.toFixed(1)} dB; never pressed, it's gone by then: ${Math.max(-120, rv.freeze.free).toFixed(0)} dB)`);
     }
 
-    // live: DECAY swept (and Kraken's SPACE flipped) under a tone, and the pedal stomped, click-free
-    const rvLive = await page.evaluate(async (ids) => {
-      const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
-      await c.resume();
-      const REC = `class GtRec4 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
-        process(i) { const a = i[0] && i[0][0], b = i[0] && i[0][1]; if (a && this.on) this.port.postMessage([a.slice(0), (b || a).slice(0)]); return this.on; } } registerProcessor('gt-rec4', GtRec4);`;
-      await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const res = [];
-      for (const id of ids) {
-        const d = R.getDevice('pedal.' + id), key = id === 'krakenhall' ? 'size' : 'decay';
-        const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
-        const inst = await R.instantiate(c, d.id, { uid: 'rvlive-' + id, on: true, params: { mix: 8 } }); await inst.ready;
-        const rec = new AudioWorkletNode(c, 'gt-rec4', { channelCount: 2, channelCountMode: 'explicit' }), blocks = [];
-        rec.port.onmessage = (e) => blocks.push(e.data);
-        g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
-        const t0 = c.currentTime, marks = [];
-        await sleep(700);
-        const moves = [10, 0, 7, 2, 10, 0, 5].map((v) => ({ [key]: v, mix: 8 }));
-        if (id === 'krakenhall') moves.push({ space: 1, mix: 8 }, { space: 0, mix: 8 });
-        for (const m of moves) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.set(m, { at }); await sleep(220); }
-        for (let k = 0; k < 4; k++) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.setOn(k % 2 === 1, at); await sleep(260); }
-        rec.port.postMessage('stop'); o.stop(); await sleep(60);
-        inst.dispose(); g.disconnect(); rec.disconnect();
-        const n = blocks.reduce((s, b) => s + b[0].length, 0), ys = [new Float32Array(n), new Float32Array(n)]; let p = 0;
-        for (const b of blocks) { ys[0].set(b[0], p); ys[1].set(b[1], p); p += b[0].length; }
-        const sr = c.sampleRate, near = new Uint8Array(n);
-        for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.06) * sr)); i++) near[i] = 1;
-        let steady = 0, at = 0;
-        for (const y of ys) for (let i = Math.round(0.4 * sr); i < n - 256; i++) { const d2 = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]); if (near[i]) at = Math.max(at, d2); else steady = Math.max(steady, d2); }
-        res.push({ id, ratio: at / Math.max(steady, 1e-9), moves: moves.length, secs: n / sr });
-      }
-      await c.close();
-      return res;
-    }, rvIds);
-    for (const l of rvLive) t.ok(l.ratio < 1.6 && l.secs > 3, `live, ${('pedal.' + l.id).padEnd(18)} with its ${l.id === 'krakenhall' ? 'SIZE (and SPACE)' : 'DECAY'} moved ${l.moves} times under a tone and stomped 4 times is click-free (second difference at the moves ${l.ratio.toFixed(2)}× the steady sound's)`);
   }
 
   // 4. the amps
@@ -652,6 +613,125 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
   });
   t.ok(kcab.length === 7 && kcab.every((r) => r.db <= -80), `the kernel's cab and mics are the graph amps' native nodes on pink noise (the difference against them): ${kcab.map((r) => `${r.what} ${r.db.toFixed(0)} dB`).join(', ')}`);
 
+  // 5. the rigs, end to end (these here; the rest on the second page, alongside)
+  if (!FAST) {
+    const rows = await rigRows(page, rigIds.slice(0, mine)), there = await side;
+    rows.push(...there.rows);
+    const judged = rows.filter((r) => r.kind !== 'keys');
+    const off = judged.filter((r) => r.err || r.bad || r.lufs < -15.5 || r.lufs > (r.lead ? -12 : -12.5) || r.tp > -1);
+    const lo = Math.min(...judged.map((r) => r.lufs)), hi = Math.max(...judged.map((r) => r.lufs));
+    t.ok(!off.length, `${judged.length} rigs (all but the keys bank) through their whole chain: ${lo.toFixed(1)} to ${hi.toFixed(1)} LUFS, true peak ≤ ${Math.max(...judged.map((r) => r.tp)).toFixed(1)} dBTP${off.length ? '; off: ' + off.slice(0, 8).map((r) => `${r.id} ${r.err || (r.bad ? 'NaN' : r.lufs.toFixed(1) + '/' + r.tp.toFixed(1))}`).join(', ') : ''}`);
+    const keys = rows.filter((r) => r.kind === 'keys');
+    t.ok(keys.every((r) => !r.err && !r.bad), `${keys.length} keys rigs render finite (their levels are set for a keyboard, not judged with a guitar)`);
+  }
+
+  const { errs: sideErrors } = await side;
+  // the Node checks' lines (4d in Node, the golden scenes), once they're done: the live checks below have the machine
+  for (const q of nodeChecks) replay(await q);
+
+  // (2b and the determinism of 2 wait for them too: the pedals that move their LFOs from main-thread timers wobble
+  // with the load, and these hold renders to each other)
+  // 2b. automation (docs/research/AUTOMATION.md 3.5): the engine moves a pedal's knob with set(values, { at }) ahead
+  // of time. A param that changes the sound before `at` (the pedal writes .value, or rebuilds, in set()) would land up
+  // to 120 ms early: those are marked auto: false in devices/guitar/pedals.js (no lane), and every other one waits.
+  {
+    const early = await page.evaluate(async (ONLY) => {
+      const { R, input } = window.__gt;
+      const SR = 48000, x = input('di', 1.2).slice(0, Math.round(1.2 * SR)), AT = 0.8, until = Math.round((AT - 0.03) * SR);
+      const go = async (id, params, move) => {
+        const c = new OfflineAudioContext(2, x.length, SR), src = c.createBufferSource(), b = c.createBuffer(1, x.length, SR);
+        b.copyToChannel(x, 0); src.buffer = b;
+        const inst = await R.instantiate(c, id, { uid: 'auto-' + id, params, on: true, bpm: 120 });
+        await inst.ready;
+        src.connect(inst.input); inst.output.connect(c.destination); src.start(0);
+        inst.set({ ...params, ...move }, { at: AT });
+        const r = await c.startRendering();
+        inst.dispose();
+        return [r.getChannelData(0).slice(0, until), r.getChannelData(1).slice(0, until)];
+      };
+      const out = { found: [], marked: [], wrong: [], params: 0 };
+      for (const d of R.listDevices().filter((q) => q.id.startsWith('pedal.') && (!ONLY || ONLY.includes(q.id.slice(6))))) {
+        const base = {};
+        for (const p of d.params) base[p.key] = p.def;
+        const ref = await go(d.id, base, {}), ref2 = await go(d.id, base, {});
+        // (a pedal whose renders differ by a hair on their own: its own floor, times ten)
+        let floor = 0;
+        for (let ch = 0; ch < 2; ch++) for (let i = 0; i < until; i++) floor = Math.max(floor, Math.abs(ref2[ch][i] - ref[ch][i]));
+        for (const p of d.params) {
+          if (p.auto === false) out.marked.push(d.id + '.' + p.key);
+          if (p.opts || p.tap || p.step >= (p.max - p.min)) continue;
+          out.params++;
+          const to = p.def > (p.min + p.max) / 2 ? p.min : p.max;
+          const got = await go(d.id, base, { [p.key]: to });
+          let dmax = 0;
+          for (let ch = 0; ch < 2; ch++) for (let i = 0; i < until; i++) dmax = Math.max(dmax, Math.abs(got[ch][i] - ref[ch][i]));
+          if (dmax > Math.max(1e-4, 10 * floor)) out.found.push(d.id + '.' + p.key);
+        }
+      }
+      return out;
+    }, ONLY);
+    const unmarked = early.found.filter((k) => !early.marked.includes(k));
+    t.note(`automation: ${early.found.length} of ${early.params} continuous pedal params change the sound before their set()'s time${early.found.length ? ': ' + early.found.join(' ') : ''}`);
+    t.ok(!unmarked.length, `every pedal param that ignores set()'s time is marked auto: false (no lane), so a lane never lands early${unmarked.length ? '; unmarked: ' + unmarked.join(' ') : ''}`);
+  }
+
+  // 2. deterministic
+  const det = await page.evaluate(async () => {
+    const { render, input } = window.__gt, x = input('di', 2), out = [];
+    for (const id of ['pedal.bitreef', 'pedal.verb', 'pedal.krillroll', 'pedal.chewedcable', 'pedal.planktoncloud', 'pedal.seasick', 'amp.abyss']) {
+      const a = await render([{ device: id }], x), b = await render([{ device: id }], x);
+      let d = 0; for (let ch = 0; ch < 2; ch++) for (let i = 0; i < a[ch].length; i++) d = Math.max(d, Math.abs(a[ch][i] - b[ch][i]));
+      out.push([id, d]);
+    }
+    return out;
+  });
+  // Kernels are bit-exact. A few of the gear's pedals drive their modulation from main-thread timers (they predate the
+  // clock), so under heavy CPU load two renders can differ by a render quantum's worth of wobble: allowed up to
+  // -80 dB, and named here so it stays visible.
+  const inexact = det.filter(([, d]) => d > 0);
+  if (inexact.length) t.note(`not bit-exact under load: ${inexact.map(([id, d]) => id.split('.')[1] + ' ' + d.toExponential(1)).join(', ')}`);
+  t.ok(det.every(([, d]) => d <= 1e-4), `renders are deterministic (twice the same to -80 dB; ${det.length - inexact.length}/${det.length} sample for sample)`);
+
+
+  if (rvIds.length) {
+    // live: DECAY swept (and Kraken's SPACE flipped) under a tone, and the pedal stomped, click-free
+    const rvLive = await page.evaluate(async (ids) => {
+      const { R } = window.__gt, c = new AudioContext({ sampleRate: 48000 });
+      await c.resume();
+      const REC = `class GtRec4 extends AudioWorkletProcessor { constructor() { super(); this.on = true; this.port.onmessage = () => { this.on = false; }; }
+        process(i) { const a = i[0] && i[0][0], b = i[0] && i[0][1]; if (a && this.on) this.port.postMessage([a.slice(0), (b || a).slice(0)]); return this.on; } } registerProcessor('gt-rec4', GtRec4);`;
+      await c.audioWorklet.addModule('data:text/javascript,' + encodeURIComponent(REC));
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const res = [];
+      for (const id of ids) {
+        const d = R.getDevice('pedal.' + id), key = id === 'krakenhall' ? 'size' : 'decay';
+        const o = c.createOscillator(), g = c.createGain(); o.frequency.value = 196; g.gain.value = 0.25; o.connect(g);
+        const inst = await R.instantiate(c, d.id, { uid: 'rvlive-' + id, on: true, params: { mix: 8 } }); await inst.ready;
+        const rec = new AudioWorkletNode(c, 'gt-rec4', { channelCount: 2, channelCountMode: 'explicit' }), blocks = [];
+        rec.port.onmessage = (e) => blocks.push(e.data);
+        g.connect(inst.input); inst.output.connect(rec); rec.connect(c.destination); o.start();
+        const t0 = c.currentTime, marks = [];
+        await sleep(700);
+        const moves = [10, 0, 7, 2, 10, 0, 5].map((v) => ({ [key]: v, mix: 8 }));
+        if (id === 'krakenhall') moves.push({ space: 1, mix: 8 }, { space: 0, mix: 8 });
+        for (const m of moves) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.set(m, { at }); await sleep(220); }
+        for (let k = 0; k < 4; k++) { const at = c.currentTime + 0.05; marks.push(at - t0); inst.setOn(k % 2 === 1, at); await sleep(260); }
+        rec.port.postMessage('stop'); o.stop(); await sleep(60);
+        inst.dispose(); g.disconnect(); rec.disconnect();
+        const n = blocks.reduce((s, b) => s + b[0].length, 0), ys = [new Float32Array(n), new Float32Array(n)]; let p = 0;
+        for (const b of blocks) { ys[0].set(b[0], p); ys[1].set(b[1], p); p += b[0].length; }
+        const sr = c.sampleRate, near = new Uint8Array(n);
+        for (const m of marks) for (let i = Math.max(0, Math.round((m - 0.03) * sr)); i < Math.min(n, Math.round((m + 0.06) * sr)); i++) near[i] = 1;
+        let steady = 0, at = 0;
+        for (const y of ys) for (let i = Math.round(0.4 * sr); i < n - 256; i++) { const d2 = Math.abs(y[i] - 2 * y[i - 1] + y[i - 2]); if (near[i]) at = Math.max(at, d2); else steady = Math.max(steady, d2); }
+        res.push({ id, ratio: at / Math.max(steady, 1e-9), moves: moves.length, secs: n / sr });
+      }
+      await c.close();
+      return res;
+    }, rvIds);
+    for (const l of rvLive) t.ok(l.ratio < 1.6 && l.secs > 3, `live, ${('pedal.' + l.id).padEnd(18)} with its ${l.id === 'krakenhall' ? 'SIZE (and SPACE)' : 'DECAY'} moved ${l.moves} times under a tone and stomped 4 times is click-free (second difference at the moves ${l.ratio.toFixed(2)}× the steady sound's)`);
+  }
+
   // 4d, live: switching a kernel amp's cabs while it plays (measured, its own, measured, a designed 4x12 with its
   // mic, measured): click-free, and no dip
   const kLive = await page.evaluate(async (KA) => {
@@ -688,30 +768,6 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
   }, ['clean', 'recto', 'tiny', 'di', 'tape', 'abyss', 'whale']); // (one at each rate, 2x, 4x, 8x and none, the wow, the octave, a bass amp)
   for (const r of kLive) t.ok(r.ratio < 1.6 && r.dip > -12 && r.secs > 2, `live, amp.${r.id} switching cabs (measured, its own, measured, a designed 4x12 with its mic, measured) is click-free (${r.ratio.toFixed(2)}× the steady sound's second difference) and never dips (quietest 5 ms ${r.dip.toFixed(1)} dB)`);
 
-  // 5. the rigs, end to end
-  if (!FAST) {
-    const rigIds = await page.evaluate(() => window.__gt.G.RIGS.map((r) => r.id));
-    const rows = [];
-    for (let k = 0; k < rigIds.length; k += 16) {
-      rows.push(...await page.evaluate(async (batch) => {
-        const { G, render, input, clawdLufs, check, tp } = window.__gt, out = [];
-        for (const id of batch) {
-          const r = G.rigById(id), kind = r.bank.id === 'bass' ? 'bass' : r.bank.id === 'keys' ? 'keys' : 'di';
-          try {
-            const y = await render(r.chain, input(kind === 'keys' ? 'di' : kind, 6), { band: true });
-            out.push({ id, bank: r.bank.id, lead: r.tags.includes('lead'), kind, lufs: clawdLufs(y[0], y[1]), tp: tp(y), ...check(y) });
-          } catch (e) { out.push({ id, err: String(e.message || e) }); }
-        }
-        return out;
-      }, rigIds.slice(k, k + 16)));
-    }
-    const judged = rows.filter((r) => r.kind !== 'keys');
-    const off = judged.filter((r) => r.err || r.bad || r.lufs < -15.5 || r.lufs > (r.lead ? -12 : -12.5) || r.tp > -1);
-    const lo = Math.min(...judged.map((r) => r.lufs)), hi = Math.max(...judged.map((r) => r.lufs));
-    t.ok(!off.length, `${judged.length} rigs (all but the keys bank) through their whole chain: ${lo.toFixed(1)} to ${hi.toFixed(1)} LUFS, true peak ≤ ${Math.max(...judged.map((r) => r.tp)).toFixed(1)} dBTP${off.length ? '; off: ' + off.slice(0, 8).map((r) => `${r.id} ${r.err || (r.bad ? 'NaN' : r.lufs.toFixed(1) + '/' + r.tp.toFixed(1))}`).join(', ') : ''}`);
-    const keys = rows.filter((r) => r.kind === 'keys');
-    t.ok(keys.every((r) => !r.err && !r.bad), `${keys.length} keys rigs render finite (their levels are set for a keyboard, not judged with a guitar)`);
-  }
 
   // 6. live: click-free stomps
   const live = await page.evaluate(async () => {
@@ -899,65 +955,68 @@ return { create({ sr, dsp, data }) { const cab = makeAmpCab(sr, dsp, data && dat
   t.ok(fail.first === 'worklet' && fail.second === 'resolved' && fail.gateNode, `the Snapper with its worklet failing to load once is a 'worklet' failure (${fail.first}), and the next build loads it (${fail.second}, gate ${fail.gateNode ? 'in' : 'missing'})`);
   t.ok(fail.whileOne === 0 && fail.after === 0, `50 amp swaps leave no oscillator running, while the last one plays (${fail.whileOne}) or once it's gone (${fail.after}): a kernel amp starts none`);
 
-  t.ok(!errors.length, `no page errors in the audio checks${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+  const pageErrors = errors.concat(sideErrors);
+  t.ok(!pageErrors.length, `no page errors in the audio checks${pageErrors.length ? ': ' + pageErrors.slice(0, 3).join(' | ') : ''}`);
   await close();
 }
 
 // ---------------------------------------------------------------------------------------------------- faces
-for (const width of [1440, 390]) {
-  const { page, errors, close } = await open('/app/gallery.html', { width, height: 900 });
-  const missing404 = [];
-  page.on('response', (r) => { if (r.status() === 404) missing404.push(r.url()); });
-  await page.waitForFunction(() => window.__gallery && window.__gallery.ready, null, { timeout: 60000 });
-  await page.waitForTimeout(1500); // (the faces' fonts)
-  const g = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll('.g-card')];
-    const noFace = cards.filter((c) => !c.querySelector('.ewf')).map((c) => c.dataset.id);
-    const kinds = {}; for (const f of document.querySelectorAll('.ewf')) kinds[f.dataset.face] = (kinds[f.dataset.face] || 0) + 1;
-    const sliders = document.querySelectorAll('.ewf [role="slider"]').length, unlabeled = [...document.querySelectorAll('.ewf [role="slider"]')].filter((s) => !s.getAttribute('aria-label') || !s.getAttribute('aria-valuetext')).length;
-    const badges = [...document.querySelectorAll('.ewf-by')].map((b) => b.textContent);
-    return { cards: cards.length, devices: window.__gallery.devices, noFace, kinds, sliders, unlabeled, badges, overflow: document.documentElement.scrollWidth - innerWidth };
-  });
-  t.ok(g.cards === g.devices && !g.noFace.length, `${width}px: gallery.html draws a face for all ${g.devices} devices (${Object.entries(g.kinds).map(([k, n]) => n + ' ' + k).join(', ')})`);
-  t.ok(g.sliders > 400 && !g.unlabeled, `${width}px: ${g.sliders} controls are ARIA sliders with a label and a valuetext`);
-  t.ok(g.badges.some((b) => /Claude/.test(b)) && g.badges.some((b) => /\byou\b/i.test(b)), `${width}px: agent-written devices are signed with their author's byline (${[...new Set(g.badges)].join(', ')})`);
-  t.ok(g.overflow <= 0, `${width}px: no sideways scroll (${g.overflow > 0 ? g.overflow + ' px over' : 'fits'})`);
-  if (width === 1440) {
-    // interact: a knob by keys and double-click, a lever, the footswitch, a drag
-    const k = await page.evaluate(async () => {
-      const card = document.querySelector('.g-card[data-id="pedal.drive"]'), dial = card.querySelector('.kn-dial'), out = card.querySelector('.g-val');
-      const v0 = +dial.getAttribute('aria-valuenow');
-      dial.focus(); dial.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); dial.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
-      const v1 = +dial.getAttribute('aria-valuenow'), said = out.textContent;
-      dial.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-      const v2 = +dial.getAttribute('aria-valuenow');
-      const sw = card.querySelector('.pd-sw'), pd = card.querySelector('.pd'), on0 = pd.classList.contains('on'); sw.click(); const on1 = pd.classList.contains('on');
-      const lever = document.querySelector('.g-card[data-id="pedal.clamocd"] .ms-b'), lv0 = lever.getAttribute('aria-valuetext'); lever.click(); const lv1 = lever.getAttribute('aria-valuetext');
-      const pw = document.querySelector('.g-card[data-id="amp.punk"] .amp-pwr'), p0 = pw.getAttribute('aria-pressed'); pw.click(); const p1 = pw.getAttribute('aria-pressed');
-      const txt = document.querySelector('.g-card[data-id="pedal.delay"] .kn-dial').getAttribute('aria-valuetext');
-      return { v0, v1, v2, said, on0, on1, lv0, lv1, p0, p1, txt };
+async function faces() {
+  for (const width of [1440, 390]) {
+    const { page, errors, close } = await open('/app/gallery.html', { width, height: 900 });
+    const missing404 = [];
+    page.on('response', (r) => { if (r.status() === 404) missing404.push(r.url()); });
+    await page.waitForFunction(() => window.__gallery && window.__gallery.ready, null, { timeout: 60000 });
+    await page.waitForTimeout(1500); // (the faces' fonts)
+    const g = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('.g-card')];
+      const noFace = cards.filter((c) => !c.querySelector('.ewf')).map((c) => c.dataset.id);
+      const kinds = {}; for (const f of document.querySelectorAll('.ewf')) kinds[f.dataset.face] = (kinds[f.dataset.face] || 0) + 1;
+      const sliders = document.querySelectorAll('.ewf [role="slider"]').length, unlabeled = [...document.querySelectorAll('.ewf [role="slider"]')].filter((s) => !s.getAttribute('aria-label') || !s.getAttribute('aria-valuetext')).length;
+      const badges = [...document.querySelectorAll('.ewf-by')].map((b) => b.textContent);
+      return { cards: cards.length, devices: window.__gallery.devices, noFace, kinds, sliders, unlabeled, badges, overflow: document.documentElement.scrollWidth - innerWidth };
     });
-    t.ok(k.v1 > k.v0 && k.v2 === k.v0 && /drive = /.test(k.said), `a knob turns with the keys (${k.v0} -> ${k.v1}, "${k.said}") and double-click puts it back (${k.v2})`);
-    t.ok(k.on0 !== k.on1 && k.lv0 !== k.lv1 && k.p0 !== k.p1, `the footswitch stomps (${k.on0} -> ${k.on1}), a lever flips (${k.lv0} -> ${k.lv1}), the amp's power switches (${k.p0} -> ${k.p1})`);
-    t.ok(k.txt === '1/8.', `valuetext comes from the param's fmt (the delay's TIME reads "${k.txt}")`);
-    const dial = await page.$('.g-card[data-id="pedal.fuzz"] .kn-dial');
-    await dial.scrollIntoViewIfNeeded();
-    const box = await dial.boundingBox(), before = await dial.getAttribute('aria-valuenow');
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await page.mouse.move(box.x + box.width / 2, box.y - 40, { steps: 5 }); await page.mouse.up();
-    const after = await dial.getAttribute('aria-valuenow'), said = await page.$eval('.g-card[data-id="pedal.fuzz"] .g-val', (e) => e.textContent);
-    t.ok(+after > +before && !/…/.test(said), `dragging a knob up turns it up (${before} -> ${after}) and lets go with a commit ("${said}")`);
-    await page.evaluate(() => scrollTo(0, 0));
-    await page.screenshot({ path: path.join(OUTDIR, 'gallery-1440.png') });
-    for (const c of ['amp', 'fuzz', 'time']) { const s = await page.$(`section[data-cat="${c}"]`); await page.addStyleTag({ content: '.g-top{position:static}' }); if (s) await s.screenshot({ path: path.join(OUTDIR, `gallery-1440-${c}.png`) }); }
-  } else {
-    await page.screenshot({ path: path.join(OUTDIR, 'gallery-390.png') });
-    await page.evaluate(() => document.querySelector('section[data-cat="amp"]').scrollIntoView());
-    await page.waitForTimeout(200);
-    await page.screenshot({ path: path.join(OUTDIR, 'gallery-390-amps.png') });
+    t.ok(g.cards === g.devices && !g.noFace.length, `${width}px: gallery.html draws a face for all ${g.devices} devices (${Object.entries(g.kinds).map(([k, n]) => n + ' ' + k).join(', ')})`);
+    t.ok(g.sliders > 400 && !g.unlabeled, `${width}px: ${g.sliders} controls are ARIA sliders with a label and a valuetext`);
+    t.ok(g.badges.some((b) => /Claude/.test(b)) && g.badges.some((b) => /\byou\b/i.test(b)), `${width}px: agent-written devices are signed with their author's byline (${[...new Set(g.badges)].join(', ')})`);
+    t.ok(g.overflow <= 0, `${width}px: no sideways scroll (${g.overflow > 0 ? g.overflow + ' px over' : 'fits'})`);
+    if (width === 1440) {
+      // interact: a knob by keys and double-click, a lever, the footswitch, a drag
+      const k = await page.evaluate(async () => {
+        const card = document.querySelector('.g-card[data-id="pedal.drive"]'), dial = card.querySelector('.kn-dial'), out = card.querySelector('.g-val');
+        const v0 = +dial.getAttribute('aria-valuenow');
+        dial.focus(); dial.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); dial.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }));
+        const v1 = +dial.getAttribute('aria-valuenow'), said = out.textContent;
+        dial.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        const v2 = +dial.getAttribute('aria-valuenow');
+        const sw = card.querySelector('.pd-sw'), pd = card.querySelector('.pd'), on0 = pd.classList.contains('on'); sw.click(); const on1 = pd.classList.contains('on');
+        const lever = document.querySelector('.g-card[data-id="pedal.clamocd"] .ms-b'), lv0 = lever.getAttribute('aria-valuetext'); lever.click(); const lv1 = lever.getAttribute('aria-valuetext');
+        const pw = document.querySelector('.g-card[data-id="amp.punk"] .amp-pwr'), p0 = pw.getAttribute('aria-pressed'); pw.click(); const p1 = pw.getAttribute('aria-pressed');
+        const txt = document.querySelector('.g-card[data-id="pedal.delay"] .kn-dial').getAttribute('aria-valuetext');
+        return { v0, v1, v2, said, on0, on1, lv0, lv1, p0, p1, txt };
+      });
+      t.ok(k.v1 > k.v0 && k.v2 === k.v0 && /drive = /.test(k.said), `a knob turns with the keys (${k.v0} -> ${k.v1}, "${k.said}") and double-click puts it back (${k.v2})`);
+      t.ok(k.on0 !== k.on1 && k.lv0 !== k.lv1 && k.p0 !== k.p1, `the footswitch stomps (${k.on0} -> ${k.on1}), a lever flips (${k.lv0} -> ${k.lv1}), the amp's power switches (${k.p0} -> ${k.p1})`);
+      t.ok(k.txt === '1/8.', `valuetext comes from the param's fmt (the delay's TIME reads "${k.txt}")`);
+      const dial = await page.$('.g-card[data-id="pedal.fuzz"] .kn-dial');
+      await dial.scrollIntoViewIfNeeded();
+      const box = await dial.boundingBox(), before = await dial.getAttribute('aria-valuenow');
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down(); await page.mouse.move(box.x + box.width / 2, box.y - 40, { steps: 5 }); await page.mouse.up();
+      const after = await dial.getAttribute('aria-valuenow'), said = await page.$eval('.g-card[data-id="pedal.fuzz"] .g-val', (e) => e.textContent);
+      t.ok(+after > +before && !/…/.test(said), `dragging a knob up turns it up (${before} -> ${after}) and lets go with a commit ("${said}")`);
+      await page.evaluate(() => scrollTo(0, 0));
+      await page.screenshot({ path: path.join(OUTDIR, 'gallery-1440.png') });
+      for (const c of ['amp', 'fuzz', 'time']) { const s = await page.$(`section[data-cat="${c}"]`); await page.addStyleTag({ content: '.g-top{position:static}' }); if (s) await s.screenshot({ path: path.join(OUTDIR, `gallery-1440-${c}.png`) }); }
+    } else {
+      await page.screenshot({ path: path.join(OUTDIR, 'gallery-390.png') });
+      await page.evaluate(() => document.querySelector('section[data-cat="amp"]').scrollIntoView());
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: path.join(OUTDIR, 'gallery-390-amps.png') });
+    }
+    // (a device library that isn't there yet is a 404 the gallery skips on purpose)
+    const real = errors.filter((e) => !/status of 404/.test(e) || missing404.some((u) => !/\/devices\/builtin\//.test(u)));
+    t.ok(!real.length, `${width}px: no page errors${real.length ? ': ' + real.slice(0, 3).join(' | ') : ''}${missing404.length ? ' (skipped: ' + missing404.map((u) => u.replace(/^.*\/app\//, '')).join(', ') + ')' : ''}`);
+    await close();
   }
-  // (a device library that isn't there yet is a 404 the gallery skips on purpose)
-  const real = errors.filter((e) => !/status of 404/.test(e) || missing404.some((u) => !/\/devices\/builtin\//.test(u)));
-  t.ok(!real.length, `${width}px: no page errors${real.length ? ': ' + real.slice(0, 3).join(' | ') : ''}${missing404.length ? ' (skipped: ' + missing404.map((u) => u.replace(/^.*\/app\//, '')).join(', ') + ')' : ''}`);
-  await close();
 }
 t.done();

@@ -26,15 +26,21 @@ import { SR, run, metalDI, psd, band, guitarBands, aliasing, goldenChecks } from
 import { writeWav } from '../app/src/engine/node/io.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 
-const T = tally('stack');
+// (on a worker thread, this file's lines are kept and sent back to be printed in order: see the end)
+const lines = [];
+const T = isMainThread ? tally('stack') : { ok: (c, m) => (lines.push(['ok', !!c, m]), !!c), note: (m) => lines.push(['note', m]) };
+if (!isMainThread) console.log = (...a) => lines.push(['log', a.join(' ')]);
 const ok = T.ok;
 const L = (x) => lufs({ sr: SR, channels: [x, x] });
 const TP = (x) => truePeak({ sr: SR, channels: [x, x] });
 const rms = (y, a = 0, b = y.length) => { let s = 0; for (let i = a; i < b; i++) s += y[i] * y[i]; return 10 * Math.log10(s / (b - a) + 1e-30); };
 const sine = (f, dbfs, secs) => { const a = Math.pow(10, dbfs / 20), x = new Float32Array(Math.round(secs * SR)); for (let i = 0; i < x.length; i++) x[i] = a * Math.sin(2 * Math.PI * f * i / SR); return x; };
 const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2);
-function block(title, fn) { console.log(title); try { fn(); } catch (e) { ok(false, `${title}: threw ${e && e.stack}`); } }
+const BLOCKS = [];
+function block(title, fn) { BLOCKS.push([title, fn]); }
+function runBlock(i) { const [title, fn] = BLOCKS[i]; console.log(title); try { fn(); } catch (e) { ok(false, `${title}: threw ${e && e.stack}`); } }
 
 block('the tone stack', () => {
   // the analog response from tmbAnalog, at s = jw; the digital one from tmbCoefs at 4x, on the unit circle
@@ -195,11 +201,36 @@ block('presets, extremes, determinism, no bank', () => {
   ok(nz === 0, `two seconds of chords, then silence: the last 5 s of 30 are digital silence (${nz} nonzero samples)`);
 });
 
-const nodeCheck = await checkDeviceNode(def);
-ok(nodeCheck.ok && nodeCheck.deterministic && !nodeCheck.nan && !nodeCheck.errors.length, `the device check (Node): ${summarize(nodeCheck)}`);
-
-if (!process.env.NODE_ONLY) {
-  console.log('golden scenes, in Node and in Chromium');
-  await goldenChecks(T, ['fx:core.stack', 'fx:core.stack:cab#' + CABS_HASH.slice(7, 19)], ['/app/src/devices/builtin/stack.js']);
+async function checks() {
+  const nodeCheck = await checkDeviceNode(def);
+  ok(nodeCheck.ok && nodeCheck.deterministic && !nodeCheck.nan && !nodeCheck.errors.length, `the device check (Node): ${summarize(nodeCheck)}`);
+  if (!process.env.NODE_ONLY) {
+    console.log('golden scenes, in Node and in Chromium');
+    await goldenChecks(T, ['fx:core.stack', 'fx:core.stack:cab#' + CABS_HASH.slice(7, 19)], ['/app/src/devices/builtin/stack.js']);
+  }
 }
+
+// Every block is CPU in one thread. The tone and the level, the renders, the presets and the checks run on worker
+// threads of their own while this one runs the tone stack, the stages and the aliasing; then, with every worker gone,
+// the cost is timed here alone, as warm as it always was (after the blocks before it). Lines print in their old order.
+if (!isMainThread) {
+  if (workerData === 'checks') await checks();
+  else for (const i of workerData) runBlock(i);
+  parentPort.postMessage(lines);
+  process.exit(0);
+}
+const COST = BLOCKS.findIndex(([title]) => title === 'cost and latency');
+const onWorker = (job) => new Promise((resolve) => {
+  const w = new Worker(new URL(import.meta.url), { workerData: job });
+  let got = null;
+  w.once('message', (m) => (got = m));
+  w.once('error', (e) => (got = [['ok', false, `the ${job} worker threw: ${e && e.stack}`]]));
+  w.once('exit', (code) => resolve(got || [['ok', false, `the ${job} worker exited (${code}) before it reported`]]));
+});
+const jobs = [...BLOCKS.keys()].filter((i) => i > COST).map((i) => onWorker([i]));
+jobs.push(onWorker('checks'));
+for (let i = 0; i < COST; i++) runBlock(i);
+const done = await Promise.all(jobs);   // (each resolves once its worker has exited)
+runBlock(COST);
+for (const got of done) for (const [kind, a, b] of got) if (kind === 'log') console.log(a); else if (kind === 'note') T.note(a); else T.ok(a, b);
 T.done();

@@ -22,7 +22,7 @@ import { normParam, paramValues } from '../app/src/devices/registry.js';
 import { sha256 } from '../app/src/engine/node/io.js';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { open } from './pw.js';
 import { getDevice } from '../app/src/devices/registry.js';
 import '../app/src/devices/builtin/index.js';
@@ -66,6 +66,17 @@ if (!fs.existsSync(dataPath(UPRIGHT_HASH))) {
   t.done();
   process.exit();
 }
+// Parlour Upright, each of the other instruments and the other instruments' studio check are independent of each
+// other, and each is seconds to a minute of renders in one thread: the run hands them to child processes of this file
+// (SAMPLER_PART=<id>, or 'studio'), three at a time, and prints what each one found in the order they're written here.
+const PART = process.env.SAMPLER_PART;
+const usong = (notes, params = {}) => ({
+  ...createProject(), id: 'p_up', title: 'up', key: null, tempo: PHRASE_BPM, devices: {},
+  tracks: [{ id: 't_up', name: 'Piano', kind: 'instrument', instrument: { device: 'core.upright', params }, inserts: [],
+    clips: [{ id: 'c1', kind: 'notes', start: 0, length: 64, notes: notes.map((n, i) => ({ id: 'n' + i, d: 1, v: 0.8, ...n, by: 'overdub' })), by: 'overdub' }],
+    gain: 0, pan: 0, mute: false, solo: false, arm: false, by: 'overdub' }],
+});
+if (PART === 'core.upright') {
 console.log('Parlour Upright: the kit file');
 const bytes = fs.readFileSync(dataPath(UPRIGHT_HASH));
 const up = decodeOdk(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length));
@@ -103,12 +114,6 @@ const up = decodeOdk(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length
 console.log('Parlour Upright: the device');
 const specs = def.params.map(normParam);
 const pplay = (events, o = {}) => play(events, { kit: up, src: def.kernel, poly: def.poly || 32, specs, ...o });
-const usong = (notes, params = {}) => ({
-  ...createProject(), id: 'p_up', title: 'up', key: null, tempo: PHRASE_BPM, devices: {},
-  tracks: [{ id: 't_up', name: 'Piano', kind: 'instrument', instrument: { device: 'core.upright', params }, inserts: [],
-    clips: [{ id: 'c1', kind: 'notes', start: 0, length: 64, notes: notes.map((n, i) => ({ id: 'n' + i, d: 1, v: 0.8, ...n, by: 'overdub' })), by: 'overdub' }],
-    gain: 0, pan: 0, mute: false, solo: false, arm: false, by: 'overdub' }],
-});
 {
   const rep = await checkDeviceNode(def, {});
   t.ok(rep.ok && !rep.warnings.length, `checkDevice (Node) passes with no warnings${rep.ok ? '' : ': ' + rep.errors.join('; ')}${rep.warnings.length ? ' (' + rep.warnings.join('; ') + ')' : ''}`);
@@ -206,6 +211,7 @@ console.log('Parlour Upright: the studio');
     t.ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   } finally { await close(); }
 }
+}
 
 
 // ------------------------------------------------------------------------------------------------ the other sampled instruments
@@ -230,8 +236,13 @@ const MORE = [
   { id: 'core.trumpet', hash: TRUMPET_HASH, recipe: TRUMPET_RECIPE, only: 'trumpet', mb: 8, keys: [53, 88], layers: [[0, 72], [73, 127]], preset: 'Flugel', velWin: [1.5, 2], velTol: 1 },
 ];
 const fetched = MORE.filter((x) => fs.existsSync(dataPath(x.hash)));
-for (const x of MORE) if (!fetched.includes(x)) t.note(`${x.id}: its kit isn't fetched (node tools/fetch-kits.js), skipped`);
-for (const x of fetched) {
+const unfetched = () => { for (const x of MORE) if (!fetched.includes(x)) t.note(`${x.id}: its kit isn't fetched (node tools/fetch-kits.js), skipped`); };
+if (!PART) {
+  await parts(['core.upright', ...fetched.map((x) => x.id), ...(fetched.length ? ['studio'] : [])], { first: ['core.upright', 'studio'], after: { 'core.upright': unfetched } });
+  t.done();
+  process.exit();
+}
+for (const x of fetched.filter((y) => y.id === PART)) {
   const d = getDevice(x.id);
   console.log(`${d.name} (${x.id}): the kit file`);
   const kb = fs.readFileSync(dataPath(x.hash));
@@ -315,7 +326,7 @@ for (const x of fetched) {
   }
 }
 
-if (fetched.length) {
+if (fetched.length && PART === 'studio') {
   console.log('the other sampled instruments: the studio');
   const { page, close, errors } = await open('/app/', { query: 'new' });
   try {
@@ -347,3 +358,35 @@ if (fetched.length) {
   } finally { await close(); }
 }
 t.done();
+
+// The parts in child processes, `par` at a time, the `first` ones started first (the longest), the rest in the order
+// given; each one's lines are printed (its checks counted here) once it and every part listed before it have finished. A part that ends without a FAIL line but not cleanly
+// (a crash, a kill) fails the run here.
+async function parts(list, { par = 3, first = [], after = {} } = {}) {
+  const run = (part) => new Promise((resolve) => {
+    const c = spawn(process.execPath, [fileURLToPath(import.meta.url)], { env: { ...process.env, SAMPLER_PART: part }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.stderr.on('data', (d) => { err += d; });
+    c.on('close', (code, sig) => resolve({ part, out, err, code, sig }));
+  });
+  const ends = list.map(() => { let end; const p = new Promise((r) => { end = r; }); return { p, end }; });
+  const order = [...list.keys()].sort((a, b) => (first.includes(list[b]) ? 1 : 0) - (first.includes(list[a]) ? 1 : 0));
+  const worker = async () => { while (order.length) { const i = order.shift(); ends[i].end(await run(list[i])); } };
+  const workers = Array.from({ length: Math.min(par, list.length) }, worker);
+  for (let i = 0; i < list.length; i++) {
+    const r = await ends[i].p;
+    let failed = false;
+    for (const line of r.out.replace(/\n$/, '').split('\n')) {
+      let m;
+      if ((m = /^ {2}ok {3}(.*)$/.exec(line))) t.ok(true, m[1]);
+      else if ((m = /^ {2}FAIL (.*)$/.exec(line))) { t.ok(false, m[1]); failed = true; }
+      else if ((m = /^ {2}\.\. {3}(.*)$/.exec(line))) t.note(m[1]);
+      else if (!/^sampler: \d+ ok, \d+ failed$/.test(line)) console.log(line);
+    }
+    if (r.err) process.stderr.write(r.err);
+    if ((r.code !== 0 || r.sig) && !failed) t.ok(false, `${r.part}: its checks' process ended (${r.sig || 'exit ' + r.code}) before they finished${r.err ? ': ' + r.err.trim().split('\n').pop() : ''}`);
+    if (after[r.part]) after[r.part]();
+  }
+  await Promise.all(workers);
+}

@@ -31,6 +31,7 @@
 //
 //   node tools/studioa-test.js            NODE_ONLY=1 skips Chromium
 import crypto from 'node:crypto';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { tally } from './pw.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { createProject } from '../app/src/core/project.js';
@@ -91,8 +92,13 @@ const energy = (x, a, b) => { let s = 0; for (let i = Math.round(a * SR), e = Ma
 const loud = (r, a, b) => { const on = onset(r.m), i0 = on + Math.round(a * SR), i1 = on + Math.round(b * SR); return lufs({ sr: SR, channels: [r.L.subarray(i0, i1), r.R.subarray(i0, i1)] }); };
 const hash = (r) => crypto.createHash('sha256').update(Buffer.from(r.L.buffer)).update(Buffer.from(r.R.buffer)).digest('hex').slice(0, 16);
 
+// Each section is a function of its tally, run where the end of the file says (one after another as before, or in a
+// worker thread beside the others), its lines said in this order.
+const SECTIONS = [];
+const section = (title, fn) => SECTIONS.push({ title, fn });
+
 // ================================================================================================ the pieces
-console.log('every note sounds, in its part of the spectrum');
+section('every note sounds, in its part of the spectrum', (t) => {
 const REGION = { kick: [20, 250], snare: [700, 6000], hat: [2500, 16000], tom1: [60, 900], tom2: [60, 700], tom3: [50, 500], tom4: [40, 400],
   crash1: [2500, 12000], crash2: [2500, 12000], ride: [1800, 9000], china: [1500, 7000], splash: [3000, 14000], tamb: [4000, 14000], cowbell: [350, 1600], shaker: [4000, 14000], clap: [900, 4500] };
 const ART_REGION = { 'snare sidestick': [500, 4000], 'hat pedal': [1000, 7000], 'ride bell': [800, 3000], 'hat edge': [1500, 9000] };
@@ -117,9 +123,10 @@ for (const [p, piece, art, name] of NOTE_MAP) {
   const other = hit(64, 1, { humanize: 0 });
   t.ok(loud(other, 0, 0.4) > -40 && loud(other, 0, 0.4) < sounds[37].l, `a note outside the map plays the side stick, quietly (${fmt(loud(other, 0, 0.4))} LUFS)`);
 }
+});
 
 // ================================================================================================ velocity
-console.log('velocity changes the sound');
+section('velocity changes the sound', (t) => {
 for (const [p, name, want] of [[36, 'kick', 1.5], [38, 'snare', 1.3], [47, 'rack tom 2', 1.15], [43, 'floor tom', 1.15], [42, 'closed hat', 1.15], [51, 'ride', 1.15], [49, 'crash', 1.1]]) {
   const a = hit(p, 0.4, { humanize: 0 }), b = hit(p, 1, { humanize: 0 });
   const dl = loud(b, 0, 0.4) - loud(a, 0, 0.4), dc = centroid(b.m, onset(b.m), 2048) / centroid(a.m, onset(a.m), 2048);
@@ -132,9 +139,10 @@ for (const [p, name, want] of [[36, 'kick', 1.5], [38, 'snare', 1.3], [47, 'rack
   const soft = play([{ p: 38, t: 0, v: 0.6 }], { velocity: -1, humanize: 0 }), hard = play([{ p: 38, t: 0, v: 0.6 }], { velocity: 1, humanize: 0 });
   t.ok(loud(hard, 0, 0.4) - loud(soft, 0, 0.4) >= 6, `VEL: the same note is ${fmt(loud(hard, 0, 0.4) - loud(soft, 0, 0.4))} dB louder with a heavy hand (VEL 1) than a light touch (VEL -1)`);
 }
+});
 
 // ================================================================================================ humanity
-console.log('no machine-gun');
+section('no machine-gun', (t) => {
 {
   const eight = (h) => play(Array.from({ length: 8 }, (_, k) => ({ p: 38, t: k, v: 0.8 })), { humanize: h, mix_room: -40 }, 8, 0.5);
   const stats = (r) => {
@@ -152,9 +160,10 @@ console.log('no machine-gun');
   const a = play(drumPhrase(), {}, DRUM_PHRASE_BEATS, 1), b = play(drumPhrase(), {}, DRUM_PHRASE_BEATS, 1);
   t.ok(hash(a) === hash(b), `the drum phrase renders bit-identically twice (${hash(a)})`);
 }
+});
 
 // ================================================================================================ the hi-hat
-console.log('the hi-hat');
+section('the hi-hat', (t) => {
 {
   const open = play([{ p: 46, t: 0, v: 0.9 }], { humanize: 0 }, 2, 1);
   const tail = (r) => energy(r.m, 0.35, 0.9);
@@ -170,9 +179,10 @@ console.log('the hi-hat');
   const fs = ring(21);
   t.ok(fs > c + 6, `the foot splash rings after the chick (${fmt(fs)} dB against a closed hat's ${fmt(c)})`);
 }
+});
 
 // ================================================================================================ the overheads
-console.log('the overheads');
+section('the overheads', (t) => {
 {
   function itd(L, R, maxMs = 2.5) {
     const n = Math.round(0.08 * SR), K = Math.round(maxMs * 0.001 * SR);
@@ -186,9 +196,10 @@ console.log('the overheads');
     t.ok(mono('itd') && mono('ild'), `${side} view: rack tom 1, rack tom 2, floor tom 1, floor tom 2 go ${view ? 'right to left' : 'left to right'} by time (${pts.map((x) => fmt(x.itd, 2)).join(', ')} ms, R after L) and level (${pts.map((x) => fmt(x.ild)).join(', ')} dB, L over R)`);
   }
 }
+});
 
 // ================================================================================================ the mics
-console.log('the mic mix');
+section('the mic mix', (t) => {
 {
   const ph = drumPhrase().filter((n) => n.t < 8);
   const off = { mix_close: -40, mix_oh: -40, mix_room: -40, mix_crush: -40 };
@@ -215,9 +226,10 @@ console.log('the mic mix');
   const hh = (view) => { const r = hit(42, 0.9, { humanize: 0, view }, 0.5); return energy(r.L, 0, 0.3) - energy(r.R, 0, 0.3); };
   t.ok(hh(0) > 2 && hh(1) < -2, `VIEW: the hat is left from the drummer's seat (${fmt(hh(0))} dB) and right from out front (${fmt(hh(1))} dB)`);
 }
+});
 
 // ================================================================================================ the low end
-console.log('the low end: the room is mono under 120 Hz');
+section('the low end: the room is mono under 120 Hz', (t) => {
 {
   // A producer measured the kick's low end out of phase between left and right (docs/FRESH-EYES-6.md, Broken 5): the
   // room's reflections reach its two mics at different times and alternate in sign, and its tail differs on each side.
@@ -257,9 +269,10 @@ console.log('the low end: the room is mono under 120 Hz');
     t.ok(Math.abs(x.side - was.side) <= 0.5 && Math.abs(x.corr - was.corr) <= 0.03, `above 150 Hz ${name} is as wide as it was: the side ${fmt(x.side, 2)} dB under the middle (was ${was.side}), correlation ${fmt(x.corr, 3)} (was ${was.corr})`);
   }
 }
+});
 
 // ================================================================================================ the physics
-console.log('the physics');
+section('the physics', (t) => {
 {
   const close = { humanize: 0, mix_oh: -40, mix_room: -40 };
   const buzz = (p, wires) => { const r = hit(p, 1, { ...close, snare_wires: wires }, 0.5); return { b: band(r.m, Math.round(0.02 * SR), 32768, 3000, 9000), all: band(r.m, Math.round(0.02 * SR), 32768, 20, 20000) }; };
@@ -301,9 +314,10 @@ console.log('the physics');
   const after = energy(roll.m, 1.5, 2);
   t.ok(Math.max(...env) - Math.min(...env) < 8 && Math.min(...env) - after > 25, `a held roll keeps rolling (its 50 ms windows within ${fmt(Math.max(...env) - Math.min(...env))} dB while held) and stops with the note (${fmt(Math.min(...env) - after)} dB down 0.5 s after)`);
 }
+});
 
 // ================================================================================================ levels
-console.log('levels');
+section('levels', (t) => {
 {
   const m = measure({ sr: SR, channels: (({ L, R }) => [L, R])(play(drumPhrase(), {}, DRUM_PHRASE_BEATS, 2)) });
   t.ok(m.lufs >= -18.5 && m.lufs <= -13.5 && m.truePeak <= -1, `the GM drum phrase at defaults: ${m.lufs} LUFS (house: -18.5..-13.5), ${m.truePeak} dBTP (<= -1), crest ${m.crest} dB`);
@@ -316,9 +330,10 @@ console.log('levels');
     t.ok(mm.lufs >= -20 && mm.lufs <= -13 && mm.truePeak <= -1, `kit ${KITS[k]} at the default mix: ${mm.lufs} LUFS, ${mm.truePeak} dBTP`);
   }
 }
+});
 
 // ================================================================================================ CPU
-console.log('CPU');
+section('CPU', (t) => {
 if (process.env.CPU !== '0') {
   const N = [], add = (p, tt, v = 0.8) => N.push({ p, t: tt, d: 0.1, v });
   for (let b = 0; b < 8; b++) {
@@ -335,11 +350,12 @@ if (process.env.CPU !== '0') {
   const secs = 32 * BEAT + 1;
   t.ok(mine <= gobo * 1.25, `a busy groove (${N.length} notes: 16th hats, a fill every other bar, crash, ride and china ringing) costs ${fmt(mine / (secs * 10), 2)}% of a core, Gobo Kit ${fmt(gobo / (secs * 10), 2)}% (x${fmt(mine / gobo, 2)}; budget x1.25)`);
 }
+});
 
 // ================================================================================================ the device check
 // (checkDeviceNode: the same check in a child process; tools/sounds-test.js runs core.drumroom at its defaults through checkDevice in Chromium's worklet and only notes its warnings; its presets and kits are not run there)
-{
-  console.log('the device check (Node)');
+// (each check is a child process of its own: three run at once, their lines said in the order they always were)
+section('the device check (Node)', async (t) => {
   const { checkDeviceNode } = await import('../app/src/engine/node/check.js');
   const { summarize } = await import('../app/src/kernel/check.js');
   const { getDevice } = await import('../app/src/devices/registry.js');
@@ -349,28 +365,71 @@ if (process.env.CPU !== '0') {
     const r = await checkDeviceNode(def, { quick });
     return { ok: r.ok, warnings: r.warnings, errors: r.errors, s: summarize(r), lat: r.latency };
   };
-  const full = await run({}, false);
+  const jobs = [[{}, false], ...kit.presets.map((pr) => [pr.params, true]), ...[1, 2, 3, 4].map((k) => [{ kit: k }, true])];
+  const got = jobs.map(() => null);
+  let next = 0;
+  await Promise.all(Array.from({ length: 3 }, async () => { while (next < jobs.length) { const i = next++; got[i] = await run(...jobs[i]); } }));
+  const [full, ...quick] = got;
   t.ok(full.ok && !full.warnings.length, `checkDevice at the defaults (full mode): ${full.s}`);
   t.ok(full.lat && full.lat.samples === full.lat.declared && full.lat.declared > 0, `the onset lands where the declared latency says (${full.lat && full.lat.samples} / ${full.lat && full.lat.declared} samples: the limiter's look-ahead)`);
-  for (const pr of kit.presets) {
-    const r = await run(pr.params, true);
+  kit.presets.forEach((pr, i) => {
+    const r = quick[i];
     t.ok(r.ok && !r.warnings.length, `checkDevice (quick) with preset ${pr.name}: ${r.s}`);
-  }
-  for (const k of [1, 2, 3, 4]) {
-    const r = await run({ kit: k }, true);
+  });
+  [1, 2, 3, 4].forEach((k, i) => {
+    const r = quick[kit.presets.length + i];
     t.ok(r.ok && !r.warnings.length, `checkDevice (quick) on kit ${KITS[k]}: ${r.s}`);
-  }
-}
+  });
+});
 // ================================================================================================ Chromium
 // (the studio boots with the kit and raises no errors of its own)
 if (!process.env.NODE_ONLY) {
-  console.log('the studio boots with the kit in Chromium');
-  const { open } = await import('./pw.js');
-  const { page, errors, close } = await open('/app/');
-  try {
-    await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
-    const mine = errors.filter((e) => /drumroom|builtin/.test(e));
-    t.ok(!mine.length, `no page errors from the kit${mine.length ? ': ' + mine.join(' | ') : ''}`);
-  } finally { await close(); }
+  section('the studio boots with the kit in Chromium', async (t) => {
+    const { open } = await import('./pw.js');
+    const { page, errors, close } = await open('/app/');
+    try {
+      await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
+      const mine = errors.filter((e) => /drumroom|builtin/.test(e));
+      t.ok(!mine.length, `no page errors from the kit${mine.length ? ': ' + mine.join(' | ') : ''}`);
+    } finally { await close(); }
+  });
 }
-t.done();
+
+// ================================================================================================ running them
+// The CPU check runs first and alone: it holds the kit's CPU time to Gobo Kit's in this process, and nothing else may
+// run beside it. Then the rest at once: the renders in three worker threads (pure CPU, each section as it was), the
+// device checks three child processes at a time, and Chromium. Each section's lines are held and said in the file's
+// order, so the suite reads as it did.
+const LANES = [['levels'], ['the low end: the room is mono under 120 Hz', 'the physics', 'no machine-gun'],
+  ['every note sounds, in its part of the spectrum', 'velocity changes the sound', 'the hi-hat', 'the overheads', 'the mic mix']];
+const later = () => { const lines = []; return { lines, ok(c, m) { lines.push(['ok', !!c, m]); return !!c; }, note(m) { lines.push(['note', null, m]); } }; };
+const runSection = async (title) => {
+  const T = later();
+  try { await SECTIONS.find((x) => x.title === title).fn(T); } catch (e) { T.err = String(e?.stack || e); }
+  return { title, lines: T.lines, err: T.err };
+};
+if (!isMainThread && workerData?.studioaLane) {
+  const done = [];
+  for (const title of workerData.studioaLane) done.push(await runSection(title));
+  parentPort.postMessage(done);
+} else {
+  const said = new Map();
+  const keep = (r) => said.set(r.title, r);
+  keep(await runSection('CPU'));
+  const inWorker = (lane) => new Promise((resolve, reject) => {
+    const w = new Worker(new URL(import.meta.url), { workerData: { studioaLane: lane } });
+    let got = null;
+    w.once('message', (m) => { got = m; });
+    w.once('error', reject);
+    w.once('exit', (code) => (got ? resolve(got) : reject(new Error(`a render worker exited (${code}) with nothing said`))));
+  });
+  const here = SECTIONS.filter((x) => !LANES.flat().includes(x.title) && x.title !== 'CPU').map((x) => runSection(x.title).then(keep));
+  await Promise.all([...LANES.map((lane) => inWorker(lane).then((rs) => rs.forEach(keep))), ...here]);
+  for (const { title } of SECTIONS) {
+    const r = said.get(title);
+    console.log(title);
+    for (const [kind, c, m] of r.lines) if (kind === 'ok') t.ok(c, m); else t.note(m);
+    if (r.err) { t.ok(false, `${title}: ${r.err.split('\n').slice(0, 3).join(' | ')}`); }
+  }
+  t.done();
+}

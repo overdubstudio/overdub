@@ -179,6 +179,8 @@ const desk = (async (T) => {
   // tap-to-find, from taps on the pads: a rock beat at 100 BPM, two bars
   await page.click('.gv-style[data-style="rock"]');
   const pad = async (voice) => { const b = await page.$(`.gv-pad[data-voice="${voice}"]`); const r = await b.boundingBox(); await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2); await page.mouse.down(); await page.mouse.up(); };
+  // (the taps are timed on the wall clock: they wait until both tap sweeps are done, so no worker runs beside them)
+  await sweeps.catch(() => {});
   // The taps are played in the page, on its own clock: five round trips a pad from here took longer than an eighth on
   // a slower machine (a CI runner read 66 BPM). Each is a pointerdown on the pad, which the pad stamps with the event's
   // timeStamp; the real mouse on a pad is checked below (F J K)

@@ -39,6 +39,7 @@ export const PARTS = { 'liveroom-stage': ['stage', 'takes', 'room'], 'liveroom-b
 // apart once read as 110 BPM.
 export const LANES = {
   liveroom: [['model', 'input', 'door', 'shelf', 'copy', 'library'], ['kitchen', 'pixels', 'glass', 'start']],
+  'liveroom-stage': [['stage'], ['room', 'takes']],
   'liveroom-band': [['band', 'shop'], ['rig', 'guitar']],
 };
 

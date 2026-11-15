@@ -168,6 +168,14 @@ export async function run(T, ctx) {
     // Space: counted in (a bar of sticks, lined up with the fake's verse), the take from beat 0 on Guitar L; its first
     // stick sounds a bar before the verse comes in on the input's clock (the file lined up by its mark, heard first)
     await waitFor(() => window.__lr.fileT0 != null, null, 30000);
+    // (every device built and playing, not a stand-in, before the first count: the count's `at` allows for the delay
+    // compensation as it is then, and a chain still building under load reads short of it, the sticks as much late)
+    await E(async () => {
+      const o = window.overdub, standIn = () => o.store.get().tracks.some((t) => (t.inserts || []).some((x) => o.engine.instance(t.id, x.id)?.fallback));
+      const t0 = performance.now();
+      await o.engine.settled();
+      while (standIn() && performance.now() - t0 < 30000) { await new Promise((r) => setTimeout(r, 50)); await o.engine.settled(); }
+    });
     await queue(0);
     await press(page, 'Space');
     await settle();

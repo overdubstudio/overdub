@@ -25,14 +25,15 @@
 // enforced, and each scene's loudness and true peak must still match to 0.05 dB. (clawd-o-matic keeps the same rule
 // for web/tools/compat-golden.json.)
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { tally, OUTDIR } from './pw.js';
 import { scenes, missingScenes } from './golden-scenes.js';
 import { renderSong } from '../app/src/engine/node/render.js';
 import { sha256, encodeWav, decodeWav, writeWav } from '../app/src/engine/node/io.js';
-import { measure } from '../app/src/audio/measure.js';
 import { run as runEffect } from './amp-scenes.js';
 import { getDevice } from '../app/src/devices/registry.js';
 
@@ -58,18 +59,66 @@ if (golden.made && !sameEngine) t.note(`golden.json was made on Node ${golden.ma
 const all = scenes();
 const missing = missingScenes();
 for (const name of missing) t.note(`${name}: skipped, its samples haven't been fetched (node tools/fetch-kits.js)`);
+// The scenes render on a pool of worker threads (tools/golden-worker.js): each is an independent render, so they
+// spread over a few cores (WORKERS: CI runs this beside two other suites). Only the samples the checks compare come
+// back (the demo's, and the browser scenes'); the rest is numbers. The longest scene (weight, below) starts
+// first, then the browser scenes, so the browser part below can start on them while the rest render, then the rest,
+// longest first; while the browser part runs it takes one of the pool's places (setSize), so the suite keeps to
+// WORKERS cores.
+const WORKERS = Math.max(1, Math.min(Number(process.env.GOLDEN_WORKERS) || 3, os.availableParallelism()));
+function renderPool(size) {
+  const queue = [], pending = new Map(), workers = [];
+  let count = 0;
+  const busy = () => workers.filter((w) => w.busy).length;
+  const next = (w) => {
+    const job = busy() < size ? queue.shift() : null;
+    w.busy = !!job;
+    if (job) w.postMessage(job);
+  };
+  const spawnOne = () => {
+    const w = new Worker(new URL('./golden-worker.js', import.meta.url));
+    w.on('message', (m) => { const k = pending.get(m.n); pending.delete(m.n); if (m.error) k.reject(new Error(m.error)); else k.resolve(m.ok); w.busy = false; next(w); });
+    w.on('error', (e) => { for (const k of pending.values()) k.reject(e); pending.clear(); });
+    workers.push(w);
+    return w;
+  };
+  const fill = () => {
+    while (queue.length && busy() < size) next(workers.find((w) => !w.busy) || spawnOne());
+  };
+  return {
+    render(job) {
+      const n = count++;
+      const done = new Promise((resolve, reject) => pending.set(n, { resolve, reject }));
+      done.catch(() => {}); // (read, and thrown, where the checks await it)
+      queue.push({ n, ...job });
+      fill();
+      return done;
+    },
+    setSize(n) { size = n; fill(); },
+    close: () => Promise.all(workers.map((w) => w.terminate())),
+  };
+}
+// determinism within one process: a second render of these scenes (in the worker that rendered the first) is bit-identical
+const TWICE = new Set(['inst:core.drums', 'fx:core.verb', 'demo', ...all.filter((s) => s.name.includes('#')).map((s) => s.name)]);
+// a scene's weight: its frames times its tracks (room:metal builds its song when it's first read: not here, it's 1)
+const tracksOf = (s) => Object.getOwnPropertyDescriptor(s, 'project').value?.tracks.length || 1;
+const weight = (s) => ((golden.scenes && golden.scenes[s.name] && golden.scenes[s.name].frames) || 0) * tracksOf(s) * (TWICE.has(s.name) ? 2 : 1);
+const byWeight = [...all].sort((a, b) => weight(b) - weight(a));
+const order = [byWeight[0], ...byWeight.slice(1).filter((s) => s.browser), ...byWeight.slice(1).filter((s) => !s.browser)];
+const t0 = Date.now();
+const pool = renderPool(WORKERS);
+const jobs = new Map();
+for (const s of order) jobs.set(s.name, pool.render({ name: s.name, twice: TWICE.has(s.name), keep: !!s.browser || s.name === 'demo' }));
+const browser = !process.env.NODE_ONLY && updating === undefined ? browserParity() : null;
+browser?.catch(() => {}); // (thrown below, where its checks are read)
 const renders = new Map();
 const fresh = {};
-let t0 = Date.now();
 for (const s of all) {
-  const a = Date.now();
-  const r = renderSong(s.project, { ...s.opts, assets: s.assets });
-  const m = measure({ sr: r.sr, channels: r.channels });
-  const h = sha256(r);
+  const r = await jobs.get(s.name), m = r, h = r.sha256;
   renders.set(s.name, r);
   fresh[s.name] = { sha256: h, frames: r.length, lufs: m.lufs, truePeak: m.truePeak, peak: m.peak, ...(s.data ? { data: s.data } : {}) };
   const g = golden.scenes && golden.scenes[s.name];
-  const tag = `${s.name}: ${m.lufs} LUFS, ${m.truePeak} dBTP, ${(r.length / r.sr).toFixed(1)} s in ${Date.now() - a} ms`;
+  const tag = `${s.name}: ${m.lufs} LUFS, ${m.truePeak} dBTP, ${(r.length / r.sr).toFixed(1)} s in ${r.ms} ms`;
   if (updating !== undefined && (updating === null || updating.has(s.name))) { t.note(`${tag} -> ${h.slice(0, 16)} (${g ? (g.sha256 === h ? 'unchanged' : 'CHANGED from ' + g.sha256.slice(0, 16)) : 'new'})`); continue; }
   if (!g) { t.ok(false, `${tag}: no golden hash (a new scene? UPDATE_GOLDEN=${s.name} node tools/golden-test.js, and say why in the commit)`); continue; }
   t.ok(r.length === g.frames, `${s.name}: ${r.length} frames (golden ${g.frames})`);
@@ -81,7 +130,8 @@ for (const s of all) {
     t.ok(Math.abs(m.lufs - g.lufs) <= 0.05 && Math.abs(m.truePeak - g.truePeak) <= 0.05, `${tag}: within 0.05 dB of golden (${g.lufs} LUFS, ${g.truePeak} dBTP)`);
   }
 }
-t.note(`${all.length} scenes in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+await pool.close();
+t.note(`${all.length} scenes in ${((Date.now() - t0) / 1000).toFixed(1)} s (${WORKERS} workers)`);
 
 if (updating !== undefined) {
   const next = { ...golden, scenes: { ...(golden.scenes || {}) } };
@@ -97,11 +147,7 @@ if (updating !== undefined) {
 }
 
 // determinism within one process: a second render of three scenes is bit-identical
-for (const name of ['inst:core.drums', 'fx:core.verb', 'demo', ...all.filter((s) => s.name.includes('#')).map((s) => s.name)]) {
-  const s = all.find((x) => x.name === name);
-  const again = sha256(renderSong(s.project, { ...s.opts, assets: s.assets }));
-  t.ok(again === fresh[name].sha256, `${name}: a second render is bit-identical`);
-}
+for (const name of TWICE) t.ok(renders.get(name).again === fresh[name].sha256, `${name}: a second render is bit-identical`);
 
 // the demo: its graph devices (the guitar's pedals) reported and bypassed, nothing else touched; its amp (a kernel)
 // renders
@@ -133,8 +179,25 @@ for (const name of ['inst:core.drums', 'fx:core.verb', 'demo', ...all.filter((s)
   const s = all.find((x) => x.name === 'demo');
   const song = path.join(OUT, 'demo.json'), wav = path.join(OUT, 'demo.wav');
   fs.writeFileSync(song, JSON.stringify(s.project));
-  const run = (...a) => spawnSync(process.execPath, [path.join(HERE, 'render.js'), ...a], { encoding: 'utf8' });
-  const r = run(song, '--out', wav, '--hash', '--measure', '--json');
+  // an effect scene from files: the DI strum as a float WAV in an assets folder
+  const fx = all.find((x) => x.name === 'fx:core.delay');
+  const dir = path.join(OUT, 'assets'); fs.mkdirSync(dir, { recursive: true });
+  for (const [id, a] of Object.entries(fx.assets)) writeWav(path.join(dir, id + '.wav'), a, { float: true });
+  const fxSong = path.join(OUT, 'delay.json'); fs.writeFileSync(fxSong, JSON.stringify(fx.project));
+  // the four runs are independent processes (only the first writes a file), so they run at once
+  const run = (...a) => new Promise((resolve) => {
+    const c = spawn(process.execPath, [path.join(HERE, 'render.js'), ...a]);
+    let stdout = '', stderr = '';
+    c.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
+    c.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
+    c.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+  const [r, strict, part, fr] = await Promise.all([
+    run(song, '--out', wav, '--hash', '--measure', '--json'),
+    run(song, '--strict', '--no-wav'),
+    run(song, '--tracks', 'Bass,Keys', '--to', '8', '--no-wav', '--json'),
+    run(fxSong, '--assets', dir, '--to', '16', '--tail', '4', '--hash', '--no-wav', '--json'),
+  ]);
   let j = null; try { j = JSON.parse(r.stdout); } catch { /* below */ }
   t.ok(r.status === 0 && j && j.sha256 === fresh.demo.sha256, `tools/render.js demo.json --hash: ${j && j.sha256 && j.sha256.slice(0, 16)} (exit ${r.status})`);
   t.ok(j && j.measure && j.measure.lufs === fresh.demo.lufs, `--measure prints measure(): ${j && j.measure && j.measure.lufs} LUFS`);
@@ -144,17 +207,9 @@ for (const name of ['inst:core.drums', 'fx:core.verb', 'demo', ...all.filter((s)
   t.ok(w && w.readUInt16LE(34) === 24 && back.sr === 48000 && back.channels[0].length === fresh.demo.frames, `the WAV is 24-bit, 48 kHz, ${back && back.channels[0].length} frames`);
   let err = 0; if (back) { const ch = renders.get('demo').channels; for (let c = 0; c < 2; c++) for (let i = 0; i < ch[c].length; i++) err = Math.max(err, Math.abs(ch[c][i] - back.channels[c][i])); }
   t.ok(back && err < 2 / 8388607, `the WAV holds the render to 24 bits (worst error ${fmtDb(dbfs(err))} dBFS)`);
-  const strict = run(song, '--strict', '--no-wav');
   t.ok(strict.status === 1, `--strict exits 1 when graph devices were bypassed (exit ${strict.status})`);
-  const part = run(song, '--tracks', 'Bass,Keys', '--to', '8', '--no-wav', '--json');
   let pj = null; try { pj = JSON.parse(part.stdout); } catch { /* below */ }
   t.ok(part.status === 0 && pj && pj.warnings.length === 0 && pj.seconds > 5, `--tracks Bass,Keys --to 8: ${pj && pj.seconds} s, no warnings (the guitar isn't built)`);
-  // an effect scene from files: the DI strum as a float WAV in an assets folder
-  const fx = all.find((x) => x.name === 'fx:core.delay');
-  const dir = path.join(OUT, 'assets'); fs.mkdirSync(dir, { recursive: true });
-  for (const [id, a] of Object.entries(fx.assets)) writeWav(path.join(dir, id + '.wav'), a, { float: true });
-  const fxSong = path.join(OUT, 'delay.json'); fs.writeFileSync(fxSong, JSON.stringify(fx.project));
-  const fr = run(fxSong, '--assets', dir, '--to', '16', '--tail', '4', '--hash', '--no-wav', '--json');
   let fj = null; try { fj = JSON.parse(fr.stdout); } catch { /* below */ }
   t.ok(fj && fj.sha256 === fresh['fx:core.delay'].sha256, `--assets: the DI strum from a WAV renders fx:core.delay to its hash (${fj && fj.sha256 && fj.sha256.slice(0, 16)})`);
   const enc = decodeWav(encodeWav({ sr: 48000, channels: [Float32Array.of(0, 0.5, -0.5, 1, -1)] }));
@@ -162,20 +217,30 @@ for (const name of ['inst:core.drums', 'fx:core.verb', 'demo', ...all.filter((s)
 }
 
 // ------------------------------------------------------------------------------------------------ browser parity
-if (process.env.NODE_ONLY || updating !== undefined) {
+// It runs beside the Node renders above (started there, each scene's comparison waiting for that scene's Node render)
+// and its checks are kept and printed here, in the order they were made.
+if (!browser) {
   t.note('browser parity skipped (' + (process.env.NODE_ONLY ? 'NODE_ONLY' : 'UPDATE_GOLDEN') + ')');
 } else {
   console.log(`browser preview vs canonical (OfflineAudioContext in Chromium; within ${PARITY_DB} dBFS)`);
+  for (const [kind, ...a] of await browser) t[kind](...a);
+}
+t.done();
+
+async function browserParity() {
+  const said = [];
+  const t = { ok: (...a) => said.push(['ok', ...a]), note: (...a) => said.push(['note', ...a]) };
   const { open } = await import('./pw.js');
   const { page, close, errors } = await open('/app/', { query: 'new' });
   try {
     await page.waitForFunction(() => window.overdub && window.overdub.store, null, { timeout: 30000 });
+    pool.setSize(Math.max(1, WORKERS - 1)); // (while it renders, the browser holds one of the pool's places; one worker at least)
     const b64 = (f) => Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
     const unb64 = (s) => { const b = Buffer.from(s, 'base64'); return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
     let exact = 0, n = 0;
-    t0 = Date.now();
+    const t0 = Date.now();
     for (const s of all.filter((x) => x.browser)) {
-      const r = renders.get(s.name);
+      const r = await jobs.get(s.name);
       const assets = Object.fromEntries(Object.entries(s.assets).map(([k, a]) => [k, { sr: a.sr, channels: a.channels.map(b64) }]));
       const out = await page.evaluate(async ({ project, opts, assets }) => {
         const { renderProject } = await import('/app/src/engine/render.js');
@@ -237,6 +302,6 @@ if (process.env.NODE_ONLY || updating !== undefined) {
     }
     t.note(`${exact} of ${n} scenes bit-identical between Chromium and Node (the rest differ by a last-bit rounding: Chromium's V8 and Node's round Math.exp, sin, tanh... differently for a few % of inputs) in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     t.ok(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
-  } finally { await close(); }
+  } finally { pool.setSize(WORKERS); await close(); }
+  return said;
 }
-t.done();

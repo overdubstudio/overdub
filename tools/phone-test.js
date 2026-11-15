@@ -37,11 +37,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { startServer, ready } from '../server/serve.js';
 import { OUTDIR, tally, QUIET, TEXT } from './pw.js';
 
 const require = createRequire(import.meta.url);
-const T = tally('phone');
+// The runs go side by side, LANES at a time (each its own browser, context and page; they share only the server).
+// What each one checks is held in its own list and printed in one piece, in the order of RUNS, when it is done.
+const tallied = tally('phone');
+const held = new AsyncLocalStorage();
+const T = {
+  ok(cond, msg) { const h = held.getStore(); if (!h) return tallied.ok(cond, msg); h.push(['ok', cond, msg]); return !!cond; },
+  note(msg) { const h = held.getStore(); if (!h) return tallied.note(msg); h.push(['note', msg]); },
+  done: () => tallied.done(),
+};
+const LANES = 5;
 const HEADED = !!process.env.HEADED;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const only = process.argv.slice(2);
@@ -1252,12 +1262,24 @@ async function dragTouch(page, engine, x0, y0, x1, y1, steps = 12, hold = 30) {
 await ready;
 const srv = await startServer({ port: 0, quiet: true });
 const pw = findPlaywright();
+const name = (run) => `${run.engine} ${run.device || run.w + 'x' + run.h}${run.turn ? ' on its side' : ''}${run.simple ? ', the simple view' : ''}${run.coach ? ', the coach strip' : ''}`;
+const one = async (run) => {
+  const t0 = Date.now();
+  await (run.coach ? coachPhone : run.turn ? sideways : run.simple ? simplePhone : phone)(pw, srv.url, run);
+  T.note(`${((Date.now() - t0) / 1000).toFixed(1)} s`);
+};
 try {
-  for (const run of RUNS) {
-    const t0 = Date.now();
-    console.log(`\n${run.engine} ${run.device || run.w + 'x' + run.h}${run.turn ? ' on its side' : ''}${run.simple ? ', the simple view' : ''}${run.coach ? ', the coach strip' : ''}`);
-    await (run.coach ? coachPhone : run.turn ? sideways : run.simple ? simplePhone : phone)(pw, srv.url, run);
-    T.note(`${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  // the long runs (the whole phone, upright) first, so the short ones fill in beside them
+  const runs = RUNS.map((run) => ({ run, h: [] }));
+  const short = ({ run }) => (run.turn || run.simple || run.coach ? 1 : 0);
+  const queue = [...runs].sort((x, y) => short(x) - short(y));
+  for (const r of runs) r.done = new Promise((res) => { r.res = res; });
+  const lane = async () => { for (let r; (r = queue.shift());) { await held.run(r.h, () => one(r.run)).catch((e) => r.h.push(['ok', false, `${name(r.run)}: the run finished (${String(e && e.stack || e).split('\n')[0]})`])); r.res(); } };
+  for (let i = 0; i < LANES; i++) lane();
+  for (const { run, h, done } of runs) {
+    await done;
+    console.log(`\n${name(run)}`);
+    for (const [k, ...args] of h) tallied[k](...args);
   }
 } finally {
   await srv.close();

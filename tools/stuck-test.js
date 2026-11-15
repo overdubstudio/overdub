@@ -33,7 +33,8 @@ const { page, errors, close } = await open('/app/');
 // (a sampled kit that isn't on this checkout, app/kits/ being gitignored, is a 404 the studio expects and plays nothing
 // for; only those are left out of "no page errors" below, and only while a kit is missing)
 const kit404 = [];
-page.on('response', (r) => { if (r.status() === 404 && /\/kits\/[0-9a-f]{64}\.odk$/.test(new URL(r.url()).pathname)) kit404.push(r.url()); });
+const watch404 = (pg) => pg.on('response', (r) => { if (r.status() === 404 && /\/kits\/[0-9a-f]{64}\.odk$/.test(new URL(r.url()).pathname)) kit404.push(r.url()); });
+watch404(page);
 await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
 
 // 3a. a live note let go while the engine is still starting never sounds (and is not held)
@@ -52,7 +53,8 @@ const race = await page.evaluate(async () => {
 if (race.skip) t.note('(the start race was not checked: ' + race.skip + ')');
 else t.ok(race.held === 0, `a key tapped and let go before the audio engine was up does not stick (${race.device}: ${race.held} held voices once it is)`);
 
-await page.evaluate(() => {
+// (the fuzz's helpers, on every page that fuzzes: the fuzzes run side by side, see STUCK_PAGES below)
+const helpers = (pg) => pg.evaluate(() => {
   const { engine } = window.overdub;
   window.__sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   window.__rng = (seed) => { let s = seed >>> 0 || 1; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); };
@@ -78,9 +80,11 @@ await page.evaluate(() => {
     return out;
   };
 });
+await helpers(page);
 
 // a sustain-heavy pattern for every instrument, release params at most 0.25 s, so 1 s after a stop is past any release
-const setup = await page.evaluate(async () => {
+// (on this page, and on the one that plays the second half of the pattern fuzz)
+const everyOn = (pg) => pg.evaluate(async () => {
   const { store, engine, devices } = window.overdub;
   const defs = devices.listDevices({ kind: 'instrument' }).filter((d) => !/^engine\./.test(d.id));
   const notes = [];
@@ -105,24 +109,30 @@ const setup = await page.evaluate(async () => {
   await window.__probe(tracks.map((x) => x.id)); // (taps on every output from the start, when there's no hook)
   return { ids: tracks.map((x) => x.id), kinds, hook: typeof engine.voices === 'function' };
 });
+const setup = await everyOn(page);
 const kernels = Object.values(setup.kinds).filter((k) => k.kernel).length, graphs = Object.values(setup.kinds).filter((k) => !k.kernel).length;
 t.ok(setup.ids.length >= 15 && kernels >= 14 && graphs >= 1, `the fuzz plays ${setup.ids.length} instruments at once (${kernels} kernels, ${graphs} graph: the fallback synth)`);
 t.ok(setup.hook, 'engine.voices() reads every instrument\'s voices (held and sounding), its output peak and what the watchdog caught');
 
-async function fuzz({ ids, trials, seed, settle = 1000, demo = false, long = 0 }) {
-  return page.evaluate(async ({ ids, trials, seed, settle, demo, long }) => {
+// trials from..trials-1 of the fuzz (from > 0: the ones before are another page's, and only their random draws are made
+// here, the same draws in the same order, so these trials are the very ones a single page would play)
+async function fuzz(pg, { ids, trials, seed, settle = 1000, demo = false, long = 0, from = 0 }) {
+  return pg.evaluate(async ({ ids, trials, seed, settle, demo, long, from }) => {
     const { store, engine } = window.overdub;
     const rnd = window.__rng(seed), pick = (a) => a[Math.floor(rnd() * a.length)];
     const end = engine.songEnd(), base = store.get().tempo;
     const res = { stops: 0, longs: 0, actions: {}, stuck: {}, ringing: {}, worst: {}, wd: 0 };
     const act = (k) => { res.actions[k] = (res.actions[k] || 0) + 1; };
     for (let i = 0; i < trials; i++) {
-      await engine.play(Math.floor(rnd() * end * 4) / 4);
-      act('play');
+      const go = i >= from;
+      const at = Math.floor(rnd() * end * 4) / 4;
+      if (go) { await engine.play(at); act('play'); }
       const k = Math.floor(rnd() * 4);
       for (let j = 0; j < k; j++) {
-        await window.__sleep(30 + rnd() * 600);
+        const ms = 30 + rnd() * 600;
         const a = pick(['seek', 'seek', 'tempo', 'loop', 'replay', 'audition', 'stopplay']);
+        if (!go) { rnd(); if (a === 'audition') { rnd(); rnd(); } continue; }   // (each action makes one draw, an audition three)
+        await window.__sleep(ms);
         act(a);
         if (a === 'seek') engine.seek(Math.floor(rnd() * end * 8) / 8);
         else if (a === 'tempo') store.dispatch({ type: 'project.set', patch: { tempo: Math.round(base * (0.6 + rnd() * 0.9)) } }, { by: 'you' });
@@ -131,7 +141,9 @@ async function fuzz({ ids, trials, seed, settle = 1000, demo = false, long = 0 }
         else if (a === 'audition') engine.audition(pick(ids), 50 + Math.floor(rnd() * 30), 0.8, 0.25 + rnd() * 2);
         else if (a === 'stopplay') { engine.stop(); await window.__sleep(rnd() * 120); await engine.play(); }
       }
-      await window.__sleep(20 + rnd() * 900);
+      const ms = 20 + rnd() * 900;
+      if (!go) continue;
+      await window.__sleep(ms);
       engine.stop();
       res.stops++;
       await window.__sleep(settle);
@@ -159,11 +171,60 @@ async function fuzz({ ids, trials, seed, settle = 1000, demo = false, long = 0 }
     const last = await window.__probe(ids);
     for (const id of ids) res.wd += +last[id].stuck || 0;   // (each instrument's count of watchdog catches, all along)
     return res;
-  }, { ids, trials, seed, settle, demo, long });
+  }, { ids, trials, seed, settle, demo, long, from });
 }
+// (two fuzzes' results as one: the second's counts added to the first's)
+const merge = (a, b) => {
+  const add = (x, y) => { for (const [k, v] of Object.entries(y)) x[k] = (x[k] || 0) + v; return x; };
+  const worst = { ...a.worst };
+  for (const [k, v] of Object.entries(b.worst)) worst[k] = Math.max(worst[k] == null ? -180 : worst[k], v);
+  return { stops: a.stops + b.stops, longs: a.longs + b.longs, actions: add({ ...a.actions }, b.actions), stuck: add({ ...a.stuck }, b.stuck), ringing: add({ ...a.ringing }, b.ringing), worst, wd: a.wd + b.wd };
+};
 
 const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
-const r1 = await fuzz({ ids: setup.ids, trials: TRIALS, seed: SEED, long: 5000 });
+
+// The pattern fuzz and the demo songs' fuzzes are played side by side, on STUCK_PAGES pages (default 4; 1 for all of
+// it on this page, one after the other, as before), each its own studio and audio clock: this page plays the first half
+// of the pattern fuzz's trials and a second page the second half (the same trials, see fuzz), and every page takes the
+// next demo song when it is free. Nothing about a fuzz changes: the same seeds, trials and waits after each stop.
+const demoIds = await page.evaluate(async () => { const m = await import('/app/src/core/demos/index.js'); return m.MORE_DEMOS.map((d) => d.id); }).catch(() => []);
+const fuzzDemo = async (pg, i) => {
+  const ids = await pg.evaluate(async (id) => {
+    const { store, engine } = window.overdub;
+    const m = await import('/app/src/core/demos/index.js');
+    const d = m.MORE_DEMOS.find((x) => x.id === id);
+    store.load(d.make(), { by: 'overdub' });
+    await engine.settled();
+    return store.get().tracks.filter((x) => x.kind !== 'audio' && x.instrument).map((x) => x.id);
+  }, demoIds[i]);
+  return { ids, r: await fuzz(pg, { ids, trials: Math.max(2, Math.round(TRIALS / 8)), seed: SEED + i + 1, settle: 600, demo: true }) };
+};
+const POOL = Math.max(1, +process.env.STUCK_PAGES || 4);
+const demoRes = new Array(demoIds.length), extra = [];
+let nextDemo = 0;
+const demos = async (pg) => { for (let i; (i = nextDemo++) < demoIds.length;) demoRes[i] = await fuzzDemo(pg, i); };
+const half = POOL > 1 ? Math.ceil(TRIALS / 2) : TRIALS;
+const pattern = { ids: setup.ids, trials: TRIALS, seed: SEED, long: 5000 };
+const [r1a, r1b] = await Promise.all([
+  fuzz(page, { ...pattern, trials: half }).then(async (r) => { await demos(page); return r; }),
+  ...Array.from({ length: POOL - 1 }, async (_, n) => {
+    const o = await open('/app/');
+    extra.push(o);
+    watch404(o.page);
+    await o.page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
+    await helpers(o.page);
+    let r = null;
+    if (n === 0) {
+      const s2 = await everyOn(o.page);
+      if (s2.ids.join() !== setup.ids.join()) throw new Error('the second page plays other instruments: ' + s2.ids.join());
+      r = await fuzz(o.page, { ...pattern, from: half });
+    } else await o.page.evaluate(async () => { const { engine } = window.overdub; await engine.start(); await engine.settled(); });
+    await demos(o.page);
+    return r;
+  }),
+]);
+for (const o of extra) { errors.push(...o.errors); await o.close(); }
+const r1 = r1b ? merge(r1a, r1b) : r1a;
 const moments = r1.stops * setup.ids.length;
 const actions = Object.entries(r1.actions).map(([k, v]) => `${v} ${k}`).join(', ');
 const name = (id) => setup.kinds[id] ? setup.kinds[id].device : id;
@@ -173,26 +234,26 @@ t.ok(sum(r1.stuck) === 0, `no instrument holds a voice 1 s after any stop (${sum
 t.ok(r1.longs >= 2 && sum(r1.ringing) === 0, `and every instrument is silent once its own tail is over: no voices, output under -90 dBFS, measured 5 s after ${r1.longs} of the stops (${sum(r1.ringing)} still sounding${sum(r1.ringing) ? ': ' + Object.entries(r1.worst).map(([id, db]) => `${name(id)} ${db.toFixed(0)} dBFS`).join(', ') : ''})`);
 t.ok(r1.wd === 0, `the watchdog never had to step in: the stops themselves let every note go (${r1.wd} voices caught)`);
 
-// the demo songs, stopped at random moments
-const demoIds = await page.evaluate(async () => { const m = await import('/app/src/core/demos/index.js'); return m.MORE_DEMOS.map((d) => d.id); }).catch(() => []);
+// the demo songs
 let dStops = 0, dStuck = 0, dWd = 0, dMoments = 0;
 const dBad = [];
 for (const [i, id] of demoIds.entries()) {
-  const ids = await page.evaluate(async (id) => {
-    const { store, engine } = window.overdub;
-    const m = await import('/app/src/core/demos/index.js');
-    const d = m.MORE_DEMOS.find((x) => x.id === id);
-    store.load(d.make(), { by: 'overdub' });
-    await engine.settled();
-    return store.get().tracks.filter((x) => x.kind !== 'audio' && x.instrument).map((x) => x.id);
-  }, id);
-  const r = await fuzz({ ids, trials: Math.max(2, Math.round(TRIALS / 8)), seed: SEED + i + 1, settle: 600, demo: true });
+  const { ids, r } = demoRes[i];
   dStops += r.stops; dMoments += r.stops * ids.length; dStuck += sum(r.stuck); dWd += r.wd;
   if (sum(r.stuck)) dBad.push(`${id}: ${Object.keys(r.stuck).join(', ')}`);
 }
 t.ok(demoIds.length >= 3 && dStuck === 0 && dWd === 0, `the ${demoIds.length} demo songs: ${dStops} stops (${dMoments} instrument-stops), ${dStuck} held voices 0.6 s after a stop, ${dWd} caught by the watchdog${dBad.length ? ' (' + dBad.join('; ') + ')' : ''}`);
 
 /* ------------------------------------------------------------------ 3. live keys */
+// (from the last demo song, as when every demo ran on this page: musical typing plays the track it arms or selects)
+if (demoIds.length) {
+  await page.evaluate(async (id) => {
+    const { store, engine } = window.overdub;
+    const m = await import('/app/src/core/demos/index.js');
+    store.load(m.MORE_DEMOS.find((x) => x.id === id).make(), { by: 'overdub' });
+    await engine.settled();
+  }, demoIds[demoIds.length - 1]);
+}
 const keys = await page.evaluate(async () => {
   const { engine, input, store } = window.overdub;
   const q = input && input.qwerty;

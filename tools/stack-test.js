@@ -17,7 +17,11 @@ import { tally, OUTDIR } from './pw.js';
 import '../app/src/devices/builtin/index.js';
 import def, { STACK_TRIM } from '../app/src/devices/builtin/stack.js';
 import { tmbAnalog, tmbCoefs, CABS_HASH, CAB_FILTER, CAB_OFF } from '../app/src/devices/builtin/amp-lib.js';
-import { presetParams, getDevice } from '../app/src/devices/registry.js';
+import { presetParams, getDevice, paramValues } from '../app/src/devices/registry.js';
+import { kernelCore, kernelCompiler } from '../app/src/kernel/worklet.js';
+import { kernelSpecs } from '../app/src/kernel/host.js';
+import { makeDsp } from '../app/src/kernel/dsp.js';
+import { dataFor } from '../app/src/engine/node/data.js';
 import { lufs, truePeak } from '../app/src/audio/measure.js';
 import * as TS from '../app/src/audio/testsignals.js';
 import { checkDeviceNode } from '../app/src/engine/node/check.js';
@@ -104,12 +108,30 @@ block('aliasing', () => {
 
 block('cost and latency', () => {
   const chug = metalDI('chug'), secs = chug.length / SR;
-  // (timed against Gaffer Tape, a heavy built-in, in the same moment: a loaded machine slows both alike)
-  const mb = getDevice('core.multiband');
-  const time = (d, p) => { const t0 = performance.now(); run(d, p, chug); return performance.now() - t0; };
+  // (timed against Gaffer Tape, a heavy built-in, in the same moment: a loaded machine slows both alike. So the three
+  // play the chug side by side, a 128-sample block each in turn, and each block is timed: one whole render after
+  // another let the load change between them, and the short Gaffer Tape render, timed last, caught a machine going
+  // quiet that the Half Stack's had not)
+  const mb = getDevice('core.multiband'), K = kernelCore(SR, makeDsp(SR), kernelCompiler);
+  const make = (d, p) => {   // (as run() in tools/amp-scenes.js builds one)
+    const values = paramValues(d, p), errs = [];
+    const c = new K({ source: d.kernel, kind: 'effect', params: kernelSpecs(d), values, seed: 1, data: dataFor(d.data), transport: { bpm: 120, playing: true, beat: 0, time: 0 } }, (m) => { if (m.type === 'error') errs.push(m.message); });
+    c.msg({ type: 'params', values, jump: true });
+    if (errs.length || !c.cur) throw new Error(d.id + ' did not compile: ' + errs.join('; '));
+    return c;
+  };
+  const times = () => {
+    const cs = [make(def, {}), make(def, { quality: 1 }), make(mb, {})], ms = [0, 0, 0];
+    const iL = new Float32Array(128), bL = new Float32Array(128), bR = new Float32Array(128);
+    for (let f = 0; f < chug.length; f += 128) {
+      iL.fill(0); iL.set(chug.subarray(f, f + 128));
+      for (let j = 0; j < 3; j++) { const t0 = performance.now(); cs[j].block(iL, iL, bL, bR, f); ms[j] += performance.now() - t0; }
+    }
+    return ms;
+  };
   run(def, {}, chug.subarray(0, SR)); run(mb, {}, chug.subarray(0, SR));
   let b4 = Infinity, b8 = Infinity, bm = Infinity;
-  for (let k = 0; k < 3; k++) { b4 = Math.min(b4, time(def, {})); b8 = Math.min(b8, time(def, { quality: 1 })); bm = Math.min(bm, time(mb, {})); }
+  for (let k = 0; k < 3; k++) { const [t4, t8, tm] = times(); b4 = Math.min(b4, t4); b8 = Math.min(b8, t8); bm = Math.min(bm, tm); }
   const pc = (ms) => 100 * ms / 1000 / secs, r4 = b4 / bm;
   // (the budget was 2.5% at 4X and 5% at 8X on an idle machine; this reports what it costs against a built-in)
   ok(r4 < 4 && b8 / b4 < 2.3, `one Half Stack with its 2048-tap cab costs ${pc(b4).toFixed(2)}% of real time at 4X (${r4.toFixed(2)}x Gaffer Tape's ${pc(bm).toFixed(2)}%) and ${pc(b8).toFixed(2)}% at 8X (best of three, ${secs.toFixed(1)} s of chug)`);

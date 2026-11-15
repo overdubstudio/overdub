@@ -37,17 +37,37 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { open, tally } from './pw.js';
 import { openLive, LIVE_HOST } from './community-live.js';
 import { makeDevicesRepo } from './fixtures/community-repo.js';
 
-const T = tally('community');
+// The sections that time nothing run side by side, three at a time, each its own browser and server as before; the
+// ones that hold Play it to its 600 ms (shelf, live-revoke) and the dry deploy (spawnSync, which holds up Node) run
+// alone after them. What each checks is held in its own list and printed in one piece, in the order they're written.
+const tallied = tally('community');
+const held = new AsyncLocalStorage();
+const T = {
+  ok(cond, msg) { const h = held.getStore(); if (!h) return tallied.ok(cond, msg); h.push([cond, msg]); return !!cond; },
+  done: () => tallied.done(),
+};
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIX = path.join(HERE, 'fixtures/community-fake');
 const FIXURL = '/tools/fixtures/community-fake/';
 const read = (f) => fs.readFileSync(path.join(FIX, f), 'utf8');
 const ignorable = (e) => /favicon|AudioContext was not allowed|fonts\.g|getUserMedia|NotAllowedError|NotFoundError/i.test(e);
 const section = async (name, fn) => { try { await fn(); } catch (e) { T.ok(false, `${name}: ran to the end (${String(e && e.stack || e).split('\n').slice(0, 3).join(' ')})`); } };
+const queued = [];
+const side = (name, fn) => { queued.push({ name, fn, alone: false, h: [] }); };
+const alone = (name, fn) => { queued.push({ name, fn, alone: true, h: [] }); };
+async function runSections(n) {
+  const run = (q) => held.run(q.h, () => section(q.name, q.fn));
+  const pool = queued.filter((q) => !q.alone);
+  let next = 0;
+  await Promise.all(Array.from({ length: n }, async () => { while (next < pool.length) await run(pool[next++]); }));
+  for (const q of queued.filter((x) => x.alone)) await run(q);
+  for (const q of queued) for (const [cond, msg] of q.h) tallied.ok(cond, msg);
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ======================================================================== the browser */
@@ -71,7 +91,7 @@ const FIXQ = `community=${FIXURL}community-index.json`;
 
 // on in every studio (no switch: what is merged ships): the section, the shelf words in More and the tool, with nothing
 // in the address but the index to read
-await section('on', async () => {
+side('on', async () => {
   const L = await open('/app/', { query: FIXQ });
   try {
     await L.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community, null, { timeout: 45000 });
@@ -91,7 +111,7 @@ await section('on', async () => {
 // (the fixture's Soft Echo file says other words than its entry, and its requester is a note; Tiny Keys' is a name:
 // make.js)
 // the section, previews, Try
-await section('shelf', async () => {
+alone('shelf', async () => {
   const P = await studio(FIXQ);
   const deviceReqs = [];
   P.page.on('request', (q) => { if (/overdub-device\.json/.test(q.url())) deviceReqs.push(q.url()); });
@@ -266,7 +286,7 @@ await section('shelf', async () => {
 });
 
 // a link from the site
-await section('link', async () => {
+side('link', async () => {
   const P = await studio(`new&${FIXQ}&community-device=tester.soft-echo`);
   try {
     await P.page.waitForSelector('.cs-detail[data-community="tester.soft-echo"]', { timeout: 15000 });
@@ -281,7 +301,7 @@ await section('link', async () => {
 });
 
 // the studio's own copy: deny list, held lines, vouched
-await section('bundled', async () => {
+side('bundled', async () => {
   const P = await open('/app/');
   try {
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1', null, { timeout: 45000 });
@@ -341,7 +361,7 @@ await section('bundled', async () => {
 });
 
 // the agent tool and its card
-await section('agent', async () => {
+side('agent', async () => {
   const P = await studio(`${FIXQ}&agent=mock&fast`);
   try {
     const r = await E(P, async () => {
@@ -420,13 +440,13 @@ await section('agent', async () => {
 });
 
 // the catalog, and Find
-await section('catalog', async () => {
+side('catalog', async () => {
   const { catalogSchemas } = await import('../app/src/agent/tools.js');
   const cat = await catalogSchemas();
   const s = cat.find((x) => x.name === 'find_community_device');
   T.ok(s && s.annotations && s.annotations.readOnlyHint === false && s.annotations.destructiveHint === false, `the catalog lists find_community_device with its annotations (${cat.length} tools)`);
 });
-await section('find', async () => {
+side('find', async () => {
   const P = await studio(FIXQ, { width: 390, height: 664 });
   try {
     const r = await E(P, async () => {
@@ -455,7 +475,7 @@ await section('find', async () => {
 });
 
 // forced live (R1): a host that isn't local; the only index read is the studio's own
-await section('forced-live', async () => {
+side('forced-live', async () => {
   const P = await openLive('/app/', { query: (local) => `community=${encodeURIComponent(`http://localhost:${new URL(local).port}${FIXURL}community-index.json`)}`, bundled: FIX });
   try {
     await P.page.waitForFunction(() => document.documentElement.dataset.ready === '1' && window.overdub?.community && window.overdub.community.state().status !== 'loading', null, { timeout: 45000 });
@@ -472,7 +492,7 @@ await section('forced-live', async () => {
 // on the live site (forced live), the shelf read on every load with the Browser never opened (R12); a device trusted
 // from now on, then revoked: held, and Try refuses with the reason (R11); the prompt as it ships (R18). The bundled
 // copy is a copy of the fixture's, in a temp directory, so the revoke can land between two loads.
-await section('live-revoke', async () => {
+alone('live-revoke', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'community-live-'));
   fs.cpSync(FIX, dir, { recursive: true });
   const REASON = 'It hid a second effect in its code.';
@@ -549,7 +569,7 @@ await section('live-revoke', async () => {
 });
 
 // the deploy, dry (R3): the pinned shelf in the stage, with a stub aws first on PATH and no credentials
-await section('deploy', async () => {
+alone('deploy', async () => {
   const ROOT = path.join(HERE, '..');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'community-deploy-'));
   try {
@@ -586,7 +606,7 @@ await section('deploy', async () => {
 
 // the frame headers (R9, R10): the local server sends them on every path, and both distributions' Terraform policies
 // (infra/live, infra/next) set them on CloudFront
-await section('headers', async () => {
+side('headers', async () => {
   const ROOT = path.join(HERE, '..');
   const { startServer } = await import('../server/serve.js');
   const srv = await startServer({ port: 0, quiet: true });
@@ -613,4 +633,5 @@ await section('headers', async () => {
     "each distribution's default behaviour sends its policy");
 });
 
+await runSections(3);
 T.done();

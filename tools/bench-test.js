@@ -1,5 +1,5 @@
 // Checks for OverdubBench (tools/bench/, docs/BENCH.md): the sandbox. The scorers (the tasks, oracles, baselines, near
-// misses, an MCP run replayed, determinism) are test/unit/bench.test.js.
+// misses, an MCP run replayed, determinism) are test/unit/bench.test.js and bench-oracles-*.test.js.
 //   node tools/bench-test.js
 // A submission's kernels run sandboxed (the oracle scores the same there, a kernel that reaches for process can't write a file or
 // start a program), and a rendered song's kernels read only what rendering needs.

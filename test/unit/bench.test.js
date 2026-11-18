@@ -3,7 +3,7 @@
 // baseline scores under 0.5, the near misses (oracles/near-misses/) score under 0.5, a run replayed from an MCP
 // tool-call log scores what its ops score, and every score comes out the same twice: fresh renders, fresh random ids.
 // The sandbox checks (Node --permission child processes: run.js and render.js reading only what they need) stay in
-// tools/bench-test.js.
+// tools/bench-test.js. The oracles' scores are in bench-oracles-1..4.test.js (test/unit/_bench.js says why).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,23 +13,13 @@ import {
   listTasks,
   startSong,
   applyOps,
-  scoreTask,
   transactionsOf,
   CHECK_KINDS,
   HERE,
 } from '../../tools/bench/score.js';
+import { T, read, run, SHARDS, shardOf } from './_bench.js';
 
-const T = { ok: (cond, msg) => (assert.ok(cond, msg), !!cond) };
-const read = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
-const strip = (s) => JSON.stringify({ ...s, checks: s.checks.map(({ label, ...c }) => c) });
-const run = (task, input, opts) => {
-  const start = startSong(task);
-  const r = applyOps(start, input);
-  if (!r.ok) return { error: r.error };
-  return scoreTask(task, r.song, { start, ...opts });
-};
 const ids = listTasks();
-const first = {};
 test('the tasks are well formed', () => {
   T.ok(ids.length >= 12 && ids.length <= 16, `${ids.length} tasks (12-16)`);
   const fams = {};
@@ -75,28 +65,6 @@ test('the tasks are well formed', () => {
     );
   }
 });
-test('oracles, baselines, near misses', () => {
-  for (const id of ids) {
-    const task = loadTask(id);
-    const oracle = run(task, read(path.join(HERE, 'oracles', id + '.json')));
-    const base = run(task, []);
-    first[id] = oracle;
-    T.ok(
-      !oracle.error && oracle.score >= 0.9,
-      `${id}: the oracle scores ${oracle.error ? 'nothing (' + oracle.error + ')' : oracle.score.toFixed(3)} (≥ 0.9)`,
-    );
-    T.ok(!base.error && base.score < 0.5, `${id}: doing nothing scores ${base.score?.toFixed(3)} (< 0.5)`);
-  }
-  const nearDir = path.join(HERE, 'oracles', 'near-misses');
-  for (const f of fs
-    .readdirSync(nearDir)
-    .filter((x) => x.endsWith('.json'))
-    .sort()) {
-    const near = read(path.join(nearDir, f));
-    const s = run(loadTask(near.task), near);
-    T.ok(!s.error && s.score < 0.5, `near miss ${f}: ${s.score?.toFixed(3)} (< 0.5): ${near.why}`);
-  }
-});
 test('an MCP run, replayed', () => {
   const o = read(path.join(HERE, 'oracles', 'device-dotted-echo.json'));
   const calls = {
@@ -108,8 +76,9 @@ test('an MCP run, replayed', () => {
   };
   T.ok(transactionsOf(calls).length === 1, 'a tool-call log replays apply_ops and define_device and skips the rest');
   const s = run(loadTask('device-dotted-echo'), calls);
+  const ops = run(loadTask('device-dotted-echo'), o);
   T.ok(
-    !s.error && s.score === first['device-dotted-echo'].score,
+    !s.error && !ops.error && s.score === ops.score,
     `define_device with use_on scores what its ops score (${s.score})`,
   );
   const bad = applyOps(startSong(loadTask('mix-bass-under-kick')), [
@@ -120,16 +89,22 @@ test('an MCP run, replayed', () => {
     `ops that fail are reported, not scored (${bad.error?.slice(0, 60)}…)`,
   );
 });
-test('determinism', () => {
-  let same = 0,
-    differ = [];
-  for (const id of ids) {
-    const again = run(loadTask(id), read(path.join(HERE, 'oracles', id + '.json')), { cache: false });
-    if (strip(again) === strip(first[id])) same++;
-    else differ.push(id);
+test('every task has a file that scores it', () => {
+  const files = fs.readdirSync(import.meta.dirname).filter((f) => /^bench-oracles-\d+\.test\.js$/.test(f));
+  const want = Array.from({ length: SHARDS }, (_, i) => `bench-oracles-${i + 1}.test.js`);
+  T.ok(
+    JSON.stringify(files.sort()) === JSON.stringify(want),
+    `the oracles' files are ${want.join(', ')} (found ${files.join(', ')})`,
+  );
+  for (const f of want) {
+    const n = +f.match(/\d+/)[0];
+    T.ok(
+      fs.readFileSync(path.join(import.meta.dirname, f), 'utf8').includes(`oracleTests(${n - 1})`),
+      `${f} scores shard ${n}`,
+    );
   }
   T.ok(
-    same === ids.length,
-    `every oracle scores the same twice, check by check, with fresh renders and fresh ids (${same}/${ids.length}${differ.length ? '; differ: ' + differ.join(', ') : ''})`,
+    ids.every((id) => shardOf(id, ids) >= 0 && shardOf(id, ids) < SHARDS),
+    `each of the ${ids.length} tasks falls to one of them`,
   );
 });

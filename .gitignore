@@ -1,5 +1,6 @@
 node_modules/
 tools/.out/
+__pycache__/
 .DS_Store
 *.log
 .claude/worktrees/

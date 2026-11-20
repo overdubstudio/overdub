@@ -1,0 +1,80 @@
+# The uncredentialed build of the image maul's coding agent runs in, from
+# main only. It holds no OIDC permission, no repository variable and no
+# secret: publish-images.yml picks its artifact up and hands it to the
+# trusted agent publisher, which pushes it as the tag .maul/agent.yaml
+# declares. (maul: https://github.com/devthenet-labs/maul; what these files
+# are for: .github/actions/publish/README.md.)
+#
+# A pull request that touches the image or the publishers runs only the
+# publishers' own tests (the test job): the image is never built from a pull
+# request, and a failing test on main stops the publish.
+name: agent image
+on:
+  # The recipe and the tag it publishes as (a tag bump in .maul/agent.yaml
+  # alone rebuilds, and a rebuild that changes nothing reproduces the
+  # published digest), and the publishers. The studio has no dependencies,
+  # so no lockfile is an input. The two lists are the same.
+  pull_request:
+    paths:
+      - '.maul/**'
+      - '.dockerignore'
+      - '.github/workflows/agent-image.yml'
+      - '.github/workflows/publish-images.yml'
+      - '.github/workflows/publish-agent.yml'
+      - '.github/actions/publish/**'
+  push:
+    branches: ['main']
+    paths:
+      - '.maul/**'
+      - '.dockerignore'
+      - '.github/workflows/agent-image.yml'
+      - '.github/workflows/publish-images.yml'
+      - '.github/workflows/publish-agent.yml'
+      - '.github/actions/publish/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # The publishers' rejection rules: guard.cjs, the OCI validator, the copy
+  # script and the shape of these workflows. Node and Python are the
+  # runner's own; the tests have no dependencies.
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the publishers' rejection rules
+        run: |
+          node --test .github/actions/publish/guard.test.cjs
+          python3 -B -m unittest discover -s .github/actions/publish -p 'test_*.py'
+  build:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      # A fixed SOURCE_DATE_EPOCH, not the commit's, and every layer's
+      # timestamps rewritten to it: the toolchain image depends only on its
+      # pinned bases and the dependency set, so an unchanged toolchain
+      # rebuilt at a later commit has the same digest, and the publisher
+      # finds its tag already published instead of refusing a changed image.
+      - name: Uncredentialed, reproducible toolchain build
+        env:
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+          docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+            -f .maul/Dockerfile --output "type=oci,dest=$RUNNER_TEMP/agent.oci.tar,rewrite-timestamp=true" .
+          python3 .github/actions/publish/validate_oci.py "$RUNNER_TEMP/agent.oci.tar" "$RUNNER_TEMP/agent-validated" agent
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agent.oci.tar
+          retention-days: 3
+          if-no-files-found: error

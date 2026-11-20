@@ -1,0 +1,10 @@
+# The image maul's coding agent runs in for this repository: an immutable
+# tag that the trusted agent publisher (.github/workflows/publish-agent.yml)
+# pushes from main, built from .maul/Dockerfile.
+#
+# To change the toolchain, edit .maul/Dockerfile and bump the tag below
+# (toolchain-v3, toolchain-v4, ...) in the same commit: tags are immutable,
+# so a changed image at a published tag fails to publish. The publisher
+# reads the tag from this file, so keep it to this one image line.
+# (toolchain-v1 was published from a private mirror of this repository.)
+image: 377946145366.dkr.ecr.us-east-1.amazonaws.com/maul/app-envs/overdub:toolchain-v2

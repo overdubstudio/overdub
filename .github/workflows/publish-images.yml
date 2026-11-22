@@ -1,27 +1,42 @@
-# The dispatcher: when the uncredentialed build (agent-image.yml) finishes,
-# hand its run to the trusted publisher. It holds no role and runs no step
-# of its own; the publisher is a workflow of its own because the AWS role
-# trusts exactly one workflow path (job_workflow_ref). It runs on
-# workflow_run, from main's copy of the workflows, never a PR's.
-#
-# Only the agent image is published here. maul can also preview pull
-# requests from a runtime image, which has a build and a publisher of its
-# own; this repository has neither (.github/actions/publish/README.md).
+# The dispatcher: when an uncredentialed build (runtime-image.yml,
+# agent-image.yml) finishes, hand its run to the trusted publisher for that
+# image kind. It holds no role and runs no step of its own; each publisher
+# is a workflow of its own because the AWS role trusts exactly one workflow
+# path (job_workflow_ref). It runs on workflow_run, from main's copy of the
+# workflows, never a PR's. (.github/actions/publish/README.md.)
 #
 # zizmor's two findings here are the design: workflow_run is how a trusted
-# workflow picks up an untrusted build without running it (the publisher
+# workflow picks up an untrusted build without running it (a publisher
 # reads the run through the API and the image as data, and checks out only
-# main's .github/actions/publish), and the publisher is called by path
+# main's .github/actions/publish), and a publisher is called by path
 # because the AWS role's trust names that path.
 name: publish images
 on: # zizmor: ignore[dangerous-triggers] (the publisher never checks out, builds or runs what the triggering run built)
   workflow_run:
-    workflows: [agent image]
+    workflows: [runtime image, agent image]
     types: [completed]
 permissions: {}
 jobs:
-  # Agent toolchain images, from main only. Off unless the repository
-  # variable AGENT_PUBLISH_ENABLED is 'true'.
+  # Runtime (preview) images, from PR heads and main commits. Off
+  # unless the repository variable PREVIEW_PUBLISH_ENABLED is 'true'.
+  runtime:
+    if: >-
+      vars.PREVIEW_PUBLISH_ENABLED == 'true' &&
+      github.event.workflow_run.name == 'runtime image' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.id == github.event.repository.id
+    # A called workflow can hold no more than its caller grants.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    uses: ./.github/workflows/publish-runtime.yml # zizmor: ignore[self-repository] (the form the publishers' tests pin)
+    with:
+      run-id: ${{ github.event.workflow_run.id }}
+  # Agent toolchain images, from main only. Gated on its own variable,
+  # AGENT_PUBLISH_ENABLED, so the image the agent runs in is published
+  # whether or not previews are.
   agent:
     if: >-
       vars.AGENT_PUBLISH_ENABLED == 'true' &&
@@ -29,7 +44,6 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event != 'pull_request' &&
       github.event.workflow_run.head_repository.id == github.event.repository.id
-    # A called workflow can hold no more than its caller grants.
     permissions:
       contents: read
       actions: read

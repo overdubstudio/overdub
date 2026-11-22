@@ -1,0 +1,24 @@
+# What the runtime image (Dockerfile) is built from, and nothing else: the build context is what deploy/deploy.sh
+# ships (site/, app/ and the public docs) plus the server and package.json ("type": "module"). The agent image
+# (.maul/Dockerfile) copies nothing from the context, so this list is the runtime image's alone.
+*
+!package.json
+!server/serve.js
+!site
+!app
+!docs/AGENTS.md
+!docs/ARCHITECTURE.md
+!docs/DEVICES.md
+!docs/UX-RESEARCH.md
+!docs/VISION.md
+!docs/BRAND.md
+!docs/REMOTE-MCP.md
+!docs/GUIDE.md
+!docs/BENCH.md
+# Never committed (.gitignore), so never in CI's build; kept out of a local one too, which would otherwise differ.
+app/kits
+app/community
+app/site-config.json
+app/vendor/ort
+app/vendor/models
+**/.DS_Store

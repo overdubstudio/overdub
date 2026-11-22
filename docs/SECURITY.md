@@ -114,10 +114,11 @@ runs; and text in a song written to steer an agent.
   presses Stop, and while a render it gave up on still holds Chrome's offline worklet thread, no other check or song
   render starts behind it.
 - **Local.** `server/serve.js` answers only requests made to localhost or an IP (DNS rebinding), sends no CORS
-  header, and serves nothing under a dot name (`.git`, `tools/.out`). The bridge also refuses a browser request from
-  another site (`Sec-Fetch-Site`), opens an event stream only for a page that said hello first, uses random call ids
-  and takes at most 8 MB. The Node renderer runs a song under Node's permission model, reading only `app/`, the
-  script and the files named on its command line.
+  header, and serves nothing under a dot name (`.git`, `tools/.out`). (The preview image, `Dockerfile`, alone answers
+  any name, `OVERDUB_ANY_HOST=1`: a container that holds the committed site and nothing else, no checkout, no bridge.)
+  The bridge also refuses a browser request from another site (`Sec-Fetch-Site`), opens an event stream only for a
+  page that said hello first, uses random call ids and takes at most 8 MB. The Node renderer runs a song under Node's
+  permission model, reading only `app/`, the script and the files named on its command line.
 
 ## The findings
 

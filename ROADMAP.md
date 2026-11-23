@@ -39,7 +39,6 @@ At [overdubstudio.com](https://overdubstudio.com/app/), and in every clone of th
 ## Next
 
 - Plate and spring reverbs, synthesized here and released CC0, and rooms we record ourselves.
-- Asking before an imported device file runs, the way a shared song already asks.
 - More of the code under the static checks: `// @ts-check` a file at a time, the formatter a directory at a time
   ([CONTRIBUTING.md](CONTRIBUTING.md), "Static checks").
 - More OverdubBench tasks ([docs/BENCH.md](docs/BENCH.md)).

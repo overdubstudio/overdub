@@ -73,8 +73,8 @@ in `llms.txt`) is its own commit, and `pages-test` checks whichever side of that
   stage, ships it on every deploy, and deploys nothing if it refuses (or, live, if there's no checkout to pull from).
 - `site/community/` is committed and, since AJ approved it on 2026-10-06, `deploy.sh` ships it (its `HELD_BACK` list
   is empty), at `/community/` as well as `/site/community/`.
-- Nothing from the shelf runs before the trust prompt. A plain file import doesn't ask today; making it ask touches
-  every import, not just the shelf, so it's a separate change.
+- Nothing from the shelf runs before the trust prompt. A plain file import asks too, unless its kernel is already
+  trusted here (`ui/devices-io.js`: Play it / Keep it off).
 - **Taking a device down** is a pin that revokes it: the studio reads its bundled index on every load and applies its
   `revoked` list (`trust.forget`), so the next deploy takes it back in every browser.
 - **The API key is gone from the page** (SECURITY.md, "No API key on the page"), which was this spec's condition for

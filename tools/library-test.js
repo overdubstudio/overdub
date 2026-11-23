@@ -152,11 +152,28 @@ ${lines.join('\n')}
     const io = await import('/app/src/ui/devices-io.js');
     const { SHOWCASE } = await import('/app/src/devices/showcase.js');
     const out = {};
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const prompt = async (ms = 5000) => { const t0 = performance.now(); let el; while (!(el = document.querySelector('.di-prompt')) && performance.now() - t0 < ms) await sleep(20); return el; };
+    // import, wait for the prompt, answer it ('play' after the 600 ms hold, or 'off'); -> { res, asked, ... }
+    const answer = async (p, how) => {
+      const el = await prompt();
+      const info = el ? { asked: true, text: el.textContent, focus: document.activeElement?.className || '', playDisabled: el.querySelector('.di-play')?.disabled } : { asked: false };
+      if (el) { if (how === 'play') { await sleep(650); el.querySelector('.di-play').click(); } else el.querySelector('.di-off').click(); }
+      return { ...info, res: await p };
+    };
+    // a direct import that must not ask: resolves, and no prompt was opened on the way
+    const asks = [];
+    const watch = new MutationObserver(() => { if (document.querySelector('.di-prompt')) asks.push(true); });
+    watch.observe(document.body, { childList: true });
+    const direct = async (p) => { const n = asks.length; const res = await p; await sleep(0); return { res, asked: asks.length > n || !!document.querySelector('.di-prompt') }; };
+    out.noAsk = {};
     // a device from elsewhere (the demo song's Firefly) comes in from its file and lands in this song
     const firefly = SHOWCASE.find((d) => d.id === 'claude.firefly');
     const fileText = JSON.stringify(io.toDeviceFile(firefly));
     const before = app.store.history.length;
-    const imp = await app.devicesIO.importText(fileText, 'firefly.overdub-device.json');
+    const d0 = await direct(app.devicesIO.importText(fileText, 'firefly.overdub-device.json'));
+    const imp = d0.res;
+    out.noAsk.firefly = !d0.asked;
     const last = app.store.history[app.store.history.length - 1];
     out.import = { ok: imp.ok, reportOk: imp.report?.ok, inSong: !!app.store.get().devices['claude.firefly'], by: last?.by, label: last?.label, steps: app.store.history.length - before, registered: app.devices.getDevice('claude.firefly')?.source };
     // ...and goes back out the same
@@ -166,47 +183,106 @@ ${lines.join('\n')}
     // a library device, exported, renamed and imported, can be placed on a track
     const sky = app.devicesIO.deviceFile('claude.skylight');
     sky.device.id = 'you.skylight-copy';
-    const imp2 = await app.devicesIO.importDevice(sky, { name: 'copy' });
+    const d1 = await direct(app.devicesIO.importDevice(sky, { name: 'copy' }));
+    const imp2 = d1.res;
+    out.noAsk.skylightCopy = !d1.asked;
     const tr = app.store.dispatch([{ type: 'track.add', ref: 't', track: { name: 'Keys', kind: 'instrument', instrument: { device: 'core.keys' } } }, { type: 'insert.add', track: '$t', insert: { device: 'you.skylight-copy' } }], { by: 'you' });
     out.copy = { ok: imp2.ok, placed: tr.ok };
     // the same file twice: nothing new
-    const again = await app.devicesIO.importText(fileText, 'firefly again');
+    const d2 = await direct(app.devicesIO.importText(fileText, 'firefly again'));
+    const again = d2.res;
+    out.noAsk.fireflyAgain = !d2.asked;
     out.again = { ok: again.ok, already: !!again.already };
     // a device that makes NaN is refused, with the report, and nothing changes
     const nan = { format: io.FORMAT, device: { id: 'you.broken', name: 'Broken', kind: 'effect', params: [], kernel: '({ create() { return { process(L, R, n) { for (let i = 0; i < n; i++) { L[i] = 0 / 0; R[i] = L[i]; } } }; } })' } };
     const h0 = app.store.history.length;
-    const bad = await app.devicesIO.importText(JSON.stringify(nan), 'broken.overdub-device.json');
+    const bad = (await answer(app.devicesIO.importText(JSON.stringify(nan), 'broken.overdub-device.json'), 'play')).res;
     out.refused = { ok: bad.ok, refused: bad.refused, reason: bad.reason, reportOk: bad.report?.ok, errors: bad.report?.errors?.length || 0, nan: bad.report?.nan, inSong: !!app.store.get().devices['you.broken'], registered: !!app.devices.getDevice('you.broken'), steps: app.store.history.length - h0 };
     out.toast = [...document.querySelectorAll('.ew-toast')].map((x) => x.textContent).join(' / ');
+    // refused by the check, its code isn't trusted: the same file asks again
+    const nanAgain = await answer(app.devicesIO.importText(JSON.stringify(nan), 'broken.overdub-device.json'), 'off');
+    out.nanTrust = { trusted: !!app.trust.trusts(nan.device.kernel), askedAgain: nanAgain.asked, declined: !!nanAgain.res.declined, inSong: !!app.store.get().devices['you.broken'] };
     // a syntax error is refused too, with its line
-    const syn = await app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.typo', name: 'Typo', kind: 'effect', params: [], kernel: '({ create() { return { process(L, R, n) { for (let i = 0; i < n; i++ { } } }; } })' } }), 'typo');
+    const syn = (await answer(app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.typo', name: 'Typo', kind: 'effect', params: [], kernel: '({ create() { return { process(L, R, n) { for (let i = 0; i < n; i++ { } } }; } })' } }), 'typo'), 'play')).res;
     out.syntax = { refused: syn.refused, reason: syn.reason };
     // a device file is untrusted: importing one never runs its kernel on the page (only in the worklet, which has no
     // DOM and no localStorage), whether the check then refuses it or not
     localStorage.setItem('overdub:probe-secret', 'sk-ant-FAKE');
     delete window.__pwned; delete window.__pwnedGuarded;
     const grab = (name, guard) => `([].constructor.constructor("${guard ? "if (typeof document !== 'undefined') " : ''}window.${name} = { where: typeof document, secret: localStorage.getItem('overdub:probe-secret') }")(), ({ create() { return { process() {} }; } }))`;
-    const g1 = await app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.grab', name: 'Grab', kind: 'effect', params: [], kernel: grab('__pwned', false) } }), 'grab.overdub-device.json');
-    const g2 = await app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.grab-quiet', name: 'Grab quietly', kind: 'effect', params: [], kernel: grab('__pwnedGuarded', true) } }), 'grab-quiet.overdub-device.json');
+    const g1 = (await answer(app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.grab', name: 'Grab', kind: 'effect', params: [], kernel: grab('__pwned', false) } }), 'grab.overdub-device.json'), 'play')).res;
+    const g2 = (await answer(app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.grab-quiet', name: 'Grab quietly', kind: 'effect', params: [], kernel: grab('__pwnedGuarded', true) } }), 'grab-quiet.overdub-device.json'), 'play')).res;
     out.grab = { pwned: window.__pwned ?? null, guarded: window.__pwnedGuarded ?? null, refused: !!g1.refused, reason: g1.reason, quietOk: g2.ok };
     localStorage.removeItem('overdub:probe-secret');
     // not a device at all
-    const junk = await app.devicesIO.importText('{"hello": 1}', 'junk.json');
+    const d3 = await direct(app.devicesIO.importText('{"hello": 1}', 'junk.json'));
+    const junk = d3.res;
+    out.noAsk.junk = !d3.asked;
     out.junk = { refused: junk.refused, reason: junk.reason };
     // a built-in's id can't be taken over: it comes in as your copy
     const verb = app.devicesIO.deviceFile('core.verb');
     verb.device.kernel = verb.device.kernel.replace('return {', 'return {\n');
-    const imp3 = await app.devicesIO.importDevice(verb, { name: 'verb' });
+    const imp3 = (await answer(app.devicesIO.importDevice(verb, { name: 'verb' }), 'play')).res;
     out.builtin = { ok: imp3.ok, id: imp3.id, coreIntact: app.devices.getDevice('core.verb').source };
     // nor can the house shelf's: the shelf's own file is already here, a different kernel under its id is your copy
     const shelf = app.devicesIO.deviceFile('claude.skylight');
-    const same = await app.devicesIO.importDevice(JSON.parse(JSON.stringify(shelf)), { name: 'skylight' });
+    const d4 = await direct(app.devicesIO.importDevice(JSON.parse(JSON.stringify(shelf)), { name: 'skylight' }));
+    const same = d4.res;
+    out.noAsk.skylight = !d4.asked;
     shelf.device.kernel = shelf.device.kernel.replace('return {', 'return {\n');
-    const other = await app.devicesIO.importDevice(shelf, { name: 'skylight, changed' });
+    const other = (await answer(app.devicesIO.importDevice(shelf, { name: 'skylight, changed' }), 'play')).res;
     out.shelf = { already: !!same.already, ok: other.ok, id: other.id, intact: app.devices.getDevice('claude.skylight').source, kernelIntact: app.devices.getDevice('claude.skylight').kernel !== shelf.device.kernel };
     // a kernel past 256 KB is refused before anything compiles it
-    const huge = await app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.huge', name: 'Huge', kind: 'effect', params: [], kernel: '/*' + 'a: 1,\n'.repeat(60000) + '*/({ create() { return { process() {} }; } })' } }), 'huge.overdub-device.json');
+    const d5 = await direct(app.devicesIO.importText(JSON.stringify({ format: io.FORMAT, device: { id: 'you.huge', name: 'Huge', kind: 'effect', params: [], kernel: '/*' + 'a: 1,\n'.repeat(60000) + '*/({ create() { return { process() {} }; } })' } }), 'huge.overdub-device.json'));
+    const huge = d5.res;
+    out.noAsk.huge = !d5.asked;
     out.huge = { refused: huge.refused, reason: huge.reason };
+    // a device file whose code this browser has never run asks first, and nothing happens to it until Play it
+    const humKernel = '({ create() { return { process(L, R, n) { for (let i = 0; i < n; i++) { L[i] *= 0.5; R[i] *= 0.5; } } }; } })';
+    const humFile = (id, name = 'Test Hum') => JSON.stringify({ format: io.FORMAT, device: { id, name, kind: 'effect', by: 'sam', params: [], kernel: humKernel } });
+    let events = 0;
+    app.ui.on('device:import', () => { events++; });
+    const hh0 = app.store.history.length, ev0 = events;
+    const p1 = app.devicesIO.importText(humFile('you.hum'), 'hum.overdub-device.json');
+    const el1 = await prompt();
+    out.hum = { asked: !!el1, text: el1?.textContent || '', focus: document.activeElement?.className || '', playDisabled: el1?.querySelector('.di-play')?.disabled,
+      buttons: [...(el1?.querySelectorAll('button') || [])].map((b) => b.textContent),
+      held: { registered: !!app.devices.getDevice('you.hum'), inSong: app.store.get().devices['you.hum'] !== undefined, trusted: !!app.trust.trusts(humKernel), events: events - ev0,
+        listed: [...document.querySelectorAll('[data-device]')].some((x) => x.dataset.device === 'you.hum') } };
+    el1?.querySelector('.di-off').click();
+    const off1 = await p1;
+    out.hum.off = { ok: off1.ok, declined: !!off1.declined, steps: app.store.history.length - hh0, registered: !!app.devices.getDevice('you.hum'), inSong: !!app.store.get().devices['you.hum'], trusted: !!app.trust.trusts(humKernel),
+      toast: [...document.querySelectorAll('.ew-toast')].some((x) => /Kept Test Hum off/.test(x.textContent)), stored: (JSON.parse(localStorage.getItem('overdub:trusted-kernels') || '{}').sha256 || []).length };
+    // again: it asks again; Escape keeps it off
+    const p2 = app.devicesIO.importText(humFile('you.hum'), 'hum.overdub-device.json');
+    const el2 = await prompt();
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    const off2 = await p2;
+    out.hum.esc = { asked: !!el2, declined: !!off2.declined, gone: !document.querySelector('.di-prompt'), inSong: !!app.store.get().devices['you.hum'], steps: app.store.history.length - hh0 };
+    // and again: Enter on the focused Keep it off (a keyboard press on a focused button is its click)
+    const p3 = app.devicesIO.importText(humFile('you.hum'), 'hum.overdub-device.json');
+    const el3 = await prompt();
+    const focused = document.activeElement;
+    focused?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    focused?.click();
+    const off3 = await p3;
+    out.hum.enter = { asked: !!el3, onOff: !!focused?.classList.contains('di-off'), declined: !!off3.declined, inSong: !!app.store.get().devices['you.hum'], steps: app.store.history.length - hh0 };
+    // Play it: checked, trusted, and in the song in one step by you
+    const hp = app.store.history.length;
+    const played = await answer(app.devicesIO.importText(humFile('you.hum'), 'hum.overdub-device.json'), 'play');
+    const lastHum = app.store.history[app.store.history.length - 1];
+    await sleep(300);
+    out.hum.play = { asked: played.asked, ok: played.res.ok, inSong: !!app.store.get().devices['you.hum'], steps: app.store.history.length - hp, by: lastHum?.by, registered: app.devices.getDevice('you.hum')?.source, trusted: !!app.trust.trusts(humKernel),
+      listed: [...document.querySelectorAll('[data-device]')].some((x) => x.dataset.device === 'you.hum'), toast: [...document.querySelectorAll('.ew-toast')].some((x) => /Imported Test Hum/.test(x.textContent)) };
+    // the same code under another id and name goes straight in
+    const d6 = await direct(app.devicesIO.importText(humFile('you.hum-2', 'Test Hum Two'), 'hum-2.overdub-device.json'));
+    out.hum.sameKernel = { asked: d6.asked, ok: d6.res.ok };
+    // exported from the rack and imported back: no ask
+    const exp = app.devicesIO.deviceFile('you.hum');
+    exp.device.id = 'you.hum-3';
+    const d7 = await direct(app.devicesIO.importDevice(exp, { name: 'hum-3' }));
+    out.hum.roundtrip = { asked: d7.asked, ok: d7.res.ok };
+    watch.disconnect();
     // a song file can't do it either: its core.keys and claude.skylight open as yours, and the tracks follow
     const song = JSON.parse(JSON.stringify(app.store.get()));
     song.title = 'From a file';
@@ -225,7 +301,7 @@ ${lines.join('\n')}
   await page.waitForSelector('html[data-ready="1"]', { timeout: 30000 });
   const re = await page.evaluate(() => ({ title: window.overdub.store.get().title, verb: window.overdub.devices.getDevice('you.verb')?.source || null, held: (window.overdub.trust?.held?.() || []).map((d) => d.id), stored: (JSON.parse(localStorage.getItem('overdub:trusted-kernels') || '{}').sha256 || []).length }));
   t.ok(r.trust?.verb && JSON.stringify(r.trust.held) === '["you.keys"]' && re.title === 'From a file' && re.verb === 'project' && JSON.stringify(re.held) === '["you.keys"]' && re.stored >= 2,
-    `an imported device file is trusted: after a reload you.verb plays (${re.verb}) while the song file's own you.keys is held (${re.held.join(', ') || 'nothing'}); ${re.stored} kernels stored`);
+    `an imported device file you let play is trusted: after a reload you.verb plays (${re.verb}) while the song file's own you.keys is held (${re.held.join(', ') || 'nothing'}); ${re.stored} kernels stored`);
   t.note(JSON.stringify(r));
   t.ok(r.import.ok && r.import.reportOk && r.import.inSong && r.import.by === 'you' && r.import.steps === 1 && r.import.registered === 'project', `import: Firefly passes the check and becomes a project device in one step signed by you ("${r.import.label}")`);
   t.ok(r.roundtrip.format === 'overdub-device/0' && r.roundtrip.kernel && r.roundtrip.params && r.roundtrip.name && r.roundtrip.request && r.roundtrip.look, 'export after import gives back the same def and kernel (params, name, request, look)');
@@ -240,6 +316,19 @@ ${lines.join('\n')}
   t.ok(r.shelf.already && r.shelf.ok && r.shelf.id === 'you.claude-skylight' && r.shelf.intact === 'library' && r.shelf.kernelIntact, `a shelf device's own file is "already here"; a changed one comes in as ${r.shelf.id}, and claude.skylight stays the shelf's`);
   t.ok(r.huge.refused && /too large/.test(r.huge.reason || ''), `a kernel past 256 KB is refused: "${r.huge.reason}"`);
   t.ok(r.file.title === 'From a file' && !r.file.ids.includes('core.keys') && r.file.ids.includes('you.keys') && r.file.track === 'you.keys' && r.file.core === 'builtin', `a song file's core.keys opens as you.keys, its track follows, and core.keys stays built in (${r.file.ids.join(', ')})`);
+  const na = r.noAsk || {};
+  t.ok(Object.keys(na).length === 6 && Object.values(na).every(Boolean), `code already trusted here (and files refused before any code) goes straight through, no prompt (${Object.entries(na).map(([k, v]) => `${k}: ${v ? 'no ask' : 'ASKED'}`).join(', ')})`);
+  const hum = r.hum || {};
+  t.ok(hum.asked && /Test Hum/.test(hum.text) && /The file says sam wrote it/.test(hum.text) && /runs on this computer/.test(hum.text), `an untrusted device file asks first, naming it and who the file says wrote it: "${hum.text}"`);
+  t.ok(JSON.stringify(hum.buttons) === '["Play it","Keep it off"]' && /di-off/.test(hum.focus) && hum.playDisabled === true, `the prompt offers Play it and Keep it off, focus on Keep it off, Play it held at first (${(hum.buttons || []).join(' / ')}; focus ${hum.focus})`);
+  t.ok(hum.held && !hum.held.registered && !hum.held.inSong && !hum.held.trusted && hum.held.events === 0 && !hum.held.listed, `while it asks, the device is held: not registered, not in the song, not listed, not trusted, nothing checked (${JSON.stringify(hum.held)})`);
+  t.ok(hum.off && hum.off.ok === false && hum.off.declined && hum.off.steps === 0 && !hum.off.registered && !hum.off.inSong && !hum.off.trusted && hum.off.toast, `Keep it off adds nothing: no step, not registered, not trusted, and a toast says so (${JSON.stringify(hum.off)})`);
+  t.ok(hum.esc && hum.esc.asked && hum.esc.declined && hum.esc.gone && !hum.esc.inSong && hum.esc.steps === 0, 'the same file again asks again, and Escape keeps it off');
+  t.ok(hum.enter && hum.enter.asked && hum.enter.onOff && hum.enter.declined && !hum.enter.inSong && hum.enter.steps === 0, 'and again: Enter on the focused Keep it off keeps it off');
+  t.ok(hum.play && hum.play.asked && hum.play.ok && hum.play.inSong && hum.play.steps === 1 && hum.play.by === 'you' && hum.play.registered === 'project' && hum.play.trusted && hum.play.listed && hum.play.toast, `Play it checks it, trusts it and adds it in one step signed by you (${JSON.stringify(hum.play)})`);
+  t.ok(hum.sameKernel && !hum.sameKernel.asked && hum.sameKernel.ok, 'the same code under another id and name then imports without asking');
+  t.ok(hum.roundtrip && !hum.roundtrip.asked && hum.roundtrip.ok, 'a device exported from this song and imported back doesn’t ask');
+  t.ok(r.nanTrust && !r.nanTrust.trusted && r.nanTrust.askedAgain && r.nanTrust.declined && !r.nanTrust.inSong, `a device the check refused after Play it stays untrusted, so its file asks again (${JSON.stringify(r.nanTrust)})`);
   t.ok(!pageErrors(errors).length, 'no page errors in the studio ' + pageErrors(errors).join(' | '));
   await close();
 }

@@ -10,7 +10,9 @@
 //   - the studio's own kernels (the built-ins and the house shelf: `shipped`), and every device in a song it ships
 //     (Night Shift's three, and any demo song's): those hashes are worked out here, never stored;
 //   - kernels this browser wrote or took in: what the person's own agents define (define_device, in the page or over
-//     MCP), a device file the person imports, and any device.define this page dispatches (main.js);
+//     MCP), and any device.define this page dispatches (main.js); a device file the person imports asks first
+//     (ui/devices-io.js: Play it / Keep it off), unless its kernel is already trusted here; Play it trusts it once the
+//     device check passes;
 //   - once, on the first run of this version, every device in the songs this browser had kept (they were already
 //     running): `migrate`; and, for the same reason, the devices of a link this browser made before then (main.js
 //     trustOwnLink, by `since`).

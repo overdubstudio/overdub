@@ -1,18 +1,23 @@
 // Devices in and out of the studio: export any kernel device as a .overdub-device.json (its def and its kernel), and
-// import one (file picker, a drop anywhere on the studio, or ⌘O on the file). An import runs the device check FIRST
-// and refuses a failing device with the check's report; one that passes becomes a project device (device.define,
-// signed by you), so it travels with the song like anything an agent wrote in it.
+// import one (file picker, a drop anywhere on the studio, or ⌘O on the file). An import of code this browser doesn't
+// trust yet asks first (Play it / Keep it off): until Play it, nothing registers, checks or compiles it, and Keep it
+// off adds nothing (the next import asks again). After Play it (or straight away, for code already trusted here) the
+// device check runs and refuses a failing device with the check's report; one that passes is trusted in this browser
+// and becomes a project device (device.define, signed by you), so it travels with the song like anything an agent
+// wrote in it.
 //
 // Also: /app/?new&device=<id> (the library page's "Use in a new song") opens a new song with a track playing that
 // device, and a few bars to hear it with.
 //
 //   app.devicesIO = { exportDevice(id), deviceFile(id) -> object, pick(), importFile(file), importText(text, name),
-//                     importDevice(file object) -> Promise<{ ok, id, name, report } | { ok: false, refused, reason, report }> }
+//                     importDevice(file object) -> Promise<{ ok, id, name, report } | { ok: false, refused, reason, report }
+//                                                        | { ok: false, declined: true, id, name }> }
 //
 // Pure helpers (no app needed) are exported for the library page and the tests: FORMAT, FILE_EXT, toDeviceFile(def),
 // parseDeviceFile(text | object), exportable(def).
 
 import { HOUSE_NS, MAX_KERNEL_CHARS, isHouseId } from '../core/share.js';
+import { byline, css, h } from './dom.js';
 
 export const FORMAT = 'overdub-device/0';
 export const FILE_EXT = '.overdub-device.json';
@@ -88,8 +93,58 @@ function starterClip(def) {
   return { notes: CHORDS };
 }
 
+const DI_CSS = `
+.di-prompt { position: fixed; z-index: 60; top: 18vh; left: 50%; transform: translateX(-50%); width: min(440px, calc(100vw - 24px)); box-sizing: border-box; display: grid; gap: 9px; padding: 14px 16px; background: var(--bg-2, var(--bg)); color: var(--text-2); border: var(--rule-2); font-size: 12.5px; line-height: 1.45; }
+.di-prompt p { margin: 0; }
+.di-prompt .di-p1 b { color: var(--text); }
+.di-prompt.di-sheet { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: auto; max-height: 92vh; overflow: auto; border-width: 1px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+.di-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+`;
+
+// one prompt at a time (opening another keeps the first one off)
+let promptOpen = null;
+
 export default function (app) {
   const { store, ui, devices } = app;
+
+  // The ask before a device file's code runs here: it names the device and who the file says wrote it. Focus starts
+  // on Keep it off (Enter and Esc keep it off); Play it is held for 600 ms, so a double-click or a held key never
+  // lands on it. DOM only: no agent tool reaches it. -> Promise<{ go }>
+  function askRun(def) {
+    promptOpen?.close?.();
+    css('ew-devices-io', DI_CSS);
+    return new Promise((resolve) => {
+      const back = document.activeElement;
+      const who = typeof def.by === 'string' && def.by.trim()
+        ? ['The file says ', byline(def.by, { app }) || String(def.by), ' wrote it. The studio can’t confirm that.']
+        : ['The file doesn’t say who wrote it.'];
+      const play = h('button.ew-btn.ew-btn-primary.ew-btn-small.di-play', { type: 'button', disabled: true }, 'Play it');
+      const off = h('button.ew-btn.ew-btn-small.di-off', { type: 'button' }, 'Keep it off');
+      const el = h('div.di-prompt', { role: 'dialog', 'aria-modal': 'true', 'aria-label': `Run ${def.name}?` },
+        h('p.di-p1', h('b', def.name), ` is ${def.kind === 'instrument' ? 'an instrument' : 'an effect'} from a device file. `, ...who),
+        h('p.di-p2', 'It’s a small program that runs on this computer, on the studio’s audio thread. Until you play it, it stays off: nothing runs it, not even the check. Play it if you trust whoever gave you the file: the device check runs first, and this browser then runs that code from now on, in any song.'),
+        h('div.di-acts', play, off));
+      let hold = 0;
+      const close = (result) => {
+        if (promptOpen !== api) return;
+        promptOpen = null;
+        clearTimeout(hold);
+        el.remove(); window.removeEventListener('keydown', onKey, true);
+        try { if (back && back.isConnected) back.focus?.(); } catch { /* fine */ }
+        resolve(result);
+      };
+      const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close({ go: false }); } else if (el.contains(document.activeElement)) ev.stopPropagation(); };
+      play.onclick = () => close({ go: true });
+      off.onclick = () => close({ go: false });
+      const api = { close: () => close({ go: false }) };
+      promptOpen = api;
+      if (window.innerWidth <= 640) el.classList.add('di-sheet');
+      document.body.append(el);
+      window.addEventListener('keydown', onKey, true);
+      off.focus();
+      hold = setTimeout(() => { play.disabled = false; }, 600);
+    });
+  }
 
   function sourceOf(id) {
     const proj = store.get().devices?.[id];
@@ -128,6 +183,17 @@ export default function (app) {
       say(`${def.name} is already in the studio`, 'info');
       return { ok: true, already: true, id: def.id, name: def.name };
     }
+    // code this browser doesn't trust yet asks first; until the person lets it play, nothing checks or compiles it
+    // (no app.trust, as in a bare test page: ask anyway)
+    const known = !!app.trust?.trusts?.(def.kernel);
+    if (!known) {
+      const a = await askRun(def);
+      if (!a.go) {
+        say(`Kept ${def.name} off. Nothing was added; importing the file again asks again.`, 'info');
+        ui.emit('device:import', { ok: false, declined: true, def });
+        return { ok: false, declined: true, id: def.id, name: def.name };
+      }
+    }
     let report;
     try {
       const { checkDevice, summarize } = await import('../kernel/check.js');
@@ -142,13 +208,14 @@ export default function (app) {
     }
     const device = { ...def, by: def.by || 'you' };
     delete device.version;
-    // the person chose this file: its code is trusted in this browser from now on (devices/trust.js), in any song, before
-    // the song takes it in (so it registers rather than being held)
+    // the person let it play (or its code was already trusted here), and it passed the check: its code is trusted in
+    // this browser from now on (devices/trust.js), in any song, before the song takes it in (so it registers rather
+    // than being held)
     app.trust?.allow?.([def.kernel]);
     const r = store.dispatch({ type: 'device.define', device }, { by: 'you', label: `imported ${def.name}` });
     if (!r.ok) { say(`Couldn’t import ${def.name}: ${r.error}`, 'bad'); return { ok: false, reason: r.error, report }; }
     const lvl = report.level ? (report.kind === 'effect' ? `${report.level.deltaLU >= 0 ? '+' : ''}${report.level.deltaLU} LU against bypass` : `${report.level.lufs} LUFS`) : '';
-    say(`Imported ${def.name}${lvl ? `: ${lvl}, ${report.truePeak} dBTP` : ''}. It’s under “Written in this song”.`, 'ok');
+    say(`Imported ${def.name}${lvl ? `: ${lvl}, ${report.truePeak} dBTP` : ''}. It’s under “Written in this song”.${known ? '' : ' This browser runs that code from now on.'}`, 'ok');
     ui.emit('device:import', { ok: true, def, report });
     return { ok: true, id: def.id, name: def.name, report };
   }

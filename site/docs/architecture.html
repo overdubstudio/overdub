@@ -62,7 +62,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Overdub architecture (v0.1 contracts)</a></h1>
-    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 166 min to read</p>
+    <p class="doc-meta">From <code>docs/ARCHITECTURE.md</code> (<a href="/docs/ARCHITECTURE.md">the Markdown</a>), about 167 min to read</p>
     <article class="prose">
 <p>Overdub is a web DAW where a musician and their agents play over each other. This document is the contract every
 module is built against. If code and this document disagree, fix one of them in the same change.</p>
@@ -569,8 +569,8 @@ the song has whose kernel this browser trusts (<code>source: 'project'</code>), 
 <code>registry.removeDevice(id)</code> for every one it no longer has or now holds (undo, another song loaded,
 <code>revert_my_changes</code>), which puts back the def it shadowed, if any (<code>shadowedDevice(id)</code>).</p>
 <p><strong>Device files</strong> (<code>ui/devices-io.js</code>, <code>app.devicesIO</code>): <code>.overdub-device.json</code> (<code>overdub-device/0</code>) out and in; an
-import runs <code>checkDevice</code> first and becomes one <code>device.define</code> by you (its kernel trusted here: the person chose the
-file). <code>/app/?device=&lt;id&gt;</code> opens a new song with that device on a track. <code>/app/library.html</code> is the public shelf.
+import of code this browser doesn't trust asks first (Play it / Keep it off); Play it runs <code>checkDevice</code> and becomes
+one <code>device.define</code> by you, its kernel trusted here once it passes. <code>/app/?device=&lt;id&gt;</code> opens a new song with that device on a track. <code>/app/library.html</code> is the public shelf.
 Details in DEVICES.md. The public, user-submitted library waits for WASM kernels and sandboxed faces (SECURITY.md).</p>
 <h3 id="who-runs-a-songs-code-devicestrustjs"><a class="h-link" href="#who-runs-a-songs-code-devicestrustjs">Who runs a song's code (<code>devices/trust.js</code>)</a></h3>
 <p>A song's devices are kernels: code from whoever made the song, which runs in the AudioWorklet on this computer when the
@@ -586,8 +586,7 @@ key, too weak to trust code by, since a kernel matching Night Shift's could be m
 <li><strong>Trusted without asking:</strong> the studio's own kernels (the built-ins and the house shelf, as registered at boot) and
 every device in a song the studio ships (each <code>DEMOS</code> entry's devices: Night Shift's three), worked out when first
 needed and never stored; and kernels this browser takes in: <code>define_device</code> (the person's own agents, in the page
-or over MCP: the tool trusts the kernel once its check passes), a device file the person imports (<code>ui/devices-io.js</code>),
-and any <code>device.define</code> op a <code>do</code> dispatch applies in this page (<code>main.js</code>; not an undo, a redo or a load, never
+or over MCP: the tool trusts the kernel once its check passes), and any <code>device.define</code> op a <code>do</code> dispatch applies in this page (<code>main.js</code>; not an undo, a redo or a load, never
 a kernel that is held, and never one allowed for this page load only, below). Once, on the first run of this
 version (the key isn't there), <code>main.js</code> trusts every kernel in the songs this browser kept (<code>overdub:project</code>,
 <code>overdub:previous</code>, <code>overdub:before-fork</code>, <code>overdub:recent</code>): they were already running. For the same reason a link this browser made before <code>since</code> opens as yours with its
@@ -619,6 +618,14 @@ what was decided. The rack draws a held device as a dashed note with <strong>Pla
 say <em>kept off</em>, the arranger draws a held instrument's clips silent (outline, hollow notes) with <em>kept off</em> where
 the byline goes, the browser lists it under &quot;Written in this song&quot;. On a phone the strip is the question alone while
 it's open and one line once it's answered, so the lanes stay in view.</li>
+<li><strong>Importing a device file</strong> (<code>ui/devices-io.js</code>): the same rule for a file. A device file whose kernel isn't trusted
+here is held until the person answers: a small dialog (a bottom sheet on a phone) names the device and who the file
+says wrote it, says it's a small program that runs on this computer, and offers <strong>Play it</strong> and <strong>Keep it off</strong>
+(focus on Keep it off; Esc keeps it off; Play it is held for 600 ms). Until Play it nothing registers, checks or
+compiles it, and nothing is dispatched. Play it runs <code>checkDevice</code>; only a device that passes is trusted
+(<code>app.trust.allow</code>) and defined by you. Keep it off adds nothing and stores nothing, so the next import asks again.
+A file whose kernel is already trusted (one exported from this rack, a demo song's device) goes straight in. No
+agent tool reaches it.</li>
 <li><strong>Agents</strong> see held devices (<code>get_project</code> <code>held</code>, <code>get_device</code> <code>held: true</code>, <code>list_devices</code>, <code>render_and_measure</code>
 and <code>provenance_report</code> say what they left out) and can't run or allow them: no tool reaches <code>app.trust.play</code>, and
 etiquette rule 8 says only the person lets held code play.</li>

@@ -48,7 +48,7 @@ jobs:
           printf 'account_id=%s\n' "$account_id" >> "$GITHUB_OUTPUT"
       - name: Re-read authoritative run, workflow, PR and artifact metadata
         id: guard
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RUN_ID: ${{ inputs.run-id }}
           PUBLISH_REPOSITORY_ID: ${{ vars.PUBLISH_REPOSITORY_ID }}
@@ -60,7 +60,7 @@ jobs:
               repositoryID: process.env.PUBLISH_REPOSITORY_ID, ownerID: process.env.PUBLISH_OWNER_ID});
             for (const [key, value] of Object.entries(result)) core.setOutput(key, value);
       - name: Download only that run's immutable artifact ID, outside the checkout
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.guard.outputs.artifact_id }}
           run-id: ${{ inputs.run-id }}

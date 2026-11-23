@@ -16,7 +16,8 @@
 //                every member is synthesized and checked as such everywhere; tools/drumkit-test.js and
 //                tools/sampler-test.js hold them to the same bar
 //   effects:     core.eq (Top Shelf), core.comp (Squeeze Box), core.verb (Stairwell), core.delay (Echo Reel),
-//                core.chorus (Double Track), core.filter (Keyhole), core.drive (Hot Print), core.crush (Chewed Tape),
+//                core.chorus (Double Track), core.tremolo (Flutter Valve),
+//                core.filter (Keyhole), core.drive (Hot Print), core.crush (Chewed Tape),
 //                core.width (Gatefold), core.limiter (Red Line), core.eq8 (Slide Rule), core.shaper (Scribble Strip),
 //                core.multiband (Gaffer Tape), core.ducker (Dim Switch: keyed, a sidechain duck), core.clipper (Clip Lamp),
 //                core.drumbus (Drum Riser), core.stack (Half Stack), core.cab (Iso Cab), core.bassrig (Y Cable),
@@ -60,6 +61,7 @@ import comp from './comp.js';
 import verb from './verb.js';
 import delay from './delay.js';
 import chorus from './chorus.js';
+import tremolo from './tremolo.js';
 import filter from './filter.js';
 import drive from './drive.js';
 import crush from './crush.js';
@@ -78,7 +80,7 @@ import bassrig from './bassrig.js';
 import rooms from './rooms.js';
 
 export const INSTRUMENTS = [poly, bass, keys, pluck, drums, pad, piano, organ, strings, bassguitar, guitar, ep, mallets, poly2, brass, choir, drumroom, wavetable, clubkit];
-export const EFFECTS = [eq, comp, verb, delay, chorus, filter, drive, crush, width, limiter, eq8, shaper, multiband, ducker, clipper, drumbus, stack, cab, bassrig, rooms];
+export const EFFECTS = [eq, comp, verb, delay, chorus, tremolo, filter, drive, crush, width, limiter, eq8, shaper, multiband, ducker, clipper, drumbus, stack, cab, bassrig, rooms];
 export const SAMPLED = [drumkit, upright, brushkit, handkit, grand, ensemble, vibes, ebass, eguitar, barisax, cello, flute, trumpet, metalkit];
 export const BUILTINS = [...INSTRUMENTS, ...SAMPLED, ...EFFECTS];
 export default BUILTINS;

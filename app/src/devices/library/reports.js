@@ -43,6 +43,7 @@ export const REPORTS = {
   "core.verb": {"hash":"imnhbr","kind":"effect","ok":true,"lufs":-21,"deltaLU":-0.1,"truePeak":-6.4,"cpu":0.6,"tail":1.1,"warnings":0},
   "core.delay": {"hash":"onbqur","kind":"effect","ok":true,"lufs":-21.3,"deltaLU":-0.4,"truePeak":-6.3,"cpu":0.5,"tail":1.5,"warnings":0},
   "core.chorus": {"hash":"src7pj","kind":"effect","ok":true,"lufs":-21.6,"deltaLU":-0.7,"truePeak":-6.5,"cpu":0.4,"tail":0,"warnings":0},
+  "core.tremolo": {"hash":"msxe0j","kind":"effect","ok":true,"lufs":-21.2,"deltaLU":-0.3,"truePeak":-6.2,"cpu":0.3,"tail":0,"warnings":0,"measured":"2026-11-23"},
   "core.filter": {"hash":"efo16d","kind":"effect","ok":true,"lufs":-20.9,"deltaLU":0,"truePeak":-7.6,"cpu":0.3,"tail":0,"warnings":0},
   "core.drive": {"hash":"16ie799","kind":"effect","ok":true,"lufs":-20.1,"deltaLU":0.8,"truePeak":-7.7,"cpu":0.5,"tail":0,"warnings":0},
   "core.crush": {"hash":"6mu72h","kind":"effect","ok":true,"lufs":-21.9,"deltaLU":-1,"truePeak":-6.3,"cpu":0.2,"tail":0,"warnings":0},

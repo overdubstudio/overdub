@@ -1,21 +1,28 @@
-# The agent image's build and trusted publisher
+# Image builds and trusted publishers
 
 [maul](https://github.com/devthenet-labs/maul) runs coding agents on issues and opens their work as pull requests.
 Each change is built and tested in a container with no network, from an image this repository declares in
-`.maul/agent.yaml`. This directory and three workflows build that image and publish it:
+`.maul/agent.yaml`, and each pull request it opens can be looked at running, as a preview, before it is merged. This
+directory and five workflows build those two images and publish them:
 
 - **The agent toolchain image** is `.maul/Dockerfile`: Node.js, Biome, tsc and a headless Chrome, everything pinned,
   no application source. `agent-image.yml` (`agent image`) builds it from `main` only; `publish-images.yml` hands the
   finished build to `publish-agent.yml`, which pushes it to `AGENT_IMAGE_REPOSITORY` as the tag `.maul/agent.yaml`
   declares.
+- **The runtime image**, what a preview runs, is `Dockerfile`: `server/serve.js` and what the site ships (`site/`,
+  `app/`, the public docs), for one commit; `.dockerignore` is the list and the Dockerfile says what is left out.
+  `runtime-image.yml` (`runtime image`) builds it for every pull request head and every `main` commit;
+  `publish-images.yml` hands the finished build to `publish-runtime.yml`, which pushes it to
+  `RUNTIME_IMAGE_REPOSITORY` as `sha-<commit>`, and a `main` commit also as `main-<commit>`, the tag the registry's
+  lifecycle keeps.
 - The registry is the maul operator's ECR (AWS account `377946145366`), not this project's own AWS account
-  (`infra/`): nothing here reads or changes the studio's infrastructure, deploys or secrets.
+  (`infra/`): nothing here reads or changes the studio's infrastructure, deploys or secrets. A preview is not
+  `next.overdubstudio.com` (`ci.yml`), which is `main` on the studio's own AWS.
 
-The scripts and their tests are maul's scaffold (`maul init app --existing`, v0.14.13), kept as generated except
-where noted: `guard.cjs`, `validate_oci.py` and `copy-image.sh` also know a second image kind, `runtime`, which maul
-previews pull requests from. This repository has no runtime image, so the scaffold's `runtime-image.yml` and
-`publish-runtime.yml` are left out, and `test_workflows.py` and `publish-images.yml` are cut down to the agent image.
-To add previews later, run the scaffold again.
+The scripts and their tests are maul's scaffold (`maul init app --existing`, v0.14.13 for the agent image and
+v0.14.15 for the runtime image's two workflows), kept as generated except where noted: the agent image is never built
+from a pull request and its build waits for the tests, and `runtime-image.yml` leaves the scaffold's actionlint step to
+`ci.yml`, which lints every workflow.
 
 ## The boundary
 
@@ -41,20 +48,23 @@ is only ever a `main` build.) Before it asks for AWS credentials, it:
 
 Only then does it assume its own role and copy the opaque blobs with the distribution's
 `skopeo copy --preserve-digests` (`copy-image.sh`). Tags are immutable: a re-run with the same digest is a no-op, and a
-different digest at an existing tag is a hard failure, never an overwrite. The build is reproducible (a fixed
-`SOURCE_DATE_EPOCH`, with every layer's timestamps rewritten to it): the image keeps its digest until its recipe or
-its pinned inputs change.
+different digest at an existing tag is a hard failure, never an overwrite. The builds are reproducible
+(`SOURCE_DATE_EPOCH`, with every layer's timestamps rewritten to it): a re-run of the same commit rebuilds the same
+runtime digest, and the agent image, built at a fixed epoch, keeps its digest until its recipe or its pinned inputs
+change.
 
-The role is the boundary. AWS binds it to this repository's OIDC subject, its numeric repository and owner IDs, the
-`main` ref, audience `sts.amazonaws.com` and the publisher workflow, the only workflow here that assumes it (the
-studio's own deploy roles, `ci.yml` and `deploy-live.yml`, are separate and in another account):
+The roles are the boundary. AWS binds each one to this repository's OIDC subject, its numeric repository and owner
+IDs, the `main` ref, audience `sts.amazonaws.com` and its **own** publisher workflow, the only workflows here that
+assume them (the studio's own deploy roles, `ci.yml` and `deploy-live.yml`, are separate and in another account):
 
-| Trusted workflow (`job_workflow_ref`)                                       | Assumes          | Publishes                                                               |
-| --------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
-| `overdubstudio/overdub/.github/workflows/publish-agent.yml@refs/heads/main` | `AGENT_ROLE_ARN` | the agent image as the `toolchain-v<N>` tag `.maul/agent.yaml` declares |
+| Trusted workflow (`job_workflow_ref`)                                         | Assumes            | Publishes                                                                            |
+| ----------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| `overdubstudio/overdub/.github/workflows/publish-runtime.yml@refs/heads/main` | `RUNTIME_ROLE_ARN` | the runtime image as `sha-<commit>`, and `main-<commit>` for a default-branch commit |
+| `overdubstudio/overdub/.github/workflows/publish-agent.yml@refs/heads/main`   | `AGENT_ROLE_ARN`   | the agent image as the `toolchain-v<N>` tag `.maul/agent.yaml` declares              |
 
-The `job_workflow_ref` is compared exactly, case included. The role can write one ECR repository and sign with one
-key, nothing else. A wrong repository variable can only make a publish fail.
+The `job_workflow_ref` is compared exactly, case included. The runtime publisher therefore cannot assume the agent
+role, and each role can write one ECR repository (the agent's can also sign with one key), nothing else. A wrong
+repository variable can only make a publish fail.
 
 Changes to `.github/` and `.maul/` need human review; maul's intent changesets refuse both paths. These protections
 assume the default branch's maintainers stay trusted. As defence in depth, protect `main` with a branch ruleset
@@ -63,14 +73,14 @@ and add a tag ruleset that restricts creating tags named `main`, so no ref can p
 ## Repository variables
 
 None of them is secret. Set them on this repository, never on the organization: an organization variable reaches every
-repository with these workflows. The maul operator's terraform creates the role and outputs the configuration as
+repository with these workflows. The maul operator's terraform creates the roles and outputs the configuration as
 dotenv, which sets it in one command:
 
 ```sh
 terraform output -raw overdubstudio_overdub_github_variables_dotenv | gh variable set -f - --repo overdubstudio/overdub
 ```
 
-Set the configuration first and the `AGENT_PUBLISH_ENABLED` gate last:
+Set the configuration first and the two `*_PUBLISH_ENABLED` gates last:
 
 | Variable                   | Value                                               | What it is                                                          |
 | -------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
@@ -81,10 +91,13 @@ Set the configuration first and the `AGENT_PUBLISH_ENABLED` gate last:
 | `AGENT_IMAGE_REPOSITORY`   | `maul/app-envs/overdub`                             | the agent image's ECR repository, which `.maul/agent.yaml` names    |
 | `AGENT_ROLE_ARN`           | the agent publisher role ARN                        | assumed only by `publish-agent.yml`                                 |
 | `AGENT_SIGNING_KEY`        | the signing key's `awskms:///` URI, or unset        | optional: the KMS key the agent image is signed with                |
+| `RUNTIME_IMAGE_REPOSITORY` | `maul/previews/overdub`                             | the runtime (preview) image's ECR repository                        |
+| `RUNTIME_ROLE_ARN`         | the runtime publisher role ARN                      | assumed only by `publish-runtime.yml`                               |
 | `AGENT_PUBLISH_ENABLED`    | `true`                                              | publishes the agent image; anything else skips it                   |
+| `PREVIEW_PUBLISH_ENABLED`  | `true`                                              | publishes runtime images; set it last, once previews are configured |
 
-A skipped publisher is not a successful publication. To stop publishing, set `AGENT_PUBLISH_ENABLED` to anything but
-`true`; to revoke publishing, remove the role's trust policy.
+A skipped publisher is not a successful publication. To stop publishing, set a `*_PUBLISH_ENABLED` variable to anything
+but `true`; to revoke publishing, remove the roles' trust policies.
 
 ## Signing the agent image
 
@@ -92,7 +105,7 @@ Signing is optional. With `AGENT_SIGNING_KEY` set, `publish-agent.yml` signs the
 (`sign-image.sh`), with cosign and the AWS KMS key the variable names, under the same short-lived agent role. It signs
 exactly the digest it validated, never a tag. The signature is cosign's legacy form, a `sha256-<hex>.sig` tag beside the
 image, so an ECR rule that expires untagged images keeps it. Nothing goes to the public transparency log, so the
-repository's name stays private.
+repository's name stays private. The runtime publisher never signs.
 
 1. Create an AWS KMS key with key spec `ECC_NIST_P256` and key usage `SIGN_VERIFY`.
 2. Let the agent publisher role use it: pass the key's ARN to the reference terraform module as
@@ -127,10 +140,25 @@ this repository, which is why the first tag here is `toolchain-v2`.)
 If the registry moves, change `ECR_REGISTRY` and `AGENT_IMAGE_REPOSITORY` and the image in `.maul/agent.yaml`
 together: maul reads the image from the file, and the publisher refuses a declaration that names another repository.
 
+## The runtime image
+
+A preview runs `Dockerfile`'s image as uid 65532 with a read-only root filesystem, no writable `/tmp`, every
+capability dropped, 256 MiB of memory and no network of its own, on one port (8080), and counts it ready when `/`
+answers 200. So the image writes nothing to disk, and stays under the publisher's 128 MiB as an OCI archive. To try
+one as a preview would run it:
+
+```sh
+docker build -t overdub-preview .
+docker run --rm --read-only --user 65532:65532 --cap-drop ALL --memory 256m -p 127.0.0.1:8080:8080 overdub-preview
+```
+
+`server/serve.js` answers there by any name (`OVERDUB_ANY_HOST=1`, set in the Dockerfile and nowhere else), because
+a preview is asked for by its own: `docs/SECURITY.md`, "Local".
+
 ## Tests
 
-`agent-image.yml`'s `test` job runs them on a pull request that touches the image or the publishers, and before every
-build on `main`:
+`agent-image.yml`'s `test` job runs them on a pull request that touches the agent image or the publishers, and before
+every agent build on `main`; `runtime-image.yml` runs them before every runtime build:
 
 ```sh
 node --test .github/actions/publish/guard.test.cjs

@@ -24,6 +24,9 @@ export function addRoute(prefix, handler) { routes.push({ prefix, handler }); }
 
 // DNS rebinding: a site can point its own name at this machine and then read what this server sends as its own. Only a
 // request made to an address (localhost, or an IP) is served, never one made to another name (server/bridge.js too).
+// A container that holds nothing but the committed site is the exception (the preview image, Dockerfile): it is asked
+// for by its own name, so OVERDUB_ANY_HOST=1 (anyHost) answers any name, and OVERDUB_HOST (host) is the address it
+// listens on there, 0.0.0.0. Never on a machine with a checkout: that is what the check is for.
 const ADDRESS = /^(localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i;
 
 export function resolvePath(urlPath) {
@@ -96,11 +99,16 @@ export function stemsRuntimeFile(urlPath) {
   return path.join(path.resolve(dir), name);
 }
 
-export function startServer({ port = Number(process.env.PORT) || 3279, host = '127.0.0.1', quiet = false } = {}) {
+export function startServer({
+  port = Number(process.env.PORT) || 3279,
+  host = env('OVERDUB_HOST') || '127.0.0.1',
+  anyHost = env('OVERDUB_ANY_HOST') === '1',
+  quiet = false,
+} = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       for (const [k, v] of Object.entries(FRAME_HEADERS)) res.setHeader(k, v);
-      if (!ADDRESS.test(String(req.headers.host || ''))) {
+      if (!anyHost && !ADDRESS.test(String(req.headers.host || ''))) {
         res.writeHead(403, { 'content-type': 'text/plain' });
         return res.end('forbidden: ask for localhost');
       }

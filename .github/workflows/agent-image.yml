@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # A fixed SOURCE_DATE_EPOCH, not the commit's, and every layer's
       # timestamps rewritten to it: the toolchain image depends only on its
       # pinned bases and the dependency set, so an unchanged toolchain
@@ -72,7 +72,7 @@ jobs:
           docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
             -f .maul/Dockerfile --output "type=oci,dest=$RUNNER_TEMP/agent.oci.tar,rewrite-timestamp=true" .
           python3 .github/actions/publish/validate_oci.py "$RUNNER_TEMP/agent.oci.tar" "$RUNNER_TEMP/agent-validated" agent
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: agent-${{ github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/agent.oci.tar

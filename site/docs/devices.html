@@ -51,6 +51,7 @@
 <li><a href="#gaffer-tape-coremultiband-three-bands-up-and-down">Gaffer Tape (core.multiband): three bands, up and down</a></li>
 <li><a href="#dim-switch-coreducker-the-sidechain-duck">Dim Switch (core.ducker): the sidechain duck</a></li>
 <li><a href="#clip-lamp-coreclipper-a-ceiling-it-never-passes">Clip Lamp (core.clipper): a ceiling it never passes</a></li>
+<li><a href="#ceiling-fan-coretremolo-tremolo-and-auto-pan">Ceiling Fan (core.tremolo): tremolo and auto-pan</a></li>
 <li><a href="#sandbag-coreclubkit-a-club-kit-for-bass-music">Sandbag (core.clubkit): a club kit for bass music</a></li>
 <li><a href="#keys-an-effect-that-hears-another-track">Keys: an effect that hears another track</a></li>
 <li><a href="#graph-devices-in-a-live-chain">Graph devices in a live chain</a></li>
@@ -82,7 +83,7 @@
   </aside>
   <main id="doc" class="doc">
     <h1 id="top" class="doc-title"><a class="h-link" href="#top">Devices: writing instruments and effects</a></h1>
-    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 73 min to read</p>
+    <p class="doc-meta">From <code>docs/DEVICES.md</code> (<a href="/docs/DEVICES.md">the Markdown</a>), about 74 min to read</p>
     <article class="prose">
 <p>Overdub's instruments and effects are <strong>devices</strong>: a small definition (id, name, params, look) plus either a Web Audio
 graph (<code>build(c, kit)</code>, trusted built-ins like the ported pedals and amps) or a <strong>kernel</strong>: a few dozen lines of pure DSP
@@ -311,6 +312,25 @@ band-limited: within 0.1 LU on the house's test signals.</li>
 <li><strong>Presets</strong>: Drum bus clip (4 dB into -3 dBFS), Master clip (+3) and Master clip (+6) (into -1 dBFS, for in front
 of Red Line), Bass grit (14 dB into tape, 60% in). The loud master is Clip Lamp, then Red Line at -1 dBTP, then the
 master's clean ceiling (<code>master.set { clip: 'clean' }</code>). <code>tools/clipper-test.js</code> holds it to this.</li>
+</ul>
+<h2 id="ceiling-fan-coretremolo-tremolo-and-auto-pan"><a class="h-link" href="#ceiling-fan-coretremolo-tremolo-and-auto-pan">Ceiling Fan (core.tremolo): tremolo and auto-pan</a></h2>
+<p>An LFO on the level: <code>rate</code> (0.1-20 Hz, 4.5 by default), <code>sync</code> (<code>FREE</code>, or a note length from 1/32 to 2 BARS),
+<code>depth</code> (0-1, 0.5 by default), <code>shape</code> (<code>SINE</code>, <code>TRIANGLE</code> or <code>SQUARE</code>) and <code>mode</code> (<code>TREMOLO</code>: both sides move
+together; <code>PAN</code>: they move opposite, an auto-pan). <code>app/src/devices/builtin/tremolo.js</code>.</p>
+<ul>
+<li><strong>In time.</strong> With <code>sync</code> on a note length the LFO runs through the stdlib's <code>lfo.sync(beats, t)</code>: one cycle per note,
+phase-locked to the beat while the transport plays. <code>FREE</code> follows <code>rate</code>.</li>
+<li><strong>The gain law.</strong> With the LFO at m (-1 to 1), a = 1 - depth/2 and h = depth/2: <code>TREMOLO</code> gives both sides
+a + h·m; <code>PAN</code> gives the left a + h·m and the right a - h·m, so the two add to the same and the mono sum doesn't
+pulse. At depth 1 the bottom of a cycle is silent (in <code>PAN</code>, on one side at a time).</li>
+<li><strong>Level-matched.</strong> Both gains are scaled by 1 / sqrt(a² + h²·E[m²]) (E[m²] is 1/2 for the sine, 1/3 for the
+triangle, 1 for the square), so the average power over a cycle is unity and the level stays at bypass on any
+program; the loud point of a cycle is over unity (+2.3 dB at the defaults).</li>
+<li><strong>No clicks.</strong> Each side's gain goes through a 3 ms <code>dsp.slew</code> before it meets the sample, which rounds the square's
+edges and any jump from switching <code>shape</code>, <code>mode</code> or <code>sync</code>.</li>
+<li><strong>Depth 0 is the input</strong>, sample for sample.</li>
+<li><strong>Presets</strong>: Surf amp (a deep 6 Hz sine), Eighth chop (a square on the eighths, synced), Slow sway (a sine pan once a
+bar). <code>test/unit/tremolo.test.js</code> holds it to this.</li>
 </ul>
 <h2 id="sandbag-coreclubkit-a-club-kit-for-bass-music"><a class="h-link" href="#sandbag-coreclubkit-a-club-kit-for-bass-music">Sandbag (core.clubkit): a club kit for bass music</a></h2>
 <p>A synthesized drum kit for dubstep, riddim, drum and bass and melodic bass, on the GM map (the riser on note 34, the

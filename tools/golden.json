@@ -953,6 +953,13 @@
       "data": {
         "cabs": "sha256-7fd30c061e6b087e7694961ba78b953045f2ef0ac082a0fda6f21e370a8bc08e"
       }
+    },
+    "fx:core.tremolo": {
+      "sha256": "5cde4d7719c23ec00aeb9f84beaed8823be6cb4ab19130071d0b6fdfa74fe5d5",
+      "frames": 576000,
+      "lufs": -21.07,
+      "truePeak": -7.25,
+      "peak": -8.2
     }
   }
 }

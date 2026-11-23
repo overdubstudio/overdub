@@ -138,7 +138,7 @@ try {
     const B = await import('/app/src/devices/builtin/index.js');
     return B.BUILTINS.map((d) => d.id);
   });
-  t.ok(ids.length === 53, `builtin/index.js registers ${ids.length} devices`);
+  t.ok(ids.length === 54, `builtin/index.js registers ${ids.length} devices`);
   // a sampled device whose samples haven't been fetched plays nothing: skipped here (tools/drumkit-test.js says so)
   const unfetched = SAMPLED.filter((d) => Object.values(d.data || {}).some((h) => !fs.existsSync(dataPath(h)))).map((d) => d.id);
   for (const id of unfetched) t.note(`${id}: skipped, its samples haven't been fetched (node tools/fetch-kits.js)`);
@@ -217,6 +217,7 @@ try {
     rows.push([id, level, `${tp} dBTP`, `${r.cpu && r.cpu.pct}%`, r.tail ? `${r.tail.seconds}s${r.tail.decays === false ? ' (rings)' : ''}` : '-', r.deterministic ? 'yes' : 'NO', r.latency ? `${r.latency.samples ?? '-'}/${r.latency.declared}` : '-']);
     t.ok(r.ok, `${id}: checkDevice ok${r.ok ? '' : ': ' + r.errors.join('; ')}`);
     for (const w of r.warnings) t.note(`${id}: ${w}`);
+    if (id === 'core.tremolo') t.ok(!r.warnings.length, `core.tremolo: the device check gives no warnings${r.warnings.length ? ': ' + r.warnings.join('; ') : ''}`);
     t.ok(levelOk, `${id}: level ${level}`);
     t.ok(tp <= -1, `${id}: true peak ${tp} dBTP at defaults (want <= -1)`);
     t.ok(r.deterministic === true, `${id}: deterministic`);

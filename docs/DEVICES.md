@@ -241,6 +241,26 @@ bias, for even harmonics), `knee` (0-1) setting how far under the ceiling the be
   of Red Line), Bass grit (14 dB into tape, 60% in). The loud master is Clip Lamp, then Red Line at -1 dBTP, then the
   master's clean ceiling (`master.set { clip: 'clean' }`). `tools/clipper-test.js` holds it to this.
 
+## Ceiling Fan (core.tremolo): tremolo and auto-pan
+
+An LFO on the level: `rate` (0.1-20 Hz, 4.5 by default), `sync` (`FREE`, or a note length from 1/32 to 2 BARS),
+`depth` (0-1, 0.5 by default), `shape` (`SINE`, `TRIANGLE` or `SQUARE`) and `mode` (`TREMOLO`: both sides move
+together; `PAN`: they move opposite, an auto-pan). `app/src/devices/builtin/tremolo.js`.
+
+- **In time.** With `sync` on a note length the LFO runs through the stdlib's `lfo.sync(beats, t)`: one cycle per note,
+  phase-locked to the beat while the transport plays. `FREE` follows `rate`.
+- **The gain law.** With the LFO at m (-1 to 1), a = 1 - depth/2 and h = depth/2: `TREMOLO` gives both sides
+  a + h·m; `PAN` gives the left a + h·m and the right a - h·m, so the two add to the same and the mono sum doesn't
+  pulse. At depth 1 the bottom of a cycle is silent (in `PAN`, on one side at a time).
+- **Level-matched.** Both gains are scaled by 1 / sqrt(a² + h²·E[m²]) (E[m²] is 1/2 for the sine, 1/3 for the
+  triangle, 1 for the square), so the average power over a cycle is unity and the level stays at bypass on any
+  program; the loud point of a cycle is over unity (+2.3 dB at the defaults).
+- **No clicks.** Each side's gain goes through a 3 ms `dsp.slew` before it meets the sample, which rounds the square's
+  edges and any jump from switching `shape`, `mode` or `sync`.
+- **Depth 0 is the input**, sample for sample.
+- **Presets**: Surf amp (a deep 6 Hz sine), Eighth chop (a square on the eighths, synced), Slow sway (a sine pan once a
+  bar). `test/unit/tremolo.test.js` holds it to this.
+
 ## Sandbag (core.clubkit): a club kit for bass music
 
 A synthesized drum kit for dubstep, riddim, drum and bass and melodic bass, on the GM map (the riser on note 34, the

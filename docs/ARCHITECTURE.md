@@ -527,7 +527,7 @@ Ids are forever; display names are not. The built-ins are named after studio obj
 Capstan, core.keys Lamp Tines, core.pluck Pinch Roller, core.drums Gobo Kit, core.pad Room Tone; core.eq Top Shelf,
 core.comp Squeeze Box, core.verb Stairwell, core.delay Echo Reel, core.chorus Double Track, core.filter Keyhole,
 core.drive Hot Print, core.crush Chewed Tape, core.width Gatefold, core.limiter Red Line, core.eq8 Slide Rule, core.shaper Scribble Strip,
-core.multiband Gaffer Tape, core.rooms Echo Chamber; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
+core.multiband Gaffer Tape, core.rooms Echo Chamber, core.tremolo Ceiling Fan; core.drumroom Studio A, a room), and a rename only touches `name`. Names must not collide
 with the guitar pedals' (`tools/guitar-test.js` checks).
 A def the studio ships may carry `describe(params)` (one line of text for `get_project`, in place of the params' JSON:
 core/project.js `summarize`), and a param `hidden` (not on the face or in the generic window), `auto: false` (no lane)
@@ -544,7 +544,7 @@ is a literal in the kernel's source, packed so the kernel stays under its 256 KB
 Param `role` (for agents and semantic controls): `tone level drive mix time feedback rate depth size decay attack
 release pitch shape width gate sens` (or omit). `unit`: `Hz dB ms s % st note x`.
 
-**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 53 built-ins, fourteen
+**Where devices come from.** `main.js` imports three libraries at boot: `devices/builtin/` (the 54 built-ins, fourteen
 of them sampled: Virtuosity Kit, Parlour Upright, Rusty Brushes, Hand Crate, Full Stick, Rosin, Damper Bar, Roundwound,
 Hollow Body, Bell Up, Endpin, Head Joint, Spit Valve and Rusty Sticks, whose samples come as kernel data; eighteen play
 kernel data in all: those fourteen, Half Stack, Iso Cab and Y Cable on the cab bank, and Echo Chamber on measured

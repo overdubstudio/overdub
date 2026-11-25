@@ -122,7 +122,7 @@ export default function (app) {
       const off = h('button.ew-btn.ew-btn-small.di-off', { type: 'button' }, 'Keep it off');
       const el = h('div.di-prompt', { role: 'dialog', 'aria-modal': 'true', 'aria-label': `Run ${def.name}?` },
         h('p.di-p1', h('b', def.name), ` is ${def.kind === 'instrument' ? 'an instrument' : 'an effect'} from a device file. `, ...who),
-        h('p.di-p2', 'It’s a preset that runs on this computer, on the studio’s audio thread. Until you play it, it stays off: nothing runs it, not even the check. Play it if you trust whoever gave you the file: the device check runs first, and this browser then uses it from now on, in any song.'),
+        h('p.di-p2', 'It’s a small program that runs on this computer, on the studio’s audio thread. Until you play it, it stays off: nothing runs it, not even the check. Play it if you trust whoever gave you the file: the device check runs first, and this browser then runs that code from now on, in any song.'),
         h('div.di-acts', play, off));
       let hold = 0;
       const close = (result) => {

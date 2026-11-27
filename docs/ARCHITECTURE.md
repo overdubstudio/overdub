@@ -558,8 +558,8 @@ the song has whose kernel this browser trusts (`source: 'project'`), holds the r
 `revert_my_changes`), which puts back the def it shadowed, if any (`shadowedDevice(id)`).
 
 **Device files** (`ui/devices-io.js`, `app.devicesIO`): `.overdub-device.json` (`overdub-device/0`) out and in; an
-import runs `checkDevice` first and becomes one `device.define` by you (its kernel trusted here: the person chose the
-file). `/app/?device=<id>` opens a new song with that device on a track. `/app/library.html` is the public shelf.
+import of code this browser doesn't trust asks first (Play it / Keep it off); Play it runs `checkDevice` and becomes
+one `device.define` by you, its kernel trusted here once it passes. `/app/?device=<id>` opens a new song with that device on a track. `/app/library.html` is the public shelf.
 Details in DEVICES.md. The public, user-submitted library waits for WASM kernels and sandboxed faces (SECURITY.md).
 
 ### Who runs a song's code (`devices/trust.js`)
@@ -577,8 +577,7 @@ until the person allows it.
 - **Trusted without asking:** the studio's own kernels (the built-ins and the house shelf, as registered at boot) and
   every device in a song the studio ships (each `DEMOS` entry's devices: Night Shift's three), worked out when first
   needed and never stored; and kernels this browser takes in: `define_device` (the person's own agents, in the page
-  or over MCP: the tool trusts the kernel once its check passes), a device file the person imports (`ui/devices-io.js`),
-  and any `device.define` op a `do` dispatch applies in this page (`main.js`; not an undo, a redo or a load, never
+  or over MCP: the tool trusts the kernel once its check passes), and any `device.define` op a `do` dispatch applies in this page (`main.js`; not an undo, a redo or a load, never
   a kernel that is held, and never one allowed for this page load only, below). Once, on the first run of this
   version (the key isn't there), `main.js` trusts every kernel in the songs this browser kept (`overdub:project`,
   `overdub:previous`, `overdub:before-fork`, `overdub:recent`): they were already running. For the same reason a link this browser made before `since` opens as yours with its
@@ -610,6 +609,14 @@ until the person allows it.
   say *kept off*, the arranger draws a held instrument's clips silent (outline, hollow notes) with *kept off* where
   the byline goes, the browser lists it under "Written in this song". On a phone the strip is the question alone while
   it's open and one line once it's answered, so the lanes stay in view.
+- **Importing a device file** (`ui/devices-io.js`): the same rule for a file. A device file whose kernel isn't trusted
+  here is held until the person answers: a small dialog (a bottom sheet on a phone) names the device and who the file
+  says wrote it, says it's a small program that runs on this computer, and offers **Play it** and **Keep it off**
+  (focus on Keep it off; Esc keeps it off; Play it is held for 600 ms). Until Play it nothing registers, checks or
+  compiles it, and nothing is dispatched. Play it runs `checkDevice`; only a device that passes is trusted
+  (`app.trust.allow`) and defined by you. Keep it off adds nothing and stores nothing, so the next import asks again.
+  A file whose kernel is already trusted (one exported from this rack, a demo song's device) goes straight in. No
+  agent tool reaches it.
 - **Agents** see held devices (`get_project` `held`, `get_device` `held: true`, `list_devices`, `render_and_measure`
   and `provenance_report` say what they left out) and can't run or allow them: no tool reaches `app.trust.play`, and
   etiquette rule 8 says only the person lets held code play.

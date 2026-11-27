@@ -234,8 +234,8 @@ no tool checks, renders or registers their code, and no tool lets them play: tha
 (`kernelPrint` in `app/src/agent/keep.js` compares the code with those taken out). A real rewrite of held code can't
 be told from new code, so on a song that has held devices any device an agent defines goes to the person as a card
 first, as on a song from a link: the call comes back `offered: true`, nothing is checked, trusted or registered, and
-the device check runs when they press **Keep**. Devices the person's own agents define, device files the person
-imports and the songs the studio ships are trusted without asking.
+the device check runs when they press **Keep**. Devices the person's own agents define and the songs the studio ships
+are trusted without asking; a device file the person imports asks the person first, and no tool answers that.
 
 ### Songs from a link
 

@@ -218,8 +218,8 @@ async function boot() {
   const store = createStore(shared?.ok ? shared.song : loadSaved(), { getDevice: devices.getDevice });
   syncProjectDevices(store);
   store.on('change', (e) => {
-    // A device this page writes into the song (an agent's define_device, a device file the person imports, the studio's
-    // own) is code this browser chose: trusted from now on. Never a held one's: only the person's Play them lets that
+    // A device this page writes into the song (an agent's define_device, a device file the person let play, the studio's
+    // own) is code this browser chose: trusted from now on (an imported file asks first: ui/devices-io.js). Never a held one's: only the person's Play them lets that
     // run (ui/share.js), and an undo, a redo or a load only puts back what was there.
     if (e.kind === 'do') {
       for (const o of e.ops || []) {
@@ -257,7 +257,8 @@ async function boot() {
       app.ui?.emit?.('trust', { played: list });
       return { ok: true, played: list };
     },
-    // kernels this browser takes in (an imported device file, an agent's define_device): trusted from now on
+    // kernels this browser takes in (an imported device file once the person lets it play, and devices-io.js asks
+    // first; an agent's define_device): trusted from now on
     allow(sources) { const n = trust.allow(sources); syncProjectDevices(store); return n; },
     // the community shelf's Try (ui/community.js): for this page load only (a reload holds it again), and taking a
     // hash back (a Try whose dispatch failed after its allow, or one taken off the shelf). -> n

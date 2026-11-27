@@ -57,16 +57,21 @@ runs; and text in a song written to steer an agent.
   a link and the registry. The worklet scope is a rule for determinism, not a security boundary.
 - **Asked first.** A song's device runs only once this browser trusts its code (`devices/trust.js`; ARCHITECTURE.md,
   "Who runs a song's code"). Trust is by SHA-256 of the kernel's source, kept in `overdub:trusted-kernels`. The studio's
-  own kernels, the shipped demo songs' devices, what the person's own agents define here and device files the person
-  imports are trusted without asking, and the first run of this version trusted the songs this browser already kept,
+  own kernels, the shipped demo songs' devices and what the person's own agents define here are trusted without asking,
+  and the first run of this version trusted the songs this browser already kept,
   once (and a link this browser made before then: its moment is sealed in its mark; one made since gets no pass, so
   sharing a song to yourself can't let held code play). Anything else a link or a song file brings is held: never
   registered, so nothing compiles, checks or renders it; an instrument plays silence and an effect is bypassed, live,
   in exports, in the provenance report's checks and in every agent measurement. The banner (or, for a file, the same
   strip in its place) names the devices and who wrote them, says they're code that runs on this computer, and asks:
-  **Play them** trusts that code for good, **Keep them off** leaves it held and the song asks again next time. Agents
-  see held devices but no tool lets them play, and `define_device` refuses a held kernel under any id. `share-test`,
-  `demos-test`, `agent-test`, `library-test` and `provenance-test` check it, with every kernel that reaches the audio
+  **Play them** trusts that code for good, **Keep them off** leaves it held and the song asks again next time. A
+  device file the person imports (⇧⌘I, the file picker, ⌘O or a drop) asks first unless its kernel is already trusted
+  here: the prompt names the device and who the file says wrote it, says it's code that runs on this computer, and
+  offers **Play it** and **Keep it off** (focus on Keep it off, Esc keeps it off, Play it held 600 ms). Until Play it
+  nothing registers, checks or compiles it; Play it runs the device check and trusts the code only if it passes; Keep
+  it off adds nothing and the next import asks again. Agents see held devices but no tool lets them play, and
+  `define_device` refuses a held kernel under any id. `share-test`, `demos-test`, `agent-test`, `library-test` and
+  `provenance-test` check it, with every kernel that reaches the audio
   thread written down.
 - **The community shelf** (`ui/community.js`, `devices/community.js`; docs/COMMUNITY-SHELF.md). In every studio.
   Its index is JSON, read by one reader that copies only the fields it knows, checks each and caps text; it never

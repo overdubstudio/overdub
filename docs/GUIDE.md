@@ -813,8 +813,9 @@ underwater in a cathedral."* The agent writes it as a small piece of audio code.
 - **The face.** A device that passes gets a face drawn from its knobs, with a badge saying who built it. Every knob
   drags, takes the arrow keys and resets on a double-click.
 - **Export and import.** In the **Devices** tab, a device's **i** card has **Export device**: a
-  `.overdub-device.json` file. In another song, **Import a device…** in the Song menu (`⌘⇧I`) brings it in. It is
-  checked again on the way in, and refused, with the report, if it fails.
+  `.overdub-device.json` file. In another song, **Import a device…** in the Song menu (`⌘⇧I`) brings it in. Unless
+  this browser already runs its code, it asks first: **Play it** checks it and brings it in, **Keep it off** leaves it
+  out. It is checked on the way in, and refused, with the report, if it fails.
 
 The [device library](/app/library.html) has 66 devices: the 53 built-in instruments and effects, and 13 Claude
 wrote, each from one request, and the request is on the card. Play any of them on the page. The Guitar Studio's 101
@@ -871,8 +872,9 @@ answer they're kept off, so if you press play first you hear the rest of the son
 On a phone the question comes first, on its own; once you've answered, the banner is one line (▶, the title, **Make
 it yours**, **Back**), so the song stays in view. The banner's ▶ plays the song and stops it, from the start marker.
 
-A song file you open (`⌘O`, or dropped on the studio) asks the same way. Nothing asks about the demo songs, the devices
-your agents write here, or a device file you import: those are yours to run. **Make it yours** keeps whatever you
+A song file you open (`⌘O`, or dropped on the studio) asks the same way. Nothing asks about the demo songs or the
+devices your agents write here: those are yours to run. A device file you import asks the same way, unless this
+browser already runs its code. **Make it yours** keeps whatever you
 decided.
 
 Whoever opens the link hears your song but doesn't keep it yet: nothing is saved in their browser until they press

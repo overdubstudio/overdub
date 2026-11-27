@@ -413,12 +413,14 @@ matches the kernel) and a ▶ that renders a demo in the page. "Use in a new son
 
 **Device files.** `.overdub-device.json` = `{ format: 'overdub-device/0', exported, device: { id, name, kind, cat,
 blurb, nod?, request?, by, params, look, tail?, trails?, kernel } }`. Export from a device's info card in the rack
-(⌥⌘E exports the selected one); import from the Song menu, ⇧⌘I, ⌘O, or a drop anywhere. An import runs
-`checkDevice` first and is refused with the report if it fails; one that passes is one `device.define` signed by you
+(⌥⌘E exports the selected one); import from the Song menu, ⇧⌘I, ⌘O, or a drop anywhere. An import of code this
+browser hasn't run asks first (**Play it** / **Keep it off**); Play it runs `checkDevice`, and the device is refused
+with the report if it fails; one that passes is one `device.define` signed by you
 (the device keeps its author). A file can't take over a built-in id (`core.verb` comes in as `you.verb`), and the
 same file twice changes nothing. Until kernels run as WASM, a device file is code from whoever made it: import files
-from people you trust. Importing one trusts its code in this browser (you chose the file), as `define_device` trusts
-what your agent writes. A share link (`#s=`) or a song file carries the song's devices, kernels included; the ones
+from people you trust. Importing one trusts its code in this browser once you play it and it passes, as
+`define_device` trusts what your agent writes; a file whose code is already trusted here (one you exported from this
+rack, say) doesn't ask. A share link (`#s=`) or a song file carries the song's devices, kernels included; the ones
 this browser hasn't trusted are held, and the studio asks before they run.
 
 **Trying a community device** (a local studio only, and Try is held until the worklet's prototypes are frozen:

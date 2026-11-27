@@ -812,8 +812,9 @@ that fails doesn't play, and the agent gets the report so it can fix it.</li>
 <li><strong>The face.</strong> A device that passes gets a face drawn from its knobs, with a badge saying who built it. Every knob
 drags, takes the arrow keys and resets on a double-click.</li>
 <li><strong>Export and import.</strong> In the <strong>Devices</strong> tab, a device's <strong>i</strong> card has <strong>Export device</strong>: a
-<code>.overdub-device.json</code> file. In another song, <strong>Import a device…</strong> in the Song menu (<code>⌘⇧I</code>) brings it in. It is
-checked again on the way in, and refused, with the report, if it fails.</li>
+<code>.overdub-device.json</code> file. In another song, <strong>Import a device…</strong> in the Song menu (<code>⌘⇧I</code>) brings it in. Unless
+this browser already runs its code, it asks first: <strong>Play it</strong> checks it and brings it in, <strong>Keep it off</strong> leaves it
+out. It is checked on the way in, and refused, with the report, if it fails.</li>
 </ul>
 <p>The <a href="/app/library.html">device library</a> has 66 devices: the 53 built-in instruments and effects, and 13 Claude
 wrote, each from one request, and the request is on the card. Play any of them on the page. The Guitar Studio's 101
@@ -862,8 +863,9 @@ on the first track with one, and its track list says <em>kept off</em> beside ea
 </ul>
 <p>On a phone the question comes first, on its own; once you've answered, the banner is one line (▶, the title, <strong>Make
 it yours</strong>, <strong>Back</strong>), so the song stays in view. The banner's ▶ plays the song and stops it, from the start marker.</p>
-<p>A song file you open (<code>⌘O</code>, or dropped on the studio) asks the same way. Nothing asks about the demo songs, the devices
-your agents write here, or a device file you import: those are yours to run. <strong>Make it yours</strong> keeps whatever you
+<p>A song file you open (<code>⌘O</code>, or dropped on the studio) asks the same way. Nothing asks about the demo songs or the
+devices your agents write here: those are yours to run. A device file you import asks the same way, unless this
+browser already runs its code. <strong>Make it yours</strong> keeps whatever you
 decided.</p>
 <p>Whoever opens the link hears your song but doesn't keep it yet: nothing is saved in their browser until they press
 <strong>Make it yours</strong>. Their copy remembers where it came from, and every part stays signed by whoever played it: Claude's
